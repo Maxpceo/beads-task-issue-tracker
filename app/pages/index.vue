@@ -58,6 +58,7 @@ const {
   selectedIssue,
   isLoading,
   isUpdating,
+  error: issuesError,
   // Pagination
   hasMore,
   loadMore,
@@ -871,6 +872,11 @@ watch(
           <!-- Top section (fixed content) -->
           <div class="p-4 space-y-4 shrink-0">
             <PathSelector v-if="!showOnboarding" ref="pathSelectorRef" :is-loading="isLoading" @change="handlePathChange" @reset="handleReset" />
+
+            <div v-if="issuesError && stats?.total === 0" class="mt-6 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+              <p class="text-xs font-medium text-destructive mb-1">Failed to load issues</p>
+              <p class="text-xs text-muted-foreground break-words">{{ issuesError }}</p>
+            </div>
 
             <div v-if="stats" class="space-y-4 mt-6">
               <div class="grid grid-cols-4 gap-1.5">
