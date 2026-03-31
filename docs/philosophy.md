@@ -1,3 +1,5 @@
+> *This document was written by the original author, Laurent Chapin. It is preserved here as the foundational design philosophy of the project.*
+
 # Philosophy: A Human Window into AI-Piloted Work
 
 ## Core Purpose

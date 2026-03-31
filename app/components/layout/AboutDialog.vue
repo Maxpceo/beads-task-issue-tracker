@@ -25,7 +25,7 @@ const appVersion = useRuntimeConfig().public.appVersion
         <DialogDescription as="div" class="space-y-3 pt-2">
           <p class="text-sm font-medium text-foreground">Version {{ appVersion }}</p>
           <div class="text-xs text-muted-foreground space-y-1">
-            <p>&copy; 2026 Laurent Chapin</p>
+            <p>&copy; 2026 Maksim Posudevskii</p>
             <p>Powered by beads (Steve Yegge)</p>
             <p>Vibe coded with Claude Code</p>
           </div>

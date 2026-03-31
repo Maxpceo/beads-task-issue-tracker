@@ -4,9 +4,8 @@ A lightweight, standalone desktop application for managing [Beads](https://githu
 
 ![Beads Task-Issue Tracker](docs/screenshots/app-overview-1.23.0.png)
 
-> **Community Fork** — This is an actively maintained fork of [Maxpceo/beads-task-issue-tracker](https://github.com/Maxpceo/beads-task-issue-tracker).
-> The original author moved on to a new project ([PaiR](https://pair.w3dev.fr)), and active development of the original repository has stopped.
-> This fork continues development to keep the app functional, add new features, and support the Beads community.
+> **Community Fork** — This is the actively maintained version of Beads Task-Issue Tracker.
+> The original author discontinued the project, and this fork continues development to keep the app functional, add new features, and support the Beads community.
 
 ## Why This App?
 
@@ -186,7 +185,6 @@ pnpm tauri:build
 - [bd Beads](https://github.com/steveyegge/beads) - The AI-native issue tracker by Steve Yegge
 - [Beads VS Code Extension](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads) - The Planet57 VS Code extension
 - [Community Tools](https://github.com/steveyegge/beads/blob/main/docs/COMMUNITY_TOOLS.md) - Other Beads community projects
-- [PaiR](https://pair.w3dev.fr) - The original author's new project (successor to this app)
 
 ## Contributing
 
@@ -194,11 +192,10 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## License
 
-[MIT](LICENSE) - Originally by Laurent Chapin, maintained by [Maxpceo](https://github.com/Maxpceo).
+[MIT](LICENSE)
 
 ---
 
 ## Acknowledgments
 
-- Original project by [Laurent Chapin (w3dev33)](https://github.com/w3dev33)
-- Developed with the assistance of [Claude Code](https://claude.ai/code), Anthropic's AI-powered coding assistant
+Originally created by Laurent Chapin ([w3dev33](https://github.com/w3dev33)), who has since moved on to other projects and discontinued maintenance of this repository. Active development is now continued by Maksim Posudevskii ([Maxpceo](https://github.com/Maxpceo)) with the help of [Claude Code](https://claude.ai/code).
