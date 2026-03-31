@@ -356,14 +356,20 @@ watch(
 )
 
 // Close and clear panel when issue transitions to closed (not when selecting an already closed issue)
+// Track issue ID to distinguish navigation from status change on same issue
+let lastWatchedIssueId: string | null = null
 watch(
-  () => selectedIssue.value?.status,
-  (newStatus, oldStatus) => {
-    if (newStatus === 'closed' && oldStatus && oldStatus !== 'closed') {
+  () => ({ id: selectedIssue.value?.id, status: selectedIssue.value?.status }),
+  ({ id: newId, status: newStatus }, oldVal) => {
+    const oldId = oldVal?.id
+    const oldStatus = oldVal?.status
+    // Only close panel when the SAME issue transitions to closed
+    if (newId && newId === oldId && newStatus === 'closed' && oldStatus && oldStatus !== 'closed') {
       isEditMode.value = false
       selectIssue(null)
       isRightSidebarOpen.value = false
     }
+    lastWatchedIssueId = newId ?? null
   }
 )
 
@@ -533,6 +539,8 @@ const handleAddIssue = () => {
 }
 
 const handleSelectIssue = async (issue: Issue) => {
+  // Direct selection from list resets navigation stack
+  navigationStack.value = []
   // First set the issue from list for immediate feedback
   selectIssue(issue)
   isEditMode.value = false
@@ -561,6 +569,7 @@ const handleEditIssueFromTable = async (issue: Issue) => {
 }
 
 const handleDeselectIssue = () => {
+  navigationStack.value = []
   selectIssue(null)
   isEditMode.value = false
   isCreatingNew.value = false
@@ -634,7 +643,18 @@ const handleAddComment = async (content: string) => {
 }
 
 
+// Navigation stack for breadcrumb-style back navigation through dependencies
+const navigationStack = ref<Array<{ id: string; title: string }>>([])
+
 const handleNavigateToIssue = async (id: string) => {
+  // Push current issue to navigation stack before navigating
+  if (selectedIssue.value) {
+    navigationStack.value = [...navigationStack.value, {
+      id: selectedIssue.value.id,
+      title: selectedIssue.value.title,
+    }]
+  }
+
   // Check if this is a child issue (format: parent-id.number)
   // If so, expand the parent epic to make the child visible
   const lastDotIndex = id.lastIndexOf('.')
@@ -643,7 +663,7 @@ const handleNavigateToIssue = async (id: string) => {
     expandEpic(parentId)
   }
 
-  // Find the issue in the current list or fetch it
+  // Find the issue in the current list or select via fetch
   const existingIssue = issues.value.find(i => i.id === id)
   if (existingIssue) {
     selectIssue(existingIssue)
@@ -651,6 +671,23 @@ const handleNavigateToIssue = async (id: string) => {
   // Fetch full details (including extended fields, parent, children)
   await fetchIssue(id)
 }
+
+const handleNavigateBack = async () => {
+  const prev = navigationStack.value[navigationStack.value.length - 1]
+  if (!prev) return
+  navigationStack.value = navigationStack.value.slice(0, -1)
+
+  const existingIssue = issues.value.find(i => i.id === prev.id)
+  if (existingIssue) {
+    selectIssue(existingIssue)
+  }
+  await fetchIssue(prev.id)
+}
+
+const navigationBackTarget = computed(() => {
+  if (navigationStack.value.length === 0) return null
+  return navigationStack.value[navigationStack.value.length - 1]
+})
 
 
 // Search handler - search is prioritary over filters (always starts empty)
@@ -987,11 +1024,13 @@ watch(
             v-if="selectedIssue && !isEditMode && !isCreatingNew"
             :selected-issue="selectedIssue"
             :is-pinned="isPinned(selectedIssue.id)"
+            :back-target="navigationBackTarget"
             @edit="handleEditIssue"
             @reopen="handleReopenIssue"
             @close="handleCloseIssue"
             @delete="handleDeleteIssue"
             @toggle-pin="togglePin(selectedIssue.id)"
+            @navigate-back="handleNavigateBack"
           />
 
           <!-- Form mode: form gère son propre scroll -->
@@ -1162,11 +1201,13 @@ watch(
           v-if="selectedIssue && !isEditMode && !isCreatingNew"
           :selected-issue="selectedIssue"
           :is-pinned="isPinned(selectedIssue.id)"
+          :back-target="navigationBackTarget"
           @edit="handleEditIssue"
           @reopen="handleReopenIssue"
           @close="handleCloseIssue"
           @delete="handleDeleteIssue"
           @toggle-pin="togglePin(selectedIssue.id)"
+          @navigate-back="handleNavigateBack"
         />
 
         <!-- Form mode: form gère son propre scroll -->
