@@ -10,6 +10,9 @@
 
 set -e
 
+# Отключить Nuxt telemetry промпт (блокирует dev server)
+export NUXT_TELEMETRY_DISABLED=1
+
 # Цвета для вывода
 RED='\033[0;31m'
 GREEN='\033[0;32m'

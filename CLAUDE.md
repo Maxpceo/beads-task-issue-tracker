@@ -65,10 +65,14 @@ Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null
 
 ### Releases
 1. **Update `CHANGELOG.md`** with the target version heading and all changes
-2. `npm version X.Y.Z --no-git-tag-version && python3 ~/.claude/scripts/sync-version.py` (same version as CHANGELOG)
-3. Commit, tag (`git tag -a vX.Y.Z`), push with tags
-4. `gh release create vX.Y.Z --title "..." --notes "..."`
-5. **Update `.claude/codebase-map.md`** to reflect any structural changes (new files, composables, commands, etc.)
+2. **Run `./release.sh`** — interactive script that:
+   - Checks branch (must be master), tests, TypeScript
+   - Asks for new version number with confirmation
+   - Verifies CHANGELOG has an entry for the version
+   - Updates version in `package.json` + `src-tauri/tauri.conf.json`
+   - Creates commit, tag, pushes — with confirmation at each step
+   - GitHub Actions automatically builds DMG/EXE/AppImage from the tag
+3. **Update `.claude/codebase-map.md`** to reflect any structural changes (new files, composables, commands, etc.)
 
 **Release notes must include:**
 - bd compatibility version (e.g., `> Requires **bd 0.49.x** — do not use bd 0.50–0.56+`)
@@ -79,7 +83,7 @@ Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null
   ```
 
 ### Commits
-Keep `Co-Authored-By: Claude Code <noreply@anthropic.com>` for transparency.
+Commit messages should clearly describe the change. No special tags required.
 
 ## Permissions
 
