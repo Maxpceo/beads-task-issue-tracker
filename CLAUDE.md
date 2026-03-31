@@ -19,7 +19,15 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 1. File issues for remaining work
 2. Run quality gates (if code changed): `pnpm test && npx vue-tsc --noEmit`
 3. Close finished issues
-4. `git pull --rebase && bd sync && git push && git status`
+4. **Update CHANGELOG.md** — add entries under `[Unreleased]` for all code changes in this session
+5. `git pull --rebase && bd sync && git push && git status`
+
+### Before Merge to master
+**MANDATORY checklist** — do not merge without completing:
+1. All tests pass: `pnpm test && npx vue-tsc --noEmit`
+2. `CHANGELOG.md` updated with all changes (under `[Unreleased]` or version heading)
+3. `README.md` reflects any user-facing changes (new features, new commands, etc.)
+4. All beads closed
 
 ### Testing
 - **Run before committing**: `pnpm test` — runs all Vitest unit tests
