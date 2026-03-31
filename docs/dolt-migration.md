@@ -1,37 +1,37 @@
-# Dolt Migration — Notes internes
+# Миграция на Dolt — Внутренние заметки
 
-## Contexte
+## Контекст
 
-Depuis bd >= 0.50, le backend Dolt remplace SQLite. Les projets existants doivent migrer.
+Начиная с bd >= 0.50, бэкенд Dolt заменяет SQLite. Существующие проекты необходимо мигрировать.
 
-## Ce qui s'est passe sur beads-task-issue-tracker (2026-02-18)
+## Что произошло в beads-task-issue-tracker (2026-02-18)
 
-### Symptome
-- Apres mise a jour vers bd 0.52, le projet affichait une page vide (0 issues)
-- `bd list` retournait `[]` sans erreur
-- Un dossier `.beads/dolt/` existait (migration partielle) mais `.beads/.dolt` manquait
+### Симптом
+- После обновления до bd 0.52 проект показывал пустую страницу (0 issues)
+- `bd list` возвращал `[]` без ошибки
+- Папка `.beads/dolt/` существовала (частичная миграция), но `.beads/.dolt` отсутствовал
 
-### Cause
-bd 0.52 a declenche une migration partielle automatiquement (probablement lors d'une ecriture).
-Le dossier `dolt/` a ete cree mais la migration n'a pas abouti. bd lisait depuis Dolt (vide) au lieu de SQLite.
+### Причина
+bd 0.52 автоматически запустил частичную миграцию (вероятно, при операции записи).
+Папка `dolt/` была создана, но миграция не завершилась. bd читал из Dolt (пустого) вместо SQLite.
 
-### Procedure de recuperation
+### Процедура восстановления
 
 ```bash
-# 1. Verifier que le JSONL contient les issues (source de verite)
+# 1. Проверить, что JSONL содержит issues (источник истины)
 wc -l .beads/issues.jsonl
 
-# 2. Tuer tout processus bd/dolt qui verrouillerait la base
+# 2. Убить все процессы bd/dolt, которые могут блокировать базу
 pkill -f "bd doctor"; pkill -f "bd daemon"; pkill -f dolt
 rm -f .beads/daemon.lock .beads/daemon.pid .beads/bd.sock .beads/dolt-access.lock .beads/.jsonl.lock
 
-# 3. Supprimer le dolt corrompu/partiel et la SQLite corrompue
+# 3. Удалить повреждённый/частичный dolt и повреждённую SQLite
 rm -rf .beads/dolt .beads/beads.db .beads/beads.db-shm .beads/beads.db-wal
 
-# 4. Reinitialiser avec le bon prefixe (verifier dans issues.jsonl)
+# 4. Переинициализировать с правильным префиксом (проверить в issues.jsonl)
 bd init --prefix beads
 
-# 5. Filtrer les issues tombstone (bd 0.52 les rejette) puis importer
+# 5. Отфильтровать tombstone-issues (bd 0.52 их отклоняет) и импортировать
 python3 -c "
 import json
 with open('.beads/issues.jsonl') as f:
@@ -47,36 +47,36 @@ with open('.beads/issues.jsonl') as f:
 "
 bd import -i /tmp/beads-clean.jsonl
 
-# 6. Verifier
+# 6. Проверить
 bd count
 bd list --limit=5
 ```
 
-### Points d'attention
+### Важные моменты
 
-- **Le JSONL est la source de verite** : tant qu'il est intact, les issues sont recuperables
-- **Les issues "tombstone"** (106 dans notre cas) sont des issues supprimees. bd 0.52 les rejette a l'import, c'est normal
-- **Le prefixe doit correspondre** : `bd init --prefix X` doit matcher le prefixe des issue IDs dans le JSONL (ex: `beads-0bn` → prefixe `beads`)
-- **Les verrous Dolt** : `bd doctor` peut creer un verrou et se bloquer lui-meme. Toujours tuer les processus existants avant de retenter
-- **`bd migrate --to-dolt`** necessite la base SQLite. Si elle a ete supprimee, utiliser `bd init` + `bd import` a la place
+- **JSONL — источник истины**: пока он цел, issues можно восстановить
+- **Tombstone-issues** (в нашем случае 106) — это удалённые issues. bd 0.52 отклоняет их при импорте, это нормально
+- **Префикс должен совпадать**: `bd init --prefix X` должен соответствовать префиксу ID issues в JSONL (например: `beads-0bn` → префикс `beads`)
+- **Блокировки Dolt**: `bd doctor` может создать блокировку и заблокировать сам себя. Всегда убивайте существующие процессы перед повторной попыткой
+- **`bd migrate --to-dolt`** требует базу SQLite. Если она была удалена, используйте `bd init` + `bd import` вместо этого
 
-## Risque pour les autres projets
+## Риск для других проектов
 
-La migration partielle peut arriver si :
-1. bd 0.52 est installe
-2. Une commande d'ecriture (`bd update`, `bd create`, etc.) est executee sur un projet SQLite
-3. La migration automatique echoue ou est interrompue
+Частичная миграция может произойти, если:
+1. Установлен bd 0.52
+2. Выполняется команда записи (`bd update`, `bd create` и т.д.) в проекте с SQLite
+3. Автоматическая миграция завершается с ошибкой или прерывается
 
-**Indicateurs** :
-- Dossier `.beads/dolt/` present mais `bd list` retourne `[]`
-- Fichier `.beads/dolt-access.lock` present
-- `bd list` retourne une erreur "Dolt backend configured but database not found"
+**Признаки**:
+- Папка `.beads/dolt/` существует, но `bd list` возвращает `[]`
+- Присутствует файл `.beads/dolt-access.lock`
+- `bd list` возвращает ошибку "Dolt backend configured but database not found"
 
-## Detection dans l'application
+## Обнаружение в приложении
 
-L'app detecte 3 cas :
-1. **Erreur explicite** : "Dolt backend configured but database not found" → intercepte par `isDoltMigrationError()` dans les catch
-2. **Detection proactive** : `bd_check_needs_migration` verifie si bd >= 0.50 + projet pas Dolt + donnees existantes
-3. **Migration partielle** : dossier `dolt/` present mais `.dolt` manquant
+Приложение определяет 3 случая:
+1. **Явная ошибка**: "Dolt backend configured but database not found" → перехватывается `isDoltMigrationError()` в catch-блоках
+2. **Проактивное обнаружение**: `bd_check_needs_migration` проверяет, что bd >= 0.50 + проект не на Dolt + есть существующие данные
+3. **Частичная миграция**: папка `dolt/` существует, но `.dolt` отсутствует
 
-La commande `bd_migrate_to_dolt` nettoie un dossier `dolt/` partiel avant de relancer `bd migrate --to-dolt --yes`.
+Команда `bd_migrate_to_dolt` очищает частичную папку `dolt/` перед повторным запуском `bd migrate --to-dolt --yes`.
