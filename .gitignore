@@ -36,3 +36,10 @@ coverage
 # Build cache
 .temp
 *.cache
+
+# Dolt database files (added by bd init)
+.dolt/
+.beads/**/*.db
+
+# MCP server config (local)
+.serena/
