@@ -4,31 +4,19 @@ A lightweight, standalone desktop application for managing [Beads](https://githu
 
 ![Beads Task-Issue Tracker](docs/screenshots/app-overview-1.23.0.png)
 
-> [!NOTE]
-> <a href="https://pair.w3dev.fr"><picture><source media="(prefers-color-scheme: dark)" srcset="https://pair.w3dev.fr/logo-dark.png"><source media="(prefers-color-scheme: light)" srcset="https://pair.w3dev.fr/logo-light.png"><img src="https://pair.w3dev.fr/logo-light.png" alt="PaiR" height="32"></picture></a>
->
-> **This project's successor is [PaiR](https://pair.w3dev.fr)** — latest release: **[v0.8.0](https://github.com/w3dev33/pair-dist/releases/tag/v0.8.0)** for macOS (ARM64 + Intel), Linux (amd64 + arm64), and Windows.
->
-> As the Beads ecosystem evolves toward autonomous multi-agent orchestration, we believe the transition should be progressive. Most developers today work **with** AI, not behind it — they need to see what's happening, understand it, and stay in control. That's what PaiR is built for: a smooth, step-by-step transition from pair programming to broader AI delegation, without losing visibility along the way.
->
-> PaiR is fully independent: built-in CLI, own storage format (`.pair/`), zero external dependencies. Your existing `.beads/` data is never modified or overwritten — PaiR stores everything in its own directory. **Migration is automatic** for projects using `bd` 0.49.x (pre-Dolt) or `br` up to 0.1.x. Projects running `bd` 0.50+ (Dolt-based) are not currently supported for migration.
->
-> The Beads Task-Issue Tracker remains available and functional with `bd` 0.49.x and `br` 0.1.x, but active development has moved to PaiR.
+> **Community Fork** — This is an actively maintained fork of [w3dev33/beads-task-issue-tracker](https://github.com/w3dev33/beads-task-issue-tracker).
+> The original author moved on to a new project ([PaiR](https://pair.w3dev.fr)), and active development of the original repository has stopped.
+> This fork continues development to keep the app functional, add new features, and support the Beads community.
 
 ## Why This App?
 
 [Beads](https://github.com/steveyegge/beads) is an AI-native issue tracker that stores issues directly in your codebase (in a `.beads` folder). Compatible with both [`br`](https://github.com/Dicklesworthstone/beads_rust) (Rust, recommended) and [`bd`](https://github.com/steveyegge/beads) (Go).
 
-> [!IMPORTANT]
 > **A human interface for AI-piloted issue tracking**
 >
 > The Beads CLI (`br` or `bd`) is designed for AI agents — they create issues, update statuses, and pilot workflows programmatically. But **humans need visibility and control** over what the AI is doing.
 >
 > This application lets you **observe** what the AI is driving, and **step in** to edit, correct, or redirect at any point. The workflow is collaborative — the AI pilots through the CLI, and you use this app as your control panel.
->
-> We follow the Beads CLI — we don't define the format, we read what it writes and present it for humans. If the CLI evolves, we adapt. If it ever becomes purely machine-to-machine with no human-interpretable output, we freeze at the last meaningful version.
->
-> *See **[docs/philosophy.md](docs/philosophy.md)** for the full design rationale.*
 
 Planet57's [vscode-beads extension](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads) provides an excellent interface for managing these issues.
 However, **VS Code can be resource-intensive**.
@@ -86,6 +74,11 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Database Repair**: Automatic detection and repair of schema migration issues
 - **Keyboard Shortcuts**: `Cmd/Ctrl+,` (settings), `Cmd/Ctrl+F` (search in markdown), `Cmd/Ctrl+Shift+L` (debug logs), arrow keys (gallery navigation)
 
+### New in v2.0.0
+- **Resizable comment section**: Drag the bottom edge to resize (160-500px), height persisted per project
+- **Comment navigation**: Table of contents with quick jump to any comment
+- **Dev script**: `./start-dev.sh` — one-command development setup with dependency checks
+
 ## How Attachments Work
 
 The Beads CLI has no built-in attachment support. This app implements its own **filesystem-based attachment system** using the `.beads/attachments/` directory as the sole source of truth.
@@ -100,22 +93,13 @@ This means the attachment storage lives inside the `.beads` directory and gets v
 
 > **For developers**: If you want to script attachment creation (e.g., automatically attach files when creating issues), see the detailed technical documentation in **[docs/attachments.md](docs/attachments.md)**.
 
-## My Workflow
-
-Beyond just viewing issues, this app is part of a broader development workflow powered by [Claude Code](https://claude.ai/code):
-
-- **Centralized task management**: Beads issues live in the codebase, making them accessible to AI coding assistants
-- **AI-driven development**: Claude Code can read, create, and update issues directly via `br` or `bd`, keeping context within the coding session
-- **External bug sync**: Custom commands can import bugs from external systems (Jira, Redmine, etc.) into Beads
-- **Daily planning**: Quickly review and prioritize tasks for the day without switching contexts
-
 ## Prerequisites
 
 > **Important**: This app requires a Beads CLI to be installed on your system. It acts as a graphical interface for the Beads command-line tool.
 
 ### Recommended: `br` (beads_rust)
 
-[**beads_rust**](https://github.com/Dicklesworthstone/beads_rust) (`br`) is our **recommended CLI** — it's faster, more optimized, and built on the proven SQLite + JSONL architecture. This is our primary choice going forward.
+[**beads_rust**](https://github.com/Dicklesworthstone/beads_rust) (`br`) is the **recommended CLI** — it's faster, more optimized, and built on the proven SQLite + JSONL architecture.
 
 1. **Install `br`** — follow the instructions at [github.com/Dicklesworthstone/beads_rust](https://github.com/Dicklesworthstone/beads_rust)
 
@@ -136,7 +120,7 @@ The app **auto-detects** which CLI is installed. You can switch between `br` and
 
 [**bd**](https://github.com/steveyegge/beads) (`bd`) version 0.49.x remains fully supported as a fallback. This is the last stable Go version with embedded Dolt and native file watcher support.
 
-> **Do not** upgrade to bd 0.50–0.56+ which switched to server mode, introducing regressions for standalone desktop use. See [beads#2050](https://github.com/steveyegge/beads/issues/2050) for details. If `bd` with Dolt regains comparable reactivity and performance in future versions, we'll reconsider.
+> **Do not** upgrade to bd 0.50-0.56+ which switched to server mode, introducing regressions for standalone desktop use. See [beads#2050](https://github.com/steveyegge/beads/issues/2050) for details.
 
 ```bash
 # Install bd (check the repo for the latest method)
@@ -147,13 +131,11 @@ curl -fsSL https://raw.githubusercontent.com/steveyegge/beads/main/scripts/insta
 
 `br` and `bd` can be installed simultaneously. The app lets you switch between them at any time via Settings — useful for comparing behavior or transitioning gradually.
 
-If you use an AI coding assistant (Claude Code, Cursor, etc.) to pilot your issues, configure its skills/commands to use the CLI of your choice (`br` or `bd`). The app will reflect changes from either one in real time.
-
 ## Installation
 
 ### Download
 
-Download the latest release for your platform from the [Releases](https://github.com/w3dev33/beads-task-issue-tracker/releases) page:
+Download the latest release from the [Releases](https://github.com/Maxpceo/beads-task-issue-tracker/releases) page:
 
 - **macOS**: `.dmg` file (Apple Silicon & Intel)
 - **Windows**: `.msi` or `.exe` installer
@@ -161,9 +143,7 @@ Download the latest release for your platform from the [Releases](https://github
 
 ### macOS: First Launch
 
-macOS may block the app because it's not signed with an Apple Developer certificate. You'll see a message saying the app "is damaged and can't be opened."
-
-**To fix this**, run the following command after installing:
+macOS may block the app because it's not signed with an Apple Developer certificate. To fix this, run:
 
 ```bash
 xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
@@ -175,22 +155,23 @@ Then open the app normally. This only needs to be done once.
 
 ```bash
 # Clone the repository
-git clone https://github.com/w3dev33/beads-task-issue-tracker.git
+git clone https://github.com/Maxpceo/beads-task-issue-tracker.git
 cd beads-task-issue-tracker
 
 # Install dependencies
 pnpm install
 
-# Run in development mode
-pnpm dev
+# Run in development mode (recommended)
+./start-dev.sh
+
+# Or run manually
+pnpm tauri:dev
 
 # Build for production
 pnpm tauri:build
 ```
 
 ## Tech Stack
-
-This application is built with modern web technologies, packaged as a native desktop app:
 
 | Layer | Technology | Description |
 |-------|------------|-------------|
@@ -205,6 +186,7 @@ This application is built with modern web technologies, packaged as a native des
 - [bd Beads](https://github.com/steveyegge/beads) - The AI-native issue tracker by Steve Yegge
 - [Beads VS Code Extension](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads) - The Planet57 VS Code extension
 - [Community Tools](https://github.com/steveyegge/beads/blob/main/docs/COMMUNITY_TOOLS.md) - Other Beads community projects
+- [PaiR](https://pair.w3dev.fr) - The original author's new project (successor to this app)
 
 ## Contributing
 
@@ -212,10 +194,11 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## License
 
-[MIT](LICENSE) - Laurent Chapin
+[MIT](LICENSE) - Originally by Laurent Chapin, maintained by [Maxpceo](https://github.com/Maxpceo).
 
 ---
 
 ## Acknowledgments
 
-This project was developed with the assistance of [Claude Code](https://claude.ai/code), Anthropic's AI-powered coding assistant.
+- Original project by [Laurent Chapin (w3dev33)](https://github.com/w3dev33)
+- Developed with the assistance of [Claude Code](https://claude.ai/code), Anthropic's AI-powered coding assistant
