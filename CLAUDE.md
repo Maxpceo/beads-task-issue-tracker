@@ -61,7 +61,7 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 ### Dev Server
 Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null && pnpm tauri:dev`
 
-## GitHub — Account: w3dev33
+## GitHub — Account: Maxpceo
 
 ### Releases
 1. **Update `CHANGELOG.md`** with the target version heading and all changes

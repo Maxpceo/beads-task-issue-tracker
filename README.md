@@ -4,7 +4,7 @@ A lightweight, standalone desktop application for managing [Beads](https://githu
 
 ![Beads Task-Issue Tracker](docs/screenshots/app-overview-1.23.0.png)
 
-> **Community Fork** — This is an actively maintained fork of [w3dev33/beads-task-issue-tracker](https://github.com/w3dev33/beads-task-issue-tracker).
+> **Community Fork** — This is an actively maintained fork of [Maxpceo/beads-task-issue-tracker](https://github.com/Maxpceo/beads-task-issue-tracker).
 > The original author moved on to a new project ([PaiR](https://pair.w3dev.fr)), and active development of the original repository has stopped.
 > This fork continues development to keep the app functional, add new features, and support the Beads community.
 

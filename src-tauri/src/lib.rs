@@ -3023,7 +3023,7 @@ async fn fs_list(path: Option<String>) -> Result<FsListResult, String> {
 // ============================================================================
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/w3dev33/beads-task-issue-tracker/releases/latest";
+const GITHUB_RELEASES_URL: &str = "https://api.github.com/repos/Maxpceo/beads-task-issue-tracker/releases/latest";
 
 /// Get a GitHub token from `gh auth token` (if gh CLI is installed and authenticated).
 /// Raises the API rate limit from 60/hour (anonymous) to 5,000/hour (authenticated).
@@ -3132,7 +3132,7 @@ async fn check_for_updates() -> Result<UpdateInfo, String> {
             current_version: CURRENT_VERSION.to_string(),
             latest_version: CURRENT_VERSION.to_string(),
             has_update: false,
-            release_url: "https://github.com/w3dev33/beads-task-issue-tracker/releases".to_string(),
+            release_url: "https://github.com/Maxpceo/beads-task-issue-tracker/releases".to_string(),
             download_url: None,
             platform: get_platform_string().to_string(),
             release_notes: None,
@@ -3157,7 +3157,7 @@ async fn check_for_updates() -> Result<UpdateInfo, String> {
     // Fetch CHANGELOG.md via GitHub API (raw.githubusercontent CDN ignores query params for caching)
     let changelog = with_github_auth(
         client
-            .get("https://api.github.com/repos/w3dev33/beads-task-issue-tracker/contents/CHANGELOG.md")
+            .get("https://api.github.com/repos/Maxpceo/beads-task-issue-tracker/contents/CHANGELOG.md")
             .header("Accept", "application/vnd.github.raw+json")
     )
         .send()
@@ -3206,7 +3206,7 @@ async fn check_for_updates_demo() -> Result<UpdateInfo, String> {
     // Fetch CHANGELOG.md via GitHub API (raw.githubusercontent CDN ignores query params for caching)
     let changelog = with_github_auth(
         client
-            .get("https://api.github.com/repos/w3dev33/beads-task-issue-tracker/contents/CHANGELOG.md")
+            .get("https://api.github.com/repos/Maxpceo/beads-task-issue-tracker/contents/CHANGELOG.md")
             .header("Accept", "application/vnd.github.raw+json")
     )
         .send()

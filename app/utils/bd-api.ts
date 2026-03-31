@@ -842,7 +842,7 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
   }
 
   // Web: call GitHub API directly
-  const response = await fetch('https://api.github.com/repos/w3dev33/beads-task-issue-tracker/releases/latest')
+  const response = await fetch('https://api.github.com/repos/Maxpceo/beads-task-issue-tracker/releases/latest')
   if (!response.ok) {
     throw new Error(`GitHub API returned status: ${response.status}`)
   }
@@ -865,7 +865,7 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
   // Fetch CHANGELOG.md via GitHub API (raw.githubusercontent CDN ignores query params for caching)
   let releaseNotes: string | null = release.body || null
   try {
-    const changelogResponse = await fetch('https://api.github.com/repos/w3dev33/beads-task-issue-tracker/contents/CHANGELOG.md', {
+    const changelogResponse = await fetch('https://api.github.com/repos/Maxpceo/beads-task-issue-tracker/contents/CHANGELOG.md', {
       headers: { 'Accept': 'application/vnd.github.raw+json' },
     })
     if (changelogResponse.ok) {

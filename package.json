@@ -10,11 +10,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/w3dev33/beads-task-issue-tracker.git"
+    "url": "https://github.com/Maxpceo/beads-task-issue-tracker.git"
   },
-  "homepage": "https://github.com/w3dev33/beads-task-issue-tracker",
+  "homepage": "https://github.com/Maxpceo/beads-task-issue-tracker",
   "bugs": {
-    "url": "https://github.com/w3dev33/beads-task-issue-tracker/issues"
+    "url": "https://github.com/Maxpceo/beads-task-issue-tracker/issues"
   },
   "keywords": [
     "beads",
