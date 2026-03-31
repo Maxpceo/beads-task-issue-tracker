@@ -83,7 +83,9 @@ Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null
   ```
 
 ### Commits
-Commit messages should clearly describe the change. No special tags required.
+- **Always in English** — open source standard for international contributors
+- Conventional Commits format: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `release:`
+- Keep `Co-Authored-By: Claude Code <noreply@anthropic.com>` for transparency
 
 ## Permissions
 
