@@ -1,20 +1,20 @@
 {
   "name": "beads-task-issue-tracker",
   "type": "module",
-  "version": "1.24.2",
+  "version": "2.0.0",
   "description": "A lightweight desktop app for managing Beads issues outside your IDE",
   "author": {
-    "name": "Laurent Chapin",
-    "email": "laurent.chapin@w3dev.fr"
+    "name": "Maksim Posudevskii",
+    "email": "maxpceo@gmail.com"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/w3dev33/beads-task-issue-tracker.git"
+    "url": "https://github.com/Maxpceo/beads-task-issue-tracker.git"
   },
-  "homepage": "https://github.com/w3dev33/beads-task-issue-tracker",
+  "homepage": "https://github.com/Maxpceo/beads-task-issue-tracker",
   "bugs": {
-    "url": "https://github.com/w3dev33/beads-task-issue-tracker/issues"
+    "url": "https://github.com/Maxpceo/beads-task-issue-tracker/issues"
   },
   "keywords": [
     "beads",
@@ -30,12 +30,13 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "tauri:dev": "cargo tauri dev",
-    "tauri:build": "cargo tauri build",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@nuxt/telemetry": "2.8.0",
     "@tanstack/vue-table": "^8.21.3",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",

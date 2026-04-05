@@ -57,7 +57,7 @@ export function useUpdateChecker() {
   }
 
   const openReleasesPage = async () => {
-    const url = updateInfo.value?.releaseUrl || 'https://github.com/w3dev33/beads-task-issue-tracker/releases'
+    const url = updateInfo.value?.releaseUrl || 'https://github.com/Maxpceo/beads-task-issue-tracker/releases'
     await openUrl(url)
   }
 

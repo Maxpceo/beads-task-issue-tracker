@@ -5,9 +5,10 @@ import StatusBadge from '~/components/issues/StatusBadge.vue'
 import PriorityBadge from '~/components/issues/PriorityBadge.vue'
 import { Button } from '~/components/ui/button'
 
-defineProps<{
+const props = defineProps<{
   selectedIssue: Issue
   isPinned?: boolean
+  backTarget?: { id: string; title: string } | null
 }>()
 
 defineEmits<{
@@ -16,11 +17,31 @@ defineEmits<{
   close: []
   delete: []
   'toggle-pin': []
+  'navigate-back': []
 }>()
+
+const backTargetShortId = computed(() => {
+  if (!props.backTarget) return ''
+  const id = props.backTarget.id
+  const dashIdx = id.lastIndexOf('-')
+  return dashIdx !== -1 ? id.slice(dashIdx + 1) : id
+})
 </script>
 
 <template>
   <div class="p-4 pb-0 space-y-3 border-b border-border">
+    <!-- Back navigation for dependency browsing -->
+    <button
+      v-if="backTarget"
+      class="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+      @click="$emit('navigate-back')"
+    >
+      <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="15 18 9 12 15 6" />
+      </svg>
+      <span class="truncate"><span class="font-mono">{{ backTargetShortId }}</span> {{ backTarget.title }}</span>
+    </button>
+
     <!-- Badges row -->
     <div class="flex items-center gap-1.5 flex-wrap">
       <CopyableId :value="selectedIssue.id" :display-value="selectedIssue.id.includes('-') ? selectedIssue.id.slice(selectedIssue.id.lastIndexOf('-') + 1) : selectedIssue.id" />

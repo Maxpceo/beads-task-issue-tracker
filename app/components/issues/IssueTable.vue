@@ -352,6 +352,29 @@ const issueMap = computed(() => {
   return map
 })
 
+// Full issues list (unfiltered) for checking blocker status
+const { issues: allIssues } = useIssues()
+const allIssuesMap = computed(() => new Map(allIssues.value.map(i => [i.id, i])))
+
+// Check if issue has at least one blocker that is still open (not closed)
+const hasActiveBlockers = (issue: Issue): boolean => {
+  if (!issue.blockedBy?.length) return false
+  return issue.blockedBy.some(id => {
+    const blocker = allIssuesMap.value.get(id)
+    // If blocker not found in full list, treat as active (could be from another project)
+    return !blocker || blocker.status !== 'closed'
+  })
+}
+
+// Get only active (non-closed) blockers for tooltip display
+const activeBlockers = (issue: Issue): string[] => {
+  if (!issue.blockedBy?.length) return []
+  return issue.blockedBy.filter(id => {
+    const blocker = allIssuesMap.value.get(id)
+    return !blocker || blocker.status !== 'closed'
+  })
+}
+
 const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigation({
   itemIds: flatVisibleIds,
   onSelect: (id) => {
@@ -549,12 +572,12 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                   <template v-else-if="col.id === 'status'">
                     <div class="flex items-center gap-1">
                       <StatusBadge :status="group.epic.status" size="sm" />
-                      <Tooltip v-if="group.epic.blockedBy?.length">
+                      <Tooltip v-if="hasActiveBlockers(group.epic)">
                         <TooltipTrigger as-child>
                           <Ban class="w-3 h-3 text-red-400" />
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          <p class="text-xs">Blocked by {{ group.epic.blockedBy.join(', ') }}</p>
+                          <p class="text-xs">Blocked by {{ activeBlockers(group.epic).join(', ') }}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -696,12 +719,12 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                     <template v-else-if="col.id === 'status'">
                       <div class="flex items-center gap-1">
                         <StatusBadge :status="child.status" size="sm" />
-                        <Tooltip v-if="child.blockedBy?.length">
+                        <Tooltip v-if="hasActiveBlockers(child)">
                           <TooltipTrigger as-child>
                             <Ban class="w-3 h-3 text-red-400" />
                           </TooltipTrigger>
                           <TooltipContent side="top">
-                            <p class="text-xs">Blocked by {{ child.blockedBy.join(', ') }}</p>
+                            <p class="text-xs">Blocked by {{ activeBlockers(child).join(', ') }}</p>
                           </TooltipContent>
                         </Tooltip>
                       </div>
@@ -814,12 +837,12 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                   <template v-else-if="col.id === 'status'">
                     <div class="flex items-center gap-1">
                       <StatusBadge :status="issue.status" size="sm" />
-                      <Tooltip v-if="issue.blockedBy?.length">
+                      <Tooltip v-if="hasActiveBlockers(issue)">
                         <TooltipTrigger as-child>
                           <Ban class="w-3 h-3 text-red-400" />
                         </TooltipTrigger>
                         <TooltipContent side="top">
-                          <p class="text-xs">Blocked by {{ issue.blockedBy.join(', ') }}</p>
+                          <p class="text-xs">Blocked by {{ activeBlockers(issue).join(', ') }}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -933,12 +956,12 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
               <template v-else-if="col.id === 'status'">
                 <div class="flex items-center gap-1">
                   <StatusBadge :status="issue.status" size="sm" />
-                  <Tooltip v-if="issue.blockedBy?.length">
+                  <Tooltip v-if="hasActiveBlockers(issue)">
                     <TooltipTrigger as-child>
                       <Ban class="w-3 h-3 text-red-400" />
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      <p class="text-xs">Blocked by {{ issue.blockedBy.join(', ') }}</p>
+                      <p class="text-xs">Blocked by {{ activeBlockers(issue).join(', ') }}</p>
                     </TooltipContent>
                   </Tooltip>
                 </div>

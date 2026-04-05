@@ -19,7 +19,15 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 1. File issues for remaining work
 2. Run quality gates (if code changed): `pnpm test && npx vue-tsc --noEmit`
 3. Close finished issues
-4. `git pull --rebase && bd sync && git push && git status`
+4. **Update CHANGELOG.md** — add entries under `[Unreleased]` for all code changes in this session
+5. `git pull --rebase && bd sync && git push && git status`
+
+### Before Merge to master
+**MANDATORY checklist** — do not merge without completing:
+1. All tests pass: `pnpm test && npx vue-tsc --noEmit`
+2. `CHANGELOG.md` updated with all changes (under `[Unreleased]` or version heading)
+3. `README.md` reflects any user-facing changes (new features, new commands, etc.)
+4. All beads closed
 
 ### Testing
 - **Run before committing**: `pnpm test` — runs all Vitest unit tests
@@ -61,14 +69,18 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 ### Dev Server
 Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null && pnpm tauri:dev`
 
-## GitHub — Account: w3dev33
+## GitHub — Account: Maxpceo
 
 ### Releases
 1. **Update `CHANGELOG.md`** with the target version heading and all changes
-2. `npm version X.Y.Z --no-git-tag-version && python3 ~/.claude/scripts/sync-version.py` (same version as CHANGELOG)
-3. Commit, tag (`git tag -a vX.Y.Z`), push with tags
-4. `gh release create vX.Y.Z --title "..." --notes "..."`
-5. **Update `.claude/codebase-map.md`** to reflect any structural changes (new files, composables, commands, etc.)
+2. **Run `./release.sh`** — interactive script that:
+   - Checks branch (must be master), tests, TypeScript
+   - Asks for new version number with confirmation
+   - Verifies CHANGELOG has an entry for the version
+   - Updates version in `package.json` + `src-tauri/tauri.conf.json`
+   - Creates commit, tag, pushes — with confirmation at each step
+   - GitHub Actions automatically builds DMG/EXE/AppImage from the tag
+3. **Update `.claude/codebase-map.md`** to reflect any structural changes (new files, composables, commands, etc.)
 
 **Release notes must include:**
 - bd compatibility version (e.g., `> Requires **bd 0.49.x** — do not use bd 0.50–0.56+`)
@@ -79,7 +91,9 @@ Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null
   ```
 
 ### Commits
-Keep `Co-Authored-By: Claude Code <noreply@anthropic.com>` for transparency.
+- **Always in English** — open source standard for international contributors
+- Conventional Commits format: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `release:`
+- Keep `Co-Authored-By: Claude Code <noreply@anthropic.com>` for transparency
 
 ## Permissions
 
