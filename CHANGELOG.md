@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+- **Dolt detection**: Recognize `embeddeddolt/` folder as Dolt indicator in addition to `.dolt/` and `dolt/` layouts, fixing badge display for projects using newer bd versions
+
+---
+
 ## [2.0.0] - 2026-03-31
 
 > Community fork by [Maxpceo](https://github.com/Maxpceo). Requires **bd 0.49.x**. Recommended CLI: **br 0.1.14**.
