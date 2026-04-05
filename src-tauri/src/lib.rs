@@ -961,6 +961,10 @@ fn project_uses_dolt(beads_dir: &std::path::Path) -> bool {
             if beads_dir.join(".dolt").is_dir() {
                 return true;
             }
+            // Check .beads/embeddeddolt/ (newer bd versions)
+            if beads_dir.join("embeddeddolt").is_dir() {
+                return true;
+            }
             // Check metadata.json for backend: "dolt"
             let metadata_path = beads_dir.join("metadata.json");
             if let Ok(content) = std::fs::read_to_string(&metadata_path) {
@@ -2264,11 +2268,17 @@ fn get_beads_mtime(beads_dir: &std::path::Path) -> Option<std::time::SystemTime>
         // Collect all .dolt/ directories to check:
         // - Legacy layout: .beads/.dolt/
         // - Nested layout (bd 0.52+): .beads/dolt/<name>/.dolt/
+        // - Embedded layout (newer bd): .beads/embeddeddolt/
         let mut dolt_dirs: Vec<std::path::PathBuf> = Vec::new();
 
         let legacy_dolt = beads_dir.join(".dolt");
         if legacy_dolt.is_dir() {
             dolt_dirs.push(legacy_dolt);
+        }
+
+        let embedded_dolt = beads_dir.join("embeddeddolt");
+        if embedded_dolt.is_dir() {
+            dolt_dirs.push(embedded_dolt);
         }
 
         let nested_dolt = beads_dir.join("dolt");
