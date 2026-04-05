@@ -144,38 +144,45 @@ fi
 echo ""
 
 # ── Шаг 6: Обновить версию в файлах ──
-echo -e "${CYAN}Шаг 6: Обновление версии в файлах${NC}"
-echo ""
-echo -e "  ${YELLOW}package.json:${NC}        $CURRENT_VERSION → ${GREEN}$NEW_VERSION${NC}"
-echo -e "  ${YELLOW}tauri.conf.json:${NC}     $CURRENT_VERSION → ${GREEN}$NEW_VERSION${NC}"
-confirm "Обновить версию в обоих файлах?"
-
-# Обновить package.json
-npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version > /dev/null
-
-# Обновить tauri.conf.json
 TAURI_CONF="src-tauri/tauri.conf.json"
-if [[ -f "$TAURI_CONF" ]]; then
-  # Заменить версию в tauri.conf.json
-  sed -i '' "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
-  echo -e "  ${GREEN}Оба файла обновлены${NC}"
+
+if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
+  echo -e "${CYAN}Шаг 6: Версия уже $NEW_VERSION — пропускаю обновление файлов${NC}"
+  echo ""
+  echo -e "${CYAN}Шаг 7: Коммит не нужен — версия не изменилась${NC}"
+  echo ""
 else
-  echo -e "${RED}  tauri.conf.json не найден!${NC}"
-  exit 1
+  echo -e "${CYAN}Шаг 6: Обновление версии в файлах${NC}"
+  echo ""
+  echo -e "  ${YELLOW}package.json:${NC}        $CURRENT_VERSION → ${GREEN}$NEW_VERSION${NC}"
+  echo -e "  ${YELLOW}tauri.conf.json:${NC}     $CURRENT_VERSION → ${GREEN}$NEW_VERSION${NC}"
+  confirm "Обновить версию в обоих файлах?"
+
+  # Обновить package.json
+  npm version "$NEW_VERSION" --no-git-tag-version --allow-same-version > /dev/null
+
+  # Обновить tauri.conf.json
+  if [[ -f "$TAURI_CONF" ]]; then
+    sed -i '' "s/\"version\": \"$CURRENT_VERSION\"/\"version\": \"$NEW_VERSION\"/" "$TAURI_CONF"
+    echo -e "  ${GREEN}Оба файла обновлены${NC}"
+  else
+    echo -e "${RED}  tauri.conf.json не найден!${NC}"
+    exit 1
+  fi
+  echo ""
+
+  # ── Шаг 7: Коммит ──
+  echo -e "${CYAN}Шаг 7: Создание коммита${NC}"
+  echo ""
+  echo -e "  Сообщение: ${GREEN}release: v$NEW_VERSION${NC}"
+  echo -e "  Файлы: package.json, $TAURI_CONF"
+  confirm "Создать коммит?"
+
+  git add package.json "$TAURI_CONF"
+  git commit -m "release: v$NEW_VERSION"
+  echo -e "  ${GREEN}Коммит создан${NC}"
+  echo ""
 fi
-echo ""
-
-# ── Шаг 7: Коммит ──
-echo -e "${CYAN}Шаг 7: Создание коммита${NC}"
-echo ""
-echo -e "  Сообщение: ${GREEN}release: v$NEW_VERSION${NC}"
-echo -e "  Файлы: package.json, $TAURI_CONF"
-confirm "Создать коммит?"
-
-git add package.json "$TAURI_CONF"
-git commit -m "release: v$NEW_VERSION"
-echo -e "  ${GREEN}Коммит создан${NC}"
-echo ""
 
 # ── Шаг 8: Тег ──
 echo -e "${CYAN}Шаг 8: Создание тега${NC}"
