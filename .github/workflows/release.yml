@@ -153,7 +153,7 @@ jobs:
           draft: true
           name: 'Beads Task-Issue Tracker ${{ github.ref_name }}'
           body: |
-            See the [CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for details.
+            See the [CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/master/CHANGELOG.md) for details.
 
             ## Installation
 
