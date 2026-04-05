@@ -22,7 +22,7 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 4. **Update CHANGELOG.md** — add entries under `[Unreleased]` for all code changes in this session
 5. `git pull --rebase && bd sync && git push && git status`
 
-### Before Merge to master
+### Before Merge to main
 **MANDATORY checklist** — do not merge without completing:
 1. All tests pass: `pnpm test && npx vue-tsc --noEmit`
 2. `CHANGELOG.md` updated with all changes (under `[Unreleased]` or version heading)
@@ -74,7 +74,7 @@ Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null
 ### Releases
 1. **Update `CHANGELOG.md`** with the target version heading and all changes
 2. **Run `./release.sh`** — interactive script that:
-   - Checks branch (must be master), tests, TypeScript
+   - Checks branch (must be main), tests, TypeScript
    - Asks for new version number with confirmation
    - Verifies CHANGELOG has an entry for the version
    - Updates version in `package.json` + `src-tauri/tauri.conf.json`
