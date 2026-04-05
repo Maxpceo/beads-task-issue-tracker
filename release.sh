@@ -101,10 +101,10 @@ CURRENT_BRANCH=$(git branch --show-current)
 echo -e "${CYAN}Шаг 1: Проверка ветки${NC}"
 echo -e "  Текущая ветка: ${GREEN}$CURRENT_BRANCH${NC}"
 
-if [[ "$CURRENT_BRANCH" != "master" && "$CURRENT_BRANCH" != "main" ]]; then
-  echo -e "${RED}  Релизы делаются только из master/main!${NC}"
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+  echo -e "${RED}  Релизы делаются только из main!${NC}"
   echo -e "  Сначала смерджи свою ветку:"
-  echo -e "    ${YELLOW}git checkout master && git merge $CURRENT_BRANCH${NC}"
+  echo -e "    ${YELLOW}git checkout main && git merge $CURRENT_BRANCH${NC}"
   exit 1
 fi
 echo -e "  ${GREEN}OK${NC}"
