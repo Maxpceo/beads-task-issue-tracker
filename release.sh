@@ -1,13 +1,72 @@
 #!/bin/bash
 
 # Выпуск новой версии Beads Task-Issue Tracker
-# Использование: ./release.sh
+# Использование:
+#   ./release.sh            — создать релиз (тесты, версия, тег, push)
+#   ./release.sh --publish  — опубликовать черновик после проверки файлов
 #
 # Интерактивный скрипт — спрашивает подтверждение на каждом шаге.
-# Обновляет версию в package.json и tauri.conf.json,
+# Обновляет версию в package.json, tauri.conf.json и Cargo.toml,
 # создаёт коммит, тег и пушит. GitHub Actions соберёт DMG/EXE/AppImage.
 
 set -e
+
+# ── Режим --publish ──
+if [[ "${1:-}" == "--publish" ]]; then
+  # Цвета
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[1;33m'
+  BLUE='\033[0;34m'
+  CYAN='\033[0;36m'
+  NC='\033[0m'
+
+  echo -e "${BLUE}==================================================${NC}"
+  echo -e "${BLUE}  Публикация релиза${NC}"
+  echo -e "${BLUE}==================================================${NC}"
+  echo ""
+
+  # Найти последний draft-релиз
+  DRAFT_TAG=$(gh release list --json tagName,isDraft --jq '.[] | select(.isDraft) | .tagName' | head -1)
+  if [[ -z "$DRAFT_TAG" ]]; then
+    echo -e "${RED}  Нет черновиков для публикации.${NC}"
+    exit 1
+  fi
+
+  echo -e "  Найден черновик: ${GREEN}$DRAFT_TAG${NC}"
+  echo ""
+
+  # Проверить файлы
+  echo -e "${CYAN}Проверка файлов:${NC}"
+  ASSETS=$(gh release view "$DRAFT_TAG" --json assets --jq '.assets[] | "\(.name) — \(.size / 1048576 * 10 | floor / 10) MB"')
+  ASSET_COUNT=$(gh release view "$DRAFT_TAG" --json assets --jq '.assets | length')
+
+  echo "$ASSETS" | while read -r line; do
+    echo -e "  ${GREEN}✓${NC} $line"
+  done
+  echo ""
+
+  if [[ "$ASSET_COUNT" -lt 6 ]]; then
+    echo -e "${RED}  Ожидается 6 файлов, найдено $ASSET_COUNT. Сборка ещё не завершена?${NC}"
+    echo -e "  ${YELLOW}Проверь: https://github.com/Maxpceo/beads-task-issue-tracker/actions${NC}"
+    exit 1
+  fi
+
+  echo -e "  ${GREEN}Все $ASSET_COUNT файлов на месте${NC}"
+  echo ""
+  read -p "Опубликовать $DRAFT_TAG? (y/n): " -n 1 -r
+  echo ""
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "${RED}Отменено.${NC}"
+    exit 1
+  fi
+
+  gh release edit "$DRAFT_TAG" --draft=false
+  echo ""
+  echo -e "${GREEN}  Релиз $DRAFT_TAG опубликован!${NC}"
+  echo -e "  ${YELLOW}https://github.com/Maxpceo/beads-task-issue-tracker/releases/tag/$DRAFT_TAG${NC}"
+  exit 0
+fi
 
 # Цвета
 RED='\033[0;31m'
@@ -231,6 +290,7 @@ echo ""
 echo -e "  ${CYAN}Следи за прогрессом:${NC}"
 echo -e "  ${YELLOW}https://github.com/Maxpceo/beads-task-issue-tracker/actions${NC}"
 echo ""
-echo -e "  ${CYAN}Релиз появится здесь:${NC}"
-echo -e "  ${YELLOW}https://github.com/Maxpceo/beads-task-issue-tracker/releases${NC}"
+echo -e "  ${CYAN}Когда сборка завершится:${NC}"
+echo -e "  1. Проверь что всё собралось: ${YELLOW}gh release view v$NEW_VERSION${NC}"
+echo -e "  2. Опубликуй: ${YELLOW}./release.sh --publish${NC}"
 echo ""
