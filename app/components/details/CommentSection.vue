@@ -32,7 +32,7 @@ const sortedComments = computed(() => {
 
 // Truncate comment text for TOC preview
 const truncate = (text: string, maxLen = 40) => {
-  const firstLine = text.split('\n')[0]
+  const firstLine = text.split('\n')[0] ?? ''
   return firstLine.length > maxLen ? firstLine.slice(0, maxLen) + '…' : firstLine
 }
 
