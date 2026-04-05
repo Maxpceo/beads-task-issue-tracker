@@ -4,24 +4,14 @@
 
 > Community fork by [Maxpceo](https://github.com/Maxpceo). Requires **bd 0.49.x**. Recommended CLI: **br 0.1.14**.
 
-### Fork
-- **Community fork**: Continued development after the original author moved to PaiR
-- **Updated README**: New fork notice, updated links to Maxpceo repository
-- **Updated CHANGELOG**: New versioning starting from v2.0.0
-
 ### New Features
 - **Resizable comment section**: Drag the bottom edge of the comment area to resize (160-500px), height saved per project
 - **Comment navigation (TOC)**: Click the list icon next to "Comments (N)" to see a table of contents — click any entry to jump to that comment with highlight
 - **Breadcrumb navigation**: Navigate dependency and relation links with clickable breadcrumbs
-- **Dev script**: `./start-dev.sh` — one-command setup that kills zombie processes, checks dependencies (pnpm, Rust, bd), and launches Tauri dev server
-- **Release script**: `./release.sh` — interactive version release with step-by-step confirmations
-- **GitHub issue templates**: Bug report and feature request forms for community contributions
 
 ### Fixes
-- **Tauri CLI commands**: Fixed `tauri:dev` and `tauri:build` scripts — use npm-installed `@tauri-apps/cli` instead of missing `cargo tauri`
 - **Dashboard error handling**: Show error message when bd CLI fails to load issues
 - **Blocked icon**: Hide lock icon when all blockers are closed
-- **TypeScript**: Fixed type error in CommentSection truncate function
 
 ---
 
