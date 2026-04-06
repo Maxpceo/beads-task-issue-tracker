@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.1.0] - 2026-04-06
 
 ### New Features
 - **CI workflow**: GitHub Actions CI runs TypeScript check, frontend tests, and Rust compilation on every PR and push to main
