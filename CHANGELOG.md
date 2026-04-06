@@ -4,9 +4,30 @@
 
 ### New Features
 - **CI workflow**: GitHub Actions CI runs TypeScript check, frontend tests, and Rust compilation on every PR and push to main
+- **Workflow KPI**: New "Workflow" KPI card shows active (non-blocked, non-closed) issues; "All" KPI card shows everything including closed
+- **Blocked issues section**: Collapsible "Blocked" quick-list in the dashboard sidebar
+- **Copy Issue ID**: One-click copy button on dashboard quick-list items
+- **Column drag-and-drop**: Reorder table columns via drag handle in column settings panel (persisted per project)
+- **Pipeline diagnostics**: New "Pipeline" tab in Debug Panel shows real-time watcher/scheduler/poll counters with color-coded values
+- **Churn stress tooling**: Stress test suite, shell script, and runbook for validating app stability under sustained file churn
 
 ### Fixes
 - **Dolt detection**: Recognize `embeddeddolt/` folder as Dolt indicator in addition to `.dolt/` and `dolt/` layouts, fixing badge display for projects using newer bd versions
+- **Pipeline stability**: Replace debounce+isProcessing with queue-based single-flight handler; add poll backpressure scheduler (min 2s between expensive poll cycles); Rust-side watcher rate-limiting with noise filtering — prevents UI freezes under heavy `.beads` churn
+- **Blocked state model**: Unified `isIssueBlocked()` and `pruneClosedBlockers()` in issue-helpers — fixes stale blocked indicators, correctly handles dependency-blocked issues across KPI stats, filters, table, and detail views
+- **Search respects filters**: Text search now intersects with active status/type/priority/assignee filters instead of bypassing them
+- **Filter checkbox rendering**: Switch `:checked` to `:model-value` on all filter dropdown checkbox items (shadcn/reka-ui fix)
+- **Filter chips always visible**: Show active filter chips during search (previously hidden when search was active)
+- **Open KPI accuracy**: Exclude dependency-blocked issues from Open KPI count and filter
+- **blockedBy from dependencies**: Nitro server transformer now computes `blockedBy` from `dependencies` array (both `bd list` and `bd show` formats)
+- **KPI card clipping**: Use `outline` instead of `ring` for active state; flex-wrap layout with min-width prevents truncation
+- **Window title bar**: Apply `titleBarStyle: Overlay` only on macOS (programmatic window creation); graceful error handling for `startDragging` and `setTitle`
+- **Tombstone removal**: Remove `tombstone`/deleted status handling from types, filters, UI, backend, and stats — simplifies the entire status model
+
+### Refactoring
+- **StatusBadge tooltip**: Blocked-by tooltip moved from IssueTable (4 duplicated blocks) into StatusBadge component; removed redundant `useIssues()` call and `Ban` icon import from IssueTable
+
+> Cherry-picked from [w3dev33/beads-task-issue-tracker#11](https://github.com/w3dev33/beads-task-issue-tracker/pull/11) by Devon Katz ([@drkatz](https://github.com/drkatz)) with [Amp](https://ampcode.com)
 
 ---
 
