@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### New Features
+- **CI workflow**: GitHub Actions CI runs TypeScript check, frontend tests, and Rust compilation on every PR and push to main
+
 ### Fixes
 - **Dolt detection**: Recognize `embeddeddolt/` folder as Dolt indicator in addition to `.dolt/` and `dolt/` layouts, fixing badge display for projects using newer bd versions
 
