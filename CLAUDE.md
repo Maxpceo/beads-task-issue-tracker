@@ -14,6 +14,25 @@ Consult these before starting any task.
 - `/close-issue` — Always ask confirmation before closing
 - `/review-to-commit` — Always use when user asks to commit
 
+### Labels
+When creating issues with `bd create`, **always** add `--label` based on which domain the issue touches. Pick 1-2 most relevant labels.
+
+| Label | When to use | Files / domains |
+|-------|-------------|-----------------|
+| `frontend` | Vue components, composables, pages | `app/components/`, `app/composables/`, `app/pages/` |
+| `backend` | Rust code, Tauri commands | `src-tauri/src/lib.rs`, `src-tauri/src/main.rs` |
+| `tracker` | Built-in SQLite engine | `src-tauri/src/tracker/` |
+| `ui` | Visual components, shadcn, themes, CSS | `app/components/ui/`, theme, styles |
+| `ci` | GitHub Actions, automation | `.github/workflows/` |
+| `dx` | Dev tools, tests, configs, docs | `tests/`, `vitest.config.ts`, `CLAUDE.md`, `.claude/` |
+| `sync` | Sync, Dolt, git sync, polling, watcher | `useAdaptivePolling`, `useChangeDetection`, `useSyncStatus`, sync Rust code |
+| `data` | Filtering, sorting, CRUD, bd-api | `bd-api.ts`, `issue-helpers.ts`, `useIssues`, `useFilters` |
+
+Examples:
+- `bd create --title="Fix Dolt badge" --type=bug --priority=3 --label=backend --label=sync`
+- `bd create --title="Add column resize" --type=feature --priority=2 --label=frontend --label=ui`
+- `bd create --title="Add CI workflow" --type=task --priority=2 --label=ci --label=dx`
+
 ### Session Completion
 All steps mandatory. Work is NOT complete until `git push` succeeds.
 1. File issues for remaining work
