@@ -124,21 +124,27 @@ echo ""
 
 # ── Шаг 3: Тесты ──
 echo -e "${CYAN}Шаг 3: Запуск тестов${NC}"
-confirm "Запустить pnpm test && npx vue-tsc --noEmit?"
+echo ""
+echo -e "${YELLOW}Запустить pnpm test && npx vue-tsc --noEmit?${NC}"
+read -p "Продолжить? (y/n): " -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+  echo -e "  Запускаю тесты..."
+  if ! pnpm test 2>&1; then
+    echo -e "${RED}  Тесты упали! Исправь перед релизом.${NC}"
+    exit 1
+  fi
+  echo -e "  ${GREEN}Тесты пройдены${NC}"
 
-echo -e "  Запускаю тесты..."
-if ! pnpm test 2>&1; then
-  echo -e "${RED}  Тесты упали! Исправь перед релизом.${NC}"
-  exit 1
+  echo -e "  Проверяю TypeScript..."
+  if ! npx vue-tsc --noEmit 2>&1; then
+    echo -e "${RED}  TypeScript ошибки! Исправь перед релизом.${NC}"
+    exit 1
+  fi
+  echo -e "  ${GREEN}TypeScript OK${NC}"
+else
+  echo -e "  ${YELLOW}Тесты пропущены${NC}"
 fi
-echo -e "  ${GREEN}Тесты пройдены${NC}"
-
-echo -e "  Проверяю TypeScript..."
-if ! npx vue-tsc --noEmit 2>&1; then
-  echo -e "${RED}  TypeScript ошибки! Исправь перед релизом.${NC}"
-  exit 1
-fi
-echo -e "  ${GREEN}TypeScript OK${NC}"
 echo ""
 
 # ── Шаг 4: Выбор версии ──
