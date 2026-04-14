@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixes
+- **Duplicate window title on macOS**: Added `hiddenTitle: true` alongside existing `titleBarStyle: Overlay` in `tauri.conf.json` so the native title bar text no longer overlaps the custom `AppHeader` title
+- **start-dev.sh kills installed app**: Scoped the first `pkill -f` match to `$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker` so running the dev script no longer terminates the installed `/Applications/Beads Task-Issue Tracker.app` (both share the same executable name from the Cargo crate)
+
 ## [2.1.0] - 2026-04-06
 
 ### New Features
