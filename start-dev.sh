@@ -33,7 +33,7 @@ echo ""
 # [1/5] Убить зомби-процессы
 echo -e "${YELLOW}[1/5] Убиваю зомби-процессы...${NC}"
 KILLED=0
-if pkill -f "beads-issue-tracker" 2>/dev/null; then
+if pkill -f "$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker" 2>/dev/null; then
     KILLED=$((KILLED + 1))
 fi
 if pkill -f "beads-task-issue-tracker" 2>/dev/null; then

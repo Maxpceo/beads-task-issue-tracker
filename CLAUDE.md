@@ -86,7 +86,9 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 - **Log file**: `~/Library/Logs/com.beads.manager/beads.log` — readable via `tail -f` or in the app.
 
 ### Dev Server
-Always kill zombies before starting: `pkill -f "beads-issue-tracker" 2>/dev/null && pnpm tauri:dev`
+Always kill zombies before starting: `pkill -f "$(pwd)/src-tauri/target/debug/beads-issue-tracker" 2>/dev/null && pnpm tauri:dev`
+
+Note: scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-issue-tracker"` also kills the installed `/Applications/Beads Task-Issue Tracker.app` because both binaries share the same executable name (`beads-issue-tracker` from the Cargo crate).
 
 ## GitHub — Account: Maxpceo
 
