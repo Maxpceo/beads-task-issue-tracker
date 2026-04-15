@@ -73,21 +73,42 @@ After updating, commit and push."
 
 Wait for agent to complete. Show user what was updated.
 
-## Step 4: Merge PR
+## Step 4: Wait for CI
+
+After the docs-expert agent pushes its commit, CI runs again on the latest branch state. We must NOT merge until all checks pass — otherwise we merge broken code into main.
+
+Capture the PR number (from Step 2 `gh pr create` output — it returns a URL ending in `/pull/<N>`), then block on GitHub Actions:
 
 ```bash
-gh pr merge --merge --delete-branch
+gh pr checks <PR_NUMBER> --watch --fail-fast
+```
+
+Behavior:
+- `--watch` — blocks until all checks complete (can take several minutes — that's fine, just wait).
+- `--fail-fast` — exits immediately with non-zero as soon as any check fails.
+- Exit 0 → all required checks passed → proceed to Step 5.
+- Exit non-zero → a check failed or was cancelled. **STOP.** Do NOT merge. Report to the user:
+  - Which check failed (from the command output)
+  - The PR URL so they can inspect logs
+  - Do not retry blindly — the user must investigate and fix the failure on the branch. Typically: pull latest, reproduce the failure locally (`pnpm test` / `npx vue-tsc --noEmit` / `cargo check`), fix, commit, push, and re-run the skill from Step 4.
+
+**Important:** If the PR has no CI configured (`gh pr checks` reports "no checks reported"), treat that as a warning and ask the user whether to proceed. Do NOT silently skip.
+
+## Step 5: Merge PR
+
+```bash
+gh pr merge <PR_NUMBER> --merge --delete-branch
 ```
 
 If merge fails (conflicts) → tell user and help resolve.
 
-## Step 5: Switch to main
+## Step 6: Switch to main
 
 ```bash
 git checkout main && git pull origin main
 ```
 
-## Step 6: Report
+## Step 7: Report
 
 Show user:
 - PR URL (link)
