@@ -63,6 +63,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 ### Bulk & Productivity
 - **Multi-Select**: Toggle multi-select mode to select issues individually or all at once
 - **Bulk Delete**: Delete multiple selected issues in one operation
+- **Multi-Copy Issue IDs**: Hold `Cmd` (macOS) or `Ctrl` (Windows/Linux) and click any copy-ID button — in the QuickList sidebar, the issue table rows, or the issue detail header — to accumulate IDs in a shared clipboard buffer as a comma-separated list. Click an already-selected item to remove it; a plain click resets the buffer and copies a single ID
 - **Sortable Columns**: Click any column header to sort (ascending, descending, or clear)
 - **Zoom Controls**: Adjust UI scale from 75% to 150% (Alt+Click to reset)
 
@@ -71,7 +72,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Theme System**: 4 themes — Classic Light, Classic Dark, Dark Flat, and Neon — with per-theme badge styling, glow effects, and one-click cycling via the header icon
 - **Debug Panel**: Live log viewer with auto-refresh, accessible via `Cmd/Ctrl+Shift+L`
 - **Database Repair**: Automatic detection and repair of schema migration issues
-- **Keyboard Shortcuts**: `Cmd/Ctrl+,` (settings), `Cmd/Ctrl+F` (search in markdown), `Cmd/Ctrl+Shift+L` (debug logs), arrow keys (gallery navigation)
+- **Keyboard Shortcuts**: `Cmd/Ctrl+,` (settings), `Cmd/Ctrl+F` (search in markdown), `Cmd/Ctrl+Shift+L` (debug logs), arrow keys (gallery navigation), `Cmd/Ctrl+click` on any copy-ID button (multi-copy accumulate)
 
 ### New in v2.0.0
 - **Resizable comment section**: Drag the bottom edge to resize (160-500px), height persisted per project

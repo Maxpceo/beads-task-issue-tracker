@@ -74,6 +74,7 @@
 | `useTauriWindow.ts` | `useTauriWindow()` | Window drag for custom title bar |
 | `usePinnedIssues.ts` | `usePinnedIssues()` | Pinned issue list with sort modes (`added`, `updated`, `manual`) |
 | `useKeyboardNavigation.ts` | `useKeyboardNavigation()` | Arrow key navigation for issue list with scroll-to-focused |
+| `useMultiCopy.ts` | `useMultiCopy()` → `{ copiedIds, copyIssueId, isCopied }` | Module-level shared state for multi-copy feature. Hold Cmd/Ctrl and click any copy-ID button to accumulate issue IDs in a shared clipboard buffer as a comma-separated list. Safe in Nuxt SPA mode (`ssr: false`) |
 
 #### Polling & Change Detection
 | File | Exports | Purpose |
@@ -163,7 +164,7 @@
 - **Menus:** DropdownMenu, Select
 - **Dialogs:** Dialog, ConfirmDialog, Sheet
 - **Data:** Table, Badge, Tooltip
-- **Custom:** LinkifiedText, CopyableId, NotificationToast, ImagePreviewDialog, ImageThumbnail, MarkdownPreviewDialog, Sonner
+- **Custom:** LinkifiedText, CopyableId (uses `useMultiCopy` — participates in multi-copy across IssueTable, IssueDetailHeader, and QuickList), NotificationToast, ImagePreviewDialog, ImageThumbnail, MarkdownPreviewDialog, Sonner
 
 ### Utils (`app/utils/`)
 
