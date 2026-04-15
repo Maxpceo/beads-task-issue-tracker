@@ -190,6 +190,8 @@ pnpm tauri:build
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
 
+This repository ships a `.claude/` directory containing agent definitions, workflow hooks, and skills for use with [Claude Code](https://claude.ai/code). If you contribute using Claude Code, these files are picked up automatically and enforce the project's workflow discipline (issue tracking, code review, branch hygiene). `.claude/settings.local.json` is gitignored and stays machine-local.
+
 ## License
 
 [MIT](LICENSE)
