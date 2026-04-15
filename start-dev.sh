@@ -31,20 +31,68 @@ echo -e "${BLUE}==================================================${NC}"
 echo ""
 
 # [1/5] Убить зомби-процессы
+#
+# ВАЖНО: установленное приложение в /Applications/Beads Task-Issue Tracker.app НЕ трогаем:
+# - Его бинарник называется "beads-issue-tracker" (без "task")
+# - Его абсолютный путь не содержит $PROJECT_ROOT
+# Все паттерны ниже привязаны либо к $PROJECT_ROOT, либо к имени "beads-task-issue-tracker"
+# (npm-имя проекта, которое у установленного приложения в командной строке не встречается).
 echo -e "${YELLOW}[1/5] Убиваю зомби-процессы...${NC}"
 KILLED=0
-if pkill -f "$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker" 2>/dev/null; then
+
+# Dev Tauri Rust-бинарник (scoped к target/debug, установленное приложение не матчится)
+if pkill -9 -f "$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker" 2>/dev/null; then
     KILLED=$((KILLED + 1))
 fi
-if pkill -f "beads-task-issue-tracker" 2>/dev/null; then
+if pkill -9 -f "beads-task-issue-tracker" 2>/dev/null; then
     KILLED=$((KILLED + 1))
 fi
+
+# Node.js dev-server процессы (pnpm tauri:dev, @tauri-apps/cli, nuxt, vite, esbuild) —
+# все scoped через абсолютный путь $PROJECT_ROOT, чтобы не задеть чужие Vite на других проектах
+for pattern in \
+    "$PROJECT_ROOT.*nuxt.*dev" \
+    "$PROJECT_ROOT.*tauri.*dev" \
+    "$PROJECT_ROOT.*vite" \
+    "$PROJECT_ROOT.*esbuild" \
+    "$PROJECT_ROOT.*pnpm.*tauri" ; do
+    if pkill -9 -f "$pattern" 2>/dev/null; then
+        KILLED=$((KILLED + 1))
+    fi
+done
+
 if [ $KILLED -gt 0 ]; then
-    echo -e "${YELLOW}Убито $KILLED зомби-процессов${NC}"
-    sleep 1
+    echo -e "${YELLOW}Убито $KILLED групп зомби-процессов${NC}"
+    sleep 2
 else
     echo -e "${GREEN}Зомби не найдены${NC}"
 fi
+
+# Проверка: порты 3000 и 3133 должны быть свободны. Иначе Nuxt падает на альтернативный порт,
+# а Tauri грузит с settings-порта — окно оказывается пустым или со старым бандлом.
+# Освобождаем ТОЛЬКО если порт держит процесс из нашего проекта (чужие Vite не трогаем).
+for port in 3000 3133; do
+    PID=$(lsof -iTCP:$port -sTCP:LISTEN -t 2>/dev/null | head -1)
+    if [ -n "$PID" ]; then
+        CMD=$(ps -p "$PID" -o command= 2>/dev/null || echo "")
+        if echo "$CMD" | grep -q "$PROJECT_ROOT"; then
+            echo -e "${YELLOW}Порт $port держит зомби $PID из нашего проекта — убиваю${NC}"
+            kill -9 "$PID" 2>/dev/null
+            sleep 1
+        else
+            echo -e "${RED}⚠ Порт $port занят процессом $PID из другого проекта (не трогаю):${NC}"
+            echo -e "${RED}  $CMD${NC}"
+            echo -e "${RED}  Остановите его вручную и запустите скрипт заново${NC}"
+            exit 1
+        fi
+    fi
+done
+echo ""
+
+# [1.5/5] Очистка dev-кешей — на случай, если HMR упал и Vite держит устаревшие модули
+echo -e "${YELLOW}[1.5/5] Очищаю dev-кеши (.nuxt, node_modules/.vite, node_modules/.cache)...${NC}"
+rm -rf "$PROJECT_ROOT/.nuxt" "$PROJECT_ROOT/node_modules/.vite" "$PROJECT_ROOT/node_modules/.cache" 2>/dev/null
+echo -e "${GREEN}Кеши очищены${NC}"
 echo ""
 
 # [2/5] Проверка pnpm и зависимостей
