@@ -2,19 +2,22 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-04-16
+
+> Requires **bd 0.49.x** — do not use bd 0.50–0.56+ (they remove embedded Dolt and CGO support).
+
 ### New Features
 - **Multi-copy issue IDs everywhere**: Hold ⌘ (macOS) or Ctrl (Windows/Linux) and click any copy-ID button — in the sidebar QuickList, in the main IssueTable rows (epics, children, regular tasks), or in the IssueDetailHeader — to accumulate issue IDs in the clipboard as a comma-separated list. All buttons share a single buffer via the new `useMultiCopy` composable, so you can Cmd+click tasks across the sidebar and the main table and get them all in one paste. Selected items keep a persistent green checkmark until the buffer resets. Cmd/Ctrl+click on an already-selected item removes it from the buffer; a plain click resets the buffer and copies a single ID with a 2s checkmark as before
 
 ### Fixes
 - **`start-dev.sh` leaves Nuxt/Vite zombies**: The script's `pkill` block only targeted the Tauri binary, so Node.js dev-server processes (`pnpm tauri:dev`, `@tauri-apps/cli`, `pnpm nuxt dev`, `nuxt.mjs dev`, Vite, esbuild) survived restarts and kept serving stale in-memory modules — code changes did not appear after "restart via script". Completely rebuilt the zombie-killing block: uses `pkill -9` on a loop of `$PROJECT_ROOT`-scoped patterns (nuxt/tauri/vite/esbuild/pnpm), then port-checks 3000 and 3133 and force-kills any lingering listeners that belong to the project (refuses to kill processes from other projects — scripts on other Vite dev servers are safe). Added a new `[1.5/5]` step that wipes `.nuxt`, `node_modules/.vite`, and `node_modules/.cache` on every startup so HMR can never serve stale bundles. The installed app in `/Applications/Beads Task-Issue Tracker.app` is explicitly protected: all patterns are scoped to `$PROJECT_ROOT` or the npm package name `beads-task-issue-tracker`, neither of which appears in the installed app's command line
+- **Duplicate window title on macOS**: Added `hiddenTitle: true` alongside existing `titleBarStyle: Overlay` in `tauri.conf.json` so the native title bar text no longer overlaps the custom `AppHeader` title
+- **`start-dev.sh` kills installed app**: Scoped the first `pkill -f` match to `$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker` so running the dev script no longer terminates the installed `/Applications/Beads Task-Issue Tracker.app` (both share the same executable name from the Cargo crate)
 
 ### Workflow & Documentation
+- **`merge-to-main` skill now waits for CI before merging**: Added a new "Wait for CI" step between documentation update and PR merge that blocks on `gh pr checks <N> --watch --fail-fast`. Aborts the skill if any check fails, with an explicit instruction to investigate rather than retry blindly — prevents merging to main while GitHub Actions is still running or has failed
 - **Workflow discipline rules from obra/superpowers**: Applied 8 rules across `CLAUDE.md`, supervisor agents (`tauri-`, `vue-`, `test-`, `merge-supervisor.md`), `code-reviewer.md`, and the `subagents-discipline` skill — Iron Law (Evidence before claims), four completion statuses (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT), Self-Review checklist, Before-you-begin / When-over-your-head escalation blocks, Model Selection guide, Enrich-bead-with-context shortcut, Save-approved-plan artefact, two-stage code review with `[SPEC_GAP]` / `[QUALITY]` labels
 - **`.claude/` is now tracked in git**: removed `.claude` from `.gitignore` so agent definitions, hooks, skills, and workflow docs ship with the repo. `.claude/settings.local.json` remains gitignored (machine-local permissions)
-
-### Fixes
-- **Duplicate window title on macOS**: Added `hiddenTitle: true` alongside existing `titleBarStyle: Overlay` in `tauri.conf.json` so the native title bar text no longer overlaps the custom `AppHeader` title
-- **start-dev.sh kills installed app**: Scoped the first `pkill -f` match to `$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker` so running the dev script no longer terminates the installed `/Applications/Beads Task-Issue Tracker.app` (both share the same executable name from the Cargo crate)
 
 ## [2.1.0] - 2026-04-06
 
