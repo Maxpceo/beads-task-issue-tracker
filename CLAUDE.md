@@ -9,10 +9,30 @@ Consult these before starting any task.
 
 ## Workflows
 
+### Evidence before claims
+
+Completion reports (both orchestrator and supervisor) must not use hedging language: *"should work / probably / seems / looks correct / выглядит корректно / должно работать / наверное работает / вроде проходит"*. Any status claim (tests pass, build ok, bug fixed, acceptance met) requires **fresh evidence in the same message**: command run + actual output + exit code. If the command wasn't run, write the actual state ("tests not run yet"), not a guess. Celebratory phrases ("Готово!", "Perfect!") are allowed ONLY after the evidence, never instead.
+
+Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md` → Iron Law section.
+
 ### Issues
 - `/run-issue <id>` — Always run before starting work on any issue
 - `/close-issue` — Always ask confirmation before closing
 - `/review-to-commit` — Always use when user asks to commit
+
+### Enrich bead with context
+
+For non-trivial beads (> 20 lines OR > 1 file), right after `bd create` add implementation context via `bd update {ID} --notes` or `--design` (or `bd create --notes`/`--design` in one call):
+
+- **Files:** exact paths + line ranges (`src-tauri/src/lib.rs:123-145`)
+- **Current state:** what's there now (snippet, behavior, contract)
+- **Target state:** what it should become (snippet, expected behavior)
+- **Investigation findings:** what you already checked (grep results, linked beads) — so the supervisor doesn't re-investigate
+- **Pattern reference:** working analogue elsewhere in the project, if any
+
+Short title = "what and why". Notes/design = the detailed "how and where". Goal: a future session picks up the bead and works WITHOUT repeating the investigation.
+
+**Skip** for trivial fixes (< 20 lines, 1 file) — title alone is enough.
 
 ### Labels
 When creating issues with `bd create`, **always** add `--label` based on which domain the issue touches. Pick 1-2 most relevant labels.
@@ -90,6 +110,29 @@ Always kill zombies before starting: `pkill -f "$(pwd)/src-tauri/target/debug/be
 
 Note: scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-issue-tracker"` also kills the installed `/Applications/Beads Task-Issue Tracker.app` because both binaries share the same executable name (`beads-issue-tracker` from the Cargo crate).
 
+### Model Selection
+
+Pick the least powerful model that can do the job — saves time and cost. When dispatching via `Agent()`, pass `model="sonnet"` or `model="opus"` explicitly.
+
+| Complexity | Model | Examples |
+|---|---|---|
+| Simple mechanical (1-2 files, clear spec) | **Sonnet** | Renames, adding a field by existing pattern, cosmetics, docs, template code |
+| Integration / judgment (multi-file, pattern matching, debugging) | **Sonnet** default, **Opus** when uncertain | New API endpoint following an existing template, refactoring one composable |
+| Architecture, cross-domain review, critical logic | **Opus** | New ADRs, complex Tauri backend changes, sync/Dolt engine, hard production bug diagnosis, code review of critical code |
+
+Agent frontmatter already specifies `model: sonnet` for most agents; the orchestrator (Opus) may implicitly inherit — set `model="sonnet"` explicitly for simple tasks to avoid burning Opus on trivialities.
+
+### Completion Report Vocabulary
+
+Supervisors return one of four statuses (full definitions live in each supervisor file):
+
+- **DONE** — work complete, no doubts. Orchestrator → code review.
+- **DONE_WITH_CONCERNS** — complete but with caveats. Orchestrator reads concerns; if about correctness/scope → fix before review; if observations → note and proceed.
+- **BLOCKED** — supervisor cannot finish. Orchestrator diagnoses: missing context (add, re-dispatch) / needs more reasoning (re-dispatch with more powerful model) / task too big (split) / plan wrong (escalate to user).
+- **NEEDS_CONTEXT** — missing info. Orchestrator supplies and re-dispatches.
+
+**Never** re-dispatch the same model on BLOCKED without changing something. If a supervisor is stuck — something must change.
+
 ## GitHub — Account: Maxpceo
 
 ### Releases
@@ -129,3 +172,24 @@ Note: scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-is
 ## Plan Mode
 
 Save plans in `.claude/plans/` (local to project), never `~/.claude/plans/`.
+
+### Save approved plan
+
+If a task went through Plan Mode and got approval — save the approved plan as an artifact before dispatching any supervisor:
+
+- Preferred: `.claude/plans/{bead-id}.md` with the plan body
+- Alternative: `bd update {ID} --design "PLAN (approved YYYY-MM-DD): ..."`
+
+Format:
+```
+PLAN (approved YYYY-MM-DD)
+Problem: <1-2 sentences>
+Approach: <what we do>
+Rejected alternatives: <what we considered and why we declined — protects against drift on re-dispatch>
+Files to change: <paths>
+Acceptance: <how we will verify>
+```
+
+**Why:** the plan survives the session. On `NOT APPROVED` and re-dispatch the supervisor sees the original plan. The reviewer cross-checks it during Phase 1 spec compliance. Rejected alternatives are recorded — nobody can "forget" and do it differently.
+
+**Skip** for small fixes that didn't use Plan Mode.
