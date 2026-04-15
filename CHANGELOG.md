@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Workflow & Documentation
+- **Workflow discipline rules from obra/superpowers**: Applied 8 rules across `CLAUDE.md`, supervisor agents (`tauri-`, `vue-`, `test-`, `merge-supervisor.md`), `code-reviewer.md`, and the `subagents-discipline` skill — Iron Law (Evidence before claims), four completion statuses (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT), Self-Review checklist, Before-you-begin / When-over-your-head escalation blocks, Model Selection guide, Enrich-bead-with-context shortcut, Save-approved-plan artefact, two-stage code review with `[SPEC_GAP]` / `[QUALITY]` labels
+- **`.claude/` is now tracked in git**: removed `.claude` from `.gitignore` so agent definitions, hooks, skills, and workflow docs ship with the repo. `.claude/settings.local.json` remains gitignored (machine-local permissions)
+
 ### Fixes
 - **Duplicate window title on macOS**: Added `hiddenTitle: true` alongside existing `titleBarStyle: Overlay` in `tauri.conf.json` so the native title bar text no longer overlaps the custom `AppHeader` title
 - **start-dev.sh kills installed app**: Scoped the first `pkill -f` match to `$PROJECT_ROOT/src-tauri/target/debug/beads-issue-tracker` so running the dev script no longer terminates the installed `/Applications/Beads Task-Issue Tracker.app` (both share the same executable name from the Cargo crate)
