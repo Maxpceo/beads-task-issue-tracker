@@ -5,6 +5,7 @@ import TypeBadge from '~/components/issues/TypeBadge.vue'
 import PriorityBadge from '~/components/issues/PriorityBadge.vue'
 
 import { useKeyboardNavigation } from '~/composables/useKeyboardNavigation'
+import { useMultiCopy } from '~/composables/useMultiCopy'
 
 const props = defineProps<{
   issues: Issue[]
@@ -25,33 +26,7 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
   },
 })
 
-const copiedIssueId = ref<string | null>(null)
-let copiedResetTimer: ReturnType<typeof setTimeout> | null = null
-
-const copyIssueId = async (issueId: string, event: Event) => {
-  event.stopPropagation()
-
-  try {
-    await navigator.clipboard.writeText(issueId)
-    copiedIssueId.value = issueId
-
-    if (copiedResetTimer) {
-      clearTimeout(copiedResetTimer)
-    }
-
-    copiedResetTimer = setTimeout(() => {
-      copiedIssueId.value = null
-    }, 2000)
-  } catch (err) {
-    console.error('Failed to copy issue ID:', err)
-  }
-}
-
-onBeforeUnmount(() => {
-  if (copiedResetTimer) {
-    clearTimeout(copiedResetTimer)
-  }
-})
+const { copyIssueId, isCopied } = useMultiCopy()
 
 const getShortId = (id: string) => {
   const dotIndex = id.indexOf('.')
@@ -94,12 +69,12 @@ const getShortId = (id: string) => {
 
           <button
             class="shrink-0 p-0.5 mt-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-            :title="`Copy issue ID ${issue.id}`"
-            :aria-label="`Copy issue ID ${issue.id}`"
+            :title="`Copy issue ID ${issue.id} (⌘/Ctrl+click to add to buffer)`"
+            :aria-label="`Copy issue ID ${issue.id}, hold Cmd or Ctrl to add to multi-copy buffer`"
             @click="copyIssueId(issue.id, $event)"
           >
             <svg
-              v-if="copiedIssueId !== issue.id"
+              v-if="!isCopied(issue.id)"
               class="w-3 h-3"
               viewBox="0 0 24 24"
               fill="none"

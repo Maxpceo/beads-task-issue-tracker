@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### New Features
+- **Multi-copy issue IDs everywhere**: Hold ⌘ (macOS) or Ctrl (Windows/Linux) and click any copy-ID button — in the sidebar QuickList, in the main IssueTable rows (epics, children, regular tasks), or in the IssueDetailHeader — to accumulate issue IDs in the clipboard as a comma-separated list. All buttons share a single buffer via the new `useMultiCopy` composable, so you can Cmd+click tasks across the sidebar and the main table and get them all in one paste. Selected items keep a persistent green checkmark until the buffer resets. Cmd/Ctrl+click on an already-selected item removes it from the buffer; a plain click resets the buffer and copies a single ID with a 2s checkmark as before
+
 ### Workflow & Documentation
 - **Workflow discipline rules from obra/superpowers**: Applied 8 rules across `CLAUDE.md`, supervisor agents (`tauri-`, `vue-`, `test-`, `merge-supervisor.md`), `code-reviewer.md`, and the `subagents-discipline` skill — Iron Law (Evidence before claims), four completion statuses (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT), Self-Review checklist, Before-you-begin / When-over-your-head escalation blocks, Model Selection guide, Enrich-bead-with-context shortcut, Save-approved-plan artefact, two-stage code review with `[SPEC_GAP]` / `[QUALITY]` labels
 - **`.claude/` is now tracked in git**: removed `.claude` from `.gitignore` so agent definitions, hooks, skills, and workflow docs ship with the repo. `.claude/settings.local.json` remains gitignored (machine-local permissions)

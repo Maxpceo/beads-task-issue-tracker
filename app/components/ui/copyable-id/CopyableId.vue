@@ -1,34 +1,28 @@
 <script setup lang="ts">
+import { useMultiCopy } from '~/composables/useMultiCopy'
+
 const props = defineProps<{
   value: string
   displayValue?: string
 }>()
 
-const copied = ref(false)
+const { copyIssueId, isCopied } = useMultiCopy()
 
-const copyToClipboard = async (event: Event) => {
-  event.stopPropagation()
-  try {
-    await navigator.clipboard.writeText(props.value)
-    copied.value = true
-    setTimeout(() => {
-      copied.value = false
-    }, 2000)
-  } catch (err) {
-    console.error('Failed to copy:', err)
-  }
+const handleClick = (event: MouseEvent) => {
+  copyIssueId(props.value, event)
 }
 </script>
 
 <template>
   <button
     class="flex items-center gap-1 text-[10px] text-muted-foreground font-mono hover:text-foreground transition-colors"
-    :title="`Copy ${props.value}`"
-    @click="copyToClipboard"
+    :title="`Copy ${props.value} (⌘/Ctrl+click to add to buffer)`"
+    :aria-label="`Copy ${props.value}, hold Cmd or Ctrl to add to multi-copy buffer`"
+    @click="handleClick"
   >
     {{ displayValue ?? value }}
     <svg
-      v-if="!copied"
+      v-if="!isCopied(props.value)"
       class="w-3 h-3"
       viewBox="0 0 24 24"
       fill="none"
