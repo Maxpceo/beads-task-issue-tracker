@@ -1,4 +1,4 @@
-import { bdMigrateToDolt, bdCheckNeedsMigration, isDoltMigrationError } from '~/utils/bd-api'
+import { bdMigrateToDolt, bdCheckNeedsMigration, isDoltMigrationError, logFrontend } from '~/utils/bd-api'
 
 // Shared state
 const needsMigration = ref(false)
@@ -57,7 +57,7 @@ export function useMigrateToDolt() {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.error('[useMigrateToDolt] migrate error:', msg, e)
+      logFrontend('error', '[useMigrateToDolt] migrate error: ' + msg).catch(() => {})
       migrateError.value = msg || 'Migration failed'
       return false
     } finally {
