@@ -1,3 +1,5 @@
+import { logFrontend } from '~/utils/bd-api'
+
 let windowModule: typeof import('@tauri-apps/api/window') | null = null
 let setTitlePermissionDeniedLogged = false
 
@@ -25,7 +27,7 @@ export function useTauriWindow() {
         // Some capability profiles may deny changing title; do not break app render.
         if (!setTitlePermissionDeniedLogged) {
           setTitlePermissionDeniedLogged = true
-          console.warn('Unable to set window title:', error)
+          logFrontend('warn', '[useTauriWindow] Unable to set window title: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
         }
       })
     }
