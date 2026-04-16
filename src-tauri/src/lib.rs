@@ -3650,6 +3650,11 @@ async fn log_frontend(level: String, message: String) {
     match level.as_str() {
         "error" => log::error!("[frontend] {}", message),
         "warn" => log::warn!("[frontend] {}", message),
+        "debug" => {
+            if VERBOSE_LOGGING.load(std::sync::atomic::Ordering::Relaxed) {
+                log::info!("[frontend] [DEBUG] {}", message);
+            }
+        }
         _ => log::info!("[frontend] {}", message),
     }
 }
