@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Workflow & Documentation
+- **Release notes template enriched**: Both the versioned release (`v*` tag) and the rolling `latest` dev-build body blocks in `.github/workflows/release.yml` now include a Requirements section (bd 0.49.x notice) and a macOS unsigned-app workaround (`xattr -cr`) so every future GitHub Release carries these notices automatically
+
 ## [2.2.0] - 2026-04-16
 
 > Requires **bd 0.49.x** — do not use bd 0.50–0.56+ (they remove embedded Dolt and CGO support).
