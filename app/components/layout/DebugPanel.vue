@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Button } from '~/components/ui/button'
-import { readLogs, clearLogs, exportLogs as exportLogsApi, getLogPath, getBdVersion, getLoggingEnabled, setLoggingEnabled, getVerboseLogging, setVerboseLogging, checkBdCliUpdate, fsExists, type BdCliUpdateInfo } from '~/utils/bd-api'
+import { readLogs, clearLogs, exportLogs as exportLogsApi, getLogPath, getBdVersion, getLoggingEnabled, setLoggingEnabled, getVerboseLogging, setVerboseLogging, checkBdCliUpdate, fsExists, logFrontend, type BdCliUpdateInfo } from '~/utils/bd-api'
 import { openUrl } from '~/utils/open-url'
 
 const { isSyncing: isForceSyncing, forceSync, syncMessage, lastSyncSuccess } = useSyncStatus()
@@ -127,7 +127,7 @@ const fetchLogs = async () => {
       })
     }
   } catch (e) {
-    console.error('Failed to fetch logs:', e)
+    logFrontend('error', '[DebugPanel] Failed to fetch logs: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
   }
 }
 
@@ -137,7 +137,7 @@ const handleClearLogs = async () => {
     await clearLogs()
     logs.value = ''
   } catch (e) {
-    console.error('Failed to clear logs:', e)
+    logFrontend('error', '[DebugPanel] Failed to clear logs: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
   } finally {
     isLoading.value = false
   }
@@ -183,7 +183,7 @@ const exportLogs = async () => {
       }, 5000)
     }
   } catch (e) {
-    console.error('Failed to export logs:', e)
+    logFrontend('error', '[DebugPanel] Failed to export logs: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
   }
 }
 

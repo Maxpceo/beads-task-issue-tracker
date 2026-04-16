@@ -9,6 +9,7 @@ import {
 } from '~/components/ui/dialog'
 import { Button } from '~/components/ui/button'
 import { renderMarkdown } from '~/utils/markdown'
+import { logFrontend } from '~/utils/bd-api'
 
 const isDev = import.meta.dev
 
@@ -39,7 +40,7 @@ const copyXattrCommand = async () => {
       xattrCopied.value = false
     }, 2000)
   } catch (err) {
-    console.error('Failed to copy:', err)
+    logFrontend('error', '[UpdateDialog] Failed to copy: ' + (err instanceof Error ? err.message : String(err))).catch(() => {})
   }
 }
 
@@ -50,7 +51,7 @@ const handleDownloadAndQuit = async () => {
       await navigator.clipboard.writeText(xattrCommand)
       xattrCopied.value = true
     } catch (err) {
-      console.error('Failed to auto-copy xattr command:', err)
+      logFrontend('error', '[UpdateDialog] Failed to auto-copy xattr command: ' + (err instanceof Error ? err.message : String(err))).catch(() => {})
     }
   }
   downloadAndQuit()

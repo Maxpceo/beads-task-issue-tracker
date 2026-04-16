@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **`'debug'` log level for `logFrontend()`**: Gated by Verbose toggle in DebugPanel — enables high-frequency pipeline diagnostics in release builds. Rust backend uses `log::info!` with `[DEBUG]` tag (bypasses release `LevelFilter::Info`) when `VERBOSE_LOGGING` is active
+
 ### Fixes
+- **Replace all `console.*` calls with `logFrontend()`**: 35 violations across 16 frontend files now use the native Tauri logging pipeline instead of `console.error`/`warn`/`debug`. Errors and warnings now appear in the in-app DebugPanel log viewer, making them visible to end users who have no DevTools access in release builds
 - **Cross-platform log path and PATH resolution** (upstream #15): `get_log_path()` was hardcoded to the macOS `~/Library/Logs/` layout, so on Linux the UI showed an empty log file and on Windows the path became a broken relative string (no `HOME` variable). `get_extended_path()` used Unix-only directories and the `:` separator, which mangled any Windows `C:\…` entry and prevented Tauri commands from locating `bd`/`br`. Both functions are now branched via `#[cfg(target_os = …)]`: macOS keeps `~/Library/Logs/com.beads.manager/beads.log`; Linux uses `dirs::data_local_dir()` → `~/.local/share/com.beads.manager/logs/beads.log` (matches `tauri-plugin-log` XDG layout); Windows uses `dirs::data_dir()` → `%APPDATA%/com.beads.manager/logs/beads.log` plus `USERPROFILE`/`LOCALAPPDATA`-based extra bin paths with the `;` PATH separator. Port of upstream `w3dev33/beads-task-issue-tracker` commit `a24eddf9` (v1.24.3)
 
 ### Workflow & Documentation

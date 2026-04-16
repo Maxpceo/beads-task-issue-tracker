@@ -1,4 +1,4 @@
-import { fsExists } from '~/utils/bd-api'
+import { fsExists, logFrontend } from '~/utils/bd-api'
 import { getFolderName } from '~/utils/path'
 import { useNotification } from '~/composables/useNotification'
 import type { Project, ProjectSortMode } from '~/utils/favorites-helpers'
@@ -78,7 +78,7 @@ function initFromStorage() {
               // Remove invalid projects
               projects.value = validProjects.map(({ exists, ...proj }) => proj)
               localStorage.setItem('beads:favorites', JSON.stringify(projects.value))
-              console.warn(`[useProjects] Removed ${invalidCount} projects with invalid paths`)
+              logFrontend('warn', `[useProjects] Removed ${invalidCount} projects with invalid paths`).catch(() => {})
             }
             isValidating = false
           }).catch(() => {

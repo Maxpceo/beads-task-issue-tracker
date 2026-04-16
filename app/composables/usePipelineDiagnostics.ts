@@ -1,3 +1,5 @@
+import { logFrontend } from '~/utils/bd-api'
+
 /**
  * Pipeline diagnostics for watcher → poll pipeline.
  *
@@ -71,7 +73,7 @@ function maybeLog(tag: string, detail?: string) {
   if (now - lastLogAt < LOG_INTERVAL_MS) return
   lastLogAt = now
   const msg = detail ? `[diag][${tag}] ${detail}` : `[diag][${tag}]`
-  console.debug(msg)
+  logFrontend('debug', msg).catch(() => {})
 }
 
 // ── Recording API (called from pipeline composables) ────────────────────

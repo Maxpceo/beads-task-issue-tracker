@@ -26,7 +26,7 @@ export function useUpdateChecker() {
         : await checkForUpdates()
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to check for updates'
-      console.error('Update check failed:', e)
+      logFrontend('error', '[update] Update check failed: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
     } finally {
       isChecking.value = false
     }
@@ -78,8 +78,7 @@ export function useUpdateChecker() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : (typeof e === 'string' ? e : 'Failed to download update')
       downloadError.value = msg
-      logFrontend('error', `[update] Download failed: ${msg}`)
-      console.error('Download failed:', e)
+      logFrontend('error', `[update] Download failed: ${msg}`).catch(() => {})
       isDownloading.value = false
       return
     }
@@ -91,8 +90,7 @@ export function useUpdateChecker() {
       await getCurrentWindow().close()
     } catch (e) {
       // Close failed — download was still successful, don't show error
-      logFrontend('warn', `[update] App close failed (download was successful): ${e}`)
-      console.warn('App close failed after successful download:', e)
+      logFrontend('warn', `[update] App close failed (download was successful): ${e}`).catch(() => {})
       isDownloading.value = false
     }
   }

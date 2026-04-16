@@ -677,7 +677,7 @@ export async function getLogPath(): Promise<string> {
   return ''
 }
 
-export async function logFrontend(level: 'error' | 'warn' | 'info', message: string): Promise<void> {
+export async function logFrontend(level: 'error' | 'warn' | 'info' | 'debug', message: string): Promise<void> {
   if (isTauri()) {
     return invoke<void>('log_frontend', { level, message })
   }

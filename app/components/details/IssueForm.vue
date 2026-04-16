@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick } from 'vue'
 import { ImageIcon } from 'lucide-vue-next'
+import { logFrontend } from '~/utils/bd-api'
 import type { Issue, IssueType, IssueStatus, IssuePriority, UpdateIssuePayload } from '~/types/issue'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
@@ -200,7 +201,7 @@ const attachFile = async () => {
           issueId,
         })
       } catch (error) {
-        console.error('Failed to copy file:', sourcePath, error)
+        logFrontend('error', '[IssueForm] Failed to copy file: ' + sourcePath + ' ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
       }
     }
   }

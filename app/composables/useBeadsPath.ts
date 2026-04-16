@@ -1,4 +1,4 @@
-import { fsExists } from '~/utils/bd-api'
+import { fsExists, logFrontend } from '~/utils/bd-api'
 import { clearProjectStorageCache } from '~/composables/useProjectStorage'
 
 const DEFAULT_PATH = '.'
@@ -29,7 +29,7 @@ export function useBeadsPath() {
               beadsPath.value = DEFAULT_PATH
               hasStoredPath.value = false
               localStorage.setItem('beads:path', JSON.stringify(DEFAULT_PATH))
-              console.warn(`[useBeadsPath] Stored path "${parsedPath}" does not exist, resetting to default`)
+              logFrontend('warn', `[useBeadsPath] Stored path "${parsedPath}" does not exist, resetting to default`).catch(() => {})
             }
             isValidating.value = false
           }).catch(() => {

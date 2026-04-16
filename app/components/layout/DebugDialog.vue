@@ -6,7 +6,7 @@ import {
   DialogTitle,
 } from '~/components/ui/dialog'
 import { Button } from '~/components/ui/button'
-import { readLogs, clearLogs, getLogPath } from '~/utils/bd-api'
+import { readLogs, clearLogs, getLogPath, logFrontend } from '~/utils/bd-api'
 
 const open = defineModel<boolean>('open', { default: false })
 
@@ -32,7 +32,7 @@ const fetchLogs = async () => {
       scrollToBottom()
     })
   } catch (e) {
-    console.error('Failed to fetch logs:', e)
+    logFrontend('error', '[DebugDialog] Failed to fetch logs: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
   }
 }
 
@@ -42,7 +42,7 @@ const handleClearLogs = async () => {
     await clearLogs()
     logs.value = ''
   } catch (e) {
-    console.error('Failed to clear logs:', e)
+    logFrontend('error', '[DebugDialog] Failed to clear logs: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
   } finally {
     isLoading.value = false
   }

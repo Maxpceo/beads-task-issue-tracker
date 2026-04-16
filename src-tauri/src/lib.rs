@@ -3650,6 +3650,11 @@ async fn log_frontend(level: String, message: String) {
     match level.as_str() {
         "error" => log::error!("[frontend] {}", message),
         "warn" => log::warn!("[frontend] {}", message),
+        "debug" => {
+            if VERBOSE_LOGGING.load(std::sync::atomic::Ordering::Relaxed) {
+                log::info!("[frontend] [DEBUG] {}", message);
+            }
+        }
         _ => log::info!("[frontend] {}", message),
     }
 }
@@ -4644,7 +4649,7 @@ fn start_watching(
 
                     let mut emit_now = false;
                     let mut schedule_delayed_emit = false;
-                    let mut counters = None;
+                    let counters;
                     let min_interval = watcher_min_emit_interval();
 
                     match project_emit_state.lock() {
