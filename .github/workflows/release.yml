@@ -155,6 +155,10 @@ jobs:
           body: |
             See the [CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for details.
 
+            ## Requirements
+
+            > **Requires bd 0.49.x.** Do **not** use bd 0.50–0.56+ — those versions progressively remove embedded Dolt and CGO support, which breaks the file-watcher path this app depends on. If you upgrade bd via Homebrew, pin it after installing 0.49: `brew pin bd`.
+
             ## Installation
 
             | Platform | File | Notes |
@@ -164,6 +168,16 @@ jobs:
             | **Windows** | `*_Windows.msi` | Recommended installer |
             | **Linux (Debian/Ubuntu)** | `*_Linux-amd64.deb` | Recommended for Debian 12+, Ubuntu 22+ |
             | **Linux (other)** | `*_Linux-amd64.AppImage` | Requires `libfuse2` |
+
+            ### macOS — unsigned app workaround
+
+            This app is **not signed with an Apple Developer certificate**. On first launch macOS will show *"Apple cannot verify this developer"* and refuse to open the app. After dragging the app to `/Applications`, run this in Terminal once:
+
+            ```bash
+            xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
+            ```
+
+            This strips the quarantine attribute Gatekeeper adds to downloaded files. The app will then launch normally.
           files: |
             src-tauri/target/*/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/deb/*.deb
@@ -185,6 +199,10 @@ jobs:
 
             This release is updated on each `/create-release latest` invocation. It always reflects the most recent development state.
 
+            ## Requirements
+
+            > **Requires bd 0.49.x.** Do **not** use bd 0.50–0.56+ — those versions progressively remove embedded Dolt and CGO support, which breaks the file-watcher path this app depends on. If you upgrade bd via Homebrew, pin it after installing 0.49: `brew pin bd`.
+
             ## Installation
 
             | Platform | File | Notes |
@@ -195,14 +213,15 @@ jobs:
             | **Linux (Debian/Ubuntu)** | `*_Linux-amd64.deb` | Recommended for Debian 12+, Ubuntu 22+ |
             | **Linux (other)** | `*_Linux-amd64.AppImage` | Requires `libfuse2` |
 
-            ## macOS: First Launch
+            ### macOS — unsigned app workaround
 
-            macOS may block the app because it's not signed with an Apple Developer certificate.
+            This app is **not signed with an Apple Developer certificate**. On first launch macOS will show *"Apple cannot verify this developer"* and refuse to open the app. After dragging the app to `/Applications`, run this in Terminal once:
 
-            **To fix this**, run:
             ```bash
             xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
             ```
+
+            This strips the quarantine attribute Gatekeeper adds to downloaded files. The app will then launch normally.
           files: |
             src-tauri/target/*/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/deb/*.deb
