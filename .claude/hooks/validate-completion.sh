@@ -87,7 +87,7 @@ fi
 
 # Check 4: Bead status
 BEAD_STATUS=$(bd show "$BEAD_ID_FROM_RESPONSE" --json 2>/dev/null | jq -r '.[0].status // "unknown"')
-EXPECTED_STATUS="closed"
+EXPECTED_STATUS="inreview"
 if [[ "$BEAD_STATUS" != "$EXPECTED_STATUS" ]]; then
   cat << EOF
 {"decision":"block","reason":"Work verification failed: bead status is '${BEAD_STATUS}'.\n\nRun: bd update ${BEAD_ID_FROM_RESPONSE} --status ${EXPECTED_STATUS}"}

@@ -1,0 +1,31 @@
+{
+  "formula": "tauri-feature",
+  "name": "tauri-feature",
+  "description": "Tauri feature: Rust command → bridge → Vue integration",
+  "type": "workflow",
+  "variables": [
+    {"name": "feature_name", "required": true, "description": "Название фичи"}
+  ],
+  "steps": [
+    {
+      "id": "rust-cmd",
+      "title": "Rust command: {{feature_name}}",
+      "type": "task",
+      "description": "Новая Tauri-команда в src-tauri/src/lib.rs + регистрация в invoke_handler"
+    },
+    {
+      "id": "bridge",
+      "title": "Tauri bridge: {{feature_name}}",
+      "type": "task",
+      "description": "Обёртка в app/utils/bd-api.ts — типобезопасный вызов invoke()",
+      "depends_on": ["rust-cmd"]
+    },
+    {
+      "id": "vue-hook",
+      "title": "Vue composable: {{feature_name}}",
+      "type": "task",
+      "description": "Composable в app/composables/ для использования из UI",
+      "depends_on": ["bridge"]
+    }
+  ]
+}

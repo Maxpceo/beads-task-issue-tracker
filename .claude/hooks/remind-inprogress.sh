@@ -11,7 +11,7 @@ if [[ "$PROMPT" == *"BEAD_ID:"* ]]; then
   # Extract BEAD_ID from prompt
   BEAD_ID=$(echo "$PROMPT" | grep -oE 'BEAD_ID:[[:space:]]*[A-Za-z0-9._-]+' | head -1 | sed 's/BEAD_ID:[[:space:]]*//')
 
-  REMINDERS="IMPORTANT: Before dispatching, ensure bead is in_progress: bd update {BEAD_ID} --status in_progress"
+  REMINDERS="IMPORTANT: Before dispatching, ensure bead is in_progress: bd update {BEAD_ID} --claim"
 
   # Check if acceptance_criteria is set
   if [[ -n "$BEAD_ID" ]]; then

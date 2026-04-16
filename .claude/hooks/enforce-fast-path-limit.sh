@@ -101,8 +101,8 @@ $(echo "$ALL_CHANGED" | head -5)
 Сейчас редактируешь: ${NORM_FILE}
 
 ЧТО ДЕЛАТЬ:
-1. bd update {BEAD_ID} --status in_progress  (если bead есть)
-2. bd create "..." && bd update {ID} --status in_progress  (если нет)
+1. bd update {BEAD_ID} --claim  (если bead есть)
+2. bd create "..." && bd update {ID} --claim  (если нет)
 3. Подумай: нужен ли dispatch supervisor вместо прямого редактирования?
 
 Если это осознанное решение — продолжай, но bead ОБЯЗАТЕЛЕН.

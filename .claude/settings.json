@@ -33,9 +33,8 @@
         "matcher": "Bash",
         "hooks": [
           {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/validate-epic-close.sh"},
-          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/validate-code-review.sh"},
-          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/validate-simplify.sh"},
-          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/validate-acceptance.sh"},
+          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/validate-review-chain.sh"},
+          {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/block-supervisor-close-and-signing.sh"},
           {"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/enforce-bead-on-large-commit.sh"}
         ]
       }

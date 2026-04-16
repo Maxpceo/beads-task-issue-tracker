@@ -24,7 +24,10 @@ node_modules
 .vscode
 .claude/settings.local.json
 .claude_root
-.beads
+.beads/*
+# Whitelist: formula files are versioned workflow templates
+!.beads/formulas/
+!.beads/formulas/**
 *.swp
 *.swo
 .DS_Store

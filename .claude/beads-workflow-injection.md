@@ -6,10 +6,11 @@
    - BEAD_ID: Your task ID (e.g., BD-001 for standalone, BD-001.2 for epic child)
    - EPIC_ID: (epic children only) The parent epic ID (e.g., BD-001)
 
-2. **Mark in progress:**
+2. **Mark in progress (claim):**
    ```bash
-   bd update {BEAD_ID} --status in_progress
+   bd update {BEAD_ID} --claim
    ```
+   `--claim` sets status=in_progress AND assigns the bead to you in one call.
 
 3. **Read bead comments for investigation context:**
    ```bash
@@ -64,15 +65,19 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    /simplify
    ```
 
-2. **Commit all changes:**
+2. **Commit ONLY your changes (НЕ использовать `git add -A` или `git add .`):**
    ```bash
-   git add -A && git commit -m "feat/fix: description [{BEAD_ID}]"
+   # Add only the specific files you changed by name — never -A / .
+   git add file1 file2 ... && git commit -m "feat/fix: description [{BEAD_ID}]"
    ```
 
-3. **Push to remote:**
+3. **Push via merge-slot (serialises concurrent sessions):**
    ```bash
+   bd merge-slot acquire
    git pull --rebase && git push
+   bd merge-slot release
    ```
+   The merge-slot prevents two parallel sessions from racing on the same remote.
 
 4. **Optionally log learnings:**
    ```bash
@@ -85,10 +90,11 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    bd comments add {BEAD_ID} "Completed: [summary]"
    ```
 
-6. **Mark status:**
+6. **Mark status inreview — supervisor's job ends here:**
    ```bash
    bd update {BEAD_ID} --status inreview
    ```
+   Review chain (simplified → reviewed → accepted → closed) is run by orchestrator afterwards. Do NOT set those statuses yourself.
 
 7. **Return completion report:**
    ```
