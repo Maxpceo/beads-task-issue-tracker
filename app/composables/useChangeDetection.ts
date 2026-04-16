@@ -121,7 +121,7 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
     try {
       await startWatching(path)
     } catch (e) {
-      console.warn('[watcher] Failed to start:', e)
+      logFrontend('error', '[watcher] Failed to start: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
       active.value = false
       return
     }
@@ -134,7 +134,7 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
       unlisten = unlistenFn
       active.value = true
     } catch (e) {
-      console.warn('[watcher] Failed to listen:', e)
+      logFrontend('error', '[watcher] Failed to listen: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
       active.value = false
     }
   }
