@@ -247,17 +247,17 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 - When the session is long and context is getting large, proactively run `/continue-task` before auto-compact triggers
 - If a `PreCompact` hook fires with "auto" trigger, immediately run `/continue-task` instead of letting compact proceed blindly
 
-### bd Version Policy
-- **Stay on bd 0.49.x** — this is the last stable version with embedded Dolt (CGO) and SQLite backend. It was installed via Homebrew (`brew install bd`) and compiled locally with CGO support.
-- **Do NOT upgrade to bd 0.50–0.56+** — versions 0.50+ progressively removed embedded Dolt in favor of server mode (`dolt sql-server`). Version 0.56 removed CGO entirely. Server mode is a regression for standalone desktop apps: no file watcher support, requires polling, server lifecycle management, single-project-per-port limitation.
-- **Pre-compiled binaries from GitHub releases (0.50+) lack CGO** — even versions that still have embedded Dolt in source code (0.50–0.55) ship without CGO in their release binaries, making embedded mode non-functional.
-- **The branch `feat/bd-056-server-mode`** contains all the work to support bd 0.56 (server mode detection, adaptive polling fix, migration logic, DoltServerBanner). It can be merged if/when bd provides a viable path for standalone apps (e.g., change notification mechanism, multi-database server support).
-- **GitHub issue [#2050](https://github.com/steveyegge/beads/issues/2050)** tracks our feedback to the bd team about server mode regressions.
-- Always preserve backward compatibility with bd 0.49 — use version-gated helpers (`supports_bd_sync()`, `supports_daemon_flag()`, etc.) in the Rust backend to branch behavior by CLI version.
+### bd Version Compatibility
+- **The app works with any bd version** — the Rust backend auto-detects the installed bd version via `parse_bd_version()` and adapts behavior through version-gated helpers (`supports_daemon_flag()`, `uses_jsonl_files()`, `supports_list_all_flag()`, `supports_delete_hard_flag()`, `uses_dolt_backend()`, `project_uses_dolt()`). All helpers handle both `major == 0` (pre-1.0) and `major >= 1` (1.x+) correctly.
+- **bd 0.57+ uses a self-managing Dolt server** — `dolt sql-server` starts automatically on first command, no manual lifecycle management needed. This resolved the regressions from bd 0.50–0.56 that we reported in [upstream issue #2050](https://github.com/steveyegge/beads/issues/2050) (now closed/fixed).
+- **JSONL stays in sync automatically** — bd 0.57+ has auto-flush (Dolt → `issues.jsonl` after each mutation, 5s debounce) and auto-import (JSONL → Dolt when file is newer). Our Claude Code hook `beads-auto-sync.sh` also runs `bd export -o .beads/issues.jsonl` immediately after every write command as a safety net.
+- **`bd sync` no longer exists** — replaced by auto-flush/auto-import and `bd export`/`bd import`. Session Completion step uses `bd dolt push` if Dolt remote is configured; otherwise JSONL is committed with git.
+- **The branch `feat/bd-056-server-mode`** is obsolete — its work (server mode detection, adaptive polling, DoltServerBanner) was superseded by bd's native self-managing server. The branch can be deleted.
 
 ### bd Backward Compatibility
 - Never assume all projects use Dolt — check `project_uses_dolt()` before skipping legacy paths
 - Use version-gated helpers in `src-tauri/src/lib.rs` for any feature that depends on a specific bd version
+- When adding new version-gated behavior, ensure both `major == 0` and `major >= 1` paths are covered
 
 ### Logging
 - **Never use `console.*`** in `app/` — the only exception is `app/plugins/console-to-log.client.ts` (the interceptor itself).
@@ -314,7 +314,7 @@ Supervisors return one of four statuses (full definitions live in each superviso
 3. **Update `.claude/codebase-map.md`** to reflect any structural changes (new files, composables, commands, etc.)
 
 **Release notes must include:**
-- bd compatibility version (e.g., `> Requires **bd 0.49.x** — do not use bd 0.50–0.56+`)
+- bd compatibility: `> Works with **bd 0.49+** (tested on 0.63.3 and 1.0.x). Self-managing Dolt server on 0.57+.`
 - **Never upload DMG manually** — GitHub Actions handles artifacts
 - macOS unsigned certificate notice:
   ```
