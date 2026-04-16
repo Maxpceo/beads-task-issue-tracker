@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Workflow & Documentation
+- **`release.sh` now stages `Cargo.lock`**: After bumping the version in `Cargo.toml`, the script also updates `beads-issue-tracker`'s version entry in `Cargo.lock` (via awk) and includes it in the release commit — prevents a dirty `Cargo.lock` from being left out of the version tag
 - **Release notes template enriched**: Both the versioned release (`v*` tag) and the rolling `latest` dev-build body blocks in `.github/workflows/release.yml` now include a Requirements section (bd 0.49.x notice) and a macOS unsigned-app workaround (`xattr -cr`) so every future GitHub Release carries these notices automatically
 
 ## [2.2.0] - 2026-04-16

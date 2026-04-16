@@ -218,12 +218,14 @@ if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
   echo ""
 else
   CARGO_TOML="src-tauri/Cargo.toml"
+  CARGO_LOCK="src-tauri/Cargo.lock"
 
   echo -e "${CYAN}Шаг 6: Обновление версии в файлах${NC}"
   echo ""
   echo -e "  ${YELLOW}package.json:${NC}        $CURRENT_VERSION → ${GREEN}$NEW_VERSION${NC}"
   echo -e "  ${YELLOW}tauri.conf.json:${NC}     $CURRENT_VERSION → ${GREEN}$NEW_VERSION${NC}"
   echo -e "  ${YELLOW}Cargo.toml:${NC}          $(grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)"/\1/') → ${GREEN}$NEW_VERSION${NC}"
+  echo -e "  ${YELLOW}Cargo.lock:${NC}          beads-issue-tracker → ${GREEN}$NEW_VERSION${NC}"
   confirm "Обновить версию во всех файлах?"
 
   # Обновить package.json
@@ -245,17 +247,31 @@ else
     exit 1
   fi
 
-  echo -e "  ${GREEN}Все 3 файла обновлены${NC}"
+  # Обновить Cargo.lock (только строку version под beads-issue-tracker).
+  # Иначе после релиза lockfile дрейфует относительно Cargo.toml и
+  # ломает 'clean working tree' проверку при следующем запуске release.sh.
+  if [[ -f "$CARGO_LOCK" ]]; then
+    awk -v new="$NEW_VERSION" '
+      /^name = "beads-issue-tracker"$/ { found=1; print; next }
+      found && /^version = / { print "version = \"" new "\""; found=0; next }
+      { print }
+    ' "$CARGO_LOCK" > "$CARGO_LOCK.tmp" && mv "$CARGO_LOCK.tmp" "$CARGO_LOCK"
+  else
+    echo -e "${RED}  Cargo.lock не найден!${NC}"
+    exit 1
+  fi
+
+  echo -e "  ${GREEN}Все 4 файла обновлены${NC}"
   echo ""
 
   # ── Шаг 7: Коммит ──
   echo -e "${CYAN}Шаг 7: Создание коммита${NC}"
   echo ""
   echo -e "  Сообщение: ${GREEN}release: v$NEW_VERSION${NC}"
-  echo -e "  Файлы: package.json, $TAURI_CONF, $CARGO_TOML"
+  echo -e "  Файлы: package.json, $TAURI_CONF, $CARGO_TOML, $CARGO_LOCK"
   confirm "Создать коммит?"
 
-  git add package.json "$TAURI_CONF" "$CARGO_TOML"
+  git add package.json "$TAURI_CONF" "$CARGO_TOML" "$CARGO_LOCK"
   git commit -m "release: v$NEW_VERSION"
   echo -e "  ${GREEN}Коммит создан${NC}"
   echo ""
