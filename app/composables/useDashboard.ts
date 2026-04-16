@@ -38,12 +38,7 @@ export function useDashboard() {
       const currentReady = stats.value?.ready ?? 0
 
       // Compute stats from issues (even if empty array)
-      if (issues !== undefined) {
-        stats.value = computeStatsFromIssues(excludeSystemLabels(issues))
-      } else {
-        // Fallback: initialize with empty stats if no issues provided
-        stats.value = computeStatsFromIssues([])
-      }
+      stats.value = computeStatsFromIssues(excludeSystemLabels(issues ?? []))
 
       // Restore ready count while waiting for bdReady
       stats.value.ready = currentReady
