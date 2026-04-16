@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Issue, IssueStatus, UpdateIssuePayload } from '~/types/issue'
 import { isIssueBlocked } from '~/utils/issue-helpers'
+import { logFrontend } from '~/utils/bd-api'
 
 // Layout components
 import AppHeader from '~/components/layout/AppHeader.vue'
@@ -523,7 +524,7 @@ return
     }
   } catch (e) {
     // Don't let pre-flight errors block the app — log and continue
-    console.error('[handlePathChange] Error during project switch:', e)
+    logFrontend('error', '[handlePathChange] Error during project switch: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
   }
 
   if (thisGeneration !== pathChangeGeneration) {

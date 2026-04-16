@@ -3,6 +3,8 @@
  * Uses Tauri shell.open() in desktop mode, window.open() in web mode
  */
 
+import { logFrontend } from '~/utils/bd-api'
+
 // Check if running in Tauri
 function isTauri(): boolean {
   return typeof window !== 'undefined' && (!!window.__TAURI__ || !!window.__TAURI_INTERNALS__)
@@ -53,7 +55,7 @@ export async function openUrl(url: string): Promise<void> {
 
   // Validate URL before opening
   if (!isValidUrl(normalizedUrl)) {
-    console.warn('Attempted to open invalid URL:', url)
+    logFrontend('warn', '[open-url] Attempted to open invalid URL: ' + url).catch(() => {})
     return
   }
 
@@ -63,7 +65,7 @@ export async function openUrl(url: string): Promise<void> {
       const { open } = await import('@tauri-apps/plugin-shell')
       await open(normalizedUrl)
     } catch (error) {
-      console.error('Failed to open URL with Tauri shell:', error)
+      logFrontend('error', '[open-url] Failed to open URL with Tauri shell: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
       // Fallback to window.open if Tauri fails
       window.open(normalizedUrl, '_blank', 'noopener,noreferrer')
     }
@@ -78,7 +80,7 @@ export async function openUrl(url: string): Promise<void> {
  */
 export async function openImageFile(filePath: string): Promise<void> {
   if (!isTauri()) {
-    console.warn('openImageFile is only available in Tauri mode')
+    logFrontend('warn', '[open-url] openImageFile is only available in Tauri mode').catch(() => {})
     return
   }
 
@@ -86,7 +88,7 @@ export async function openImageFile(filePath: string): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('open_image_file', { path: filePath })
   } catch (error) {
-    console.error('Failed to open image file:', error)
+    logFrontend('error', '[open-url] Failed to open image file: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
   }
 }
 
@@ -96,7 +98,7 @@ export interface TextData {
 
 export async function readTextFile(filePath: string): Promise<TextData | null> {
   if (!isTauri()) {
-    console.warn('readTextFile is only available in Tauri mode')
+    logFrontend('warn', '[open-url] readTextFile is only available in Tauri mode').catch(() => {})
     return null
   }
 
@@ -105,14 +107,14 @@ export async function readTextFile(filePath: string): Promise<TextData | null> {
     const result = await invoke<{ content: string }>('read_text_file', { path: filePath })
     return { content: result.content }
   } catch (error) {
-    console.error('Failed to read text file:', error)
+    logFrontend('error', '[open-url] Failed to read text file: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
     return null
   }
 }
 
 export async function writeTextFile(filePath: string, content: string): Promise<boolean> {
   if (!isTauri()) {
-    console.warn('writeTextFile is only available in Tauri mode')
+    logFrontend('warn', '[open-url] writeTextFile is only available in Tauri mode').catch(() => {})
     return false
   }
 
@@ -121,7 +123,7 @@ export async function writeTextFile(filePath: string, content: string): Promise<
     await invoke('write_text_file', { path: filePath, content })
     return true
   } catch (error) {
-    console.error('Failed to write text file:', error)
+    logFrontend('error', '[open-url] Failed to write text file: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
     return false
   }
 }
@@ -133,7 +135,7 @@ export interface ImageData {
 
 export async function readImageFile(filePath: string): Promise<ImageData | null> {
   if (!isTauri()) {
-    console.warn('readImageFile is only available in Tauri mode')
+    logFrontend('warn', '[open-url] readImageFile is only available in Tauri mode').catch(() => {})
     return null
   }
 
@@ -145,7 +147,7 @@ export async function readImageFile(filePath: string): Promise<ImageData | null>
       mimeType: result.mime_type,
     }
   } catch (error) {
-    console.error('Failed to read image file:', error)
+    logFrontend('error', '[open-url] Failed to read image file: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
     return null
   }
 }
