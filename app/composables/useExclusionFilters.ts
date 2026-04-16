@@ -9,21 +9,38 @@ export interface ExclusionFilters {
   assignee: string[]
 }
 
+// System labels hidden from the issue list and dashboard stats by default.
+// Users can re-enable visibility via the Exclusions dropdown (funnel icon).
+const SYSTEM_LABELS = ['gt:slot']
+
 const defaultExclusions: ExclusionFilters = {
   status: [],
   priority: [],
   type: [],
-  labels: [],
+  labels: [...SYSTEM_LABELS],
   assignee: [],
 }
 
 const validStatuses: IssueStatus[] = ['open', 'in_progress', 'blocked', 'closed', 'deferred', 'pinned', 'hooked']
+
+// One-time migration for existing users whose exclusionFilters were saved
+// before SYSTEM_LABELS were introduced.
+const SYSTEM_LABELS_MIGRATION_FLAG = 'beads:system-labels-exclusion-migrated'
 
 export function useExclusionFilters() {
   const exclusions = useProjectStorage<ExclusionFilters>('exclusionFilters', defaultExclusions)
 
   if (import.meta.client) {
     exclusions.value.status = exclusions.value.status.filter(status => validStatuses.includes(status))
+
+    if (!localStorage.getItem(SYSTEM_LABELS_MIGRATION_FLAG)) {
+      for (const label of SYSTEM_LABELS) {
+        if (!exclusions.value.labels.includes(label)) {
+          exclusions.value.labels.push(label)
+        }
+      }
+      localStorage.setItem(SYSTEM_LABELS_MIGRATION_FLAG, 'true')
+    }
   }
 
   const toggleStatus = (status: IssueStatus) => {
