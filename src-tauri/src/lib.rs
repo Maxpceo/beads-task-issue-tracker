@@ -828,19 +828,34 @@ fn parse_issues_tolerant(output: &str, context: &str) -> Result<Vec<BdRawIssue>,
 }
 
 fn get_extended_path() -> String {
-    let home = env::var("HOME").unwrap_or_default();
-    let extra_paths = vec![
-        "/opt/homebrew/bin".to_string(),
-        "/usr/local/bin".to_string(),
-        "/usr/bin".to_string(),
-        "/bin".to_string(),
-        format!("{}/.local/bin", home),
-        format!("{}/bin", home),
-    ];
     let current_path = env::var("PATH").unwrap_or_default();
-    let mut all_paths = extra_paths;
-    all_paths.extend(current_path.split(':').map(String::from));
-    all_paths.join(":")
+
+    #[cfg(target_os = "windows")]
+    {
+        let userprofile = env::var("USERPROFILE").unwrap_or_default();
+        let localappdata = env::var("LOCALAPPDATA").unwrap_or_default();
+        let mut extra_paths = vec![
+            format!(r"{}\AppData\Local\bin", userprofile),
+            format!(r"{}\.local\bin", userprofile),
+            format!(r"{}\Programs", localappdata),
+        ];
+        extra_paths.extend(current_path.split(';').map(String::from));
+        extra_paths.join(";")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = env::var("HOME").unwrap_or_default();
+        let mut extra_paths = vec![
+            "/opt/homebrew/bin".to_string(),
+            "/usr/local/bin".to_string(),
+            "/usr/bin".to_string(),
+            "/bin".to_string(),
+            format!("{}/.local/bin", home),
+            format!("{}/bin", home),
+        ];
+        extra_paths.extend(current_path.split(':').map(String::from));
+        extra_paths.join(":")
+    }
 }
 
 /// Creates a Command with platform-specific flags.
@@ -3515,9 +3530,32 @@ async fn download_and_install_update(download_url: String) -> Result<String, Str
 // ============================================================================
 
 fn get_log_path() -> PathBuf {
-    let home = env::var("HOME").unwrap_or_default();
-    PathBuf::from(home)
-        .join("Library/Logs/com.beads.manager/beads.log")
+    // Match tauri-plugin-log's LogDir resolution per platform:
+    //   macOS:   ~/Library/Logs/com.beads.manager/
+    //   Linux:   ~/.local/share/com.beads.manager/logs/  (XDG_DATA_HOME)
+    //   Windows: %APPDATA%/com.beads.manager/logs/
+    #[cfg(target_os = "macos")]
+    {
+        let home = env::var("HOME").unwrap_or_default();
+        PathBuf::from(home)
+            .join("Library/Logs/com.beads.manager/beads.log")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("com.beads.manager")
+            .join("logs")
+            .join("beads.log")
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("com.beads.manager")
+            .join("logs")
+            .join("beads.log")
+    }
 }
 
 #[tauri::command]

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixes
+- **Cross-platform log path and PATH resolution** (upstream #15): `get_log_path()` was hardcoded to the macOS `~/Library/Logs/` layout, so on Linux the UI showed an empty log file and on Windows the path became a broken relative string (no `HOME` variable). `get_extended_path()` used Unix-only directories and the `:` separator, which mangled any Windows `C:\…` entry and prevented Tauri commands from locating `bd`/`br`. Both functions are now branched via `#[cfg(target_os = …)]`: macOS keeps `~/Library/Logs/com.beads.manager/beads.log`; Linux uses `dirs::data_local_dir()` → `~/.local/share/com.beads.manager/logs/beads.log` (matches `tauri-plugin-log` XDG layout); Windows uses `dirs::data_dir()` → `%APPDATA%/com.beads.manager/logs/beads.log` plus `USERPROFILE`/`LOCALAPPDATA`-based extra bin paths with the `;` PATH separator. Port of upstream `w3dev33/beads-task-issue-tracker` commit `a24eddf9` (v1.24.3)
+
 ### Workflow & Documentation
 - **`release.sh` now stages `Cargo.lock`**: After bumping the version in `Cargo.toml`, the script also updates `beads-issue-tracker`'s version entry in `Cargo.lock` (via awk) and includes it in the release commit — prevents a dirty `Cargo.lock` from being left out of the version tag
 - **Release notes template enriched**: Both the versioned release (`v*` tag) and the rolling `latest` dev-build body blocks in `.github/workflows/release.yml` now include a Requirements section (bd 0.49.x notice) and a macOS unsigned-app workaround (`xattr -cr`) so every future GitHub Release carries these notices automatically
