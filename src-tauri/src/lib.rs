@@ -4649,7 +4649,7 @@ fn start_watching(
 
                     let mut emit_now = false;
                     let mut schedule_delayed_emit = false;
-                    let mut counters = None;
+                    let counters;
                     let min_interval = watcher_min_emit_interval();
 
                     match project_emit_state.lock() {
