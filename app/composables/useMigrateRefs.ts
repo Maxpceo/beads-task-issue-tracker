@@ -1,4 +1,4 @@
-import { bdCheckRefsMigration, bdMigrateRefs } from '~/utils/bd-api'
+import { bdCheckRefsMigration, bdMigrateRefs, logFrontend } from '~/utils/bd-api'
 
 // Shared state (module-level so it persists across component re-renders)
 const needsMigration = ref(false)
@@ -49,7 +49,7 @@ export function useMigrateRefs() {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      console.error('[useMigrateRefs] migrate error:', msg, e)
+      logFrontend('error', '[useMigrateRefs] migrate error: ' + msg).catch(() => {})
       migrateError.value = msg || 'Migration failed'
       return false
     } finally {

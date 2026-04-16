@@ -1,5 +1,5 @@
 import type { Issue, ChildIssue } from '~/types/issue'
-import { bdAvailableRelationTypes, checkBdCompatibility } from '~/utils/bd-api'
+import { bdAvailableRelationTypes, checkBdCompatibility, logFrontend } from '~/utils/bd-api'
 
 // Singleton state — shared across all callers
 
@@ -192,7 +192,7 @@ export function useIssueDialogs() {
           issueId: selectedIssue.value.id,
         })
       } catch (error) {
-        console.error('Failed to copy file:', sourcePath, error)
+        logFrontend('error', '[useIssueDialogs] Failed to copy file: ' + sourcePath + ' ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
       }
     }
 
@@ -229,7 +229,7 @@ export function useIssueDialogs() {
       // Refresh issue to update the attachments
       await fetchIssue(selectedIssue.value.id)
     } catch (error) {
-      console.error('Failed to delete attachment:', error)
+      logFrontend('error', '[useIssueDialogs] Failed to delete attachment: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
     } finally {
       isDetaching.value = false
       isDetachDialogOpen.value = false
