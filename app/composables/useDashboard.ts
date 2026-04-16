@@ -9,6 +9,17 @@ export function useDashboard() {
   const error = ref<string | null>(null)
 
   const { beadsPath } = useBeadsPath()
+  const { exclusions } = useExclusionFilters()
+
+  // Filter out issues with system-excluded labels before computing stats.
+  // Only label-based exclusions apply — status/priority/type/assignee filters
+  // are user-intent filters, not system-level visibility rules.
+  const excludeSystemLabels = (issues: Issue[]): Issue[] => {
+    if (exclusions.value.labels.length === 0) return issues
+    return issues.filter(issue =>
+      !issue.labels?.some(l => exclusions.value.labels.includes(l.toLowerCase())),
+    )
+  }
 
   // Helper to get the current path
   const getPath = () => beadsPath.value && beadsPath.value !== '.' ? beadsPath.value : undefined
@@ -28,7 +39,7 @@ export function useDashboard() {
 
       // Compute stats from issues (even if empty array)
       if (issues !== undefined) {
-        stats.value = computeStatsFromIssues(issues)
+        stats.value = computeStatsFromIssues(excludeSystemLabels(issues))
       } else {
         // Fallback: initialize with empty stats if no issues provided
         stats.value = computeStatsFromIssues([])
@@ -57,7 +68,7 @@ export function useDashboard() {
    * Used by the batched polling system to avoid separate bdReady call.
    */
   const updateFromPollData = (issues: Issue[], readyData: Issue[]) => {
-    stats.value = computeStatsFromIssues(issues)
+    stats.value = computeStatsFromIssues(excludeSystemLabels(issues))
     readyIssues.value = readyData || []
     stats.value.ready = readyIssues.value.length
   }
