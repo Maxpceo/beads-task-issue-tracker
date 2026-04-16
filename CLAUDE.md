@@ -103,7 +103,10 @@ All steps mandatory. Work is NOT complete until `git push` succeeds.
 - **Frontend (TypeScript)**: `logFrontend('info', '[context] message')` — import from `~/utils/bd-api`. Calls the Rust `log_frontend` Tauri command which writes via `log::info!("[frontend] ...")`.
 - **Backend (Rust)**: `log_info!("[context] message")`, `log_error!(...)` macros — write directly to the native log.
 - Levels: `'info'`, `'warn'`, `'error'`
-- **Log file**: `~/Library/Logs/com.beads.manager/beads.log` — readable via `tail -f` or in the app.
+- **Log file** (per platform):
+  - **macOS**: `~/Library/Logs/com.beads.manager/beads.log` — readable via `tail -f` or in the app.
+  - **Linux**: `~/.local/share/com.beads.manager/logs/beads.log` (XDG, matches `tauri-plugin-log`)
+  - **Windows**: `%APPDATA%/com.beads.manager/logs/beads.log`
 
 ### Dev Server
 Always kill zombies before starting: `pkill -f "$(pwd)/src-tauri/target/debug/beads-issue-tracker" 2>/dev/null && pnpm tauri:dev`
