@@ -39,7 +39,7 @@ You may stop and say "this merge is too complex for me". Bad resolution is worse
 ## Phase 0: Start
 
 ```
-1. If BEAD_ID provided: `bd update {BEAD_ID} --status in_progress`
+1. If BEAD_ID provided: `bd update {BEAD_ID} --claim`  (sets in_progress + assigns to you)
 2. Verify: `git status` shows merge in progress
 3. Both branches readable: can access HEAD and MERGE_HEAD
 ```
@@ -115,7 +115,14 @@ git add [file]
 
 # 4. After ALL resolved
 git commit -m "Merge [branch]: [summary of resolutions]"
+
+# 5. Push via merge-slot (serialises concurrent sessions)
+bd merge-slot acquire
+git pull --rebase && git push
+bd merge-slot release
 ```
+
+НЕ ставь статусы review chain (`simplified`, `reviewed`, `accepted`) и не закрывай бид — это работа orchestrator'а. Твоя работа заканчивается на `bd update {BEAD_ID} --status inreview`.
 
 ---
 

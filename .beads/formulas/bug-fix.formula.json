@@ -1,0 +1,31 @@
+{
+  "formula": "bug-fix",
+  "name": "bug-fix",
+  "description": "Bug fix: reproduce → fix → regression test",
+  "type": "workflow",
+  "variables": [
+    {"name": "bug", "required": true, "description": "Описание бага"}
+  ],
+  "steps": [
+    {
+      "id": "reproduce",
+      "title": "Воспроизвести: {{bug}}",
+      "type": "task",
+      "description": "Написать падающий тест, воспроизводящий баг"
+    },
+    {
+      "id": "fix",
+      "title": "Исправить: {{bug}}",
+      "type": "task",
+      "description": "Исправить код, тест должен пройти",
+      "depends_on": ["reproduce"]
+    },
+    {
+      "id": "regression",
+      "title": "Регрессионный тест",
+      "type": "task",
+      "description": "Убедиться что фикс не сломал другие тесты",
+      "depends_on": ["fix"]
+    }
+  ]
+}

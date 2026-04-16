@@ -76,11 +76,12 @@ Staged: ${CODE_FILES} code file(s), ~${ADDED_LINES} added lines.
 This exceeds Fast Path limits (1 file, <=20 lines).
 
 Per CLAUDE.md, large changes require Supervisor Path:
-1. bd create / bd update --status in_progress
-2. Dispatch supervisor (Task tool)
-3. Code review (MANDATORY)
-4. Dispatch code-simplifier
-5. bd close
+1. bd create / bd update --claim
+2. Dispatch supervisor (Task tool)  →  supervisor sets --status inreview
+3. Dispatch code-simplifier          →  orchestrator sets --status simplified
+4. Code review (MANDATORY)           →  orchestrator sets --status reviewed
+5. Acceptance                         →  orchestrator sets --status accepted
+6. bd close
 
 If this is intentional (e.g., spec tests, config), proceed.
 Otherwise, consider following the full workflow.

@@ -1,0 +1,32 @@
+{
+  "formula": "vue-feature",
+  "name": "vue-feature",
+  "description": "Vue feature: component → composable → integration",
+  "type": "workflow",
+  "variables": [
+    {"name": "feature_name", "required": true, "description": "Название фичи"},
+    {"name": "page", "default": "index", "description": "Страница для интеграции (напр. index, issues)"}
+  ],
+  "steps": [
+    {
+      "id": "component",
+      "title": "Компонент: {{feature_name}}",
+      "type": "task",
+      "description": "Vue компонент в app/components/ + типы + стили (Tailwind v4 / shadcn-nuxt)"
+    },
+    {
+      "id": "composable",
+      "title": "Composable: {{feature_name}}",
+      "type": "task",
+      "description": "Composable в app/composables/ — state, dialogs, filtering логика",
+      "depends_on": ["component"]
+    },
+    {
+      "id": "integration",
+      "title": "Интеграция на страницу {{page}}",
+      "type": "task",
+      "description": "Подключить компонент и composable на страницу, проверить в dev-сервере",
+      "depends_on": ["composable"]
+    }
+  ]
+}

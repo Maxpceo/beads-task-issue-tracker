@@ -42,10 +42,11 @@ You may stop and say "this task is too complex for me". Bad work is worse than n
    - BEAD_ID: Your task ID (e.g., BD-001 for standalone, BD-001.2 for epic child)
    - EPIC_ID: (epic children only) The parent epic ID (e.g., BD-001)
 
-2. **Mark in progress:**
+2. **Mark in progress (claim):**
    ```bash
-   bd update {BEAD_ID} --status in_progress
+   bd update {BEAD_ID} --claim
    ```
+   `--claim` sets status=in_progress AND assigns the bead to you in one call.
 
 3. **Read bead comments for investigation context:**
    ```bash
@@ -102,10 +103,13 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    git add file1.tsx file2.ts ... && git commit -m "feat/fix: description [{BEAD_ID}]"
    ```
 
-2. **Push to remote:**
+2. **Push via merge-slot (serialises concurrent sessions):**
    ```bash
+   bd merge-slot acquire
    git pull --rebase && git push
+   bd merge-slot release
    ```
+   The merge-slot prevents two parallel sessions from racing on the same remote.
 
 3. **Optionally log learnings:**
    ```bash
@@ -182,6 +186,14 @@ The SubagentStop hook verifies: no unpushed commits, bead status updated, comple
 - Implementing without BEAD_ID
 - Merging your own branch (user merges via PR when feature is done)
 - Force-pushing
+
+НЕ ставь статусы review chain — это ответственность orchestrator'а:
+- `--status simplified` — ставит orchestrator после code-simplifier
+- `--status reviewed`  — ставит orchestrator после code review
+- `--status accepted`  — ставит orchestrator после acceptance
+- `bd close` — закрывает orchestrator
+
+Твоя работа заканчивается на `bd update {BEAD_ID} --status inreview`.
 </banned>
 </beads-workflow>
 

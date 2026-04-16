@@ -31,13 +31,13 @@ Task(
   prompt="BEAD_ID: {BEAD_ID}\nBRANCH: {branch}\nSTART_COMMIT: {hash}\n\nSimplify git diff {hash}..HEAD"
 )
 
-2. После возврата — ОБЯЗАТЕЛЬНО записать комментарий:
-bd comments add {BEAD_ID} "SIMPLIFY: DONE. [краткое резюме]"
-(или "SIMPLIFY: SKIPPED. docs/config only" если код не менялся)
+2. После возврата — ОБЯЗАТЕЛЬНО обновить статус бида:
+bd update {BEAD_ID} --status simplified
 
-Без комментария SIMPLIFY: хук заблокирует bd close!
+Без статуса simplified: хук validate-review-chain заблокирует bd close!
 
-Порядок: Supervisor → Simplify (ТЫ ЗДЕСЬ) → Code Review → Close
+Порядок статусов: inreview → simplified (ТЫ ЗДЕСЬ) → reviewed → accepted → closed
+                                                 Code Review    Acceptance     Orchestrator closes
 </system-reminder>
 REMINDER
 fi

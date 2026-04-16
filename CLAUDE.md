@@ -53,13 +53,174 @@ Examples:
 - `bd create --title="Add column resize" --type=feature --priority=2 --label=frontend --label=ui`
 - `bd create --title="Add CI workflow" --type=task --priority=2 --label=ci --label=dx`
 
-### Session Completion
+### Типы задач (`--type`)
+
+| Тип | Назначение | Когда использовать |
+|-----|-----------|-------------------|
+| `task` | Обычная задача (default) | Реализация фичи, фикс бага |
+| `bug` | Баг | Воспроизводимая ошибка |
+| `feature` | Фича | Новая пользовательская возможность |
+| `epic` | Группа задач | Multi-domain, несколько supervisor'ов |
+| `spike` | Timeboxed исследование | Неясный подход — сперва нужно исследование. Результат: решение + findings, не production-код |
+| `story` | User story | Задача с точки зрения пользователя |
+| `milestone` | Контрольная точка | Не содержит работы — отмечает завершение группы задач |
+
+### Bead Status Lifecycle
+
+bd v1.0.2 использует структурированные статусы вместо comment markers. Весь review chain отслеживается через `bd query "status=..."`:
+
+```
+open → in_progress → inreview → simplified → reviewed → accepted → closed
+  ↑        ↑            ↑           ↑           ↑          ↑         ↑
+create  --claim     supervisor  orchestr.   orchestr.  orchestr.  bd close
+                    после push  после       после      после     --suggest-next
+                                simplify    review     acceptance
+```
+
+**Кто что ставит:**
+- `in_progress` → supervisor через `bd update {ID} --claim` (атомарный claim: assignee + in_progress). Это lock — предотвращает захват бида другим агентом.
+- `inreview` → supervisor после commit+push
+- `simplified` → **orchestrator** после code-simplifier
+- `reviewed` → **orchestrator** после code-reviewer APPROVED
+- `accepted` → **orchestrator** после acceptance checks
+- `closed` → **orchestrator** через `bd close {ID} --suggest-next`
+
+Supervisor'ы НЕ ставят `simplified`/`reviewed`/`accepted` и не вызывают `bd close` — это работа orchestrator'а. Хук `block-supervisor-close-and-signing.sh` блокирует попытки.
+
+**Сокращённые пути:**
+- Без `acceptance_criteria`: `reviewed → closed` (skip `accepted`)
+- Fast path: `open → in_progress → closed` (skip весь review chain)
+
+### Beads Commands (reference)
+
+```bash
+# Discovery & query
+bd ready                                          # Беды без блокеров — что брать в работу
+bd query "status=open AND priority<=2"            # Язык запросов: AND/OR/NOT, сравнения, даты
+bd list --status=in_progress                      # Фильтр по статусу
+bd show {ID} [--json]                             # Детали (human или JSON)
+bd graph {ID}                                     # Визуализация зависимостей
+bd graph --html {ID} > g.html                     # Интерактивный HTML
+bd graph check                                    # Проверка целостности графа
+bd stats                                          # Общая статистика (open/closed/blocked)
+bd find-duplicates [--method ai]                  # Поиск дубликатов (механический/AI)
+bd preflight                                      # Pre-PR checks (lint + stale + orphans)
+bd stale                                          # Бид без активности
+bd orphans                                        # Бид со сломанными зависимостями
+
+# Create & update
+bd create --title="..." --description="..." --type=task --priority=2 --label=dx
+bd create --title="..." --type=epic               # Эпик (родитель)
+bd create --title="..." --parent={EPIC_ID}        # Child эпика
+bd q "Title" -p 1                                 # Quick capture (выводит только ID)
+bd update {ID} --claim                            # Атомарный claim (assignee + in_progress)
+bd update {ID} --status inreview                  # Явный статус
+bd update {ID} --acceptance "1. Тесты. 2. ..."    # Acceptance criteria
+bd update {ID} --notes / --design / --title       # Поля бида
+
+# Todo (лёгкие задачи)
+bd todo add "Fix typo"                            # Создать (P2 task)
+bd todo                                           # Список открытых
+bd todo done {ID}                                 # Закрыть
+
+# Close
+bd close {ID}                                     # Закрыть
+bd close {ID1} {ID2} ...                          # Массово (эффективнее)
+bd close {ID} --suggest-next                      # + показать разблокированные
+bd close {ID} --claim-next                        # + сразу взять следующую
+
+# Dependencies
+bd dep add {ID} {DEPENDS_ON}                      # Добавить зависимость
+bd dep relate {NEW_ID} {OLD_ID}                   # Трассировка без зависимости
+bd blocked                                        # Все заблокированные
+
+# Formulas & batch
+bd formula list                                   # Доступные формулы
+bd mol pour <name> --var key="value"              # Создать эпик из формулы
+bd mol distill {EPIC_ID} name                     # Извлечь формулу из удачного эпика
+bd cook <name> --dry-run --var key="v"            # Предпросмотр без создания
+bd batch -f operations.txt                        # Атомарные операции из файла
+
+# State & parallel work
+bd set-state {ID} dim=value --reason "why"        # Оперативное состояние
+bd worktree create name --branch branch           # Worktree для параллельной работы
+bd merge-slot acquire / release                   # Сериализация push (см. ниже)
+
+# Lifecycle hygiene
+bd defer {ID} --until="date"                      # Отложить до даты
+bd supersede {ID} --with={NEW_ID}                 # Заменить новым
+bd gc --dry-run                                   # Сборка мусора (предпросмотр)
+bd human {ID}                                     # Флаг для человеческого решения
+bd memories <keyword> / bd remember / bd forget   # Persistent memory
+```
+
+### Полезные запросы (bd query)
+
+Язык запросов: AND/OR/NOT, сравнения (`=`, `!=`, `<=`, `>`), даты (`>2d`, `>7d`).
+
+```bash
+bd query "status=open AND priority<=2"             # Приоритетные открытые
+bd query "status=open AND type=bug"                # Открытые баги
+bd query "status=inreview"                         # Ждут simplify
+bd query "status=simplified"                       # Ждут code review
+bd query "status=reviewed"                         # Ждут acceptance
+bd query "status=inreview AND updated>2d"          # Застряли в review chain
+bd query "label=frontend AND status!=closed"       # Активные фронтенд задачи
+bd query "assignee=none AND status=open"           # Ничьи задачи
+bd query "type=epic AND status!=closed"            # Активные эпики
+bd query "status=in_progress AND updated>7d"       # Застрявшие >7 дней
+```
+
+### bd todo vs bd create
+
+| Критерий | `bd todo add` | `bd create` |
+|----------|---------------|-------------|
+| Объём | < 5 строк, 1 файл | > 5 строк или multi-file |
+| Supervisor нужен | Нет (orchestrator правит) | Да |
+| Review chain | Нет | Да (simplified → reviewed → accepted) |
+| Пример | Fix typo, update config | Новый endpoint, фикс бага |
+
+### Формулы для типовых задач
+
+3 готовых формулы в `.beads/formulas/` (адаптированы под Vue/Nuxt + Tauri):
+
+```bash
+bd formula list                                                         # Список
+bd mol pour vue-feature --var feature_name="Dashboard"                  # component → composable → integration
+bd mol pour tauri-feature --var feature_name="Auth"                     # Rust cmd → bridge → Vue hook
+bd mol pour bug-fix --var bug="Login timeout"                           # reproduce → fix → regression test
+bd cook vue-feature --dry-run --var feature_name="X"                    # Предпросмотр без создания
+bd mol distill {EPIC_ID} my-new-formula                                 # Извлечь формулу из удачного эпика
+```
+
+### Merge-slot для параллельных сессий
+
+При параллельных сессиях Claude Code — использовать merge-slot для сериализации push на одной ветке:
+
+```bash
+bd merge-slot acquire           # Захватить (ждёт если занято)
+git pull --rebase && git push
+bd merge-slot release           # Освободить
+```
+
+Инициализация (один раз на проект): `bd merge-slot create`. Slot: `beads-task-issue-tracker-merge-slot`.
+
+**Зачем:** без worktrees несколько сессий могут одновременно делать `git push` на одну ветку → race condition и non-fast-forward отказы. Slot гарантирует, что push сериализуется.
+
+### Session Completion (Landing the Plane)
 All steps mandatory. Work is NOT complete until `git push` succeeds.
 1. File issues for remaining work
 2. Run quality gates (if code changed): `pnpm test && npx vue-tsc --noEmit`
-3. Close finished issues
+3. Close finished issues — use `bd close <id> --suggest-next` to see newly unblocked beads
 4. **Update CHANGELOG.md** — add entries under `[Unreleased]` for all code changes in this session
-5. `git pull --rebase && bd sync && git push && git status`
+5. Commit only files you changed: `git add file1 file2 ...` (NEVER `git add -A`/`git add .` — parallel sessions may run on the same branch)
+6. **Push via merge-slot** (serialises concurrent sessions):
+   ```bash
+   bd merge-slot acquire
+   git pull --rebase && git push
+   bd merge-slot release
+   ```
+7. Verify: `git status` must show "up to date with origin"
 
 ### Before Merge to main
 **MANDATORY checklist** — do not merge without completing:

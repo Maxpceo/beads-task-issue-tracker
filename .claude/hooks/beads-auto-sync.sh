@@ -24,7 +24,7 @@ echo "$COMMAND" | grep -qE '^\s*bd\s+' || exit 0
 
 # Only trigger on write commands (skip read-only: list, show, ready, stats, etc.)
 # Also skip 'bd export' itself to avoid infinite loop
-echo "$COMMAND" | grep -qE 'bd\s+(create|update|close|dep|comments|reopen|delete|promote|merge-slot|move|refile|set-state|rename|duplicate|supersede|undefer|defer|label)\b' || exit 0
+echo "$COMMAND" | grep -qE 'bd\s+(create|update|close|dep|comments|reopen|delete|promote|merge-slot|move|refile|set-state|rename|duplicate|supersede|undefer|defer|label|batch|todo)\b' || exit 0
 
 JSONL=".beads/issues.jsonl"
 
