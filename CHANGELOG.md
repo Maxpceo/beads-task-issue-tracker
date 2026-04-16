@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- **Hide `gt:slot` system beads**: The internal `merge-slot` service bead (tagged `gt:slot`) is now hidden from the issue table and excluded from dashboard KPI counts by default — it no longer clutters the task list or inflates Open/All stats.
 - **`'debug'` log level for `logFrontend()`**: Gated by Verbose toggle in DebugPanel — enables high-frequency pipeline diagnostics in release builds. Rust backend uses `log::info!` with `[DEBUG]` tag (bypasses release `LevelFilter::Info`) when `VERBOSE_LOGGING` is active
 
 ### Fixes
