@@ -1,3 +1,5 @@
+import { logFrontend } from '~/utils/bd-api'
+
 // Global state for dialog/panel visibility
 const showUpdateDialog = ref(false)
 const showAboutDialog = ref(false)
@@ -121,7 +123,7 @@ export function useAppMenu() {
 
       await menu.setAsAppMenu()
     } catch (error) {
-      console.error('Failed to initialize app menu:', error)
+      logFrontend('error', '[useAppMenu] Failed to initialize app menu: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
     }
   }
 
