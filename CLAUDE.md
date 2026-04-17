@@ -15,12 +15,13 @@ Consult these before starting any task.
 
 Completion reports (both orchestrator and supervisor) must not use hedging language: *"should work / probably / seems / looks correct / выглядит корректно / должно работать / наверное работает / вроде проходит"*. Any status claim (tests pass, build ok, bug fixed, acceptance met) requires **fresh evidence in the same message**: command run + actual output + exit code. If the command wasn't run, write the actual state ("tests not run yet"), not a guess. Celebratory phrases ("Готово!", "Perfect!") are allowed ONLY after the evidence, never instead.
 
-Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md`.
+Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md` → Iron Law section.
 
 ### Issues
 - `/run-issue <id>` — Always run before starting work on any issue.
 - `/close-issue` — Always ask confirmation before closing.
 - `/review-to-commit` — Always use when user asks to commit.
+- Полный справочник команд bd (создание, запросы, формулы, lifecycle, worktrees): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
 
 ### Enrich bead with context
 
@@ -53,9 +54,9 @@ Examples:
 | `bug` | Баг | Воспроизводимая ошибка |
 | `feature` | Фича | Новая пользовательская возможность |
 | `epic` | Группа задач | Multi-domain, несколько supervisor'ов |
-| `spike` | Timeboxed исследование | Неясный подход |
-| `story` | User story | С точки зрения пользователя |
-| `milestone` | Контрольная точка | Не содержит работы |
+| `spike` | Timeboxed исследование | Неясный подход — сперва нужно исследование. Результат: решение + findings, не production-код |
+| `story` | User story | Задача с точки зрения пользователя |
+| `milestone` | Контрольная точка | Не содержит работы — отмечает завершение группы задач |
 
 ### Bead Status Lifecycle
 
@@ -133,17 +134,26 @@ Full merge cycle (PR → docs update → merge → checkout main) — skill `mer
 ### Code Organization
 - **Never overload `app/pages/index.vue`** — extract logic into composables (`app/composables/`) and UI sections into dedicated components (`app/components/`).
 - Keep `index.vue` as an orchestrator: layout structure, composable wiring, and minimal glue code.
+- Prefer reusable composables over inline logic for state, dialogs, resize, filtering, etc.
 - **Prefer shared components** over duplication.
 
 ### Context Management
 - **Always prefer `/continue-task` over `/compact`** — it preserves issue context, progress, and next steps far better.
+- When the session is long and context is getting large, proactively run `/continue-task` before auto-compact triggers.
 - If a `PreCompact` hook fires with "auto" trigger, immediately run `/continue-task` instead of letting compact proceed blindly.
 
 ### Logging
 All logging rules (no `console.*` in `app/`, `logFrontend()` for TS, `log_*!` macros for Rust, log-file paths per platform) auto-load from **[.claude/rules/logging.md](.claude/rules/logging.md)** when you Read any `.ts`/`.vue`/`.rs` file.
 
+### bd Version Compatibility (orchestrator-level)
+- The app works with **any bd version** — Rust backend auto-detects via `parse_bd_version()` and version-gated helpers. Handles both pre-1.0 (`major == 0`) and 1.x+ (`major >= 1`).
+- **bd 0.57+** uses a self-managing Dolt server; auto-flush/auto-import keeps JSONL in sync. No manual `bd sync` needed — that command no longer exists; use `bd dolt push` or `bd export`.
+- Never assume all projects use Dolt — check `project_uses_dolt()` before skipping legacy paths.
+
+Full compatibility matrix + version-gated helper list: **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)**.
+
 ### Rust backend / Tauri
-bd version compatibility, Dev Server zombie-kill, Tauri MCP setup, backward-compat helpers — auto-load from **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)** when you touch any file in `src-tauri/`.
+Dev Server zombie-kill, Tauri MCP setup, backend-specific patterns — auto-load from **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)** when you touch any file in `src-tauri/`. Quick: `pnpm tauri:dev` (but kill zombies first — see src-tauri/CLAUDE.md).
 
 ### Model Selection & Completion Reports
 **[.claude/references/orchestration.md](.claude/references/orchestration.md)** — DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT, когда Opus vs Sonnet.

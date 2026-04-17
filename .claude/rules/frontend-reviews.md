@@ -17,7 +17,7 @@ This is NOT optional. Before marking `inreview`:
 
 Run on each modified component:
 ```
-Skill(skill="rams", args="path/to/component.tsx")
+Skill(skill="rams", args="path/to/component.vue")
 ```
 
 **What RAMS Checks:**
