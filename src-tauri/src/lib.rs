@@ -5055,18 +5055,16 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // MCP server for AI-driven UI testing. Debug builds only — opens an
-            // IPC channel so Claude Code can drive the webview (DOM, screenshots,
-            // clicks, JS exec). See CLAUDE.md → "AI-Driven UI Testing".
-            // https://github.com/P3GLEG/tauri-plugin-mcp
+            // MCP server for AI-driven UI testing. Gated by the `dev-mcp` Cargo
+            // feature — opens an IPC channel so Claude Code can drive the webview.
+            // See CLAUDE.md → "AI-Driven UI Testing".
             //
-            // The npm bridge (`tauri-plugin-mcp-server`) hard-codes the socket
-            // path to `/tmp/tauri-mcp.sock` (literal `/tmp`, see client.js).
-            // The Rust default uses `std::env::temp_dir()` which on macOS
-            // resolves to `$TMPDIR` (`/var/folders/.../T/`) — this would
-            // mismatch the bridge and produce silent connect failures. We pin
-            // both sides to `/tmp/tauri-mcp.sock` explicitly.
-            #[cfg(debug_assertions)]
+            // We pin the socket path to literal `/tmp/tauri-mcp.sock` because the
+            // npm bridge (`tauri-plugin-mcp-server`) hard-codes that path, while
+            // the Rust default (`std::env::temp_dir()`) resolves to `$TMPDIR`
+            // (`/var/folders/.../T/`) on macOS — a mismatch would cause silent
+            // connect failures.
+            #[cfg(feature = "dev-mcp")]
             app.handle().plugin(tauri_plugin_mcp::init_with_config(
                 tauri_plugin_mcp::PluginConfig::new("beads-issue-tracker".to_string())
                     .socket_path(std::path::PathBuf::from("/tmp/tauri-mcp.sock")),
