@@ -105,7 +105,7 @@ export function transformIssue(raw: BdRawIssue): Issue {
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
     closedAt: raw.closed_at,
-    startedAt: raw.started_at !== undefined ? raw.started_at : undefined,
+    startedAt: raw.started_at,
     comments: (raw.comments || []).map((c) => ({
       id: String(c.id),
       author: c.author,
