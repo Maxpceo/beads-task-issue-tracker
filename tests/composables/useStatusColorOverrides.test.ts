@@ -2,6 +2,61 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { hashPath } from '~/utils/hash'
 
+// Vitest cannot patch import.meta.client per-module (ES modules have independent meta).
+// We mock useProjectStorage to re-implement it without the import.meta.client guard,
+// using real localStorage so integration behaviour is preserved.
+vi.mock('~/composables/useProjectStorage', async () => {
+  const { ref, watch, triggerRef } = await import('vue')
+  const { hashPath: hp } = await import('~/utils/hash')
+
+  const settingsRegistry = new Map<string, { setting: string; defaultValue: unknown; valueRef: ReturnType<typeof ref> }>()
+  let currentProjectHash: string | null = null
+
+  function getBeadsPath(): string {
+    const stored = localStorage.getItem('beads:path')
+    if (stored) { try { return JSON.parse(stored) || '.' } catch { return '.' } }
+    return '.'
+  }
+  function getFullKey(setting: string, hash: string) { return `beads:proj:${hash}:${setting}` }
+  function loadValue<T>(setting: string, defaultValue: T): T {
+    const hash = hp(getBeadsPath())
+    const raw = localStorage.getItem(getFullKey(setting, hash))
+    if (raw) { try { return JSON.parse(raw) } catch { return defaultValue } }
+    return defaultValue
+  }
+
+  const saveProjectValue = <T>(setting: string, value: T): void => {
+    const hash = hp(getBeadsPath())
+    localStorage.setItem(getFullKey(setting, hash), JSON.stringify(value))
+  }
+
+  const reloadProjectStorage = (): void => {
+    const newHash = hp(getBeadsPath())
+    if (currentProjectHash === newHash) return
+    currentProjectHash = newHash
+    for (const [, meta] of settingsRegistry) {
+      meta.valueRef.value = loadValue(meta.setting, meta.defaultValue)
+      triggerRef(meta.valueRef)
+    }
+  }
+
+  const clearProjectStorageCache = (): void => {
+    currentProjectHash = null
+    settingsRegistry.clear()
+  }
+
+  const useProjectStorage = <T>(setting: string, defaultValue: T): ReturnType<typeof ref<T>> => {
+    if (currentProjectHash === null) currentProjectHash = hp(getBeadsPath())
+    if (settingsRegistry.has(setting)) return settingsRegistry.get(setting)!.valueRef as ReturnType<typeof ref<T>>
+    const valueRef = ref<T>(loadValue(setting, defaultValue))
+    settingsRegistry.set(setting, { setting, defaultValue, valueRef })
+    watch(valueRef, (v) => { saveProjectValue(setting, v) }, { deep: true })
+    return valueRef as ReturnType<typeof ref<T>>
+  }
+
+  return { useProjectStorage, saveProjectValue, reloadProjectStorage, clearProjectStorageCache }
+})
+
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
 
 const PROJECT_PATH = '/tmp/test-project'
@@ -20,12 +75,10 @@ function createMemoryStorage(): Storage {
   }
 }
 
-async function importFresh() {
-  vi.resetModules()
-  const mod = await import('~/composables/useStatusColorOverrides')
-  const storageMod = await import('~/composables/useProjectStorage')
-  return { ...mod, ...storageMod }
-}
+// Import once — vi.mock is hoisted and stable across the suite.
+// We reset per-test state via clearProjectStorageCache + resetting the module-level store.
+import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
+import { clearProjectStorageCache, reloadProjectStorage } from '~/composables/useProjectStorage'
 
 describe('useStatusColorOverrides (integration)', () => {
   beforeEach(() => {
