@@ -30,6 +30,9 @@ const typeOptions: { value: IssueType; label: string }[] = [
   { value: 'feature', label: 'Feature' },
   { value: 'epic', label: 'Epic' },
   { value: 'chore', label: 'Chore' },
+  { value: 'spike', label: 'Spike' },
+  { value: 'story', label: 'Story' },
+  { value: 'milestone', label: 'Milestone' },
 ]
 
 const isSelected = (type: IssueType) => props.selectedTypes.includes(type)

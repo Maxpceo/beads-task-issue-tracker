@@ -576,7 +576,7 @@ fn priority_to_number(priority: &str) -> String {
 }
 
 fn normalize_issue_type(issue_type: &str) -> String {
-    let valid_types = ["bug", "task", "feature", "epic", "chore"];
+    let valid_types = ["bug", "task", "feature", "epic", "chore", "spike", "story", "milestone"];
     if valid_types.contains(&issue_type) {
         issue_type.to_string()
     } else {
@@ -2677,6 +2677,9 @@ async fn bd_count(options: CwdOptions) -> Result<CountResult, String> {
     by_type.insert("feature".to_string(), 0);
     by_type.insert("epic".to_string(), 0);
     by_type.insert("chore".to_string(), 0);
+    by_type.insert("spike".to_string(), 0);
+    by_type.insert("story".to_string(), 0);
+    by_type.insert("milestone".to_string(), 0);
 
     let mut by_priority: HashMap<String, usize> = HashMap::new();
     by_priority.insert("p0".to_string(), 0);

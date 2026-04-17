@@ -120,6 +120,9 @@ const typeOrder: Record<IssueType, number> = {
   task: 2,
   epic: 3,
   chore: 4,
+  spike: 5,
+  story: 6,
+  milestone: 7,
 }
 
 // Natural sort comparison for IDs (handles multi-digit numbers correctly)
