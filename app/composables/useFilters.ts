@@ -1,10 +1,11 @@
+import { computed } from 'vue'
 import type { FilterState, IssueStatus, IssueType, IssuePriority } from '~/types/issue'
 import { useProjectStorage } from '~/composables/useProjectStorage'
 
 export const workflowStatuses: IssueStatus[] = ['open', 'in_progress', 'deferred', 'pinned', 'hooked']
 
 const defaultFilters: FilterState = {
-  status: [],
+  status: [...workflowStatuses],
   type: [],
   priority: [],
   assignee: [],
@@ -14,15 +15,6 @@ const defaultFilters: FilterState = {
 
 export function useFilters() {
   const filters = useProjectStorage<FilterState>('filters', defaultFilters)
-
-  // Clear transient filters on init and reset status to the default KPI view.
-  if (import.meta.client) {
-    filters.value.search = ''
-    filters.value.labels = []
-    filters.value.assignee = []
-    // Always reset to the default WORKFLOW view on load/refresh.
-    filters.value.status = [...workflowStatuses]
-  }
 
   const toggleStatus = (status: IssueStatus) => {
     const index = filters.value.status.indexOf(status)
