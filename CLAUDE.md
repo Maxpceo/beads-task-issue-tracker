@@ -279,7 +279,7 @@ Note: scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-is
 
 ### AI-Driven UI Testing (Tauri MCP)
 
-Chrome DevTools / Playwright **do not work with Tauri's WKWebView on macOS** — Apple does not implement CDP. To let Claude Code drive the running app (DOM, screenshots, clicks, JS exec, native mac mouse/keyboard), the project ships [`tauri-plugin-mcp`](https://github.com/P3GLEG/tauri-plugin-mcp) wired into **debug builds only** (see `src-tauri/Cargo.toml` `[target.'cfg(debug_assertions)'.dependencies]` and `src-tauri/src/lib.rs` `setup()`). The plugin opens an IPC channel inside `pnpm tauri:dev` builds and is excluded from release binaries automatically.
+Chrome DevTools / Playwright **do not work with Tauri's WKWebView on macOS** — Apple does not implement CDP. To let Claude Code drive the running app (DOM, screenshots, clicks, JS exec, native mac mouse/keyboard), the project ships [`tauri-plugin-mcp`](https://github.com/P3GLEG/tauri-plugin-mcp) gated behind the `dev-mcp` Cargo feature (see `src-tauri/Cargo.toml` `[features]` and `src-tauri/src/lib.rs` `setup()` gated by `#[cfg(feature = "dev-mcp")]`). The `pnpm tauri:dev` script passes `--features dev-mcp` automatically; `tauri build` does not, so release binaries omit the plugin entirely — it is not linked at all.
 
 To use it locally:
 1. Install the MCP-server bridge once: `npm i -g tauri-plugin-mcp-server`. Note: this npm package's `bin` is shipped as a JS file with **no shebang**, so we cannot exec it directly — `.mcp.json` invokes it via `node` with the full `index.js` path (already wired)

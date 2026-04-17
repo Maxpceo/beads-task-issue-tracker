@@ -28,9 +28,14 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 notify = "7.0"
 notify-debouncer-mini = "0.5"
 dotenvy = "0.15"
+# AI-driven UI testing — enabled only when `dev-mcp` feature is active (i.e., `pnpm tauri:dev`).
+# Lets Claude Code drive the webview (DOM, screenshots, clicks, JS exec) over an IPC channel.
+# See CLAUDE.md → "AI-Driven UI Testing". https://github.com/P3GLEG/tauri-plugin-mcp
+tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", optional = true }
 
-# AI-driven UI testing — debug builds only. Lets Claude Code drive the webview
-# (DOM, screenshots, clicks, JS exec) over an IPC channel. See CLAUDE.md.
-# https://github.com/P3GLEG/tauri-plugin-mcp
-[target.'cfg(debug_assertions)'.dependencies]
-tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp" }
+# `dev-mcp` — включает tauri-plugin-mcp для AI-тестирования в dev-сборке.
+# `pnpm tauri:dev` передаёт `--features dev-mcp` автоматически.
+# `tauri build` (release) фичу не включает — плагин не линкуется.
+[features]
+default = []
+dev-mcp = ["dep:tauri-plugin-mcp"]

@@ -30,7 +30,7 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
-    "tauri:dev": "tauri dev",
+    "tauri:dev": "tauri dev --features dev-mcp",
     "tauri:build": "tauri build",
     "test": "vitest run",
     "test:watch": "vitest"

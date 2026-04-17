@@ -5066,7 +5066,7 @@ pub fn run() {
             // resolves to `$TMPDIR` (`/var/folders/.../T/`) — this would
             // mismatch the bridge and produce silent connect failures. We pin
             // both sides to `/tmp/tauri-mcp.sock` explicitly.
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "dev-mcp")]
             app.handle().plugin(tauri_plugin_mcp::init_with_config(
                 tauri_plugin_mcp::PluginConfig::new("beads-issue-tracker".to_string())
                     .socket_path(std::path::PathBuf::from("/tmp/tauri-mcp.sock")),
