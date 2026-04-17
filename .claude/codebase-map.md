@@ -76,6 +76,12 @@
 | `useKeyboardNavigation.ts` | `useKeyboardNavigation()` | Arrow key navigation for issue list with scroll-to-focused |
 | `useMultiCopy.ts` | `useMultiCopy()` → `{ copiedIds, copyIssueId, isCopied }` | Module-level shared state for multi-copy feature. Hold Cmd/Ctrl and click any copy-ID button to accumulate issue IDs in a shared clipboard buffer as a comma-separated list. Safe in Nuxt SPA mode (`ssr: false`) |
 
+#### Status & Display
+| File | Exports | Purpose |
+|------|---------|---------|
+| `useStatuses.ts` | `useStatuses()` → `{ statuses, isLoading }` | Lazy-loads `bd statuses --json` via `bd_statuses` Tauri command; caches per project path (module-level reactive cache keyed by `beadsPath`). Returns full list of built-in + custom statuses. Used by `StatusBadge`, `StatusFilterDropdown`, and `SettingsDialog` |
+| `useStatusColorOverrides.ts` | `useStatusColorOverrides()` → `{ overrides, setOverride, resetOverride }` | Per-project localStorage (`beads:proj:<hash>:status-colors`) for custom solid/gradient colors on any status badge. Applied instantly app-wide; Reset button restores default category color |
+
 #### Polling & Change Detection
 | File | Exports | Purpose |
 |------|---------|---------|
@@ -111,7 +117,7 @@
 | `AppHeader.vue` | Top bar: title, zoom controls, theme toggle, Tauri drag region |
 | `UpdateIndicator.vue` | Sync/watcher status badges |
 | `UpdateDialog.vue` | Available updates UI |
-| `SettingsDialog.vue` | Theme, CLI client, backend selector, probe toggle (dev-only) |
+| `SettingsDialog.vue` | Theme, CLI client, backend selector, probe toggle (dev-only), Status Colors section (per-status color overrides with solid/gradient pickers and Reset button) |
 | `AboutDialog.vue` | App info, credits |
 | `DebugPanel.vue` | Live log viewer with filters |
 | `DebugDialog.vue` | BD CLI version, compatibility info |
@@ -145,7 +151,7 @@
 | `LabelFilterDropdown.vue` | Label filter (dynamic from data) |
 | `ExclusionFilterDropdown.vue` | Exclusion filters panel |
 | `ColumnConfig.vue` | Column visibility dialog |
-| `StatusBadge.vue` | Color-coded status display |
+| `StatusBadge.vue` | Dynamic status display — reads status meta from `useStatuses`, applies `useStatusColorOverrides`. Built-in statuses get per-status gradients; custom statuses use `bg-status-category-{active,wip,frozen,done}-gradient` CSS classes per theme |
 | `TypeBadge.vue` | Color-coded type display |
 | `PriorityBadge.vue` | Color-coded priority display |
 | `LabelBadge.vue` | Multi-label tags |
@@ -170,7 +176,7 @@
 
 | File | Key Exports | Purpose |
 |------|-------------|---------|
-| `bd-api.ts` (~995 lines) | `bdList()`, `bdCreate()`, `bdUpdate()`, `bdShow()`, `bdClose()`, `bdDelete()`, `bdPollData()`, `bdCheckChanged()`, `bdSync()`, `bdMigrateToDolt()`, `bdCheckNeedsMigration()`, `trackerSync()`, `trackerDetect()`, `trackerInit()`, `trackerGetConflicts()`, `trackerResolveConflict()`, `trackerDismissConflict()`, `trackerCheckBeadsSource()`, `trackerMigrateFromBeads()`, `getBackendMode()`, `setBackendMode()`, etc. | Tauri invoke bridge — all 75 commands. Tracker types: `TrackerSyncResult`, `ConflictRecord`, `BeadsSourceInfo`, `TrackerMigrationResult`. Falls back to web API in browser mode |
+| `bd-api.ts` (~908 lines) | `bdList()`, `bdCreate()`, `bdUpdate()`, `bdShow()`, `bdClose()`, `bdDelete()`, `bdPollData()`, `bdCheckChanged()`, `bdSync()`, `bdMigrateToDolt()`, `bdCheckNeedsMigration()`, `trackerSync()`, `trackerDetect()`, `trackerInit()`, `trackerGetConflicts()`, `trackerResolveConflict()`, `trackerDismissConflict()`, `trackerCheckBeadsSource()`, `trackerMigrateFromBeads()`, `getBackendMode()`, `setBackendMode()`, etc. | Tauri invoke bridge — all 75 commands. Tracker types: `TrackerSyncResult`, `ConflictRecord`, `BeadsSourceInfo`, `TrackerMigrationResult`. Falls back to web API in browser mode |
 | `probe-adapter.ts` | `probeMetricsToIssues()`, `probeMetricsToPollData()`, `matchProbeProject()` | Probe response → app types adapter. `matchProbeProject()`: pure path matching with `.beads` suffix normalization |
 | `issue-helpers.ts` | `deduplicateIssues()`, `naturalCompare()`, `sortIssues()`, `filterIssues()`, `groupIssues()`, `computeStatsFromIssues()` | Pure functions extracted from useIssues + useDashboard for testability. Sorting, filtering, epic grouping, dashboard KPIs |
 | `favorites-helpers.ts` | `normalizePath()`, `deduplicateFavorites()`, `sortFavorites()`, `isFavorite()`, `createFavoriteEntry()` | Pure functions extracted from useFavorites for testability |
@@ -184,7 +190,8 @@
 
 ```typescript
 type IssueType = 'bug' | 'task' | 'feature' | 'epic' | 'chore'
-type IssueStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred' | 'tombstone' | 'pinned' | 'hooked'
+type IssueStatus = BuiltInStatus | (string & {})  // widened: accepts custom statuses from bd
+// BuiltInStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred' | 'tombstone' | 'pinned' | 'hooked'
 type IssuePriority = 'p0' | 'p1' | 'p2' | 'p3' | 'p4'
 
 interface Issue { id, title, description, type, status, priority, assignee?, labels[],
@@ -215,7 +222,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 
 | File | Purpose |
 |------|---------|
-| `src/lib.rs` (5274 lines) | All Tauri commands, data structures, helpers. Single-file backend |
+| `src/lib.rs` (5207 lines) | All Tauri commands, data structures, helpers. Single-file backend |
 | `src/main.rs` | Entry point — calls `lib::run()` |
 | `src/tracker/` (5114 lines, 12 modules) | Built-in SQLite-native issue tracker engine |
 | `tauri.conf.json` | Window config (1400x900, overlay title bar), bundle, CSP (connect-src includes `http://localhost:*` for probe SSE), dev port 3133 |
@@ -242,7 +249,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 
 **SQLite schema (v4):** `issues`, `comments`, `labels`, `dependencies`, `issues_fts` (FTS5), `conflicts`, `schema_version`
 
-### Tauri Commands (75 total)
+### Tauri Commands (76 total)
 
 #### Issue Operations
 | Command | bd CLI | Special Logic |
@@ -251,6 +258,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `bd_count` | `bd list` (open + closed) | Builds aggregations by type/priority |
 | `bd_ready` | `bd ready` | Fetches ready issues |
 | `bd_status` | `bd status --json` | Raw JSON passthrough |
+| `bd_statuses` | `bd statuses --json` | Returns full list of built-in + custom statuses. Replaces the hard-coded status whitelist in `normalize_issue_status`. Accepts `CwdOptions` |
 | `bd_show` | `bd show <id>` | Returns None if not found |
 | `bd_create` | `bd create "title" [--flags]` | Maps all payload fields to CLI flags |
 | `bd_update` | `bd update <id> [--flags]` | **External ref sentinel:** empty string → `cleared:{id}` for UNIQUE constraint |
