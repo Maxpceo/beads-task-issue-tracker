@@ -8,7 +8,7 @@ function nuxtMetaPlugin(): Plugin {
   return {
     name: 'nuxt-import-meta-client',
     transform(code, id) {
-      if (!id.includes('/app/')) return
+      if (!id.includes('/app/') || id.includes('/node_modules/')) return
       return code
         .replace(/import\.meta\.client/g, 'true')
         .replace(/import\.meta\.server/g, 'false')
@@ -22,7 +22,6 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     include: ['tests/**/*.test.ts'],
-    setupFiles: ['tests/setup.ts'],
   },
   resolve: {
     alias: {
