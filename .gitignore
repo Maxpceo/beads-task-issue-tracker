@@ -48,3 +48,11 @@ coverage
 .serena/
 # bd worktree
 slot-hide/
+
+# BMAD methodology — personal planning tooling, not product code
+_bmad/
+.claude/skills/bmad-*/
+
+# Claude Code local artifacts (personal, not shared)
+.claude/plans/
+.claude/scheduled_tasks.lock
