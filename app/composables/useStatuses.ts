@@ -58,7 +58,7 @@ async function loadForPath(path: string): Promise<void> {
   if (cacheByPath.has(path) || loadingPaths.has(path)) return
   loadingPaths.add(path)
   try {
-    const response = await invoke<BdStatusesResponse>('bd_statuses', { cwd: path })
+    const response = await invoke<BdStatusesResponse>('bd_statuses', { options: { cwd: path } })
     const built = response.built_in_statuses.map((s) => toStatusMeta(s, true))
     const custom = response.custom_statuses.map((s) => toStatusMeta(s, false))
     cacheByPath.set(path, [...built, ...custom])
