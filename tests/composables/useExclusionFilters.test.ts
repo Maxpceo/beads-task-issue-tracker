@@ -51,17 +51,18 @@ describe('useExclusionFilters (integration)', () => {
     localStorage.setItem('beads:path', JSON.stringify(PROJECT_A))
   })
 
-  it('fresh install: module load triggers migration — gt:slot added, per-project flag set', async () => {
-    await importFresh()
+  it('fresh install: module load triggers migration — gt:slot in memory, per-project flag set', async () => {
+    const { useExclusionFilters } = await importFresh()
     await flushPromises()
 
-    const stored = localStorage.getItem(exclusionsKey(PROJECT_A))
-    expect(stored).not.toBeNull()
-    const parsed = JSON.parse(stored!) as { labels: string[] }
-    expect(parsed.labels).toContain('gt:slot')
-
+    // Migration watcher fires immediately — per-project flag must be set in localStorage
     expect(localStorage.getItem(perProjectMigrationKey(PROJECT_A))).toBe('true')
     expect(localStorage.getItem(V2_FLAG)).toBe('true')
+
+    // gt:slot is present in the in-memory ref (useProjectStorage lazy-writes;
+    // the value lives in the reactive ref even before any user interaction persists it)
+    const { exclusions } = useExclusionFilters()
+    expect(exclusions.value.labels).toContain('gt:slot')
   })
 
   it('v1 → v2 upgrade on module load: v1 flag removed, v2 flag set', async () => {
