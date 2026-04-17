@@ -451,7 +451,8 @@ Git Sync (built-in backend):
 | `tests/utils/probe-adapter.test.ts` | 8 | `matchProbeProject` — path matching with `.beads` suffix normalization |
 | `tests/utils/hash.test.ts` | 6 | `hashPath` |
 | `tests/composables/useExclusionFilters.test.ts` | 7 | Fresh install migration, v1→v2 flag upgrade, user-choice respected, no-duplication, project switch via `setPath`, switch-back after user cleared `gt:slot`, `activeCount`/`hasActiveExclusions` reactive state. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test to re-execute the module-level watch |
+| `tests/composables/useFilters.test.ts` | 5 | Fresh install workflow default, reload survival of cleared state, A→B→A round-trip, search/labels/assignee persistence, `hasActiveFilters` reactivity. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test |
 
-**Total: 268 tests** (12 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
+**Total: 273 tests** (13 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
 
 **Rust tests**: Tracker modules contain `#[cfg(test)]` blocks — run via `cargo test` in `src-tauri/`.
