@@ -282,9 +282,9 @@ Note: scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-is
 Chrome DevTools / Playwright **do not work with Tauri's WKWebView on macOS** — Apple does not implement CDP. To let Claude Code drive the running app (DOM, screenshots, clicks, JS exec, native mac mouse/keyboard), the project ships [`tauri-plugin-mcp`](https://github.com/P3GLEG/tauri-plugin-mcp) wired into **debug builds only** (see `src-tauri/Cargo.toml` `[target.'cfg(debug_assertions)'.dependencies]` and `src-tauri/src/lib.rs` `setup()`). The plugin opens an IPC channel inside `pnpm tauri:dev` builds and is excluded from release binaries automatically.
 
 To use it locally:
-1. Install the MCP-server bridge once: `npm i -g tauri-plugin-mcp-server` (the npm package is `tauri-plugin-mcp-server` but the binary it installs is `tauri-mcp-server` — this is the name to put in `.mcp.json`)
-2. Start the app: `pnpm tauri:dev` (the plugin auto-starts inside the dev binary)
-3. Make sure `.mcp.json` exposes the MCP server (already wired — `command: "tauri-mcp-server"`)
+1. Install the MCP-server bridge once: `npm i -g tauri-plugin-mcp-server`. Note: this npm package's `bin` is shipped as a JS file with **no shebang**, so we cannot exec it directly — `.mcp.json` invokes it via `node` with the full `index.js` path (already wired)
+2. Start the app: `pnpm tauri:dev` (the plugin auto-starts inside the dev binary; the Rust side is configured to bind to literal `/tmp/tauri-mcp.sock` because the npm bridge hard-codes that path and ignores `$TMPDIR`)
+3. `.mcp.json` exposes the MCP server (already wired — `command: "node"`, `args: ["/opt/homebrew/lib/node_modules/tauri-plugin-mcp-server/build/index.js"]`). Verify with `claude mcp list` — expect `tauri: ✓ Connected`. If you see `Failed to connect`, check that `/tmp/tauri-mcp.sock` exists (the dev binary creates it at startup)
 4. Ask Claude things like: "Take a screenshot of the app", "Click the Type filter and tell me the options", "Read the contents of localStorage key `beads:proj:*`"
 
 Verification examples for upcoming features should prefer this over asking the human to look at the screen.
