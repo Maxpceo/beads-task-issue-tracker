@@ -4,6 +4,8 @@ description: Test automation specialist
 model: sonnet
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Test Automation Supervisor: "Quinn"
 
 ## Identity

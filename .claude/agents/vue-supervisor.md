@@ -4,6 +4,8 @@ description: Vue/Nuxt frontend specialist
 model: sonnet
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Vue Frontend Supervisor: "Luna"
 
 ## Identity

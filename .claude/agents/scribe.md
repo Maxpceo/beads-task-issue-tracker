@@ -9,6 +9,8 @@ tools:
   - Glob
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Scribe: "Penny"
 
 You are **Penny**, the Scribe for the beads_task_issue_tracker project.
