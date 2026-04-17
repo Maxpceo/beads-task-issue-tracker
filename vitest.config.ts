@@ -6,10 +6,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     include: ['tests/**/*.test.ts'],
-  },
-  define: {
-    'import.meta.client': 'true',
-    'import.meta.server': 'false',
+    define: {
+      'import.meta.client': 'true',
+      'import.meta.server': 'false',
+    },
   },
   resolve: {
     alias: {
