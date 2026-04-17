@@ -277,6 +277,18 @@ Always kill zombies before starting: `pkill -f "$(pwd)/src-tauri/target/debug/be
 
 Note: scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-issue-tracker"` also kills the installed `/Applications/Beads Task-Issue Tracker.app` because both binaries share the same executable name (`beads-issue-tracker` from the Cargo crate).
 
+### AI-Driven UI Testing (Tauri MCP)
+
+Chrome DevTools / Playwright **do not work with Tauri's WKWebView on macOS** — Apple does not implement CDP. To let Claude Code drive the running app (DOM, screenshots, clicks, JS exec, native mac mouse/keyboard), the project ships [`tauri-plugin-mcp`](https://github.com/P3GLEG/tauri-plugin-mcp) wired into **debug builds only** (see `src-tauri/Cargo.toml` `[target.'cfg(debug_assertions)'.dependencies]` and `src-tauri/src/lib.rs` `setup()`). The plugin opens an IPC channel inside `pnpm tauri:dev` builds and is excluded from release binaries automatically.
+
+To use it locally:
+1. Install the MCP-server bridge once: `npm i -g tauri-plugin-mcp-server`
+2. Start the app: `pnpm tauri:dev` (the plugin auto-starts inside the dev binary)
+3. Make sure `.claude/settings.json` exposes the MCP server (already wired)
+4. Ask Claude things like: "Take a screenshot of the app", "Click the Type filter and tell me the options", "Read the contents of localStorage key `beads:proj:*`"
+
+Verification examples for upcoming features should prefer this over asking the human to look at the screen.
+
 ### Model Selection
 
 Pick the least powerful model that can do the job — saves time and cost. When dispatching via `Agent()`, pass `model="sonnet"` or `model="opus"` explicitly.
