@@ -1166,7 +1166,6 @@ fn ensure_beads_permissions(beads_dir: &std::path::Path) {
 
         let current_mode = meta.permissions().mode() & 0o777;
         if current_mode == 0o700 {
-            // Already correct — skip the syscall.
             return;
         }
 
@@ -1203,9 +1202,7 @@ fn execute_bd(command: &str, args: &[String], cwd: Option<&str>) -> Result<Strin
                 .unwrap_or_else(|_| ".".to_string())
         });
 
-    // Ensure .beads/ has 0700 permissions so bd 1.0.0+ doesn't print permission warnings to stderr.
-    // This is idempotent: if permissions are already correct the function returns immediately.
-    ensure_beads_permissions(&std::path::Path::new(&working_dir).join(".beads"));
+    ensure_beads_permissions(&PathBuf::from(&working_dir).join(".beads"));
 
     // Split command by spaces to handle subcommands like "comments add"
     let mut full_args: Vec<&str> = command.split_whitespace().collect();
