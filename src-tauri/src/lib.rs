@@ -1142,6 +1142,56 @@ fn reset_bd_version_cache() {
     *cached = None;
 }
 
+/// Ensure `.beads/` directory has 0700 permissions (Unix-only).
+///
+/// bd 1.0.0+ enforces 0700 permissions on the `.beads/` directory and prints a warning to stderr
+/// before every command if permissions are not 0700. This function silently fixes the permissions
+/// so bd stops warning. Errors are logged as WARN but never crash or block the caller.
+///
+/// Windows: no-op (POSIX modes don't apply to Windows ACL model).
+fn ensure_beads_permissions(beads_dir: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Skip symlinks — chmod on a symlink changes the link target, not the link itself.
+        // Use metadata() (follows symlinks) to check if it is a real directory we own.
+        let meta = match std::fs::metadata(beads_dir) {
+            Ok(m) => m,
+            Err(e) => {
+                log_warn!("[permissions] Cannot stat {:?}: {}", beads_dir, e);
+                return;
+            }
+        };
+
+        let current_mode = meta.permissions().mode() & 0o777;
+        if current_mode == 0o700 {
+            return;
+        }
+
+        let new_perms = std::fs::Permissions::from_mode(0o700);
+        match std::fs::set_permissions(beads_dir, new_perms) {
+            Ok(()) => {
+                log_info!(
+                    "[permissions] Set 0700 on {:?} (was {:04o})",
+                    beads_dir,
+                    current_mode
+                );
+            }
+            Err(e) => {
+                log_warn!(
+                    "[permissions] Cannot set 0700 on {:?}: {} — bd warnings may appear in logs",
+                    beads_dir,
+                    e
+                );
+            }
+        }
+    }
+    // Windows: no-op — POSIX permission bits are not applicable.
+    #[cfg(not(unix))]
+    let _ = beads_dir;
+}
+
 fn execute_bd(command: &str, args: &[String], cwd: Option<&str>) -> Result<String, String> {
     let working_dir = cwd
         .map(String::from)
@@ -1151,6 +1201,8 @@ fn execute_bd(command: &str, args: &[String], cwd: Option<&str>) -> Result<Strin
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| ".".to_string())
         });
+
+    ensure_beads_permissions(&PathBuf::from(&working_dir).join(".beads"));
 
     // Split command by spaces to handle subcommands like "comments add"
     let mut full_args: Vec<&str> = command.split_whitespace().collect();
