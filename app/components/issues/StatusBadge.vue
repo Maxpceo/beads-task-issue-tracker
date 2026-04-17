@@ -32,7 +32,7 @@ const config = computed(() => {
     const background = override.to
       ? `linear-gradient(135deg, ${override.from}, ${override.to})`
       : override.from
-    return { label, icon, class: 'text-white', style: { background } }
+    return { label, icon, class: 'badge-gradient text-white', style: { background } }
   }
 
   // Priority 2: built-in or category class (existing logic)

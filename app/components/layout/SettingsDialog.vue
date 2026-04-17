@@ -10,6 +10,7 @@ import { Label } from '~/components/ui/label'
 import { Button } from '~/components/ui/button'
 import { getCliBinaryPath, setCliBinaryPath, checkExternalHealth } from '~/utils/bd-api'
 import type { ThemeDefinition } from '~/composables/useTheme'
+import type { IssueStatus } from '~/types/issue'
 import { useStatuses } from '~/composables/useStatuses'
 import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
 import StatusBadge from '~/components/issues/StatusBadge.vue'
@@ -317,7 +318,7 @@ const groupedStatuses = computed(() => {
                 >
                   <!-- Live preview badge -->
                   <div class="shrink-0 w-24">
-                    <StatusBadge :status="status.name as any" size="sm" />
+                    <StatusBadge :status="status.name as IssueStatus" size="sm" />
                   </div>
 
                   <!-- Color pickers -->
