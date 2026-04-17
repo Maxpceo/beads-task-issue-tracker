@@ -1,5 +1,8 @@
+import { watch } from 'vue'
 import type { IssueStatus, IssueType, IssuePriority } from '~/types/issue'
 import { useProjectStorage } from '~/composables/useProjectStorage'
+import { useBeadsPath } from '~/composables/useBeadsPath'
+import { hashPath } from '~/utils/hash'
 
 export interface ExclusionFilters {
   status: IssueStatus[]
@@ -23,24 +26,49 @@ const defaultExclusions: ExclusionFilters = {
 
 const validStatuses: IssueStatus[] = ['open', 'in_progress', 'blocked', 'closed', 'deferred', 'pinned', 'hooked']
 
-// One-time migration for existing users whose exclusionFilters were saved
-// before SYSTEM_LABELS were introduced.
-const SYSTEM_LABELS_MIGRATION_FLAG = 'beads:system-labels-exclusion-migrated'
+// v1 — original global flag (single project only). Now retired.
+const SYSTEM_LABELS_MIGRATION_V1_FLAG = 'beads:system-labels-exclusion-migrated'
+// v2 — marker that v1 has been cleaned up.
+const SYSTEM_LABELS_MIGRATION_V2_FLAG = 'beads:system-labels-migration-v2'
+
+/** Returns the per-project migration flag key for a given project path. */
+export function perProjectMigrationKey(path: string): string {
+  return `beads:proj:${hashPath(path)}:system-labels-migrated`
+}
+
+/**
+ * Removes the legacy v1 global flag and records the v2 upgrade marker.
+ * Idempotent — safe to call multiple times.
+ */
+export function upgradeV1FlagIfNeeded(): void {
+  if (!import.meta.client) return
+  if (localStorage.getItem(SYSTEM_LABELS_MIGRATION_V2_FLAG)) return
+  localStorage.removeItem(SYSTEM_LABELS_MIGRATION_V1_FLAG)
+  localStorage.setItem(SYSTEM_LABELS_MIGRATION_V2_FLAG, 'true')
+}
+
+// Module-level watcher — fires for every project switch (and on first load).
+// Ensures each project gets the gt:slot migration applied exactly once,
+// while respecting any subsequent user edits (per-project flag guards re-run).
+if (import.meta.client) {
+  upgradeV1FlagIfNeeded()
+  const { beadsPath } = useBeadsPath()
+  const exclusions = useProjectStorage<ExclusionFilters>('exclusionFilters', defaultExclusions)
+  watch(beadsPath, (path) => {
+    const key = perProjectMigrationKey(path)
+    if (localStorage.getItem(key)) return
+    for (const label of SYSTEM_LABELS) {
+      if (!exclusions.value.labels.includes(label)) exclusions.value.labels.push(label)
+    }
+    localStorage.setItem(key, 'true')
+  }, { immediate: true })
+}
 
 export function useExclusionFilters() {
   const exclusions = useProjectStorage<ExclusionFilters>('exclusionFilters', defaultExclusions)
 
   if (import.meta.client) {
     exclusions.value.status = exclusions.value.status.filter(status => validStatuses.includes(status))
-
-    if (!localStorage.getItem(SYSTEM_LABELS_MIGRATION_FLAG)) {
-      for (const label of SYSTEM_LABELS) {
-        if (!exclusions.value.labels.includes(label)) {
-          exclusions.value.labels.push(label)
-        }
-      }
-      localStorage.setItem(SYSTEM_LABELS_MIGRATION_FLAG, 'true')
-    }
   }
 
   const toggleStatus = (status: IssueStatus) => {
