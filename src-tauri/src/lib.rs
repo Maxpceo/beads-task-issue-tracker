@@ -5027,6 +5027,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // MCP server for AI-driven UI testing. Debug builds only — opens an
+            // IPC channel so Claude Code can drive the webview (DOM, screenshots,
+            // clicks, JS exec). See CLAUDE.md → "AI-Driven UI Testing".
+            // https://github.com/P3GLEG/tauri-plugin-mcp
+            #[cfg(debug_assertions)]
+            app.handle().plugin(tauri_plugin_mcp::init())?;
+
             // Enable logging in both debug and release builds
             let log_level = if cfg!(debug_assertions) {
                 log::LevelFilter::Debug

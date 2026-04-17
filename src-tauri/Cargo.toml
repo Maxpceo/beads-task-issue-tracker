@@ -28,3 +28,9 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-feature
 notify = "7.0"
 notify-debouncer-mini = "0.5"
 dotenvy = "0.15"
+
+# AI-driven UI testing — debug builds only. Lets Claude Code drive the webview
+# (DOM, screenshots, clicks, JS exec) over an IPC channel. See CLAUDE.md.
+# https://github.com/P3GLEG/tauri-plugin-mcp
+[target.'cfg(debug_assertions)'.dependencies]
+tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp" }
