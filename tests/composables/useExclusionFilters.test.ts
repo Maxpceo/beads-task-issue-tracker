@@ -93,7 +93,7 @@ describe('per-project migration — runMigration', () => {
     store = {}
   })
 
-  it('test 1 — fresh install: adds gt:slot and sets per-project flag', () => {
+  it('fresh install: adds gt:slot and sets per-project flag', () => {
     const exclusions: ExclusionFilters = { labels: [] }
     const ran = runMigration(PATH_A, store, exclusions)
     expect(ran).toBe(true)
@@ -101,13 +101,13 @@ describe('per-project migration — runMigration', () => {
     expect(store[perProjectMigrationKey(PATH_A)]).toBe('true')
   })
 
-  it('test 2 — no duplication: gt:slot already present is not added again', () => {
+  it('no duplication: gt:slot already present is not added again', () => {
     const exclusions: ExclusionFilters = { labels: ['gt:slot'] }
     runMigration(PATH_A, store, exclusions)
     expect(exclusions.labels.filter(l => l === 'gt:slot').length).toBe(1)
   })
 
-  it('test 5 — user choice respected: per-project flag set + labels=[] → gt:slot NOT re-added', () => {
+  it('user choice respected: per-project flag set + labels=[] → gt:slot NOT re-added', () => {
     // Simulate: migration already ran, user later removed gt:slot
     store[perProjectMigrationKey(PATH_A)] = 'true'
     const exclusions: ExclusionFilters = { labels: [] }
@@ -116,7 +116,7 @@ describe('per-project migration — runMigration', () => {
     expect(exclusions.labels).not.toContain('gt:slot')
   })
 
-  it('test 6 — project switch: new project without per-project flag triggers migration', () => {
+  it('project switch: new project without per-project flag triggers migration', () => {
     // PATH_A already migrated
     store[perProjectMigrationKey(PATH_A)] = 'true'
     const exclusionsA: ExclusionFilters = { labels: ['gt:slot'] }
@@ -133,7 +133,7 @@ describe('per-project migration — runMigration', () => {
     expect(exclusionsA.labels).toContain('gt:slot')
   })
 
-  it('test 7 — switch back: returning to project where user cleared gt:slot keeps it cleared', () => {
+  it('switch back: returning to project where user cleared gt:slot keeps it cleared', () => {
     // User previously ran migration on PATH_A, then manually removed gt:slot
     store[perProjectMigrationKey(PATH_A)] = 'true'
     const exclusions: ExclusionFilters = { labels: [] }
@@ -146,7 +146,7 @@ describe('per-project migration — runMigration', () => {
 })
 
 describe('v1 to v2 upgrade combined with per-project migration', () => {
-  it('test 3 — v1 upgrade: v1 flag removed, v2 set, per-project migration then runs', () => {
+  it('v1 upgrade: v1 flag removed, v2 set, per-project migration then runs', () => {
     const store: Record<string, string> = { [V1_FLAG]: 'true' }
     const path = '/Users/max/project-a'
     const exclusions: ExclusionFilters = { labels: [] }

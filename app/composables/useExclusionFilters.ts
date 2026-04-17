@@ -32,7 +32,7 @@ const SYSTEM_LABELS_MIGRATION_V1_FLAG = 'beads:system-labels-exclusion-migrated'
 const SYSTEM_LABELS_MIGRATION_V2_FLAG = 'beads:system-labels-migration-v2'
 
 /** Returns the per-project migration flag key for a given project path. */
-export function perProjectMigrationKey(path: string): string {
+function perProjectMigrationKey(path: string): string {
   return `beads:proj:${hashPath(path)}:system-labels-migrated`
 }
 
@@ -40,7 +40,7 @@ export function perProjectMigrationKey(path: string): string {
  * Removes the legacy v1 global flag and records the v2 upgrade marker.
  * Idempotent — safe to call multiple times.
  */
-export function upgradeV1FlagIfNeeded(): void {
+function upgradeV1FlagIfNeeded(): void {
   if (!import.meta.client) return
   if (localStorage.getItem(SYSTEM_LABELS_MIGRATION_V2_FLAG)) return
   localStorage.removeItem(SYSTEM_LABELS_MIGRATION_V1_FLAG)
