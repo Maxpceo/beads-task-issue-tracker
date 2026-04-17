@@ -32,8 +32,9 @@ if [[ "$CWD" == *"/.worktrees/"* ]] || [[ "$CWD" == *"\.worktrees\"* ]]; then
   exit 0
 fi
 
-# Check current branch (if we're in a git repo outside worktrees)
-CURRENT_BRANCH=$(git branch --show-current 2>/dev/null)
+# Check current branch by file path, not cwd (handles git worktrees anywhere)
+FILE_DIR=$(dirname "$FILE_PATH")
+CURRENT_BRANCH=$(git -C "$FILE_DIR" branch --show-current 2>/dev/null)
 
 # Block if on main or master (and not in a worktree)
 if [[ "$CURRENT_BRANCH" == "main" ]] || [[ "$CURRENT_BRANCH" == "master" ]]; then

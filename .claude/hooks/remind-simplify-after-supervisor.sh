@@ -27,7 +27,7 @@ Supervisor завершил работу. ПЕРЕД code review ты ОБЯЗА
 
 1. Dispatch code-simplifier:
 Task(
-  subagent_type="code-simplifier",
+  subagent_type="code-simplifier:code-simplifier",
   prompt="BEAD_ID: {BEAD_ID}\nBRANCH: {branch}\nSTART_COMMIT: {hash}\n\nSimplify git diff {hash}..HEAD"
 )
 
