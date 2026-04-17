@@ -52,7 +52,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Gallery Navigation**: Browse multiple attached files with arrow keys or buttons
 
 ### Filtering & Display
-- **Extended Status Support**: All active Beads statuses handled — `deferred`, `pinned`, and `hooked`
+- **Dynamic Status Support**: All statuses from your `bd` installation are automatically loaded — including the bd 1.0.x review chain (`inreview`, `simplified`, `reviewed`, `accepted`) and any custom statuses you define. No hard-coded whitelist; the status filter dropdown always reflects your actual database
 - **Advanced Filters**: Multi-select filters by type, status, priority, labels, and assignee
 - **Exclusion Filters**: Hide specific issues by criteria (inverse filtering)
 - **Search**: Find issues by title, ID, or description
@@ -69,6 +69,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 
 ### Settings & Tools
 - **Dual CLI support**: Auto-detects [`br`](https://github.com/Dicklesworthstone/beads_rust) (Rust, recommended) and [`bd`](https://github.com/steveyegge/beads) (Go) — switch between them via Settings (`Cmd/Ctrl+,`), feature profiles adapt automatically
+- **Status Color Overrides**: Assign a custom solid color or two-stop gradient to any status badge in Settings. Changes apply instantly across the entire app and are persisted per project. A Reset button returns any badge to its default theme color
 - **Theme System**: 4 themes — Classic Light, Classic Dark, Dark Flat, and Neon — with per-theme badge styling, glow effects, and one-click cycling via the header icon
 - **Debug Panel**: Live log viewer with auto-refresh, accessible via `Cmd/Ctrl+Shift+L`
 - **Database Repair**: Automatic detection and repair of schema migration issues
@@ -116,11 +117,13 @@ This means the attachment storage lives inside the `.beads` directory and gets v
 
 The app **auto-detects** which CLI is installed. You can switch between `br` and `bd` at any time via **Settings** (`Cmd/Ctrl+,`).
 
-### Also supported: `bd` 0.49.x (Go)
+### Also supported: `bd` (Go)
 
-[**bd**](https://github.com/steveyegge/beads) (`bd`) version 0.49.x remains fully supported as a fallback. This is the last stable Go version with embedded Dolt and native file watcher support.
+[**bd**](https://github.com/steveyegge/beads) (`bd`) is fully supported across versions. The app auto-detects the installed bd version and adapts its behavior accordingly:
 
-> **Do not** upgrade to bd 0.50-0.56+ which switched to server mode, introducing regressions for standalone desktop use. See [beads#2050](https://github.com/steveyegge/beads/issues/2050) for details.
+- **bd 0.57+**: self-managing Dolt server — starts automatically on first command, no manual setup needed
+- **bd 1.0.x**: all review-chain statuses (`inreview`, `simplified`, `reviewed`, `accepted`) and custom statuses are now rendered correctly
+- **bd 0.49.x**: the last stable Go version with embedded Dolt, still supported as a fallback
 
 ```bash
 # Install bd (check the repo for the latest method)

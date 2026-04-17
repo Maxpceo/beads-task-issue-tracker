@@ -312,6 +312,27 @@
   box-shadow: 0 0 8px var(--badge-status-hooked-glow), 0 0 2px var(--badge-status-hooked-glow);
 }
 
+/* Category-based gradients for custom statuses */
+.bg-status-category-active-gradient {
+  background: linear-gradient(135deg, var(--badge-status-open), var(--badge-status-open-deep));
+  box-shadow: 0 0 8px var(--badge-status-open-glow), 0 0 2px var(--badge-status-open-glow);
+}
+
+.bg-status-category-wip-gradient {
+  background: linear-gradient(135deg, var(--badge-status-in-progress), var(--badge-status-in-progress-deep));
+  box-shadow: 0 0 8px var(--badge-status-in-progress-glow), 0 0 2px var(--badge-status-in-progress-glow);
+}
+
+.bg-status-category-frozen-gradient {
+  background: linear-gradient(135deg, var(--badge-status-deferred), var(--badge-status-deferred-deep));
+  box-shadow: 0 0 8px var(--badge-status-deferred-glow), 0 0 2px var(--badge-status-deferred-glow);
+}
+
+.bg-status-category-done-gradient {
+  background: linear-gradient(135deg, var(--badge-status-closed), var(--badge-status-closed-deep));
+  box-shadow: 0 0 8px var(--badge-status-closed-glow), 0 0 2px var(--badge-status-closed-glow);
+}
+
 /* Priority gradients */
 .bg-priority-p0-gradient {
   background: linear-gradient(135deg, var(--badge-priority-p0), var(--badge-priority-p0-deep));
@@ -447,6 +468,10 @@ body {
 [data-theme="light"] .bg-status-tombstone-gradient { background: var(--badge-status-tombstone); }
 [data-theme="light"] .bg-status-pinned-gradient { background: var(--badge-status-pinned); }
 [data-theme="light"] .bg-status-hooked-gradient { background: var(--badge-status-hooked); }
+[data-theme="light"] .bg-status-category-active-gradient { background: var(--badge-status-open); }
+[data-theme="light"] .bg-status-category-wip-gradient { background: var(--badge-status-in-progress); }
+[data-theme="light"] .bg-status-category-frozen-gradient { background: var(--badge-status-deferred); }
+[data-theme="light"] .bg-status-category-done-gradient { background: var(--badge-status-closed); }
 [data-theme="light"] .bg-type-bug-gradient { background: var(--badge-type-bug); }
 [data-theme="light"] .bg-type-task-gradient { background: var(--badge-type-task); }
 [data-theme="light"] .bg-type-feature-gradient { background: var(--badge-type-feature); }
@@ -467,6 +492,10 @@ body {
 [data-theme="flat"] .bg-status-tombstone-gradient { background: var(--badge-status-tombstone); }
 [data-theme="flat"] .bg-status-pinned-gradient { background: var(--badge-status-pinned); }
 [data-theme="flat"] .bg-status-hooked-gradient { background: var(--badge-status-hooked); }
+[data-theme="flat"] .bg-status-category-active-gradient { background: var(--badge-status-open); }
+[data-theme="flat"] .bg-status-category-wip-gradient { background: var(--badge-status-in-progress); }
+[data-theme="flat"] .bg-status-category-frozen-gradient { background: var(--badge-status-deferred); }
+[data-theme="flat"] .bg-status-category-done-gradient { background: var(--badge-status-closed); }
 [data-theme="flat"] .bg-type-bug-gradient { background: var(--badge-type-bug); }
 [data-theme="flat"] .bg-type-task-gradient { background: var(--badge-type-task); }
 [data-theme="flat"] .bg-type-feature-gradient { background: var(--badge-type-feature); }
@@ -548,6 +577,32 @@ body {
   color: #00e5ff !important;
   border-color: rgba(0, 229, 255, 0.5) !important;
   box-shadow: inset 0 0 12px rgba(0, 229, 255, 0.1), 0 0 8px rgba(0, 229, 255, 0.15);
+}
+
+/* Category-based neon badges for custom statuses */
+[data-theme="neon"] .bg-status-category-active-gradient {
+  background: rgba(0, 212, 255, 0.12) !important;
+  color: #00d4ff !important;
+  border-color: rgba(0, 212, 255, 0.5) !important;
+  box-shadow: inset 0 0 12px rgba(0, 212, 255, 0.1), 0 0 8px rgba(0, 212, 255, 0.15);
+}
+[data-theme="neon"] .bg-status-category-wip-gradient {
+  background: rgba(0, 255, 135, 0.12) !important;
+  color: #00ff87 !important;
+  border-color: rgba(0, 255, 135, 0.5) !important;
+  box-shadow: inset 0 0 12px rgba(0, 255, 135, 0.1), 0 0 8px rgba(0, 255, 135, 0.15);
+}
+[data-theme="neon"] .bg-status-category-frozen-gradient {
+  background: rgba(255, 170, 0, 0.12) !important;
+  color: #ffaa00 !important;
+  border-color: rgba(255, 170, 0, 0.5) !important;
+  box-shadow: inset 0 0 12px rgba(255, 170, 0, 0.1), 0 0 8px rgba(255, 170, 0, 0.15);
+}
+[data-theme="neon"] .bg-status-category-done-gradient {
+  background: rgba(136, 146, 160, 0.1) !important;
+  color: #8892a0 !important;
+  border-color: rgba(136, 146, 160, 0.35) !important;
+  box-shadow: none;
 }
 
 /* Type badges — neon style */

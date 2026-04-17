@@ -485,6 +485,26 @@ pub struct FsListResult {
 }
 
 // ============================================================================
+// bd_statuses response structs
+// ============================================================================
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BdStatus {
+    pub name: String,
+    pub category: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BdStatusesResponse {
+    pub built_in_statuses: Vec<BdStatus>,
+    pub custom_statuses: Vec<BdStatus>,
+}
+
+// ============================================================================
 // Options structs for commands
 // ============================================================================
 
@@ -585,11 +605,10 @@ fn normalize_issue_type(issue_type: &str) -> String {
 }
 
 fn normalize_issue_status(status: &str) -> String {
-    let valid_statuses = ["open", "in_progress", "blocked", "closed", "deferred", "pinned", "hooked"];
-    if valid_statuses.contains(&status) {
-        status.to_string()
-    } else {
+    if status.is_empty() {
         "open".to_string()
+    } else {
+        status.to_string()
     }
 }
 
@@ -2735,6 +2754,15 @@ async fn bd_status(options: CwdOptions) -> Result<serde_json::Value, String> {
 
     serde_json::from_str(&output)
         .map_err(|e| format!("Failed to parse status: {}", e))
+}
+
+#[tauri::command]
+async fn bd_statuses(options: CwdOptions) -> Result<BdStatusesResponse, String> {
+    log_info!("[bd_statuses] Called with cwd: {:?}", options.cwd);
+    let output = execute_bd("statuses", &[], options.cwd.as_deref())?;
+
+    serde_json::from_str(&output)
+        .map_err(|e| format!("Failed to parse statuses: {}", e))
 }
 
 #[tauri::command]
@@ -5119,6 +5147,7 @@ pub fn run() {
             bd_count,
             bd_ready,
             bd_status,
+            bd_statuses,
             bd_show,
             bd_create,
             get_logging_enabled,

@@ -6,6 +6,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '~/components/ui/tooltip'
+import { useStatuses } from '~/composables/useStatuses'
+import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
 
 const props = defineProps<{
   status: IssueStatus
@@ -14,37 +16,53 @@ const props = defineProps<{
 }>()
 
 const { showBadgeIcons } = useTheme()
+const { getMeta } = useStatuses()
+const { getOverride } = useStatusColorOverrides()
 
-const statusConfig: Record<IssueStatus, { label: string; class: string }> = {
-  open: { label: 'OPEN', class: 'badge-gradient bg-status-open-gradient text-white' },
-  in_progress: { label: 'IN PROGRESS', class: 'badge-gradient bg-status-in-progress-gradient text-white' },
-  blocked: { label: 'BLOCKED', class: 'badge-gradient bg-status-blocked-gradient text-white' },
-  closed: { label: 'CLOSED', class: 'badge-gradient bg-status-closed-gradient text-white' },
-  deferred: { label: 'DEFERRED', class: 'badge-gradient bg-status-deferred-gradient text-white' },
-  pinned: { label: 'PINNED', class: 'badge-gradient bg-status-pinned-gradient text-white' },
-  hooked: { label: 'HOOKED', class: 'badge-gradient bg-status-hooked-gradient text-white' },
-}
+const config = computed(() => {
+  const meta = getMeta(props.status)
+  const label = meta
+    ? meta.label
+    : props.status.toUpperCase().replace(/_/g, ' ')
+  const icon = meta?.icon
 
-// SVG icon paths for each status (12x12 viewBox)
-const statusIcons: Partial<Record<IssueStatus, string>> = {
-  open: 'M6 1a5 5 0 1 0 0 10A5 5 0 0 0 6 1zM2 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0z',
-  in_progress: 'M6 1a5 5 0 1 0 0 10A5 5 0 0 0 6 1zM2 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0zM5 4v3l2.5 1.5',
-  blocked: 'M6 1a5 5 0 1 0 0 10A5 5 0 0 0 6 1zM2 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0zM4 4l4 4M8 4l-4 4',
-  closed: 'M6 1a5 5 0 1 0 0 10A5 5 0 0 0 6 1zM2 6a4 4 0 1 1 8 0 4 4 0 0 1-8 0zM4 6l1.5 1.5L8 4.5',
-}
+  // Priority 1: user color override — emit inline style, no gradient class
+  const override = getOverride(props.status)
+  if (override) {
+    const background = override.to
+      ? `linear-gradient(135deg, ${override.from}, ${override.to})`
+      : override.from
+    return { label, icon, class: 'badge-gradient text-white', style: { background } }
+  }
 
-const config = computed(() => statusConfig[props.status] || statusConfig.open)
+  // Priority 2: built-in or category class (existing logic)
+  if (!meta) {
+    return {
+      label,
+      icon,
+      class: 'badge-gradient bg-status-category-active-gradient text-white',
+      style: undefined,
+    }
+  }
+  const cls = meta.isBuiltIn
+    ? `badge-gradient bg-status-${meta.name.replace(/_/g, '-')}-gradient text-white`
+    : `badge-gradient bg-status-category-${meta.category}-gradient text-white`
+  return { label, icon, class: cls, style: undefined }
+})
+
 const showBlockedTooltip = computed(() => props.blockedBy?.length && props.status === 'blocked')
 </script>
 
 <template>
   <Tooltip v-if="showBlockedTooltip">
     <TooltipTrigger as-child>
-      <Badge :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary">
-        <span v-if="showBadgeIcons && statusIcons[status]" class="inline-flex items-center mr-1">
-          <svg class="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-            <path :d="statusIcons[status]" />
-          </svg>
+      <Badge
+        :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']"
+        :style="config.style"
+        variant="secondary"
+      >
+        <span v-if="showBadgeIcons && config.icon" class="inline-flex items-center mr-1" aria-hidden="true">
+          {{ config.icon }}
         </span>
         {{ config.label }}
       </Badge>
@@ -53,11 +71,14 @@ const showBlockedTooltip = computed(() => props.blockedBy?.length && props.statu
       <p class="text-xs">Blocked by {{ blockedBy!.join(', ') }}</p>
     </TooltipContent>
   </Tooltip>
-  <Badge v-else :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary">
-    <span v-if="showBadgeIcons && statusIcons[status]" class="inline-flex items-center mr-1">
-      <svg class="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-        <path :d="statusIcons[status]" />
-      </svg>
+  <Badge
+    v-else
+    :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']"
+    :style="config.style"
+    variant="secondary"
+  >
+    <span v-if="showBadgeIcons && config.icon" class="inline-flex items-center mr-1" aria-hidden="true">
+      {{ config.icon }}
     </span>
     {{ config.label }}
   </Badge>

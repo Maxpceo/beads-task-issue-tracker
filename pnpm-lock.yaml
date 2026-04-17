@@ -87,6 +87,9 @@ importers:
       tailwindcss:
         specifier: ^4.1.18
         version: 4.1.18
+      tauri-plugin-mcp:
+        specifier: 0.1.0
+        version: 0.1.0
       terser:
         specifier: ^5.46.0
         version: 5.46.0
@@ -3581,6 +3584,9 @@ packages:
   tar@7.5.6:
     resolution: {integrity: sha512-xqUeu2JAIJpXyvskvU3uvQW8PAmHrtXp2KDuMJwQqW8Sqq0CaZBAQ+dKS3RBXVhU4wC5NjAdKrmh84241gO9cA==}
     engines: {node: '>=18'}
+
+  tauri-plugin-mcp@0.1.0:
+    resolution: {integrity: sha512-deml377Ax032+AabqGc5wkhJygn6XtOggqTWPVNIQ8DUksFRdy2cvX1xZWF7xLG3dO0QUBt/P7CRyJ3IRNV+0w==}
 
   terser@5.46.0:
     resolution: {integrity: sha512-jTwoImyr/QbOWFFso3YoU3ik0jBBDJ6JTOQiy/J2YxVJdZCc+5u7skhNwiOR3FQIygFqVUPHl7qbbxtjW2K3Qg==}
@@ -7784,6 +7790,10 @@ snapshots:
       minipass: 7.1.2
       minizlib: 3.1.0
       yallist: 5.0.0
+
+  tauri-plugin-mcp@0.1.0:
+    dependencies:
+      '@tauri-apps/api': 2.10.1
 
   terser@5.46.0:
     dependencies:

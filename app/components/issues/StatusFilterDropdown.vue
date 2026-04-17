@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 import StatusBadge from '~/components/issues/StatusBadge.vue'
+import { useStatuses } from '~/composables/useStatuses'
 
 const props = defineProps<{
   selectedStatuses: IssueStatus[]
@@ -24,15 +25,7 @@ defineEmits<{
   'update:open': [value: boolean]
 }>()
 
-const statusOptions: { value: IssueStatus; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'blocked', label: 'Blocked' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'deferred', label: 'Deferred' },
-  { value: 'pinned', label: 'Pinned' },
-  { value: 'hooked', label: 'Hooked' },
-]
+const { statuses } = useStatuses()
 
 const isSelected = (status: IssueStatus) => props.selectedStatuses.includes(status)
 </script>
@@ -49,6 +42,7 @@ const isSelected = (status: IssueStatus) => props.selectedStatuses.includes(stat
               fill="none"
               stroke="currentColor"
               stroke-width="2"
+              aria-hidden="true"
             >
               <circle cx="12" cy="12" r="10" />
               <polyline points="12 6 12 12 16 14" />
@@ -65,15 +59,15 @@ const isSelected = (status: IssueStatus) => props.selectedStatuses.includes(stat
       </TooltipTrigger>
       <TooltipContent>Filter by status</TooltipContent>
       <DropdownMenuContent align="start" class="w-40">
-      <DropdownMenuCheckboxItem
-        v-for="opt in statusOptions"
-        :key="opt.value"
-        :model-value="isSelected(opt.value)"
-        class="text-xs cursor-pointer"
-        @select.prevent="$emit('toggle', opt.value)"
-      >
-        <StatusBadge :status="opt.value" size="sm" />
-      </DropdownMenuCheckboxItem>
+        <DropdownMenuCheckboxItem
+          v-for="s in statuses"
+          :key="s.name"
+          :model-value="isSelected(s.name)"
+          class="text-xs cursor-pointer"
+          @select.prevent="$emit('toggle', s.name)"
+        >
+          <StatusBadge :status="s.name" size="sm" />
+        </DropdownMenuCheckboxItem>
       </DropdownMenuContent>
     </DropdownMenu>
   </Tooltip>
