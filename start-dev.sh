@@ -71,16 +71,21 @@ fi
 # Проверка: порты 3000 и 3133 должны быть свободны. Иначе Nuxt падает на альтернативный порт,
 # а Tauri грузит с settings-порта — окно оказывается пустым или со старым бандлом.
 # Освобождаем ТОЛЬКО если порт держит процесс из нашего проекта (чужие Vite не трогаем).
+#
+# Принадлежность определяем по cwd процесса, а не по строке команды: argv может содержать
+# относительный путь (./node_modules/...) и не совпасть с $PROJECT_ROOT, хотя процесс наш.
 for port in 3000 3133; do
     PID=$(lsof -iTCP:$port -sTCP:LISTEN -t 2>/dev/null | head -1)
     if [ -n "$PID" ]; then
+        CWD=$(lsof -a -d cwd -p "$PID" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
         CMD=$(ps -p "$PID" -o command= 2>/dev/null || echo "")
-        if echo "$CMD" | grep -q "$PROJECT_ROOT"; then
+        if [ -n "$CWD" ] && [[ "$CWD" == "$PROJECT_ROOT"* ]]; then
             echo -e "${YELLOW}Порт $port держит зомби $PID из нашего проекта — убиваю${NC}"
             kill -9 "$PID" 2>/dev/null
             sleep 1
         else
             echo -e "${RED}⚠ Порт $port занят процессом $PID из другого проекта (не трогаю):${NC}"
+            echo -e "${RED}  cwd: ${CWD:-<не определено>}${NC}"
             echo -e "${RED}  $CMD${NC}"
             echo -e "${RED}  Остановите его вручную и запустите скрипт заново${NC}"
             exit 1
