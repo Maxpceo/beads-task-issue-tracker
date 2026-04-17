@@ -2757,16 +2757,12 @@ async fn bd_status(options: CwdOptions) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-async fn bd_statuses(path: String) -> Result<BdStatusesResponse, String> {
-    log_info!("[bd_statuses] Called with path: {}", path);
-    let cwd = if path.is_empty() { None } else { Some(path.as_str()) };
-    let output = execute_bd("statuses", &[], cwd)?;
+async fn bd_statuses(options: CwdOptions) -> Result<BdStatusesResponse, String> {
+    log_info!("[bd_statuses] Called with cwd: {:?}", options.cwd);
+    let output = execute_bd("statuses", &[], options.cwd.as_deref())?;
 
     serde_json::from_str(&output)
-        .map_err(|e| {
-            log_error!("[bd_statuses] Failed to parse JSON: {}", e);
-            format!("Failed to parse statuses: {}", e)
-        })
+        .map_err(|e| format!("Failed to parse statuses: {}", e))
 }
 
 #[tauri::command]
