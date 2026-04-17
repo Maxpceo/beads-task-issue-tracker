@@ -1,3 +1,4 @@
+import { type ComputedRef } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { logFrontend } from '~/utils/bd-api'
 import { useBeadsPath } from '~/composables/useBeadsPath'
@@ -26,17 +27,13 @@ interface BdStatusesResponse {
 const cacheByPath = reactive(new Map<string, StatusMeta[]>())
 const loadingPaths = new Set<string>()
 
-function makeLabel(name: string): string {
-  return name.toUpperCase().replace(/_/g, ' ')
-}
-
 function toStatusMeta(entry: BdStatusEntry, isBuiltIn: boolean): StatusMeta {
   const category = (['active', 'wip', 'frozen', 'done'].includes(entry.category)
     ? entry.category
     : 'active') as StatusMeta['category']
   return {
     name: entry.name,
-    label: makeLabel(entry.name),
+    label: entry.name.toUpperCase().replace(/_/g, ' '),
     category,
     icon: entry.icon || undefined,
     isBuiltIn,
@@ -69,43 +66,31 @@ async function loadForPath(path: string): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     logFrontend('warn', `[useStatuses] Failed to load statuses for ${path}: ${msg}`).catch(() => {})
-    // Fall back to built-ins so badges don't break
     cacheByPath.set(path, [...BUILTIN_FALLBACK])
   } finally {
     loadingPaths.delete(path)
   }
 }
 
-export function useStatuses() {
+// Single module-level watcher — all useStatuses() calls share one load trigger
+if (import.meta.client) {
+  const { beadsPath } = useBeadsPath()
+  watch(beadsPath, (path) => { loadForPath(path) }, { immediate: true })
+}
+
+export function useStatuses(): { statuses: ComputedRef<StatusMeta[]>; getMeta: (name: string) => StatusMeta | undefined; refresh: () => Promise<void> } {
   const { beadsPath } = useBeadsPath()
 
-  const statuses = computed<StatusMeta[]>(() => {
-    return cacheByPath.get(beadsPath.value) ?? []
-  })
+  const statuses = computed<StatusMeta[]>(() => cacheByPath.get(beadsPath.value) ?? [])
 
-  const getMeta = (name: string): StatusMeta | undefined => {
+  function getMeta(name: string): StatusMeta | undefined {
     return statuses.value.find((s) => s.name === name)
   }
 
-  const refresh = async (): Promise<void> => {
+  async function refresh(): Promise<void> {
     cacheByPath.delete(beadsPath.value)
     await loadForPath(beadsPath.value)
   }
 
-  // Kick off lazy load on mount and whenever the path changes
-  if (import.meta.client) {
-    watch(
-      beadsPath,
-      (path) => {
-        loadForPath(path)
-      },
-      { immediate: true }
-    )
-  }
-
-  return {
-    statuses,
-    getMeta,
-    refresh,
-  }
+  return { statuses, getMeta, refresh }
 }

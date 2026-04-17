@@ -17,15 +17,13 @@ const props = defineProps<{
 const { showBadgeIcons } = useTheme()
 const { getMeta } = useStatuses()
 
-// Derive badge class and label from StatusMeta
 const config = computed(() => {
   const meta = getMeta(props.status)
   if (!meta) {
-    // Unknown status — fall back to active-category gradient, show raw name
     return {
       label: props.status.toUpperCase().replace(/_/g, ' '),
       class: 'badge-gradient bg-status-category-active-gradient text-white',
-      icon: undefined as string | undefined,
+      icon: undefined,
     }
   }
   const cls = meta.isBuiltIn
