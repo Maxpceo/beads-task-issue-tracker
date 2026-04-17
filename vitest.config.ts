@@ -7,6 +7,10 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['tests/**/*.test.ts'],
   },
+  define: {
+    'import.meta.client': 'true',
+    'import.meta.server': 'false',
+  },
   resolve: {
     alias: {
       '~': resolve(__dirname, 'app'),
