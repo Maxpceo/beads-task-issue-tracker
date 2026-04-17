@@ -69,11 +69,18 @@ function getFullKey(setting: string, projectHash: string): string {
   return `beads:proj:${projectHash}:${setting}`
 }
 
+// Deep-clone defaultValue so the caller's reference never gets mutated through the ref.
+// Without this, mutating filters.value.status = [] in one project leaks into the
+// shared defaultValue object and contaminates the next project's load.
+function cloneDefault<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
+}
+
 /**
  * Load a value from localStorage for the current project.
  */
 function loadValue<T>(setting: string, defaultValue: T): T {
-  if (!import.meta.client) return defaultValue
+  if (!import.meta.client) return cloneDefault(defaultValue)
 
   const projectPath = getBeadsPath()
   const projectHash = hashPath(projectPath)
@@ -84,10 +91,10 @@ function loadValue<T>(setting: string, defaultValue: T): T {
     try {
       return JSON.parse(stored)
     } catch {
-      return defaultValue
+      return cloneDefault(defaultValue)
     }
   }
-  return defaultValue
+  return cloneDefault(defaultValue)
 }
 
 /**
