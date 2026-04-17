@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "tauri": {
-      "command": "tauri-plugin-mcp-server",
+      "command": "tauri-mcp-server",
       "args": []
     }
   }
