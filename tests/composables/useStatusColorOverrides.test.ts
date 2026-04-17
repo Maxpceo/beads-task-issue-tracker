@@ -1,91 +1,115 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
+import { hashPath } from '~/utils/hash'
+import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
+import { clearProjectStorageCache, reloadProjectStorage } from '~/composables/useProjectStorage'
 
-// Test the ColorOverride type shape and the logic for style computation
-// (the composable delegates persistence to useProjectStorage which is tested separately)
+// The nuxtMetaPlugin in vitest.config.ts replaces import.meta.client → true and
+// import.meta.server → false in all /app/ files at transform time, so the real
+// useProjectStorage composable works with localStorage in the jsdom environment.
 
-describe('ColorOverride style computation', () => {
-  // Mirror the logic from StatusBadge.vue config computed
-  function computeStyle(override: { from: string; to?: string } | undefined) {
-    if (!override) return undefined
-    return override.to
-      ? `linear-gradient(135deg, ${override.from}, ${override.to})`
-      : override.from
+const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
+
+const PROJECT_PATH = '/tmp/test-project'
+const PROJECT_HASH = hashPath(PROJECT_PATH)
+const STORAGE_KEY = `beads:proj:${PROJECT_HASH}:status-colors`
+
+function createMemoryStorage(): Storage {
+  let data = new Map<string, string>()
+  return {
+    get length() { return data.size },
+    clear: () => { data = new Map() },
+    getItem: (key: string) => (data.has(key) ? data.get(key)! : null),
+    setItem: (key: string, value: string) => { data.set(key, String(value)) },
+    removeItem: (key: string) => { data.delete(key) },
+    key: (index: number) => Array.from(data.keys())[index] ?? null,
   }
+}
 
-  it('returns undefined when no override', () => {
-    expect(computeStyle(undefined)).toBeUndefined()
-  })
-
-  it('returns solid color for single-color override', () => {
-    expect(computeStyle({ from: '#ff00ff' })).toBe('#ff00ff')
-  })
-
-  it('returns gradient when to is present', () => {
-    expect(computeStyle({ from: '#ff0000', to: '#0000ff' })).toBe(
-      'linear-gradient(135deg, #ff0000, #0000ff)'
-    )
-  })
-
-  it('solid override ignores undefined to', () => {
-    expect(computeStyle({ from: '#123456', to: undefined })).toBe('#123456')
-  })
-})
-
-describe('ColorOverride store operations (localStorage mock)', () => {
-  // Simple in-memory store to test set/get/remove logic
-  let store: Record<string, { from: string; to?: string }> = {}
-
-  function getOverride(name: string) {
-    return store[name]
-  }
-  function setOverride(name: string, override: { from: string; to?: string }) {
-    store = { ...store, [name]: override }
-  }
-  function removeOverride(name: string) {
-    const next = { ...store }
-    delete next[name]
-    store = next
-  }
-
+describe('useStatusColorOverrides (integration)', () => {
   beforeEach(() => {
-    store = {}
+    const storage = createMemoryStorage()
+    // Replace global localStorage with a fresh in-memory store for each test
+    Object.defineProperty(globalThis, 'localStorage', { value: storage, writable: true, configurable: true })
+    localStorage.setItem('beads:path', JSON.stringify(PROJECT_PATH))
+    // Reset singleton state in useProjectStorage and useStatusColorOverrides
+    clearProjectStorageCache()
   })
 
-  it('getOverride returns undefined for unknown status', () => {
+  it('setOverride/getOverride/removeOverride round-trip via real composable', () => {
+    const { getOverride, setOverride, removeOverride } = useStatusColorOverrides()
+
     expect(getOverride('open')).toBeUndefined()
-  })
 
-  it('setOverride stores an override', () => {
     setOverride('open', { from: '#ff0000' })
     expect(getOverride('open')).toEqual({ from: '#ff0000' })
-  })
 
-  it('setOverride with gradient stores both colors', () => {
     setOverride('inreview', { from: '#ff0000', to: '#00ff00' })
+    expect(getOverride('inreview')).toEqual({ from: '#ff0000', to: '#00ff00' })
+
+    removeOverride('open')
+    expect(getOverride('open')).toBeUndefined()
     expect(getOverride('inreview')).toEqual({ from: '#ff0000', to: '#00ff00' })
   })
 
-  it('removeOverride clears an override', () => {
-    setOverride('open', { from: '#ff0000' })
-    removeOverride('open')
-    expect(getOverride('open')).toBeUndefined()
-  })
+  it('persists to localStorage under beads:proj:<hash>:status-colors', async () => {
+    const { setOverride } = useStatusColorOverrides()
 
-  it('removeOverride on non-existent key is safe', () => {
-    expect(() => removeOverride('nonexistent')).not.toThrow()
-  })
-
-  it('setOverride preserves other overrides', () => {
-    setOverride('open', { from: '#ff0000' })
-    setOverride('closed', { from: '#00ff00' })
-    removeOverride('open')
-    expect(getOverride('closed')).toEqual({ from: '#00ff00' })
-    expect(getOverride('open')).toBeUndefined()
-  })
-
-  it('overwriting an override replaces it', () => {
-    setOverride('open', { from: '#ff0000', to: '#0000ff' })
     setOverride('open', { from: '#123456' })
-    expect(getOverride('open')).toEqual({ from: '#123456' })
+    await flushPromises()
+
+    const raw = localStorage.getItem(STORAGE_KEY)
+    expect(raw).not.toBeNull()
+    expect(JSON.parse(raw!)).toEqual({ open: { from: '#123456' } })
+  })
+
+  it('uses a project-scoped key (different hash per beadsPath)', async () => {
+    const otherPath = '/tmp/another-project'
+    const otherHash = hashPath(otherPath)
+    expect(otherHash).not.toBe(PROJECT_HASH)
+
+    const { setOverride } = useStatusColorOverrides()
+
+    setOverride('open', { from: '#abcdef' })
+    await flushPromises()
+
+    expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull()
+    expect(localStorage.getItem(`beads:proj:${otherHash}:status-colors`)).toBeNull()
+  })
+
+  it('switches stored values when beadsPath changes and reloadProjectStorage is called', async () => {
+    const otherPath = '/tmp/another-project'
+    const otherHash = hashPath(otherPath)
+    const otherKey = `beads:proj:${otherHash}:status-colors`
+    localStorage.setItem(otherKey, JSON.stringify({ closed: { from: '#00ff00' } }))
+
+    const { getOverride, setOverride } = useStatusColorOverrides()
+
+    setOverride('open', { from: '#ff0000' })
+    await flushPromises()
+    expect(getOverride('open')).toEqual({ from: '#ff0000' })
+    expect(getOverride('closed')).toBeUndefined()
+
+    localStorage.setItem('beads:path', JSON.stringify(otherPath))
+    reloadProjectStorage()
+    await nextTick()
+
+    expect(getOverride('open')).toBeUndefined()
+    expect(getOverride('closed')).toEqual({ from: '#00ff00' })
+  })
+
+  it('restores existing overrides from localStorage on first use (persistence across reload)', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ open: { from: '#111111' }, closed: { from: '#222222', to: '#333333' } })
+    )
+    // Re-run cache clear so useProjectStorage picks up the pre-seeded data
+    // (store singleton in useStatusColorOverrides was already populated by prior tests)
+    clearProjectStorageCache()
+
+    const { getOverride } = useStatusColorOverrides()
+
+    expect(getOverride('open')).toEqual({ from: '#111111' })
+    expect(getOverride('closed')).toEqual({ from: '#222222', to: '#333333' })
   })
 })

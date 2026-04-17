@@ -446,10 +446,12 @@ Git Sync (built-in backend):
 | `tests/utils/open-url.test.ts` | 19 | `isValidUrl`, `isLocalPath`, `normalizeUrl` |
 | `tests/composables/useKeyboardNavigation.test.ts` | 17 | Arrow key navigation, scroll-to-focused |
 | `tests/utils/attachment-encoding.test.ts` | 14 | Attachment path encoding/decoding |
+| `tests/composables/useStatusColorOverrides.test.ts` | 5 | Round-trip persistence, localStorage key format, project-scoped isolation, path-switching via `reloadProjectStorage`, persistence across reload. Integration test — imports real composable against an in-memory `Storage` stub |
 | `tests/utils/dashboard-stats.test.ts` | 11 | `computeStatsFromIssues` |
 | `tests/utils/probe-adapter.test.ts` | 8 | `matchProbeProject` — path matching with `.beads` suffix normalization |
 | `tests/utils/hash.test.ts` | 6 | `hashPath` |
+| `tests/composables/useExclusionFilters.test.ts` | 7 | Fresh install migration, v1→v2 flag upgrade, user-choice respected, no-duplication, project switch via `setPath`, switch-back after user cleared `gt:slot`, `activeCount`/`hasActiveExclusions` reactive state. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test to re-execute the module-level watch |
 
-**Total: 214 tests** (10 files) | **Strategy**: Extract pure functions from composables into `app/utils/` for unit testing. Composables remain thin reactive wrappers.
+**Total: 268 tests** (12 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
 
 **Rust tests**: Tracker modules contain `#[cfg(test)]` blocks — run via `cargo test` in `src-tauri/`.

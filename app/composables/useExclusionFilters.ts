@@ -1,4 +1,4 @@
-import { watch } from 'vue'
+import { watch, computed } from 'vue'
 import type { IssueStatus, IssueType, IssuePriority } from '~/types/issue'
 import { useProjectStorage } from '~/composables/useProjectStorage'
 import { useBeadsPath } from '~/composables/useBeadsPath'
