@@ -618,6 +618,11 @@ const formatEstimate = (minutes: number) => {
             <p class="text-xs">{{ formatDate(issue.createdAt) }}</p>
           </div>
 
+          <div v-if="issue.startedAt">
+            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Started</h5>
+            <p class="text-xs">{{ formatDate(issue.startedAt) }}</p>
+          </div>
+
           <div>
             <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Updated</h5>
             <p class="text-xs">{{ formatDate(issue.updatedAt) }}</p>
