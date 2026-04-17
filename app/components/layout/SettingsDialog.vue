@@ -61,19 +61,6 @@ function getDefaultFrom(category: string): string {
   return DEFAULT_FROM[category] ?? '#3b82f6'
 }
 
-const colorStates = computed<Record<string, ColorPickerState>>(() => {
-  const result: Record<string, ColorPickerState> = {}
-  for (const status of statuses.value) {
-    const override = getOverride(status.name)
-    result[status.name] = {
-      useGradient: !!override?.to,
-      from: override?.from ?? getDefaultFrom(status.category),
-      to: override?.to ?? '#ffffff',
-    }
-  }
-  return result
-})
-
 // Mutable local copy for picker interaction — built once when statuses load
 const localColors = ref<Record<string, ColorPickerState>>({})
 
@@ -95,45 +82,23 @@ watch(
   { immediate: true }
 )
 
-function applyOverride(name: string) {
-  const state = localColors.value[name]
-  if (!state) return
-  setOverride(name, {
-    from: state.from,
-    to: state.useGradient ? state.to : undefined,
-  })
+// Safe accessor — guarantees a ColorPickerState even if localColors[name] is not yet set
+function colorState(name: string): ColorPickerState {
+  return localColors.value[name] ?? { useGradient: false, from: '#3b82f6', to: '#ffffff' }
+}
+
+function applyColor(name: string, patch: Partial<ColorPickerState>) {
+  const next = { ...colorState(name), ...patch }
+  localColors.value[name] = next
+  setOverride(name, { from: next.from, to: next.useGradient ? next.to : undefined })
 }
 
 function resetOverride(name: string) {
   removeOverride(name)
   const status = statuses.value.find((s) => s.name === name)
   if (status) {
-    localColors.value[name] = {
-      useGradient: false,
-      from: getDefaultFrom(status.category),
-      to: '#ffffff',
-    }
+    localColors.value[name] = { useGradient: false, from: getDefaultFrom(status.category), to: '#ffffff' }
   }
-}
-
-// Safe accessor — guarantees a ColorPickerState even if localColors[name] is not yet set
-function colorState(name: string): ColorPickerState {
-  return localColors.value[name] ?? { useGradient: false, from: '#3b82f6', to: '#ffffff' }
-}
-
-function setColorFrom(name: string, value: string) {
-  const state = colorState(name)
-  localColors.value[name] = { ...state, from: value }
-}
-
-function setColorTo(name: string, value: string) {
-  const state = colorState(name)
-  localColors.value[name] = { ...state, to: value }
-}
-
-function setUseGradient(name: string, value: boolean) {
-  const state = colorState(name)
-  localColors.value[name] = { ...state, useGradient: value }
 }
 
 // Load current setting when dialog opens
@@ -221,10 +186,6 @@ const groupedStatuses = computed(() => {
   return groups
 })
 
-// Check if a status has an active override
-function hasOverride(name: string): boolean {
-  return !!getOverride(name)
-}
 </script>
 
 <template>
@@ -352,7 +313,7 @@ function hasOverride(name: string): boolean {
                   v-for="status in group.statuses"
                   :key="status.name"
                   class="flex items-center gap-2 rounded-md border border-border/50 px-2 py-1.5"
-                  :class="hasOverride(status.name) ? 'border-primary/30 bg-primary/5' : ''"
+                  :class="!!getOverride(status.name) ? 'border-primary/30 bg-primary/5' : ''"
                 >
                   <!-- Live preview badge -->
                   <div class="shrink-0 w-24">
@@ -372,7 +333,7 @@ function hasOverride(name: string): boolean {
                         type="color"
                         class="size-6 rounded cursor-pointer border border-border/50 p-0.5 bg-transparent"
                         :title="`${status.label} primary color`"
-                        @input="setColorFrom(status.name, ($event.target as HTMLInputElement).value); applyOverride(status.name)"
+                        @input="applyColor(status.name, { from: ($event.target as HTMLInputElement).value })"
                       />
                     </div>
 
@@ -384,7 +345,7 @@ function hasOverride(name: string): boolean {
                         type="checkbox"
                         class="size-4 rounded cursor-pointer accent-primary"
                         :title="`Enable gradient for ${status.label}`"
-                        @change="setUseGradient(status.name, ($event.target as HTMLInputElement).checked); applyOverride(status.name)"
+                        @change="applyColor(status.name, { useGradient: ($event.target as HTMLInputElement).checked })"
                       />
                       <label :for="`gradient-${status.name}`" class="text-[10px] text-muted-foreground cursor-pointer select-none">
                         Grad
@@ -403,7 +364,7 @@ function hasOverride(name: string): boolean {
                         type="color"
                         class="size-6 rounded cursor-pointer border border-border/50 p-0.5 bg-transparent"
                         :title="`${status.label} gradient end color`"
-                        @input="setColorTo(status.name, ($event.target as HTMLInputElement).value); applyOverride(status.name)"
+                        @input="applyColor(status.name, { to: ($event.target as HTMLInputElement).value })"
                       />
                     </div>
                   </div>
@@ -413,7 +374,7 @@ function hasOverride(name: string): boolean {
                     variant="ghost"
                     size="sm"
                     class="h-6 px-1.5 text-[10px] shrink-0"
-                    :disabled="!hasOverride(status.name)"
+                    :disabled="!getOverride(status.name)"
                     :aria-label="`Reset ${status.label} color to default`"
                     @click="resetOverride(status.name)"
                   >
