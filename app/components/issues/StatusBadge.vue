@@ -7,6 +7,7 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 import { useStatuses } from '~/composables/useStatuses'
+import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
 
 const props = defineProps<{
   status: IssueStatus
@@ -16,24 +17,37 @@ const props = defineProps<{
 
 const { showBadgeIcons } = useTheme()
 const { getMeta } = useStatuses()
+const { getOverride } = useStatusColorOverrides()
 
 const config = computed(() => {
   const meta = getMeta(props.status)
+  const label = meta
+    ? meta.label
+    : props.status.toUpperCase().replace(/_/g, ' ')
+  const icon = meta?.icon
+
+  // Priority 1: user color override — emit inline style, no gradient class
+  const override = getOverride(props.status)
+  if (override) {
+    const background = override.to
+      ? `linear-gradient(135deg, ${override.from}, ${override.to})`
+      : override.from
+    return { label, icon, class: 'text-white', style: { background } }
+  }
+
+  // Priority 2: built-in or category class (existing logic)
   if (!meta) {
     return {
-      label: props.status.toUpperCase().replace(/_/g, ' '),
+      label,
+      icon,
       class: 'badge-gradient bg-status-category-active-gradient text-white',
-      icon: undefined,
+      style: undefined,
     }
   }
   const cls = meta.isBuiltIn
     ? `badge-gradient bg-status-${meta.name.replace(/_/g, '-')}-gradient text-white`
     : `badge-gradient bg-status-category-${meta.category}-gradient text-white`
-  return {
-    label: meta.label,
-    class: cls,
-    icon: meta.icon,
-  }
+  return { label, icon, class: cls, style: undefined }
 })
 
 const showBlockedTooltip = computed(() => props.blockedBy?.length && props.status === 'blocked')
@@ -42,7 +56,11 @@ const showBlockedTooltip = computed(() => props.blockedBy?.length && props.statu
 <template>
   <Tooltip v-if="showBlockedTooltip">
     <TooltipTrigger as-child>
-      <Badge :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary">
+      <Badge
+        :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']"
+        :style="config.style"
+        variant="secondary"
+      >
         <span v-if="showBadgeIcons && config.icon" class="inline-flex items-center mr-1" aria-hidden="true">
           {{ config.icon }}
         </span>
@@ -53,7 +71,12 @@ const showBlockedTooltip = computed(() => props.blockedBy?.length && props.statu
       <p class="text-xs">Blocked by {{ blockedBy!.join(', ') }}</p>
     </TooltipContent>
   </Tooltip>
-  <Badge v-else :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary">
+  <Badge
+    v-else
+    :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']"
+    :style="config.style"
+    variant="secondary"
+  >
     <span v-if="showBadgeIcons && config.icon" class="inline-flex items-center mr-1" aria-hidden="true">
       {{ config.icon }}
     </span>

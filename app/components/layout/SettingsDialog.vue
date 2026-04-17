@@ -10,6 +10,9 @@ import { Label } from '~/components/ui/label'
 import { Button } from '~/components/ui/button'
 import { getCliBinaryPath, setCliBinaryPath, checkExternalHealth } from '~/utils/bd-api'
 import type { ThemeDefinition } from '~/composables/useTheme'
+import { useStatuses } from '~/composables/useStatuses'
+import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
+import StatusBadge from '~/components/issues/StatusBadge.vue'
 
 const open = defineModel<boolean>('open', { default: false })
 
@@ -35,6 +38,103 @@ const probeEnabled = useLocalStorage('beads:probeEnabled', false)
 const dataSourceUrl = useLocalStorage('beads:dataSourceUrl', 'http://localhost:9100')
 const isTesting = ref(false)
 const healthResult = ref<boolean | null>(null)
+
+// Status color overrides
+const { statuses } = useStatuses()
+const { getOverride, setOverride, removeOverride } = useStatusColorOverrides()
+
+// Local state for the color pickers — initialized from overrides or defaults
+interface ColorPickerState {
+  useGradient: boolean
+  from: string
+  to: string
+}
+
+const DEFAULT_FROM: Record<string, string> = {
+  active: '#3b82f6',
+  wip: '#8b5cf6',
+  done: '#22c55e',
+  frozen: '#6b7280',
+}
+
+function getDefaultFrom(category: string): string {
+  return DEFAULT_FROM[category] ?? '#3b82f6'
+}
+
+const colorStates = computed<Record<string, ColorPickerState>>(() => {
+  const result: Record<string, ColorPickerState> = {}
+  for (const status of statuses.value) {
+    const override = getOverride(status.name)
+    result[status.name] = {
+      useGradient: !!override?.to,
+      from: override?.from ?? getDefaultFrom(status.category),
+      to: override?.to ?? '#ffffff',
+    }
+  }
+  return result
+})
+
+// Mutable local copy for picker interaction — built once when statuses load
+const localColors = ref<Record<string, ColorPickerState>>({})
+
+// Sync localColors when statuses change (e.g. first load)
+watch(
+  statuses,
+  (newStatuses) => {
+    const next: Record<string, ColorPickerState> = {}
+    for (const status of newStatuses) {
+      const override = getOverride(status.name)
+      next[status.name] = {
+        useGradient: !!override?.to,
+        from: override?.from ?? getDefaultFrom(status.category),
+        to: override?.to ?? '#ffffff',
+      }
+    }
+    localColors.value = next
+  },
+  { immediate: true }
+)
+
+function applyOverride(name: string) {
+  const state = localColors.value[name]
+  if (!state) return
+  setOverride(name, {
+    from: state.from,
+    to: state.useGradient ? state.to : undefined,
+  })
+}
+
+function resetOverride(name: string) {
+  removeOverride(name)
+  const status = statuses.value.find((s) => s.name === name)
+  if (status) {
+    localColors.value[name] = {
+      useGradient: false,
+      from: getDefaultFrom(status.category),
+      to: '#ffffff',
+    }
+  }
+}
+
+// Safe accessor — guarantees a ColorPickerState even if localColors[name] is not yet set
+function colorState(name: string): ColorPickerState {
+  return localColors.value[name] ?? { useGradient: false, from: '#3b82f6', to: '#ffffff' }
+}
+
+function setColorFrom(name: string, value: string) {
+  const state = colorState(name)
+  localColors.value[name] = { ...state, from: value }
+}
+
+function setColorTo(name: string, value: string) {
+  const state = colorState(name)
+  localColors.value[name] = { ...state, to: value }
+}
+
+function setUseGradient(name: string, value: boolean) {
+  const state = colorState(name)
+  localColors.value[name] = { ...state, useGradient: value }
+}
 
 // Load current setting when dialog opens
 watch(open, async (isOpen) => {
@@ -83,11 +183,53 @@ async function testConnection() {
     isTesting.value = false
   }
 }
+
+// Group statuses by category for display
+const categoryOrder = ['active', 'wip', 'done', 'frozen'] as const
+const categoryLabels: Record<string, string> = {
+  active: 'Active',
+  wip: 'In Progress',
+  done: 'Done',
+  frozen: 'Frozen / Deferred',
+}
+
+const groupedStatuses = computed(() => {
+  const groups: Array<{ category: string; label: string; statuses: typeof statuses.value }> = []
+  const byCategory = new Map<string, typeof statuses.value>()
+
+  for (const s of statuses.value) {
+    if (!byCategory.has(s.category)) byCategory.set(s.category, [])
+    byCategory.get(s.category)!.push(s)
+  }
+
+  // Known categories in order
+  for (const cat of categoryOrder) {
+    const list = byCategory.get(cat)
+    if (list?.length) {
+      groups.push({ category: cat, label: categoryLabels[cat] ?? cat, statuses: list })
+      byCategory.delete(cat)
+    }
+  }
+
+  // Any remaining (custom categories)
+  for (const [cat, list] of byCategory) {
+    if (list.length) {
+      groups.push({ category: cat, label: cat, statuses: list })
+    }
+  }
+
+  return groups
+})
+
+// Check if a status has an active override
+function hasOverride(name: string): boolean {
+  return !!getOverride(name)
+}
 </script>
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent class="sm:max-w-lg">
+    <DialogContent class="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle>Settings</DialogTitle>
         <DialogDescription>
@@ -110,7 +252,7 @@ async function testConnection() {
               @click="setTheme(t.id)"
             >
               <div class="flex items-center justify-center h-8 w-8">
-                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <circle v-if="t.icon === 'sun'" v-bind="sunCircle" />
                   <rect v-if="t.icon === 'square'" x="3" y="3" width="18" height="18" rx="2" />
                   <path v-if="themeIconPaths[t.icon]" :d="themeIconPaths[t.icon]" />
@@ -183,6 +325,106 @@ async function testConnection() {
           </div>
         </div>
 
+        <!-- Status Colors -->
+        <div class="space-y-3">
+          <div>
+            <Label>Status Colors</Label>
+            <p class="text-xs text-muted-foreground mt-0.5">
+              Customize badge colors for each status. Changes are local to this project and machine.
+            </p>
+          </div>
+
+          <div v-if="statuses.length === 0" class="text-xs text-muted-foreground py-2">
+            Loading statuses...
+          </div>
+
+          <div v-else class="space-y-4">
+            <div
+              v-for="group in groupedStatuses"
+              :key="group.category"
+              class="space-y-2"
+            >
+              <h3 class="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+                {{ group.label }}
+              </h3>
+              <div class="space-y-2">
+                <div
+                  v-for="status in group.statuses"
+                  :key="status.name"
+                  class="flex items-center gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                  :class="hasOverride(status.name) ? 'border-primary/30 bg-primary/5' : ''"
+                >
+                  <!-- Live preview badge -->
+                  <div class="shrink-0 w-24">
+                    <StatusBadge :status="status.name as any" size="sm" />
+                  </div>
+
+                  <!-- Color pickers -->
+                  <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                    <!-- From color -->
+                    <div class="flex items-center gap-1">
+                      <label :for="`color-from-${status.name}`" class="text-[10px] text-muted-foreground shrink-0">
+                        {{ colorState(status.name).useGradient ? 'From' : 'Color' }}
+                      </label>
+                      <input
+                        :id="`color-from-${status.name}`"
+                        :value="colorState(status.name).from"
+                        type="color"
+                        class="size-6 rounded cursor-pointer border border-border/50 p-0.5 bg-transparent"
+                        :title="`${status.label} primary color`"
+                        @input="setColorFrom(status.name, ($event.target as HTMLInputElement).value); applyOverride(status.name)"
+                      />
+                    </div>
+
+                    <!-- Gradient toggle + to color -->
+                    <div class="flex items-center gap-1">
+                      <input
+                        :id="`gradient-${status.name}`"
+                        :checked="colorState(status.name).useGradient"
+                        type="checkbox"
+                        class="size-4 rounded cursor-pointer accent-primary"
+                        :title="`Enable gradient for ${status.label}`"
+                        @change="setUseGradient(status.name, ($event.target as HTMLInputElement).checked); applyOverride(status.name)"
+                      />
+                      <label :for="`gradient-${status.name}`" class="text-[10px] text-muted-foreground cursor-pointer select-none">
+                        Grad
+                      </label>
+                      <label
+                        v-if="colorState(status.name).useGradient"
+                        :for="`color-to-${status.name}`"
+                        class="sr-only"
+                      >
+                        {{ status.label }} gradient end color
+                      </label>
+                      <input
+                        v-if="colorState(status.name).useGradient"
+                        :id="`color-to-${status.name}`"
+                        :value="colorState(status.name).to"
+                        type="color"
+                        class="size-6 rounded cursor-pointer border border-border/50 p-0.5 bg-transparent"
+                        :title="`${status.label} gradient end color`"
+                        @input="setColorTo(status.name, ($event.target as HTMLInputElement).value); applyOverride(status.name)"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- Reset button -->
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-6 px-1.5 text-[10px] shrink-0"
+                    :disabled="!hasOverride(status.name)"
+                    :aria-label="`Reset ${status.label} color to default`"
+                    @click="resetOverride(status.name)"
+                  >
+                    Reset
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Probe Toggle (dev-only until probe is a public feature) -->
         <div v-if="isDev" class="space-y-3">
           <div class="flex items-center justify-between">
@@ -190,6 +432,8 @@ async function testConnection() {
             <button
               class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
               :class="probeEnabled ? 'bg-primary' : 'bg-muted-foreground/30'"
+              aria-label="Toggle probe monitoring"
+              :aria-pressed="probeEnabled"
               @click="probeEnabled = !probeEnabled; healthResult = null"
             >
               <span
