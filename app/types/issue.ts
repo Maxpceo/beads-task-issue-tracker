@@ -45,6 +45,7 @@ export interface Issue {
   labels: string[]
   createdAt: string
   updatedAt: string
+  startedAt?: string | null
   closedAt?: string
   comments: Comment[]
   blockedBy?: string[]

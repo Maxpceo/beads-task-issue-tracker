@@ -329,6 +329,7 @@ pub struct BdRawIssue {
     pub created_by: Option<String>,
     pub updated_at: String,
     pub closed_at: Option<String>,
+    pub started_at: Option<String>,
     pub close_reason: Option<String>,
     pub blocked_by: Option<Vec<String>>,
     pub blocks: Option<Vec<String>>,
@@ -375,6 +376,8 @@ pub struct Issue {
     pub updated_at: String,
     #[serde(rename = "closedAt")]
     pub closed_at: Option<String>,
+    #[serde(rename = "startedAt")]
+    pub started_at: Option<String>,
     pub comments: Vec<Comment>,
     #[serde(rename = "blockedBy")]
     pub blocked_by: Option<Vec<String>>,
@@ -701,6 +704,7 @@ fn transform_issue(raw: BdRawIssue) -> Issue {
         created_at: raw.created_at,
         updated_at: raw.updated_at,
         closed_at: raw.closed_at,
+        started_at: raw.started_at,
         comments: raw.comments.unwrap_or_default().into_iter().map(|c| {
             Comment {
                 id: match c.id {
