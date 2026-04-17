@@ -5031,8 +5031,18 @@ pub fn run() {
             // IPC channel so Claude Code can drive the webview (DOM, screenshots,
             // clicks, JS exec). See CLAUDE.md → "AI-Driven UI Testing".
             // https://github.com/P3GLEG/tauri-plugin-mcp
+            //
+            // The npm bridge (`tauri-plugin-mcp-server`) hard-codes the socket
+            // path to `/tmp/tauri-mcp.sock` (literal `/tmp`, see client.js).
+            // The Rust default uses `std::env::temp_dir()` which on macOS
+            // resolves to `$TMPDIR` (`/var/folders/.../T/`) — this would
+            // mismatch the bridge and produce silent connect failures. We pin
+            // both sides to `/tmp/tauri-mcp.sock` explicitly.
             #[cfg(debug_assertions)]
-            app.handle().plugin(tauri_plugin_mcp::init())?;
+            app.handle().plugin(tauri_plugin_mcp::init_with_config(
+                tauri_plugin_mcp::PluginConfig::new("beads-issue-tracker".to_string())
+                    .socket_path(std::path::PathBuf::from("/tmp/tauri-mcp.sock")),
+            ))?;
 
             // Enable logging in both debug and release builds
             let log_level = if cfg!(debug_assertions) {
