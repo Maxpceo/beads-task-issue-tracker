@@ -1,3 +1,11 @@
+---
+name: frontend-reviews
+description: Mandatory RAMS accessibility + Web Interface Guidelines reviews on modified Vue components before marking inreview.
+paths:
+  - "app/components/**/*.vue"
+  - "app/pages/**/*.vue"
+---
+
 ## Mandatory: Frontend Reviews (RAMS + Web Interface Guidelines)
 
 <CRITICAL-REQUIREMENT>
