@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { hashPath } from '~/utils/hash'
 
+const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
+
 const PROJECT_PATH = '/tmp/test-project'
 const PROJECT_HASH = hashPath(PROJECT_PATH)
 const STORAGE_KEY = `beads:proj:${PROJECT_HASH}:status-colors`
@@ -55,7 +57,7 @@ describe('useStatusColorOverrides (integration)', () => {
     const { setOverride } = useStatusColorOverrides()
 
     setOverride('open', { from: '#123456' })
-    await nextTick()
+    await flushPromises()
 
     const raw = localStorage.getItem(STORAGE_KEY)
     expect(raw).not.toBeNull()
@@ -71,7 +73,7 @@ describe('useStatusColorOverrides (integration)', () => {
     const { setOverride } = useStatusColorOverrides()
 
     setOverride('open', { from: '#abcdef' })
-    await nextTick()
+    await flushPromises()
 
     expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull()
     expect(localStorage.getItem(`beads:proj:${otherHash}:status-colors`)).toBeNull()
@@ -87,12 +89,13 @@ describe('useStatusColorOverrides (integration)', () => {
     const { getOverride, setOverride } = useStatusColorOverrides()
 
     setOverride('open', { from: '#ff0000' })
-    await nextTick()
+    await flushPromises()
     expect(getOverride('open')).toEqual({ from: '#ff0000' })
     expect(getOverride('closed')).toBeUndefined()
 
     localStorage.setItem('beads:path', JSON.stringify(otherPath))
     reloadProjectStorage()
+    await nextTick()
 
     expect(getOverride('open')).toBeUndefined()
     expect(getOverride('closed')).toEqual({ from: '#00ff00' })
