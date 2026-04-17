@@ -72,6 +72,9 @@ const typeOptions: { value: IssueType; label: string }[] = [
   { value: 'task', label: 'Task' },
   { value: 'epic', label: 'Epic' },
   { value: 'chore', label: 'Chore' },
+  { value: 'spike', label: 'Spike' },
+  { value: 'story', label: 'Story' },
+  { value: 'milestone', label: 'Milestone' },
 ]
 
 const isStatusExcluded = (status: IssueStatus) => exclusions.value.status.includes(status)

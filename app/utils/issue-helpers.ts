@@ -416,7 +416,7 @@ export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
     closed: 0,
     workflow: 0,
     ready: 0,
-    byType: { bug: 0, task: 0, feature: 0, epic: 0, chore: 0 },
+    byType: { bug: 0, task: 0, feature: 0, epic: 0, chore: 0, spike: 0, story: 0, milestone: 0 },
     byPriority: { p0: 0, p1: 0, p2: 0, p3: 0, p4: 0 },
   }
 

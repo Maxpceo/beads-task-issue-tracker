@@ -1,4 +1,4 @@
-export type IssueType = 'bug' | 'task' | 'feature' | 'epic' | 'chore'
+export type IssueType = 'bug' | 'task' | 'feature' | 'epic' | 'chore' | 'spike' | 'story' | 'milestone'
 export type IssueStatus = 'open' | 'in_progress' | 'blocked' | 'closed' | 'deferred' | 'pinned' | 'hooked'
 export type IssuePriority = 'p0' | 'p1' | 'p2' | 'p3' | 'p4'
 

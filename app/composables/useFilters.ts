@@ -87,7 +87,7 @@ export function useFilters() {
   }
 
   const allStatuses: IssueStatus[] = ['open', 'in_progress', 'blocked', 'closed', 'deferred', 'pinned', 'hooked']
-  const allTypes: IssueType[] = ['bug', 'task', 'feature', 'epic', 'chore']
+  const allTypes: IssueType[] = ['bug', 'task', 'feature', 'epic', 'chore', 'spike', 'story', 'milestone']
   const allPriorities: IssuePriority[] = ['p0', 'p1', 'p2', 'p3', 'p4']
 
   const setAllFilters = () => {
