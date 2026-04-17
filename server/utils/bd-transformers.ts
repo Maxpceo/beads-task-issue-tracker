@@ -60,7 +60,7 @@ export function priorityToNumber(priority: string): string {
  * Validate and normalize issue type
  */
 export function normalizeIssueType(type: string): IssueType {
-  const validTypes: IssueType[] = ['bug', 'task', 'feature', 'epic', 'chore']
+  const validTypes: IssueType[] = ['bug', 'task', 'feature', 'epic', 'chore', 'spike', 'story', 'milestone']
   return validTypes.includes(type as IssueType) ? (type as IssueType) : 'task'
 }
 

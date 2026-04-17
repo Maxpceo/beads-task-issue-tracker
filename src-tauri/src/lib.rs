@@ -2621,6 +2621,9 @@ async fn bd_count(options: CwdOptions) -> Result<CountResult, String> {
     by_type.insert("feature".to_string(), 0);
     by_type.insert("epic".to_string(), 0);
     by_type.insert("chore".to_string(), 0);
+    by_type.insert("spike".to_string(), 0);
+    by_type.insert("story".to_string(), 0);
+    by_type.insert("milestone".to_string(), 0);
 
     let mut by_priority: HashMap<String, usize> = HashMap::new();
     by_priority.insert("p0".to_string(), 0);
