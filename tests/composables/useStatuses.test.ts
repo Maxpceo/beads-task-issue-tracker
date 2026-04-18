@@ -1,52 +1,69 @@
-import { describe, it, expect } from 'vitest'
-import { BUILTIN_FALLBACK } from '~/composables/useStatuses'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
 
-/**
- * Guard-тест: категории BUILTIN_FALLBACK должны соответствовать `bd statuses`.
- * Тест ловит регрессии при изменении fallback.
- */
+// useStatuses.ts использует module-level `reactive()` и `watch()` из Nuxt auto-imports.
+// В тестовой среде auto-imports недоступны — мокаем зависимости до импорта модуля.
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}))
+
+vi.mock('~/utils/bd-api', () => ({
+  logFrontend: vi.fn(() => Promise.resolve()),
+}))
+
+vi.mock('~/composables/useBeadsPath', () => ({
+  useBeadsPath: () => ({
+    beadsPath: { value: '/tmp/test-project' },
+  }),
+}))
+
 describe('BUILTIN_FALLBACK categories guard', () => {
-  const categoryMap = Object.fromEntries(
-    BUILTIN_FALLBACK.map(s => [s.name, s.category])
-  )
+  let BUILTIN_FALLBACK: Array<{ name: string; category: string; isBuiltIn: boolean; label: string }>
+
+  beforeAll(async () => {
+    const mod = await import('~/composables/useStatuses')
+    BUILTIN_FALLBACK = mod.BUILTIN_FALLBACK
+  })
+
+  it('содержит ровно 7 built-in статусов', () => {
+    expect(BUILTIN_FALLBACK).toHaveLength(7)
+  })
+
+  it('все isBuiltIn = true', () => {
+    expect(BUILTIN_FALLBACK.every(s => s.isBuiltIn)).toBe(true)
+  })
 
   it('open → active', () => {
-    expect(categoryMap['open']).toBe('active')
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'open')
+    expect(s?.category).toBe('active')
   })
 
   it('in_progress → wip', () => {
-    expect(categoryMap['in_progress']).toBe('wip')
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'in_progress')
+    expect(s?.category).toBe('wip')
   })
 
   it('blocked → wip (не active)', () => {
-    expect(categoryMap['blocked']).toBe('wip')
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'blocked')
+    expect(s?.category).toBe('wip')
   })
 
   it('deferred → frozen', () => {
-    expect(categoryMap['deferred']).toBe('frozen')
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'deferred')
+    expect(s?.category).toBe('frozen')
   })
 
   it('closed → done', () => {
-    expect(categoryMap['closed']).toBe('done')
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'closed')
+    expect(s?.category).toBe('done')
   })
 
   it('pinned → frozen (не active)', () => {
-    expect(categoryMap['pinned']).toBe('frozen')
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'pinned')
+    expect(s?.category).toBe('frozen')
   })
 
   it('hooked → wip (не active)', () => {
-    expect(categoryMap['hooked']).toBe('wip')
-  })
-
-  it('все 7 built-in статусов присутствуют', () => {
-    const names = BUILTIN_FALLBACK.map(s => s.name)
-    expect(names).toContain('open')
-    expect(names).toContain('in_progress')
-    expect(names).toContain('blocked')
-    expect(names).toContain('closed')
-    expect(names).toContain('deferred')
-    expect(names).toContain('pinned')
-    expect(names).toContain('hooked')
-    expect(BUILTIN_FALLBACK).toHaveLength(7)
+    const s = BUILTIN_FALLBACK.find(s => s.name === 'hooked')
+    expect(s?.category).toBe('wip')
   })
 })
