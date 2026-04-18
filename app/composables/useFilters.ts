@@ -1,20 +1,45 @@
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import type { FilterState, IssueStatus, IssueType, IssuePriority } from '~/types/issue'
 import { useProjectStorage } from '~/composables/useProjectStorage'
+import { useStatuses } from '~/composables/useStatuses'
+import { computeWorkflowStatuses } from '~/utils/workflow-statuses'
 
-export const workflowStatuses: IssueStatus[] = ['open', 'in_progress', 'deferred', 'pinned', 'hooked']
-
-const defaultFilters: FilterState = {
-  status: [...workflowStatuses],
-  type: [],
-  priority: [],
-  assignee: [],
-  search: '',
-  labels: [],
+/** Проверяет равенство двух массивов статусов как множеств (порядок не важен) */
+function isStatusSetEqual(a: IssueStatus[], b: IssueStatus[]): boolean {
+  if (a.length !== b.length) return false
+  const set = new Set(a)
+  return b.every(s => set.has(s))
 }
 
 export function useFilters() {
-  const filters = useProjectStorage<FilterState>('filters', defaultFilters)
+  const { statuses } = useStatuses()
+
+  // Derived computed — workflow = active+wip+frozen (всё кроме done)
+  const workflowStatuses = computed(() => computeWorkflowStatuses(statuses.value))
+  // Derived computed — все известные статусы
+  const allStatuses = computed(() => [...new Set(statuses.value.map(s => s.name as IssueStatus))])
+
+  const defaults: FilterState = {
+    status: [...workflowStatuses.value],
+    type: [],
+    priority: [],
+    assignee: [],
+    search: '',
+    labels: [],
+  }
+  const filters = useProjectStorage<FilterState>('filters', defaults)
+
+  // Watch workflowStatuses — если filter был «Workflow», переносим на новый список
+  watch(workflowStatuses, (newW, oldW) => {
+    if (!oldW || !isStatusSetEqual(filters.value.status, oldW)) return
+    filters.value.status = [...newW]
+  })
+
+  // Watch allStatuses — если filter был «Total», переносим на новый список
+  watch(allStatuses, (newAll, oldAll) => {
+    if (!oldAll || !isStatusSetEqual(filters.value.status, oldAll)) return
+    filters.value.status = [...newAll]
+  })
 
   const toggleStatus = (status: IssueStatus) => {
     const index = filters.value.status.indexOf(status)
@@ -78,12 +103,11 @@ export function useFilters() {
     filters.value.status = [...statuses]
   }
 
-  const allStatuses: IssueStatus[] = ['open', 'in_progress', 'blocked', 'closed', 'deferred', 'pinned', 'hooked']
   const allTypes: IssueType[] = ['bug', 'task', 'feature', 'epic', 'chore', 'spike', 'story', 'milestone']
   const allPriorities: IssuePriority[] = ['p0', 'p1', 'p2', 'p3', 'p4']
 
   const setAllFilters = () => {
-    filters.value.status = [...allStatuses]
+    filters.value.status = [...allStatuses.value]
     filters.value.type = []
     filters.value.priority = []
     filters.value.assignee = []
@@ -104,6 +128,8 @@ export function useFilters() {
 
   return {
     filters,
+    workflowStatuses,
+    allStatuses,
     toggleStatus,
     toggleType,
     togglePriority,
@@ -114,5 +140,7 @@ export function useFilters() {
     setStatusFilter,
     setAllFilters,
     hasActiveFilters,
+    allTypes,
+    allPriorities,
   }
 }
