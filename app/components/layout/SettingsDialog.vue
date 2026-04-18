@@ -40,6 +40,9 @@ const dataSourceUrl = useLocalStorage('beads:dataSourceUrl', 'http://localhost:9
 const isTesting = ref(false)
 const healthResult = ref<boolean | null>(null)
 
+// Display options
+const { floatActiveToTop } = useIssues()
+
 // Status color overrides
 const { statuses } = useStatuses()
 const { getOverride, setOverride, removeOverride } = useStatusColorOverrides()
@@ -284,6 +287,27 @@ const groupedStatuses = computed(() => {
                 Original Beads CLI (Go)
               </p>
             </button>
+          </div>
+        </div>
+
+        <!-- Display Options -->
+        <div class="space-y-3">
+          <Label>Display Options</Label>
+          <div class="flex items-start gap-3 rounded-md border border-border/50 px-3 py-2.5">
+            <input
+              id="float-active-to-top"
+              v-model="floatActiveToTop"
+              type="checkbox"
+              class="mt-0.5 size-4 shrink-0 rounded cursor-pointer accent-primary"
+            />
+            <div class="flex flex-col gap-0.5">
+              <label for="float-active-to-top" class="text-sm font-medium cursor-pointer select-none leading-tight">
+                Float active tasks to top
+              </label>
+              <p class="text-xs text-muted-foreground text-pretty">
+                Tasks in active work categories (in progress, review, etc.) appear at the top of the table regardless of sort field.
+              </p>
+            </div>
           </div>
         </div>
 

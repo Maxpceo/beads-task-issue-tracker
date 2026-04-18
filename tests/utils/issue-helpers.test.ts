@@ -13,6 +13,7 @@ import {
   statusOrder,
   priorityOrder,
   typeOrder,
+  categoryRank,
 } from '~/utils/issue-helpers'
 
 // ---------------------------------------------------------------------------
@@ -262,6 +263,92 @@ describe('sortIssues', () => {
     const noLabel = makeIssue({ id: 'a', labels: [] })
     const result = sortIssues([noLabel, withLabel], 'labels', 'asc')
     expect(result[0]!.id).toBe('b')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// sortIssues — floatActive option
+// ---------------------------------------------------------------------------
+describe('sortIssues floatActive option', () => {
+  // resolveCategory helper that maps status names to categories
+  const resolveCategory = (status: string): string | undefined => {
+    const map: Record<string, string> = {
+      in_progress: 'wip',
+      inreview: 'wip',
+      open: 'active',
+      blocked: 'frozen',
+      closed: 'done',
+    }
+    return map[status]
+  }
+
+  it('floatActive: false → strict sort by field, no category interference', () => {
+    const issues = [
+      makeIssue({ id: 'a', status: 'closed', updatedAt: '2025-03-01T00:00:00Z' }),
+      makeIssue({ id: 'b', status: 'in_progress', updatedAt: '2025-01-01T00:00:00Z' }),
+      makeIssue({ id: 'c', status: 'open', updatedAt: '2025-02-01T00:00:00Z' }),
+    ]
+    const result = sortIssues(issues, 'updatedAt', 'desc', [], { floatActive: false, resolveCategory })
+    // desc by updatedAt: a (Mar) → c (Feb) → b (Jan)
+    expect(result.map(i => i.id)).toEqual(['a', 'c', 'b'])
+  })
+
+  it('floatActive: true → wip above active above frozen above done', () => {
+    const issues = [
+      makeIssue({ id: 'done-1', status: 'closed' }),
+      makeIssue({ id: 'frozen-1', status: 'blocked' }),
+      makeIssue({ id: 'active-1', status: 'open' }),
+      makeIssue({ id: 'wip-1', status: 'in_progress' }),
+    ]
+    const result = sortIssues(issues, 'updatedAt', 'desc', [], { floatActive: true, resolveCategory })
+    expect(result.map(i => i.id)).toEqual(['wip-1', 'active-1', 'frozen-1', 'done-1'])
+  })
+
+  it('unknown status with resolveCategory returning undefined → fallback rank active (1)', () => {
+    const issues = [
+      makeIssue({ id: 'unknown', status: 'custom_status' }), // resolveCategory returns undefined → rank 1 (active)
+      makeIssue({ id: 'done', status: 'closed' }),            // rank 3 (done)
+      makeIssue({ id: 'wip', status: 'in_progress' }),        // rank 0 (wip)
+    ]
+    const result = sortIssues(issues, 'updatedAt', 'desc', [], { floatActive: true, resolveCategory })
+    // wip(0) → unknown→active fallback(1) → done(3)
+    expect(result[0]!.id).toBe('wip')
+    expect(result[1]!.id).toBe('unknown')
+    expect(result[2]!.id).toBe('done')
+  })
+
+  it('floatActive: true + pinned IDs → pinned stays above wip', () => {
+    const issues = [
+      makeIssue({ id: 'wip-1', status: 'in_progress' }),
+      makeIssue({ id: 'pinned-open', status: 'open' }),
+      makeIssue({ id: 'done-1', status: 'closed' }),
+    ]
+    const result = sortIssues(issues, 'updatedAt', 'desc', ['pinned-open'], { floatActive: true, resolveCategory })
+    expect(result[0]!.id).toBe('pinned-open') // pinned always tier 1
+    expect(result[1]!.id).toBe('wip-1')       // wip tier 2
+    expect(result[2]!.id).toBe('done-1')       // done tier last
+  })
+
+  it('inside wip category, user-sort by priority desc applies correctly', () => {
+    const issues = [
+      makeIssue({ id: 'wip-low', status: 'in_progress', priority: 'p3' }),
+      makeIssue({ id: 'done-high', status: 'closed', priority: 'p0' }),
+      makeIssue({ id: 'wip-high', status: 'in_progress', priority: 'p0' }),
+    ]
+    const result = sortIssues(issues, 'priority', 'asc', [], { floatActive: true, resolveCategory })
+    // wip partition: wip-high(p0) before wip-low(p3); done partition: done-high(p0)
+    expect(result[0]!.id).toBe('wip-high')
+    expect(result[1]!.id).toBe('wip-low')
+    expect(result[2]!.id).toBe('done-high')
+  })
+
+  it('no options param passed → backward compatible, sorts without category interference', () => {
+    const issues = [
+      makeIssue({ id: 'a', status: 'closed', updatedAt: '2025-03-01T00:00:00Z' }),
+      makeIssue({ id: 'b', status: 'in_progress', updatedAt: '2025-01-01T00:00:00Z' }),
+    ]
+    const result = sortIssues(issues, 'updatedAt', 'desc')
+    expect(result.map(i => i.id)).toEqual(['a', 'b'])
   })
 })
 

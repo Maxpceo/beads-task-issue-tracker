@@ -52,6 +52,7 @@ const pageSize = ref(50)
 const currentPage = ref(1)
 const sortField = useProjectStorage<string | null>('sortField', 'updatedAt')
 const sortDirection = useProjectStorage<'asc' | 'desc'>('sortDirection', 'desc')
+const floatActiveToTop = useProjectStorage<boolean>('floatActiveToTop', true)
 
 // Epic expand/collapse state (persisted per project) - default to expanded (true)
 const expandedEpics = useProjectStorage<Record<string, boolean>>('expandedEpics', {})
@@ -403,8 +404,12 @@ export function useIssues() {
   )
 
   // Computed for sorted issues (default: updatedAt DESC, null = no sort)
+  const { getMeta } = useStatuses()
   const sortedIssues = computed(() =>
-    sortIssuesPure(filteredIssues.value, sortField.value, sortDirection.value, pinnedIssueIds.value)
+    sortIssuesPure(filteredIssues.value, sortField.value, sortDirection.value, pinnedIssueIds.value, {
+      floatActive: floatActiveToTop.value,
+      resolveCategory: (s) => getMeta(s)?.category,
+    })
   )
 
   // Computed for paginated issues
@@ -828,6 +833,7 @@ export function useIssues() {
     resetPagination,
     sortField,
     sortDirection,
+    floatActiveToTop,
     setSort,
     // Epic expand/collapse
     isEpicExpanded,
