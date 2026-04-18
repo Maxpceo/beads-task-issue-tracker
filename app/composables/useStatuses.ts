@@ -1,4 +1,4 @@
-import { type ComputedRef } from 'vue'
+import { type ComputedRef, reactive, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { logFrontend } from '~/utils/bd-api'
 import { useBeadsPath } from '~/composables/useBeadsPath'
