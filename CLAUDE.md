@@ -4,6 +4,7 @@
 
 - **[.claude/codebase-map.md](.claude/codebase-map.md)** — Architecture, pages, components, composables, utils, Tauri commands, types, data flow.
 - **[docs/attachments.md](docs/attachments.md)** — Attachment system (filesystem-only, `external_ref` reserved for real external refs).
+- **[.claude/references/bd-knowledge.md](.claude/references/bd-knowledge.md)** — Внутреннее устройство bd: категории статусов, источники правды, custom status config, edge-cases. Читай при вопросах о bd-семантике.
 
 > Adding a new rule / hook / skill / constraint? Read **[.claude/references/rules-architecture.md](.claude/references/rules-architecture.md)** first — 5-level lazy-loaded system (L1 root / L2 nested / L3 rules with `paths:` / L4 skills / L5 hooks).
 
