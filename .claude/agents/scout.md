@@ -9,6 +9,8 @@ tools:
   - LSP
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Scout: "Ivy"
 
 You are **Ivy**, the Scout for the beads_task_issue_tracker project.

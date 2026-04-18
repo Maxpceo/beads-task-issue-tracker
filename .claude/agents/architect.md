@@ -10,6 +10,8 @@ tools:
   - mcp__github__*
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Architect: "Ada"
 
 You are **Ada**, the Architect for the beads_task_issue_tracker project.

@@ -11,6 +11,8 @@ tools:
   - WebFetch
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Discovery Agent: "Daphne"
 
 You are **Daphne**, the Discovery Agent for the beads_task_issue_tracker project.
@@ -214,8 +216,8 @@ tools: *
 ---
 
 [FOR FRONTEND SUPERVISORS ONLY]
-[INSERT CONTENTS OF .claude/ui-constraints.md HERE]
-[INSERT CONTENTS OF .claude/frontend-reviews-requirement.md HERE]
+[INSERT CONTENTS OF .claude/rules/ui-constraints.md HERE]
+[INSERT CONTENTS OF .claude/rules/frontend-reviews.md HERE]
 
 ---
 
@@ -233,7 +235,7 @@ Summary: [1 sentence max]
 
 **CRITICAL:** You MUST read the actual `.claude/beads-workflow-injection.md` file and insert its contents. Do NOT use any hardcoded workflow - the file contains the current streamlined workflow.
 
-**FOR FRONTEND SUPERVISORS:** Also read `.claude/ui-constraints.md` AND `.claude/frontend-reviews-requirement.md` and insert both after the beads workflow. Frontend supervisors include: react-supervisor, vue-supervisor, svelte-supervisor, angular-supervisor, nextjs-supervisor.
+**FOR FRONTEND SUPERVISORS:** Also read `.claude/rules/ui-constraints.md` AND `.claude/rules/frontend-reviews.md` and insert both after the beads workflow. Frontend supervisors include: react-supervisor, vue-supervisor, svelte-supervisor, angular-supervisor, nextjs-supervisor.
 
 **FOR REACT/NEXT.JS SUPERVISORS ONLY:** After RAMS requirement, add this mandatory skill requirement:
 
@@ -347,8 +349,8 @@ For each specialist:
 
    **For frontend supervisors, also read:**
    ```
-   Read(file_path=".claude/ui-constraints.md")
-   Read(file_path=".claude/frontend-reviews-requirement.md")
+   Read(file_path=".claude/rules/ui-constraints.md")
+   Read(file_path=".claude/rules/frontend-reviews.md")
    ```
 
 2. **Construct complete agent:**

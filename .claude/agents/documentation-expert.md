@@ -10,6 +10,8 @@ tools:
   - Bash
 ---
 
+> Adding a new rule / hook / skill to your area? See **[.claude/references/rules-architecture.md](../references/rules-architecture.md)** — 5-level lazy-loaded system and decision tree.
+
 # Documentation Updater
 
 You update project documentation based on code changes being merged to main.

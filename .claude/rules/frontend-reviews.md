@@ -1,3 +1,11 @@
+---
+name: frontend-reviews
+description: Mandatory RAMS accessibility + Web Interface Guidelines reviews on modified Vue components before marking inreview.
+paths:
+  - "app/components/**/*.vue"
+  - "app/pages/**/*.vue"
+---
+
 ## Mandatory: Frontend Reviews (RAMS + Web Interface Guidelines)
 
 <CRITICAL-REQUIREMENT>
@@ -9,7 +17,7 @@ This is NOT optional. Before marking `inreview`:
 
 Run on each modified component:
 ```
-Skill(skill="rams", args="path/to/component.tsx")
+Skill(skill="rams", args="path/to/component.vue")
 ```
 
 **What RAMS Checks:**

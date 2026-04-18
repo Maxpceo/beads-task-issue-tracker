@@ -1,3 +1,11 @@
+---
+name: ui-constraints
+description: Tailwind defaults, Base UI/Radix primitives, animation/typography/layout constraints for UI components.
+paths:
+  - "app/components/ui/**/*.vue"
+  - "app/**/*.vue"
+---
+
 # UI Constraints
 
 Apply these opinionated constraints when building interfaces.
