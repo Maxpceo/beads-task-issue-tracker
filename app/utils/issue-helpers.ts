@@ -145,6 +145,14 @@ export function compareChildIssues(a: Issue, b: Issue): number {
   return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
 }
 
+/** Category rank for floating active tasks to top (wip first, done last) */
+export const categoryRank: Record<string, number> = {
+  wip: 0,
+  active: 1,
+  frozen: 2,
+  done: 3,
+}
+
 /** Sort orders for status, priority, and type fields */
 export const statusOrder: Record<string, number> = {
   in_progress: 0,
@@ -175,26 +183,45 @@ export const typeOrder: Record<string, number> = {
  * Within pinned and non-pinned partitions, the requested sort applies normally.
  * Returns a new sorted array (does not mutate input).
  */
-export function sortIssues(issues: Issue[], field: string | null, direction: 'asc' | 'desc', pinnedIds?: string[]): Issue[] {
+export function sortIssues(
+  issues: Issue[],
+  field: string | null,
+  direction: 'asc' | 'desc',
+  pinnedIds?: string[],
+  options?: { floatActive?: boolean; resolveCategory?: (status: string) => string | undefined }
+): Issue[] {
   const pinnedSet = new Set(pinnedIds || [])
+  const resolveCategory = options?.floatActive ? options.resolveCategory : undefined
+  const rankOf = (issue: Issue): number =>
+    categoryRank[resolveCategory!(issue.status) ?? 'active'] ?? 1
 
-  // No sort field: just float pinned to top, keep original order otherwise
+  // No sort field: just float pinned to top (and optionally by category), keep original order otherwise
   if (!field) {
-    if (pinnedSet.size === 0) return issues
+    if (pinnedSet.size === 0 && !resolveCategory) return issues
     const pinned = issues.filter(i => pinnedSet.has(i.id))
     const rest = issues.filter(i => !pinnedSet.has(i.id))
+    if (resolveCategory) {
+      pinned.sort((a, b) => rankOf(a) - rankOf(b))
+      rest.sort((a, b) => rankOf(a) - rankOf(b))
+    }
     return [...pinned, ...rest]
   }
   const sorted = [...issues]
   const dir = direction === 'asc' ? 1 : -1
 
   sorted.sort((a, b) => {
-    // Primary: pinned issues always on top
+    // Tier 1: pinned issues always on top
     const aPinned = pinnedSet.has(a.id) ? 0 : 1
     const bPinned = pinnedSet.has(b.id) ? 0 : 1
     if (aPinned !== bPinned) return aPinned - bPinned
 
-    // Secondary: sort by requested field within each partition
+    // Tier 2: category rank (when floatActive enabled)
+    if (resolveCategory) {
+      const catDelta = rankOf(a) - rankOf(b)
+      if (catDelta !== 0) return catDelta
+    }
+
+    // Tier 3: sort by requested field within each partition
     let aVal: string | number | null = null
     let bVal: string | number | null = null
 

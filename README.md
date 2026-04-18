@@ -65,6 +65,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Bulk Delete**: Delete multiple selected issues in one operation
 - **Multi-Copy Issue IDs**: Hold `Cmd` (macOS) or `Ctrl` (Windows/Linux) and click any copy-ID button — in the QuickList sidebar, the issue table rows, or the issue detail header — to accumulate IDs in a shared clipboard buffer as a comma-separated list. Click an already-selected item to remove it; a plain click resets the buffer and copies a single ID
 - **Sortable Columns**: Click any column header to sort (ascending, descending, or clear)
+- **Float active tasks to top**: When enabled (default ON), tasks in the `wip` status category (`in_progress`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` status) always float above other tasks regardless of the sort column. Toggle in Settings → Display Options
 - **Zoom Controls**: Adjust UI scale from 75% to 150% (Alt+Click to reset)
 
 ### Settings & Tools
