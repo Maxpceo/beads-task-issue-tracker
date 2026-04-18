@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ref, computed } from 'vue'
 import { hashPath } from '~/utils/hash'
+import type { StatusMeta } from '~/composables/useStatuses'
 
 // Integration test: imports the real useFilters composable against a fresh
 // in-memory localStorage per test. Each test uses vi.resetModules() so the
@@ -7,9 +9,39 @@ import { hashPath } from '~/utils/hash'
 // "app reload" — the key scenario this bead fixes (filters must survive
 // refresh/project switch instead of being force-reset to workflow defaults).
 
+// MOCK_STATUSES: 7 built-ins + 1 кастомный wip (inreview) — итого 8
+const MOCK_STATUSES: StatusMeta[] = [
+  { name: 'open',        label: 'OPEN',        category: 'active', isBuiltIn: true  },
+  { name: 'in_progress', label: 'IN PROGRESS',  category: 'wip',    isBuiltIn: true  },
+  { name: 'blocked',     label: 'BLOCKED',      category: 'wip',    isBuiltIn: true  },
+  { name: 'deferred',    label: 'DEFERRED',     category: 'frozen', isBuiltIn: true  },
+  { name: 'pinned',      label: 'PINNED',       category: 'frozen', isBuiltIn: true  },
+  { name: 'hooked',      label: 'HOOKED',       category: 'wip',    isBuiltIn: true  },
+  { name: 'closed',      label: 'CLOSED',       category: 'done',   isBuiltIn: true  },
+  { name: 'inreview',    label: 'INREVIEW',     category: 'wip',    isBuiltIn: false },
+]
+
+// Workflow = все кроме done → open, in_progress, blocked, deferred, pinned, hooked, inreview
+const WORKFLOW_STATUSES = MOCK_STATUSES
+  .filter(s => s.category !== 'done')
+  .map(s => s.name)
+
+vi.mock('~/composables/useStatuses', () => {
+  const mockStatuses = ref([...MOCK_STATUSES])
+  return {
+    useStatuses: () => ({
+      statuses: computed(() => mockStatuses.value),
+      getMeta: (name: string) => mockStatuses.value.find(s => s.name === name),
+      refresh: async () => {},
+    }),
+    BUILTIN_FALLBACK: MOCK_STATUSES,
+    // Expose ref so tests can mutate it for watch tests
+    _mockStatusesRef: mockStatuses,
+  }
+})
+
 const PROJECT_A = '/tmp/project-a'
 const PROJECT_B = '/tmp/project-b'
-const WORKFLOW_STATUSES = ['open', 'in_progress', 'deferred', 'pinned', 'hooked']
 
 const flushPromises = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -126,5 +158,13 @@ describe('useFilters (integration)', () => {
     await flushPromises()
 
     expect(hasActiveFilters.value).toBe(false)
+  })
+
+  it('кастомный inreview (wip) присутствует в workflowStatuses', async () => {
+    const { useFilters } = await importFresh()
+    const { workflowStatuses } = useFilters()
+
+    expect(workflowStatuses.value).toContain('inreview')
+    expect(workflowStatuses.value).not.toContain('closed')
   })
 })
