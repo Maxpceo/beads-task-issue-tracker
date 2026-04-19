@@ -5,6 +5,7 @@ const props = defineProps<{
   byPriority: Record<IssuePriority, number>
 }>()
 
+const { t } = useI18n()
 const { currentTheme } = useTheme()
 const isNeon = computed(() => currentTheme.value.id === 'neon')
 
@@ -33,7 +34,7 @@ const neonBarStyle = (rgb: string, value: number) => {
 
 <template>
   <div class="space-y-3">
-    <h4 class="text-sm font-medium text-muted-foreground">Priority Distribution</h4>
+    <h4 class="text-sm font-medium text-muted-foreground">{{ t('dashboard.charts.priorityTitle') }}</h4>
 
     <div class="space-y-2">
       <div

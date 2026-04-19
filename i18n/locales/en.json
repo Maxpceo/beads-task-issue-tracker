@@ -212,5 +212,83 @@
       "connected": "Connected",
       "disconnected": "Disconnected"
     }
+  },
+  "dashboard": {
+    "kpi": {
+      "workflow": "Workflow",
+      "open": "Open",
+      "inProgress": "In Progress",
+      "blocked": "Blocked",
+      "all": "All"
+    },
+    "sections": {
+      "charts": "Charts",
+      "inProgress": "In Progress",
+      "blocked": "Blocked",
+      "checkThisOut": "Check This Out",
+      "readyToWork": "Ready to Work"
+    },
+    "pinnedSort": {
+      "byPinDate": "By pin date (click for updated)",
+      "byUpdated": "By updated (click for manual)",
+      "manual": "Manual order (click for pin date)"
+    },
+    "charts": {
+      "statusTitle": "Status Distribution",
+      "priorityTitle": "Priority Distribution",
+      "open": "Open",
+      "closed": "Closed"
+    },
+    "lists": {
+      "noPinned": "No pinned issues",
+      "noReady": "No issues ready to work on",
+      "copyTitle": "Copy issue ID {id} (⌘/Ctrl+click to add to buffer)",
+      "copyAria": "Copy issue ID {id}, hold Cmd or Ctrl to add to multi-copy buffer"
+    },
+    "onboarding": {
+      "title": "No project selected",
+      "description": "Browse to select a Beads project folder to get started",
+      "browse": "Browse"
+    },
+    "folderPicker": {
+      "title": "Select Beads Project Folder",
+      "description": "Navigate to a folder containing a Beads database (.beads folder)",
+      "homeTitle": "Home",
+      "parentTitle": "Parent folder",
+      "goTitle": "Go",
+      "pathPlaceholder": "/path/to/folder",
+      "beadsProject": "Beads Project",
+      "added": "Added",
+      "noSubfolders": "No subfolders",
+      "beadsLabel": "beads",
+      "open": "Open",
+      "addProject": "Add Project",
+      "loadError": "Failed to load directory"
+    },
+    "pathSelector": {
+      "selectProject": "Select Project",
+      "projects": "Projects",
+      "sort": {
+        "aToZ": "A-Z (click for Z-A)",
+        "zToA": "Z-A (click for manual)",
+        "manual": "Manual (click for A-Z)",
+        "reset": "Reset to A-Z"
+      },
+      "exposed": "Exposed to monitoring (click to disable)",
+      "notExposed": "Not exposed (click to expose)",
+      "removeTitle": "Remove project",
+      "removeDescription": "Are you sure you want to remove '{name}' from your projects?",
+      "exposeDialog": {
+        "removeTitle": "Remove from monitoring",
+        "exposeTitle": "Expose to monitoring",
+        "removeConfirm": "Are you sure you want to remove '{name}' from monitoring?",
+        "exposeConfirm": "Are you sure you want to expose '{name}' to monitoring?"
+      }
+    },
+    "prerequisites": {
+      "welcomeTitle": "Welcome to Beads Task-Issue Tracker",
+      "welcomeSubtitle": "Follow the steps below to get started",
+      "content": "**Beads** is an AI-native issue tracker that lives directly in your codebase. Issues are stored as files in a `.beads` folder within your repository.\n\n### Prerequisites\n\n#### 1. Install the Beads CLI\n\n```bash\n# Using npm\nnpm install -g @beads/cli\n\n# Or using Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Initialize Beads in your project\n\nNavigate to your project folder and run:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nThis creates a `.beads` folder in your repository.\n\n#### 3. Create your first issue\n\n```bash\nbd create \"My first issue\" --type task --priority p2\n```\n\n### Learn more\n\n- [Beads Documentation](https://beads.dev)\n- [GitHub Repository](https://github.com/steveyegge/beads)\n"
+    }
   }
 }

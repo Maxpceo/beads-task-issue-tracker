@@ -1,42 +1,9 @@
 <script setup lang="ts">
 import LinkifiedText from '~/components/ui/linkified-text/LinkifiedText.vue'
 
-const prerequisitesContent = `**Beads** is an AI-native issue tracker that lives directly in your codebase. Issues are stored as files in a \`.beads\` folder within your repository.
+const { t } = useI18n()
 
-### Prerequisites
-
-#### 1. Install the Beads CLI
-
-\`\`\`bash
-# Using npm
-npm install -g @beads/cli
-
-# Or using Homebrew (macOS)
-brew install beads
-\`\`\`
-
-#### 2. Initialize Beads in your project
-
-Navigate to your project folder and run:
-
-\`\`\`bash
-cd /path/to/your/project
-bd init
-\`\`\`
-
-This creates a \`.beads\` folder in your repository.
-
-#### 3. Create your first issue
-
-\`\`\`bash
-bd create "My first issue" --type task --priority p2
-\`\`\`
-
-### Learn more
-
-- [Beads Documentation](https://beads.dev)
-- [GitHub Repository](https://github.com/steveyegge/beads)
-`
+const prerequisitesContent = computed(() => t('dashboard.prerequisites.content'))
 </script>
 
 <template>
@@ -52,8 +19,8 @@ bd create "My first issue" --type task --priority p2
           </svg>
         </div>
         <div>
-          <h2 class="text-lg font-semibold">Welcome to Beads Task-Issue Tracker</h2>
-          <p class="text-sm text-muted-foreground">Follow the steps below to get started</p>
+          <h2 class="text-lg font-semibold">{{ t('dashboard.prerequisites.welcomeTitle') }}</h2>
+          <p class="text-sm text-muted-foreground">{{ t('dashboard.prerequisites.welcomeSubtitle') }}</p>
         </div>
       </div>
 

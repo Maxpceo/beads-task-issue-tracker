@@ -212,5 +212,83 @@
       "connected": "Соединение есть",
       "disconnected": "Соединения нет"
     }
+  },
+  "dashboard": {
+    "kpi": {
+      "workflow": "Workflow",
+      "open": "Открытые",
+      "inProgress": "В работе",
+      "blocked": "Заблокированные",
+      "all": "Все"
+    },
+    "sections": {
+      "charts": "Графики",
+      "inProgress": "В работе",
+      "blocked": "Заблокированные",
+      "checkThisOut": "Обрати внимание",
+      "readyToWork": "Готовы к работе"
+    },
+    "pinnedSort": {
+      "byPinDate": "По дате закрепления (кликни для «по обновлению»)",
+      "byUpdated": "По обновлению (кликни для ручной сортировки)",
+      "manual": "Ручной порядок (кликни для «по дате закрепления»)"
+    },
+    "charts": {
+      "statusTitle": "Распределение по статусу",
+      "priorityTitle": "Распределение по приоритету",
+      "open": "Открытые",
+      "closed": "Закрытые"
+    },
+    "lists": {
+      "noPinned": "Нет закреплённых задач",
+      "noReady": "Нет задач, готовых к работе",
+      "copyTitle": "Скопировать ID задачи {id} (⌘/Ctrl+клик — добавить в буфер)",
+      "copyAria": "Скопировать ID задачи {id}, удерживайте Cmd или Ctrl, чтобы добавить в буфер мульти-копирования"
+    },
+    "onboarding": {
+      "title": "Проект не выбран",
+      "description": "Нажмите Browse, чтобы выбрать папку проекта Beads",
+      "browse": "Выбрать"
+    },
+    "folderPicker": {
+      "title": "Выбор папки проекта Beads",
+      "description": "Перейдите в папку, содержащую базу Beads (папку .beads)",
+      "homeTitle": "Домой",
+      "parentTitle": "Родительская папка",
+      "goTitle": "Перейти",
+      "pathPlaceholder": "/путь/к/папке",
+      "beadsProject": "Проект Beads",
+      "added": "Добавлен",
+      "noSubfolders": "Нет подпапок",
+      "beadsLabel": "beads",
+      "open": "Открыть",
+      "addProject": "Добавить проект",
+      "loadError": "Не удалось загрузить папку"
+    },
+    "pathSelector": {
+      "selectProject": "Выбрать проект",
+      "projects": "Проекты",
+      "sort": {
+        "aToZ": "А-Я (кликни для Я-А)",
+        "zToA": "Я-А (кликни для ручной сортировки)",
+        "manual": "Ручной порядок (кликни для А-Я)",
+        "reset": "Сбросить к А-Я"
+      },
+      "exposed": "Транслируется в мониторинг (кликни, чтобы отключить)",
+      "notExposed": "Не транслируется (кликни, чтобы включить)",
+      "removeTitle": "Удалить проект",
+      "removeDescription": "Удалить «{name}» из списка проектов?",
+      "exposeDialog": {
+        "removeTitle": "Убрать из мониторинга",
+        "exposeTitle": "Включить в мониторинг",
+        "removeConfirm": "Убрать «{name}» из мониторинга?",
+        "exposeConfirm": "Включить «{name}» в мониторинг?"
+      }
+    },
+    "prerequisites": {
+      "welcomeTitle": "Добро пожаловать в Beads Task-Issue Tracker",
+      "welcomeSubtitle": "Следуйте шагам ниже, чтобы начать",
+      "content": "**Beads** — это AI-native трекер задач, который живёт прямо в вашей кодовой базе. Задачи хранятся как файлы в папке `.beads` внутри репозитория.\n\n### Предварительные требования\n\n#### 1. Установите Beads CLI\n\n```bash\n# Через npm\nnpm install -g @beads/cli\n\n# Или через Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Инициализируйте Beads в вашем проекте\n\nПерейдите в папку проекта и выполните:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nЭто создаст папку `.beads` в репозитории.\n\n#### 3. Создайте первую задачу\n\n```bash\nbd create \"Моя первая задача\" --type task --priority p2\n```\n\n### Узнать больше\n\n- [Документация Beads](https://beads.dev)\n- [Репозиторий GitHub](https://github.com/steveyegge/beads)\n"
+    }
   }
 }
