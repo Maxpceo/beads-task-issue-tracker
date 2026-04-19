@@ -18,8 +18,10 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
+const { t } = useI18n()
+
 // Title: show project name if selected, otherwise default app title
-const displayTitle = computed(() => props.projectName || 'Beads Task-Issue Tracker')
+const displayTitle = computed(() => props.projectName || t('app.title'))
 
 const { isDark, currentTheme, cycleTheme } = useTheme()
 const { zoomLevel, zoomIn, zoomOut, resetZoom, canZoomIn, canZoomOut } = useZoom()
@@ -129,7 +131,7 @@ const handleZoomIn = (event: MouseEvent) => {
             </svg>
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Zoom out (⌥ click to reset)</TooltipContent>
+        <TooltipContent>{{ t('layout.header.zoomOut') }}</TooltipContent>
       </Tooltip>
 
       <span class="text-xs text-muted-foreground w-10 text-center tabular-nums">{{ zoomLevel }}%</span>
@@ -157,7 +159,7 @@ const handleZoomIn = (event: MouseEvent) => {
             </svg>
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Zoom in (⌥ click to reset)</TooltipContent>
+        <TooltipContent>{{ t('layout.header.zoomIn') }}</TooltipContent>
       </Tooltip>
 
       <!-- Refresh button -->
@@ -181,7 +183,7 @@ const handleZoomIn = (event: MouseEvent) => {
             </svg>
           </Button>
         </TooltipTrigger>
-        <TooltipContent>Refresh</TooltipContent>
+        <TooltipContent>{{ t('common.refresh') }}</TooltipContent>
       </Tooltip>
 
       <!-- Theme toggle (cycles through themes) -->

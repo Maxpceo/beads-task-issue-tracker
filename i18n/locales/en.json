@@ -12,8 +12,20 @@
     "loading": "Loading…",
     "error": "Error",
     "retry": "Retry",
+    "refresh": "Refresh",
     "yes": "Yes",
     "no": "No"
+  },
+  "about": {
+    "version": "Version {version}",
+    "poweredBy": "Powered by beads (Steve Yegge)",
+    "vibeCoded": "Vibe coded with Claude Code"
+  },
+  "layout": {
+    "header": {
+      "zoomIn": "Zoom in (⌥ click to reset)",
+      "zoomOut": "Zoom out (⌥ click to reset)"
+    }
   },
   "settings": {
     "title": "Settings",

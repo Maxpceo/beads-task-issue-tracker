@@ -12,8 +12,20 @@
     "loading": "Загрузка…",
     "error": "Ошибка",
     "retry": "Повторить",
+    "refresh": "Обновить",
     "yes": "Да",
     "no": "Нет"
+  },
+  "about": {
+    "version": "Версия {version}",
+    "poweredBy": "На базе beads (Steve Yegge)",
+    "vibeCoded": "Написано в вайб-режиме через Claude Code"
+  },
+  "layout": {
+    "header": {
+      "zoomIn": "Увеличить (⌥ — сброс)",
+      "zoomOut": "Уменьшить (⌥ — сброс)"
+    }
   },
   "settings": {
     "title": "Настройки",
