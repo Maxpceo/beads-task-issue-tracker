@@ -75,6 +75,8 @@ const {
   // Actions
   fetchIssues,
   fetchPollData,
+  warmUpFromCache,
+  applyWarmUpSnapshot,
   fetchIssue,
   createIssue,
   updateIssue,
@@ -481,8 +483,37 @@ const handlePathChange = async () => {
   selectIssue(null)
   isEditMode.value = false
   isCreatingNew.value = false
-  clearIssues()  // Reset issue list so new-issue detection doesn't flash all rows
-  clearStats()   // Reset stats so previous project's ready work doesn't persist
+
+  // Stale-while-revalidate: try to prefill UI from the on-disk PollData snapshot.
+  // If we have a warm snapshot, skip the clearIssues/clearStats wipe so the user
+  // sees the last-known state instantly while fresh data loads in parallel below.
+  // If no cache, fall back to the original "wipe, then load" behavior.
+  let warmedFromCache = false
+  try {
+    const snapshot = await warmUpFromCache(beadsPath.value)
+    // Re-check generation AFTER the await but BEFORE mutating reactive state.
+    // Without this guard, a slow warm-up for project B could resolve after the
+    // user has already switched to project C and leak B's data into C's UI.
+    if (thisGeneration !== pathChangeGeneration) {
+      return
+    }
+    if (snapshot) {
+      const cachedReady = applyWarmUpSnapshot(snapshot)
+      updateFromPollData(issues.value, cachedReady)
+      warmedFromCache = true
+      isLoading.value = false
+    }
+  } catch (e) {
+    logFrontend('error', '[handlePathChange] warmUpFromCache failed: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
+    if (thisGeneration !== pathChangeGeneration) {
+      return
+    }
+  }
+
+  if (!warmedFromCache) {
+    clearIssues()  // Reset issue list so new-issue detection doesn't flash all rows
+    clearStats()   // Reset stats so previous project's ready work doesn't persist
+  }
 
   // Stop polling + change detection during project switch to prevent:
   // 1. Concurrent bd calls from old project's poll cycle

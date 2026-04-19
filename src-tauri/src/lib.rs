@@ -2414,6 +2414,88 @@ pub struct PollData {
     pub ready_issues: Vec<Issue>,
 }
 
+// ----------------------------------------------------------------------------
+// Poll disk cache (stale-while-revalidate for project switch)
+// ----------------------------------------------------------------------------
+
+/// Raw snapshot persisted to disk for stale-while-revalidate warm-up.
+/// We store raw issues so reads can re-run transform_issue (which may evolve).
+#[derive(Debug, Serialize, Deserialize)]
+struct PollCacheFile {
+    open_issues: Vec<BdRawIssue>,
+    closed_issues: Vec<BdRawIssue>,
+    ready_issues: Vec<BdRawIssue>,
+}
+
+/// TTL for poll disk cache. Older snapshots are ignored to avoid confusing the user.
+const POLL_CACHE_TTL_SECS: u64 = 60 * 60; // 1 hour
+
+/// djb2 hash — mirrors frontend `app/utils/hash.ts::hashPath` so the same project
+/// produces the same 8-char hex on both sides (localStorage keys ↔ backend cache files).
+/// JS `String.charCodeAt` returns UTF-16 code units, so we iterate `encode_utf16()`
+/// here (NOT `bytes()` — that diverges for any non-ASCII character, e.g. Cyrillic
+/// home-dir paths). Wrapping i32 arithmetic matches JS 32-bit bitwise semantics;
+/// `wrapping_abs` on i32::MIN stays i32::MIN, which casts to 0x80000000 as u32 —
+/// same as JS `Math.abs`.
+fn hash_path_djb2(path: &str) -> String {
+    let mut hash: i32 = 5381;
+    for unit in path.encode_utf16() {
+        hash = hash.wrapping_shl(5).wrapping_add(hash).wrapping_add(unit as i32);
+    }
+    format!("{:08x}", hash.wrapping_abs() as u32)
+}
+
+/// Return the poll-cache directory inside the OS cache dir. Creates it on demand.
+fn poll_cache_dir() -> Option<PathBuf> {
+    let base = dirs::cache_dir()?.join("com.beads.manager").join("poll");
+    if let Err(e) = fs::create_dir_all(&base) {
+        log_warn!("[poll_cache] Failed to create cache dir {:?}: {}", base, e);
+        return None;
+    }
+    Some(base)
+}
+
+fn poll_cache_path(project_hash: &str) -> Option<PathBuf> {
+    Some(poll_cache_dir()?.join(format!("poll-{}.json", project_hash)))
+}
+
+/// Read raw poll snapshot from disk for the given project hash.
+/// Returns `None` if the file is missing, unreadable, older than TTL, or malformed.
+fn read_poll_cache(project_hash: &str) -> Option<PollCacheFile> {
+    let path = poll_cache_path(project_hash)?;
+    let meta = fs::metadata(&path).ok()?;
+    let modified = meta.modified().ok()?;
+    let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+    if age.as_secs() > POLL_CACHE_TTL_SECS {
+        log_debug!("[poll_cache] Skipping stale cache {:?} (age {}s)", path, age.as_secs());
+        return None;
+    }
+    let bytes = fs::read(&path).ok()?;
+    match serde_json::from_slice::<PollCacheFile>(&bytes) {
+        Ok(cache) => Some(cache),
+        Err(e) => {
+            log_warn!("[poll_cache] Failed to parse {:?}: {}", path, e);
+            None
+        }
+    }
+}
+
+/// Write raw poll snapshot to disk for the given project hash. Errors are logged and swallowed
+/// — caching is best-effort and must not break the poll path.
+fn write_poll_cache(project_hash: &str, cache: &PollCacheFile) {
+    let Some(path) = poll_cache_path(project_hash) else { return };
+    let bytes = match serde_json::to_vec(cache) {
+        Ok(b) => b,
+        Err(e) => {
+            log_warn!("[poll_cache] Serialize failed: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = fs::write(&path, bytes) {
+        log_warn!("[poll_cache] Write failed {:?}: {}", path, e);
+    }
+}
+
 /// Batched poll: sync once, then fetch all issues + ready in 2 commands (was 3).
 /// Replaces 3 separate IPC calls (bd_list + bd_list(closed) + bd_ready) with one.
 #[tauri::command]
@@ -2448,23 +2530,40 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     log_info!("[bd_poll_data] Batched poll done: {} open, {} closed, {} ready",
         raw_open.len(), raw_closed.len(), raw_ready.len());
 
-    // Update mtime AFTER our commands ran, so the next bd_check_changed
-    // only detects EXTERNAL changes (not our own poll's side effects)
-    {
-        let working_dir = cwd_ref
-            .map(String::from)
-            .or_else(|| env::var("BEADS_PATH").ok())
-            .unwrap_or_else(|| {
+    // Resolve working directory once — used for both mtime bookkeeping below and
+    // the poll-cache snapshot further down.
+    let working_dir = cwd_ref
+        .map(String::from)
+        .or_else(|| env::var("BEADS_PATH").ok())
+        .unwrap_or_else(|| {
             env::current_dir()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| ".".to_string())
         });
-        let beads_dir = std::path::Path::new(&working_dir).join(".beads");
 
+    // Update mtime AFTER our commands ran, so the next bd_check_changed
+    // only detects EXTERNAL changes (not our own poll's side effects).
+    {
+        let beads_dir = std::path::Path::new(&working_dir).join(".beads");
         if let Some(mtime) = get_beads_mtime(&beads_dir) {
             let mut map = LAST_KNOWN_MTIME.lock().unwrap();
-            map.insert(working_dir, mtime);
+            map.insert(working_dir.clone(), mtime);
         }
+    }
+
+    // Fire-and-forget: persist raw snapshot for stale-while-revalidate warm-up on
+    // project switch. Clone raw vecs (cheap relative to bd IPC) and write on a
+    // blocking thread so the poll path is never blocked by disk I/O.
+    {
+        let project_hash = hash_path_djb2(&working_dir);
+        let snapshot = PollCacheFile {
+            open_issues: raw_open.clone(),
+            closed_issues: raw_closed.clone(),
+            ready_issues: raw_ready.clone(),
+        };
+        std::thread::spawn(move || {
+            write_poll_cache(&project_hash, &snapshot);
+        });
     }
 
     Ok(PollData {
@@ -2472,6 +2571,30 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         closed_issues: raw_closed.into_iter().map(transform_issue).collect(),
         ready_issues: raw_ready.into_iter().map(transform_issue).collect(),
     })
+}
+
+/// Read last-known PollData snapshot from disk (stale-while-revalidate warm-up).
+/// Returns `Ok(None)` if the cache is missing or older than TTL (1h).
+/// Intended to be called synchronously on project switch to prefill the UI
+/// while `bd_poll_data` runs in parallel to produce fresh data.
+#[tauri::command]
+async fn bd_poll_data_cached(cwd: String) -> Result<Option<PollData>, String> {
+    let project_hash = hash_path_djb2(&cwd);
+    let Some(cache) = read_poll_cache(&project_hash) else {
+        return Ok(None);
+    };
+    log_debug!(
+        "[bd_poll_data_cached] Serving warm snapshot for {}: {} open, {} closed, {} ready",
+        project_hash,
+        cache.open_issues.len(),
+        cache.closed_issues.len(),
+        cache.ready_issues.len()
+    );
+    Ok(Some(PollData {
+        open_issues: cache.open_issues.into_iter().map(transform_issue).collect(),
+        closed_issues: cache.closed_issues.into_iter().map(transform_issue).collect(),
+        ready_issues: cache.ready_issues.into_iter().map(transform_issue).collect(),
+    }))
 }
 
 /// Get the latest mtime across all beads database files.
@@ -5141,6 +5264,7 @@ pub fn run() {
             bd_check_changed,
             bd_reset_mtime,
             bd_poll_data,
+            bd_poll_data_cached,
             bd_list,
             bd_count,
             bd_ready,

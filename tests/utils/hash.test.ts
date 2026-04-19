@@ -32,4 +32,30 @@ describe('hashPath', () => {
     const result = hashPath('/home/dev/my project (2)')
     expect(result).toMatch(/^[0-9a-f]{8}$/)
   })
+
+  // Cross-language parity: these exact hex values MUST match the Rust
+  // `hash_path_djb2` output in `src-tauri/src/lib.rs`. If you change the
+  // hash algorithm on one side, update the other and regenerate these.
+  // Verified 2026-04 via `node /tmp/hash-compute.mjs` vs `rustc ... && ./bin`.
+  describe('JS↔Rust parity (fixed expected values)', () => {
+    it('ASCII path', () => {
+      expect(hashPath('/home/dev/project')).toBe('37a0a871')
+    })
+
+    it('Cyrillic path (directory name)', () => {
+      expect(hashPath('/Users/максим/project')).toBe('26b3ca76')
+    })
+
+    it('Cyrillic path (trailing segment)', () => {
+      expect(hashPath('/Users/dev/проект')).toBe('319ee14f')
+    })
+
+    it('emoji / astral (surrogate pair) path', () => {
+      expect(hashPath('/tmp/🚀/repo')).toBe('54a05b76')
+    })
+
+    it('empty string → djb2 seed 5381 = 0x1505', () => {
+      expect(hashPath('')).toBe('00001505')
+    })
+  })
 })

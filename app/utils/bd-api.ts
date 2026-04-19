@@ -394,6 +394,21 @@ export async function bdPollData(path?: string): Promise<PollData> {
   return { openIssues, closedIssues, readyIssues }
 }
 
+/**
+ * Stale-while-revalidate warm-up: read last-known PollData snapshot from disk cache.
+ * Returns `null` if the cache is missing, expired (> 1h), or the call fails.
+ * Web builds always return `null` — only Tauri persists snapshots.
+ */
+export async function bdPollDataCached(cwd: string): Promise<PollData | null> {
+  if (!isTauri()) return null
+  try {
+    const data = await invoke<PollData | null>('bd_poll_data_cached', { cwd })
+    return data ?? null
+  } catch {
+    return null
+  }
+}
+
 // ============================================================================
 // BD API Functions - Use Tauri invoke in app, fetch in web
 // ============================================================================
