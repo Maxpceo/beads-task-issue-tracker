@@ -2,11 +2,15 @@
 title: 'i18n (EN + RU) для UI'
 type: 'feature'
 created: '2026-04-19'
-status: 'ready-for-dev'
+status: 'in-progress'
+baseline_commit: 'd0be714'
 context:
   - '{project-root}/CLAUDE.md'
   - '{project-root}/.claude/codebase-map.md'
 ---
+
+<!-- Spec Change Log: Ask First #3 (Nuxt 4 compat) resolved 2026-04-19 via separate PR #43 (Nuxt 4.3 → 4.4.2). Can now use @nuxtjs/i18n@10.2.4 (latest). -->
+
 
 <frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
 
