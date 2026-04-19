@@ -8,7 +8,15 @@ import {
 } from '~/components/ui/dialog'
 import { Label } from '~/components/ui/label'
 import { Button } from '~/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '~/components/ui/select'
 import { getCliBinaryPath, setCliBinaryPath, checkExternalHealth } from '~/utils/bd-api'
+import { useLocale } from '~/composables/useLocale'
 import type { ThemeDefinition } from '~/composables/useTheme'
 import type { IssueStatus } from '~/types/issue'
 import { useStatuses } from '~/composables/useStatuses'
@@ -18,6 +26,17 @@ import StatusBadge from '~/components/issues/StatusBadge.vue'
 const open = defineModel<boolean>('open', { default: false })
 
 const { theme: activeTheme, themes, setTheme } = useTheme()
+
+// Language
+const { locale, isAuto, setLocale } = useLocale()
+const currentValue = computed(() => (isAuto.value ? 'auto' : locale.value))
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function onLanguageChange(value: any) {
+  if (value === 'auto' || value === 'en' || value === 'ru') {
+    setLocale(value)
+  }
+}
 
 // SVG icons for theme cards
 const themeIconPaths: Record<string, string> = {
@@ -231,6 +250,27 @@ const groupedStatuses = computed(() => {
             </button>
           </div>
         </div>
+
+        <!-- Language Selector -->
+        <section class="space-y-3">
+          <div>
+            <h3 class="text-sm font-medium">{{ $t('settings.language.title') }}</h3>
+            <p class="text-xs text-muted-foreground">{{ $t('settings.language.description') }}</p>
+          </div>
+          <Select :model-value="currentValue" @update:model-value="onLanguageChange">
+            <SelectTrigger class="w-full max-w-xs">
+              <SelectValue :placeholder="$t('settings.language.auto')" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">
+                {{ $t('settings.language.auto') }}
+                <span v-if="isAuto" class="text-muted-foreground ml-2">({{ locale === 'ru' ? $t('settings.language.russian') : $t('settings.language.english') }})</span>
+              </SelectItem>
+              <SelectItem value="en">{{ $t('settings.language.english') }}</SelectItem>
+              <SelectItem value="ru">{{ $t('settings.language.russian') }}</SelectItem>
+            </SelectContent>
+          </Select>
+        </section>
 
         <!-- CLI Client Selector -->
         <div class="space-y-3">
