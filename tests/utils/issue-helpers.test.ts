@@ -370,11 +370,11 @@ describe('filterIssues', () => {
     expect(result.map(i => i.id)).toEqual(['1', '2'])
   })
 
-  it('default workflow view excludes blocked statuses and dependency-blocked issues', () => {
+  it('default workflow view includes blocked statuses and dependency-blocked issues (excludes only closed/deleted/tombstone)', () => {
     const dependencyBlocked = makeIssue({ id: '5', status: 'open', blockedBy: ['1'] })
     const explicitlyBlocked = makeIssue({ id: '6', status: 'blocked' })
     const result = filterIssues([...issues, dependencyBlocked, explicitlyBlocked], noFilters, noExclusions)
-    expect(result.map(i => i.id)).toEqual(['1', '2'])
+    expect(result.map(i => i.id)).toEqual(['1', '2', '5', '6'])
   })
 
   it('shows only selected statuses when status filter active', () => {
