@@ -53,6 +53,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 
 ### Filtering & Display
 - **Dynamic Status Support**: All statuses from your `bd` installation are automatically loaded — including the bd 1.0.x review chain (`inreview`, `simplified`, `reviewed`, `accepted`) and any custom statuses you define. No hard-coded whitelist; the status filter dropdown always reflects your actual database
+- **Workflow filter derived from bd categories**: The Workflow KPI filter automatically includes every status whose bd category is `active`, `wip`, or `frozen` — so `blocked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` status you define with `bd statuses` are all covered without manual configuration. Click the Workflow KPI card to apply the filter
 - **Advanced Filters**: Multi-select filters by type, status, priority, labels, and assignee
 - **Exclusion Filters**: Hide specific issues by criteria (inverse filtering)
 - **Search**: Find issues by title, ID, or description

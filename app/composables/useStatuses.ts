@@ -1,4 +1,4 @@
-import { type ComputedRef } from 'vue'
+import { type ComputedRef, reactive, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { logFrontend } from '~/utils/bd-api'
 import { useBeadsPath } from '~/composables/useBeadsPath'
@@ -40,15 +40,16 @@ function toStatusMeta(entry: BdStatusEntry, isBuiltIn: boolean): StatusMeta {
   }
 }
 
-// Built-in fallback used when the Tauri command is unavailable
-const BUILTIN_FALLBACK: StatusMeta[] = [
+// Built-in fallback used when the Tauri command is unavailable (cold-start)
+// Категории должны соответствовать выводу `bd statuses`
+export const BUILTIN_FALLBACK: StatusMeta[] = [
   { name: 'open', label: 'OPEN', category: 'active', isBuiltIn: true },
   { name: 'in_progress', label: 'IN PROGRESS', category: 'wip', isBuiltIn: true },
-  { name: 'blocked', label: 'BLOCKED', category: 'active', isBuiltIn: true },
+  { name: 'blocked', label: 'BLOCKED', category: 'wip', isBuiltIn: true },
   { name: 'closed', label: 'CLOSED', category: 'done', isBuiltIn: true },
   { name: 'deferred', label: 'DEFERRED', category: 'frozen', isBuiltIn: true },
-  { name: 'pinned', label: 'PINNED', category: 'active', isBuiltIn: true },
-  { name: 'hooked', label: 'HOOKED', category: 'active', isBuiltIn: true },
+  { name: 'pinned', label: 'PINNED', category: 'frozen', isBuiltIn: true },
+  { name: 'hooked', label: 'HOOKED', category: 'wip', isBuiltIn: true },
 ]
 
 async function loadForPath(path: string): Promise<void> {
@@ -81,7 +82,7 @@ if (import.meta.client) {
 export function useStatuses(): { statuses: ComputedRef<StatusMeta[]>; getMeta: (name: string) => StatusMeta | undefined; refresh: () => Promise<void> } {
   const { beadsPath } = useBeadsPath()
 
-  const statuses = computed<StatusMeta[]>(() => cacheByPath.get(beadsPath.value) ?? [])
+  const statuses = computed<StatusMeta[]>(() => cacheByPath.get(beadsPath.value) ?? BUILTIN_FALLBACK)
 
   function getMeta(name: string): StatusMeta | undefined {
     return statuses.value.find((s) => s.name === name)

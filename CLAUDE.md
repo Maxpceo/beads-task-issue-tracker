@@ -4,6 +4,7 @@
 
 - **[.claude/codebase-map.md](.claude/codebase-map.md)** — Architecture, pages, components, composables, utils, Tauri commands, types, data flow.
 - **[docs/attachments.md](docs/attachments.md)** — Attachment system (filesystem-only, `external_ref` reserved for real external refs).
+- **[.claude/references/bd-knowledge.md](.claude/references/bd-knowledge.md)** — Внутреннее устройство bd: категории статусов, источники правды, custom status config, edge-cases. Читай при вопросах о bd-семантике.
 
 > Adding a new rule / hook / skill / constraint? Read **[.claude/references/rules-architecture.md](.claude/references/rules-architecture.md)** first — 5-level lazy-loaded system (L1 root / L2 nested / L3 rules with `paths:` / L4 skills / L5 hooks).
 
@@ -18,9 +19,6 @@ Completion reports (both orchestrator and supervisor) must not use hedging langu
 Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md` → Iron Law section.
 
 ### Issues
-- `/run-issue <id>` — Always run before starting work on any issue.
-- `/close-issue` — Always ask confirmation before closing.
-- `/review-to-commit` — Always use when user asks to commit.
 - Полный справочник команд bd (создание, запросы, формулы, lifecycle, worktrees): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
 
 ### Enrich bead with context
@@ -60,7 +58,7 @@ Examples:
 
 ### Bead Status Lifecycle
 
-bd v1.0.2 использует структурированные статусы. Review chain отслеживается через `bd query "status=..."`.
+bd 1.x использует структурированные статусы. Review chain отслеживается через `bd query "status=..."`.
 
 ```
 open → in_progress → inreview → simplified → reviewed → accepted → closed
@@ -137,11 +135,6 @@ Full merge cycle (PR → docs update → merge → checkout main) — skill `mer
 - Prefer reusable composables over inline logic for state, dialogs, resize, filtering, etc.
 - **Prefer shared components** over duplication.
 
-### Context Management
-- **Always prefer `/continue-task` over `/compact`** — it preserves issue context, progress, and next steps far better.
-- When the session is long and context is getting large, proactively run `/continue-task` before auto-compact triggers.
-- If a `PreCompact` hook fires with "auto" trigger, immediately run `/continue-task` instead of letting compact proceed blindly.
-
 ### Logging
 All logging rules (no `console.*` in `app/`, `logFrontend()` for TS, `log_*!` macros for Rust, log-file paths per platform) auto-load from **[.claude/rules/logging.md](.claude/rules/logging.md)** when you Read any `.ts`/`.vue`/`.rs` file.
 
@@ -172,4 +165,4 @@ Save plans in `.claude/plans/` (local to project), never `~/.claude/plans/`. Ful
 - `~/.claude/` (global config).
 
 ### Always Require Confirmation
-- `git commit`, `git push`, `/close-issue`.
+- `git commit`, `git push`.

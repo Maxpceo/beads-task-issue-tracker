@@ -46,7 +46,7 @@ import {
 } from '~/components/ui/tooltip'
 
 // Composables
-const { filters, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
+const { filters, workflowStatuses, allStatuses, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
 const { columns, toggleColumn, setColumns, resetColumns } = useColumnConfig()
 const { beadsPath, hasStoredPath } = useBeadsPath()
 const { success: notifySuccess, error: notifyError } = useNotification()
@@ -801,27 +801,27 @@ const handleRemoveLabelFilter = (label: string) => {
 
 // KPI filter handlers
 type KpiFilter = 'total' | 'open' | 'in_progress' | 'blocked' | 'workflow'
-const allStatusFilters: IssueStatus[] = ['open', 'in_progress', 'blocked', 'closed', 'deferred', 'pinned', 'hooked']
-const workflowStatusFilters = workflowStatuses
 
-const matchesStatusFilters = (selected: IssueStatus[], expected: IssueStatus[]) => {
+/** Set-equality: порядок элементов не важен */
+const isStatusSetEqual = (selected: IssueStatus[], expected: IssueStatus[]) => {
   if (selected.length !== expected.length) return false
-  return expected.every(status => selected.includes(status))
+  const set = new Set(selected)
+  return expected.every(s => set.has(s))
 }
 
 const activeKpiFilter = computed<KpiFilter | null>(() => {
-  const statusFilters = filters.value.status
-  if (statusFilters.length === 0 || matchesStatusFilters(statusFilters, workflowStatusFilters)) return 'workflow'
-  if (matchesStatusFilters(statusFilters, allStatusFilters)) return 'total'
-  if (statusFilters.length === 1 && statusFilters[0] === 'open') return 'open'
-  if (statusFilters.length === 1 && statusFilters[0] === 'in_progress') return 'in_progress'
-  if (statusFilters.length === 1 && statusFilters[0] === 'blocked') return 'blocked'
+  const sel = filters.value.status
+  if (sel.length === 0 || isStatusSetEqual(sel, workflowStatuses.value)) return 'workflow'
+  if (isStatusSetEqual(sel, allStatuses.value)) return 'total'
+  if (sel.length === 1 && sel[0] === 'open') return 'open'
+  if (sel.length === 1 && sel[0] === 'in_progress') return 'in_progress'
+  if (sel.length === 1 && sel[0] === 'blocked') return 'blocked'
   return null
 })
 
 const handleKpiClick = (kpi: KpiFilter) => {
   if (kpi === 'workflow') {
-    setStatusFilter([...workflowStatusFilters])
+    setStatusFilter([...workflowStatuses.value])
   } else if (kpi === 'total') {
     setAllFilters()
   } else if (kpi === 'open') {
