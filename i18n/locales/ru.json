@@ -348,9 +348,11 @@
   "dashboard": {
     "kpi": {
       "workflow": "Workflow",
-      "open": "Открытые",
+      "ready": "Готовы",
       "inProgress": "В работе",
+      "inReview": "На ревью",
       "blocked": "Заблокированные",
+      "deferred": "Отложены",
       "all": "Все"
     },
     "sections": {

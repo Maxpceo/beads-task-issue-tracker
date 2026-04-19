@@ -15,7 +15,7 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 
-type KpiFilter = 'total' | 'open' | 'in_progress' | 'blocked' | 'workflow'
+type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow'
 
 const props = withDefaults(defineProps<{
   stats: DashboardStats | null
@@ -58,9 +58,11 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
     <!-- KPI cards (hidden in desktop scrollable section where KPIs are in the fixed section) -->
     <div v-if="!hideKpis" :class="['flex flex-wrap p-0.5 -m-0.5', kpiGridCols === 5 ? 'gap-1.5' : 'gap-3']">
       <KpiCard :title="t('dashboard.kpi.workflow')" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" @click="emit('kpi-click', 'workflow')" />
-      <KpiCard :title="t('dashboard.kpi.open')" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="emit('kpi-click', 'open')" />
+      <KpiCard :title="t('dashboard.kpi.ready')" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="emit('kpi-click', 'open')" />
       <KpiCard :title="t('dashboard.kpi.inProgress')" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" @click="emit('kpi-click', 'in_progress')" />
+      <KpiCard :title="t('dashboard.kpi.inReview')" :value="stats.inReview" color="var(--color-status-inreview)" :active="activeKpiFilter === 'in_review'" @click="emit('kpi-click', 'in_review')" />
       <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" @click="emit('kpi-click', 'blocked')" />
+      <KpiCard :title="t('dashboard.kpi.deferred')" :value="stats.deferred" color="var(--color-status-deferred)" :active="activeKpiFilter === 'deferred'" @click="emit('kpi-click', 'deferred')" />
       <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" @click="emit('kpi-click', 'total')" />
     </div>
 
