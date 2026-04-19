@@ -69,7 +69,7 @@ describe('computeStatsFromIssues', () => {
     expect(stats.blocked).toBe(1)
   })
 
-  it('counts open issues with blockers as blocked', () => {
+  it('counts open issues with blockers as blocked but still inside workflow', () => {
     const issues = [
       makeIssue({ id: '1', status: 'open', blockedBy: ['2'] }),
       makeIssue({ id: '2', status: 'open' }),
@@ -77,10 +77,10 @@ describe('computeStatsFromIssues', () => {
     const stats = computeStatsFromIssues(issues)
     expect(stats.blocked).toBe(1)
     expect(stats.open).toBe(1)
-    expect(stats.workflow).toBe(1)
+    expect(stats.workflow).toBe(2)
   })
 
-  it('counts workflow as non-blocked, non-closed, non-deleted issues', () => {
+  it('counts workflow as everything except closed/deleted/tombstone (blocked included)', () => {
     const issues = [
       makeIssue({ id: '1', status: 'open' }),
       makeIssue({ id: '2', status: 'in_progress' }),
@@ -92,7 +92,7 @@ describe('computeStatsFromIssues', () => {
       makeIssue({ id: '8', status: 'open', blockedBy: ['1'] }),
     ]
     const stats = computeStatsFromIssues(issues)
-    expect(stats.workflow).toBe(3)
+    expect(stats.workflow).toBe(5)
   })
 
   it('counts closed separately', () => {
@@ -153,7 +153,7 @@ describe('computeStatsFromIssues', () => {
     expect(stats.inProgress).toBe(1)
     expect(stats.blocked).toBe(1)
     expect(stats.closed).toBe(1)
-    expect(stats.workflow).toBe(3)
+    expect(stats.workflow).toBe(4)
   })
 
   it('initializes ready to 0', () => {

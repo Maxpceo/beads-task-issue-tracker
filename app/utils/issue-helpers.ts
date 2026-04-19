@@ -72,12 +72,14 @@ export function isIssueBlocked(issue: Pick<Issue, 'status' | 'blockedBy'>): bool
 /**
  * Determine whether an issue belongs in the WORKFLOW view.
  *
- * WORKFLOW includes everything except closed/deleted/tombstone and blocked.
+ * WORKFLOW includes everything except closed/deleted/tombstone — blocked
+ * issues are part of the workflow (they remain in the work pipeline, just
+ * currently waiting to be unblocked). Matches `computeWorkflowStatuses`
+ * (categories active/wip/frozen), where `blocked` sits in `wip`.
  */
 export function isIssueWorkflow(issue: Pick<Issue, 'status' | 'blockedBy'>): boolean {
   const status = issue.status as string
-  if (status === 'closed' || status === 'deleted' || status === 'tombstone') return false
-  return !isIssueBlocked(issue)
+  return status !== 'closed' && status !== 'deleted' && status !== 'tombstone'
 }
 
 /**
