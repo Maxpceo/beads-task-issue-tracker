@@ -30,7 +30,18 @@ export default defineNuxtConfig({
     port: 3133,
   },
 
-  modules: ['shadcn-nuxt'],
+  modules: ['shadcn-nuxt', '@nuxtjs/i18n'],
+
+  i18n: {
+    strategy: 'no_prefix',
+    defaultLocale: 'en',
+    fallbackLocale: 'en',
+    detectBrowserLanguage: false,
+    locales: [
+      { code: 'en', language: 'en-US', file: 'en.json' },
+      { code: 'ru', language: 'ru-RU', file: 'ru.json' },
+    ],
+  },
 
   shadcn: {
     prefix: '',

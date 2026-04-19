@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@nuxt/telemetry": "2.8.0",
+    "@nuxtjs/i18n": "10.2.4",
     "@tanstack/vue-table": "^8.21.3",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
