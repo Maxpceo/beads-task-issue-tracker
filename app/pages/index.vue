@@ -335,12 +335,29 @@ onMounted(async () => {
         notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
       }
 
+      // Stale-while-revalidate: try to prefill UI from the on-disk PollData snapshot
+      // before the (slow) cold bd subprocess starts. Same pattern as handlePathChange.
+      // No generation guard needed here — onMounted runs once with no concurrent caller.
+      let warmedFromCache = false
+      const tWarmup = performance.now()
+      try {
+        const snapshot = await warmUpFromCache(beadsPath.value)
+        if (snapshot) {
+          const cachedReady = applyWarmUpSnapshot(snapshot)
+          updateFromPollData(issues.value, cachedReady)
+          warmedFromCache = true
+        }
+      } catch (e) {
+        logFrontend('error', '[onMounted] warmUpFromCache failed: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
+      }
+      const perfWarmup = performance.now() - tWarmup
+
       // Sequential: bd commands can't run concurrently (Dolt SIGSEGV on parallel access)
       const perfFirstPollTrigger = performance.now()
       fetchIssues().then(async () => {
         await fetchStats(issues.value)
         const perfFirstDataReady = performance.now()
-        logFrontend('info', `[perf:app_boot] mount→trigger=${(perfFirstPollTrigger - perfAppBootStart).toFixed(0)}ms trigger→data=${(perfFirstDataReady - perfFirstPollTrigger).toFixed(0)}ms total=${(perfFirstDataReady - perfAppBootStart).toFixed(0)}ms`).catch(() => {})
+        logFrontend('info', `[perf:app_boot] warmup=${perfWarmup.toFixed(0)}ms warmedFromCache=${warmedFromCache} mount→trigger=${(perfFirstPollTrigger - perfAppBootStart).toFixed(0)}ms trigger→data=${(perfFirstDataReady - perfFirstPollTrigger).toFixed(0)}ms total=${(perfFirstDataReady - perfAppBootStart).toFixed(0)}ms`).catch(() => {})
       })
     }
   }
