@@ -8,13 +8,6 @@ import {
 } from '~/components/ui/dialog'
 import { Label } from '~/components/ui/label'
 import { Button } from '~/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '~/components/ui/select'
 import { getCliBinaryPath, setCliBinaryPath, checkExternalHealth } from '~/utils/bd-api'
 import { useLocale } from '~/composables/useLocale'
 import type { ThemeDefinition } from '~/composables/useTheme'
@@ -259,19 +252,23 @@ const groupedStatuses = computed(() => {
             <h3 class="text-sm font-medium">{{ $t('settings.language.title') }}</h3>
             <p class="text-xs text-muted-foreground">{{ $t('settings.language.description') }}</p>
           </div>
-          <Select :model-value="currentValue" @update:model-value="onLanguageChange">
-            <SelectTrigger class="w-full max-w-xs">
-              <SelectValue :placeholder="$t('settings.language.auto')" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">
+          <div class="flex flex-col gap-2 max-w-xs" role="radiogroup" :aria-label="$t('settings.language.title')">
+            <label class="flex items-center gap-2 cursor-pointer rounded-md border px-3 py-2 hover:bg-accent transition-colors" :class="currentValue === 'auto' ? 'border-primary bg-accent' : 'border-input'">
+              <input type="radio" name="locale" value="auto" class="accent-primary" :checked="currentValue === 'auto'" @change="onLanguageChange('auto')">
+              <span class="text-sm">
                 {{ $t('settings.language.auto') }}
-                <span v-if="isAuto" class="text-muted-foreground ml-2">({{ locale === 'ru' ? $t('settings.language.russian') : $t('settings.language.english') }})</span>
-              </SelectItem>
-              <SelectItem value="en">{{ $t('settings.language.english') }}</SelectItem>
-              <SelectItem value="ru">{{ $t('settings.language.russian') }}</SelectItem>
-            </SelectContent>
-          </Select>
+                <span v-if="isAuto" class="text-muted-foreground ml-1">({{ locale === 'ru' ? $t('settings.language.russian') : $t('settings.language.english') }})</span>
+              </span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer rounded-md border px-3 py-2 hover:bg-accent transition-colors" :class="currentValue === 'en' ? 'border-primary bg-accent' : 'border-input'">
+              <input type="radio" name="locale" value="en" class="accent-primary" :checked="currentValue === 'en'" @change="onLanguageChange('en')">
+              <span class="text-sm">{{ $t('settings.language.english') }}</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer rounded-md border px-3 py-2 hover:bg-accent transition-colors" :class="currentValue === 'ru' ? 'border-primary bg-accent' : 'border-input'">
+              <input type="radio" name="locale" value="ru" class="accent-primary" :checked="currentValue === 'ru'" @change="onLanguageChange('ru')">
+              <span class="text-sm">{{ $t('settings.language.russian') }}</span>
+            </label>
+          </div>
         </section>
 
         <!-- CLI Client Selector -->
