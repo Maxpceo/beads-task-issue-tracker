@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { Issue } from '~/types/issue'
 import {
   deduplicateIssues,
+  linkParentsAndChildren,
   naturalCompare,
   getParentIdFromIssue,
   compareChildIssues,
@@ -608,6 +609,45 @@ describe('pruneClosedBlockers', () => {
     pruneClosedBlockers(issues)
 
     expect(issues[0]!.blockedBy).toEqual(['missing-1'])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// linkParentsAndChildren
+// ---------------------------------------------------------------------------
+describe('linkParentsAndChildren', () => {
+  it('derives parent from dot-notation ID and aggregates children on epic', () => {
+    const issues = [
+      makeIssue({ id: 'abc', type: 'epic', title: 'Epic A' }),
+      makeIssue({ id: 'abc.1', title: 'Child 1' }),
+      makeIssue({ id: 'abc.2', title: 'Child 2', priority: 'p0' }),
+    ]
+
+    linkParentsAndChildren(issues)
+
+    expect(issues[1]!.parent).toEqual({ id: 'abc', title: 'Epic A', status: 'open', priority: 'p2' })
+    expect(issues[2]!.parent?.id).toBe('abc')
+    expect(issues[0]!.children).toHaveLength(2)
+    expect(issues[0]!.children?.map(c => c.id)).toEqual(['abc.1', 'abc.2'])
+    expect(issues[0]!.children?.[1]).toEqual({ id: 'abc.2', title: 'Child 2', status: 'open', priority: 'p0' })
+  })
+
+  it('enriches explicit parent link with loaded data', () => {
+    const issues = [
+      makeIssue({ id: 'epic1', type: 'epic', title: 'Fresh Title', status: 'in_progress' }),
+      makeIssue({ id: 'child1', parent: { id: 'epic1', title: 'Stale', status: 'open', priority: 'p2' } as any }),
+    ]
+
+    linkParentsAndChildren(issues)
+
+    expect(issues[1]!.parent?.title).toBe('Fresh Title')
+    expect(issues[1]!.parent?.status).toBe('in_progress')
+  })
+
+  it('leaves issues untouched when parent is not in the array', () => {
+    const issues = [makeIssue({ id: 'orphan.1' })]
+    linkParentsAndChildren(issues)
+    expect(issues[0]!.parent).toBeUndefined()
   })
 })
 

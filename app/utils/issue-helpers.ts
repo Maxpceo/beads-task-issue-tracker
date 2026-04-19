@@ -2,7 +2,7 @@
  * Pure helper functions for issue data manipulation.
  * Extracted from useIssues composable for testability.
  */
-import type { Issue, DashboardStats, IssueType, IssuePriority } from '~/types/issue'
+import type { Issue, DashboardStats, IssueType, IssuePriority, ChildIssue } from '~/types/issue'
 import type { IssueGroup } from '~/composables/useIssues'
 
 /**
@@ -27,6 +27,47 @@ export function deduplicateIssues(issues: Issue[]): Issue[] {
   }
 
   return Array.from(issueMap.values())
+}
+
+/**
+ * Populate `parent` (derived from explicit link or dot-notation ID) and
+ * aggregate `children` lists on epics, using only the data in the given array.
+ *
+ * Mutates issues in place. Used by fetchIssues / fetchPollData / warmUpFromCache
+ * to rebuild hierarchy without issuing extra `bd show` calls.
+ */
+export function linkParentsAndChildren(issues: Issue[]): void {
+  const issueMap = new Map(issues.map(i => [i.id, i]))
+
+  // Fill in parent details (derive from ID pattern if not explicitly set).
+  for (const issue of issues) {
+    const parentId = getParentIdFromIssue(issue)
+    if (!parentId) continue
+    const parentIssue = issueMap.get(parentId)
+    if (!parentIssue) continue
+    issue.parent = {
+      id: parentIssue.id,
+      title: parentIssue.title,
+      status: parentIssue.status,
+      priority: parentIssue.priority,
+    }
+  }
+
+  // Aggregate children per epic.
+  const childrenByParent = new Map<string, ChildIssue[]>()
+  for (const issue of issues) {
+    if (!issue.parent?.id) continue
+    let list = childrenByParent.get(issue.parent.id)
+    if (!list) {
+      list = []
+      childrenByParent.set(issue.parent.id, list)
+    }
+    list.push({ id: issue.id, title: issue.title, status: issue.status, priority: issue.priority })
+  }
+  for (const [epicId, children] of childrenByParent) {
+    const epic = issueMap.get(epicId)
+    if (epic) epic.children = children
+  }
 }
 
 /**

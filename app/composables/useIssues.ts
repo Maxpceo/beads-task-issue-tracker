@@ -1,9 +1,10 @@
 import { useI18n } from 'vue-i18n'
 import type { Issue, CreateIssuePayload, UpdateIssuePayload } from '~/types/issue'
-import { bdList, bdCount, bdShow, bdCreate, bdUpdate, bdClose, bdDelete, bdAddComment, bdAddDependency, bdRemoveDependency, bdAddRelation, bdRemoveRelation, bdPurgeOrphanAttachments, bdPollData, bdSearch, bdLabelAdd, bdLabelRemove, type BdListOptions, type PollData } from '~/utils/bd-api'
+import { bdList, bdCount, bdShow, bdCreate, bdUpdate, bdClose, bdDelete, bdAddComment, bdAddDependency, bdRemoveDependency, bdAddRelation, bdRemoveRelation, bdPurgeOrphanAttachments, bdPollData, bdPollDataCached, bdSearch, bdLabelAdd, bdLabelRemove, type BdListOptions, type PollData } from '~/utils/bd-api'
 import { useProjectStorage } from '~/composables/useProjectStorage'
 import {
   deduplicateIssues,
+  linkParentsAndChildren,
   pruneClosedBlockers,
   naturalCompare,
   getParentIdFromIssue,
@@ -137,60 +138,9 @@ export function useIssues() {
       const allIssues = await bdList({ path, includeAll: true })
       const newIssues = deduplicateIssues(allIssues || [])
 
-      // Build parent-child relationships from the data we already have (no bdShow needed)
-      const issueMap = new Map(newIssues.map(i => [i.id, i]))
-
-      // 1. Fill in parent details
-      //    - Use explicit parent.id from bd list if available (bd < 0.50)
-      //    - Derive from dot notation in ID for bd >= 0.50 (e.g., "abc.1" → parent "abc")
-      for (const issue of newIssues) {
-        // Derive parent from ID pattern if not already set
-        if (!issue.parent?.id) {
-          const lastDot = issue.id.lastIndexOf('.')
-          if (lastDot !== -1) {
-            const suffix = issue.id.slice(lastDot + 1)
-            if (/^\d+$/.test(suffix)) {
-              const derivedParentId = issue.id.slice(0, lastDot)
-              const parentIssue = issueMap.get(derivedParentId)
-              if (parentIssue) {
-                issue.parent = {
-                  id: parentIssue.id,
-                  title: parentIssue.title,
-                  status: parentIssue.status,
-                  priority: parentIssue.priority,
-                }
-              }
-            }
-          }
-        } else {
-          // Enrich explicit parent with full details from loaded data
-          const parentIssue = issueMap.get(issue.parent.id)
-          if (parentIssue) {
-            issue.parent = {
-              id: parentIssue.id,
-              title: parentIssue.title,
-              status: parentIssue.status,
-              priority: parentIssue.priority,
-            }
-          }
-        }
-      }
-
-      // 2. Build children lists for epics from child issues that reference them
-      const childrenByParent = new Map<string, Array<{ id: string; title: string; status: typeof newIssues[0]['status']; priority: typeof newIssues[0]['priority'] }>>()
-      for (const issue of newIssues) {
-        if (issue.parent?.id) {
-          const list = childrenByParent.get(issue.parent.id) || []
-          list.push({ id: issue.id, title: issue.title, status: issue.status, priority: issue.priority })
-          childrenByParent.set(issue.parent.id, list)
-        }
-      }
-      for (const [epicId, children] of childrenByParent) {
-        const epic = issueMap.get(epicId)
-        if (epic) {
-          epic.children = children
-        }
-      }
+      // Rebuild parent-child hierarchy (both explicit links and dot-notation derivation)
+      // from the loaded data — no extra bdShow calls needed.
+      linkParentsAndChildren(newIssues)
 
       pruneClosedBlockers(newIssues)
 
@@ -267,45 +217,7 @@ export function useIssues() {
       const mergedIssues = [...(data.openIssues || []), ...(data.closedIssues || [])]
       const newIssues = deduplicateIssues(mergedIssues)
 
-      // Build parent-child relationships from the data we already have (no bdShow needed)
-      const issueMap = new Map(newIssues.map(i => [i.id, i]))
-
-      // Derive parent from dot notation if not set (bd >= 0.50)
-      for (const issue of newIssues) {
-        if (!issue.parent?.id) {
-          const lastDot = issue.id.lastIndexOf('.')
-          if (lastDot !== -1) {
-            const suffix = issue.id.slice(lastDot + 1)
-            if (/^\d+$/.test(suffix)) {
-              const derivedParentId = issue.id.slice(0, lastDot)
-              const parentIssue = issueMap.get(derivedParentId)
-              if (parentIssue) {
-                issue.parent = { id: parentIssue.id, title: parentIssue.title, status: parentIssue.status, priority: parentIssue.priority }
-              }
-            }
-          }
-        } else {
-          const parentIssue = issueMap.get(issue.parent.id)
-          if (parentIssue) {
-            issue.parent = { id: parentIssue.id, title: parentIssue.title, status: parentIssue.status, priority: parentIssue.priority }
-          }
-        }
-      }
-
-      const childrenByParent = new Map<string, Array<{ id: string; title: string; status: typeof newIssues[0]['status']; priority: typeof newIssues[0]['priority'] }>>()
-      for (const issue of newIssues) {
-        if (issue.parent?.id) {
-          const list = childrenByParent.get(issue.parent.id) || []
-          list.push({ id: issue.id, title: issue.title, status: issue.status, priority: issue.priority })
-          childrenByParent.set(issue.parent.id, list)
-        }
-      }
-      for (const [epicId, children] of childrenByParent) {
-        const epic = issueMap.get(epicId)
-        if (epic) {
-          epic.children = children
-        }
-      }
+      linkParentsAndChildren(newIssues)
 
       // Preserve blockedBy/blocks from previous enrichments (fetchIssues or fetchIssue)
       // Poll data doesn't return these, but they were populated by earlier bdShow calls.
@@ -388,6 +300,49 @@ export function useIssues() {
       }
       return null
     }
+  }
+
+  /**
+   * Stale-while-revalidate warm-up on project switch: reads a disk-cached PollData
+   * snapshot and returns the prepared issue list + ready list so the caller can decide
+   * whether to apply it (after checking its own generation guard). Does NOT mutate any
+   * reactive state — this avoids a race where a slow warm-up for project B returns
+   * after the user has already switched to project C and leaks B's data into C's UI.
+   * Returns `null` if no usable cache exists.
+   */
+  const warmUpFromCache = async (
+    cwd: string,
+  ): Promise<{ issues: Issue[]; readyIssues: Issue[] } | null> => {
+    const data = await bdPollDataCached(cwd)
+    if (!data) return null
+
+    const mergedIssues = [...(data.openIssues || []), ...(data.closedIssues || [])]
+    const newIssues = deduplicateIssues(mergedIssues)
+
+    linkParentsAndChildren(newIssues)
+    pruneClosedBlockers(newIssues)
+
+    return {
+      issues: newIssues,
+      readyIssues: data.readyIssues || [],
+    }
+  }
+
+  /**
+   * Apply a warm-up snapshot to reactive state. Split from `warmUpFromCache` so the
+   * caller can re-check its generation guard between the (async) fetch and the
+   * (synchronous) mutation. Mirrors the trailing "update polling state" block of
+   * `fetchPollData` for symmetry.
+   */
+  const applyWarmUpSnapshot = (snapshot: { issues: Issue[]; readyIssues: Issue[] }): Issue[] => {
+    issues.value = snapshot.issues
+    lastKnownCount.value = snapshot.issues.length
+    const maxUpdated = snapshot.issues.reduce(
+      (max, issue) => (issue.updatedAt > max ? issue.updatedAt : max),
+      '',
+    )
+    lastKnownUpdated.value = maxUpdated || null
+    return snapshot.readyIssues
   }
 
   // Check if there are changes without fetching full list
@@ -848,6 +803,8 @@ export function useIssues() {
     // Actions
     fetchIssues,
     fetchPollData,
+    warmUpFromCache,
+    applyWarmUpSnapshot,
     fetchIssue,
     createIssue,
     updateIssue,
