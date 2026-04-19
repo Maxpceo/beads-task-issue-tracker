@@ -411,7 +411,7 @@
     "prerequisites": {
       "welcomeTitle": "Добро пожаловать в Beads Task-Issue Tracker",
       "welcomeSubtitle": "Следуйте шагам ниже, чтобы начать",
-      "content": "**Beads** — это AI-native трекер задач, который живёт прямо в вашей кодовой базе. Задачи хранятся как файлы в папке `.beads` внутри репозитория.\n\n### Предварительные требования\n\n#### 1. Установите Beads CLI\n\n```bash\n# Через npm\nnpm install -g @beads/cli\n\n# Или через Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Инициализируйте Beads в вашем проекте\n\nПерейдите в папку проекта и выполните:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nЭто создаст папку `.beads` в репозитории.\n\n#### 3. Создайте первую задачу\n\n```bash\nbd create \"Моя первая задача\" --type task --priority p2\n```\n\n### Узнать больше\n\n- [Документация Beads](https://beads.dev)\n- [Репозиторий GitHub](https://github.com/steveyegge/beads)\n"
+      "content": "**Beads** — это AI-native трекер задач, который живёт прямо в вашей кодовой базе. Задачи хранятся как файлы в папке `.beads` внутри репозитория.\n\n### Предварительные требования\n\n#### 1. Установите Beads CLI\n\n```bash\n# Через npm\nnpm install -g {'@'}beads/cli\n\n# Или через Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Инициализируйте Beads в вашем проекте\n\nПерейдите в папку проекта и выполните:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nЭто создаст папку `.beads` в репозитории.\n\n#### 3. Создайте первую задачу\n\n```bash\nbd create \"Моя первая задача\" --type task --priority p2\n```\n\n### Узнать больше\n\n- [Документация Beads](https://beads.dev)\n- [Репозиторий GitHub](https://github.com/steveyegge/beads)\n"
     }
   },
   "issues": {

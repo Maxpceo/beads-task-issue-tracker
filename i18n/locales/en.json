@@ -411,7 +411,7 @@
     "prerequisites": {
       "welcomeTitle": "Welcome to Beads Task-Issue Tracker",
       "welcomeSubtitle": "Follow the steps below to get started",
-      "content": "**Beads** is an AI-native issue tracker that lives directly in your codebase. Issues are stored as files in a `.beads` folder within your repository.\n\n### Prerequisites\n\n#### 1. Install the Beads CLI\n\n```bash\n# Using npm\nnpm install -g @beads/cli\n\n# Or using Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Initialize Beads in your project\n\nNavigate to your project folder and run:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nThis creates a `.beads` folder in your repository.\n\n#### 3. Create your first issue\n\n```bash\nbd create \"My first issue\" --type task --priority p2\n```\n\n### Learn more\n\n- [Beads Documentation](https://beads.dev)\n- [GitHub Repository](https://github.com/steveyegge/beads)\n"
+      "content": "**Beads** is an AI-native issue tracker that lives directly in your codebase. Issues are stored as files in a `.beads` folder within your repository.\n\n### Prerequisites\n\n#### 1. Install the Beads CLI\n\n```bash\n# Using npm\nnpm install -g {'@'}beads/cli\n\n# Or using Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Initialize Beads in your project\n\nNavigate to your project folder and run:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nThis creates a `.beads` folder in your repository.\n\n#### 3. Create your first issue\n\n```bash\nbd create \"My first issue\" --type task --priority p2\n```\n\n### Learn more\n\n- [Beads Documentation](https://beads.dev)\n- [GitHub Repository](https://github.com/steveyegge/beads)\n"
     }
   },
   "issues": {
