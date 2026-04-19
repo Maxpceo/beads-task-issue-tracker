@@ -22,6 +22,12 @@ const SYNC_COOLDOWN_SECS: u64 = 10;
 static LAST_KNOWN_MTIME: LazyLock<Mutex<HashMap<String, std::time::SystemTime>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// Tracks projects for which we've already logged a Dolt cold-start timing.
+// Used by [`bd_poll_data`] to emit `[perf:dolt_coldstart]` only on the first
+// bd_poll_data call per Dolt-backed project per process lifetime.
+static DOLT_COLDSTART_LOGGED: LazyLock<Mutex<std::collections::HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
 // Configurable CLI binary name (default: "bd")
 static CLI_BINARY: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new("bd".to_string()));
 
@@ -2503,29 +2509,48 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     log_info!("[bd_poll_data] Batched poll starting");
 
     let cwd_ref = cwd.as_deref();
+    let t_total = std::time::Instant::now();
 
     // Single sync for the entire poll cycle
     sync_bd_database(cwd_ref);
 
-    // Fetch issues: single --all call for bd >= 0.55, fallback to 2 calls for older versions
+    // Fetch issues: single --all call for bd >= 0.55, fallback to 2 calls for older versions.
+    // [perf] Measure subprocess spawn time separately from JSON parsing so we can tell
+    // whether the bottleneck is bd CLI startup (cold Dolt, process spawn) or parse cost.
+    let mut spawn_ms: u128 = 0;
+    let mut parse_ms: u128 = 0;
+
     let (raw_open, raw_closed) = if supports_list_all_flag() {
+        let t_spawn = std::time::Instant::now();
         let all_output = execute_bd("list", &["--all".to_string(), "--limit=0".to_string()], cwd_ref)?;
+        spawn_ms += t_spawn.elapsed().as_millis();
+
+        let t_parse = std::time::Instant::now();
         let raw_all = parse_issues_tolerant(&all_output, "bd_poll_data_all")?;
         let (open, closed): (Vec<_>, Vec<_>) = raw_all.into_iter()
             .partition(|issue: &BdRawIssue| issue.status != "closed");
+        parse_ms += t_parse.elapsed().as_millis();
         (open, closed)
     } else {
+        let t_spawn = std::time::Instant::now();
         let open_output = execute_bd("list", &["--limit=0".to_string()], cwd_ref)?;
         let closed_output = execute_bd("list", &["--status=closed".to_string(), "--limit=0".to_string()], cwd_ref)?;
-        (
-            parse_issues_tolerant(&open_output, "bd_poll_data_open")?,
-            parse_issues_tolerant(&closed_output, "bd_poll_data_closed")?,
-        )
+        spawn_ms += t_spawn.elapsed().as_millis();
+
+        let t_parse = std::time::Instant::now();
+        let open = parse_issues_tolerant(&open_output, "bd_poll_data_open")?;
+        let closed = parse_issues_tolerant(&closed_output, "bd_poll_data_closed")?;
+        parse_ms += t_parse.elapsed().as_millis();
+        (open, closed)
     };
 
-    // Fetch ready issues
+    let t_spawn_ready = std::time::Instant::now();
     let ready_output = execute_bd("ready", &[], cwd_ref)?;
+    spawn_ms += t_spawn_ready.elapsed().as_millis();
+
+    let t_parse_ready = std::time::Instant::now();
     let raw_ready = parse_issues_tolerant(&ready_output, "bd_poll_data_ready")?;
+    parse_ms += t_parse_ready.elapsed().as_millis();
 
     log_info!("[bd_poll_data] Batched poll done: {} open, {} closed, {} ready",
         raw_open.len(), raw_closed.len(), raw_ready.len());
@@ -2566,11 +2591,40 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         });
     }
 
-    Ok(PollData {
+    // [perf] Transform phase: BdRawIssue → Issue via `transform_issue` on every vec.
+    let issues_count = raw_open.len() + raw_closed.len() + raw_ready.len();
+    let t_transform = std::time::Instant::now();
+    let result = PollData {
         open_issues: raw_open.into_iter().map(transform_issue).collect(),
         closed_issues: raw_closed.into_iter().map(transform_issue).collect(),
         ready_issues: raw_ready.into_iter().map(transform_issue).collect(),
-    })
+    };
+    let transform_ms = t_transform.elapsed().as_millis();
+    let total_ms = t_total.elapsed().as_millis();
+
+    log_debug!(
+        "[perf:bd_poll_data] spawn={}ms parse={}ms transform={}ms total={}ms issues={}",
+        spawn_ms, parse_ms, transform_ms, total_ms, issues_count
+    );
+
+    // [perf] Dolt cold-start: log once per project per process lifetime.
+    // The very first bd_poll_data call on a Dolt-backed project pays for
+    // `dolt sql-server` startup — which dominates switch latency on large projects.
+    {
+        let beads_dir = std::path::Path::new(&working_dir).join(".beads");
+        if project_uses_dolt(&beads_dir) {
+            let mut logged = DOLT_COLDSTART_LOGGED.lock().unwrap();
+            if !logged.contains(&working_dir) {
+                logged.insert(working_dir.clone());
+                log_info!(
+                    "[perf:dolt_coldstart] path={} init_ms={}",
+                    working_dir, total_ms
+                );
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Read last-known PollData snapshot from disk (stale-while-revalidate warm-up).

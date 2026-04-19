@@ -466,6 +466,8 @@ const handlePathChange = async () => {
   const thisGeneration = ++pathChangeGeneration
 
   const perfStart = performance.now()
+  let perfWarmup = 0
+  let perfClearState = 0
   let perfPreflight = 0
   let perfFetchIssues = 0
   let perfFetchStats = 0
@@ -489,6 +491,7 @@ const handlePathChange = async () => {
   // sees the last-known state instantly while fresh data loads in parallel below.
   // If no cache, fall back to the original "wipe, then load" behavior.
   let warmedFromCache = false
+  const tWarmup = performance.now()
   try {
     const snapshot = await warmUpFromCache(beadsPath.value)
     // Re-check generation AFTER the await but BEFORE mutating reactive state.
@@ -509,10 +512,13 @@ const handlePathChange = async () => {
       return
     }
   }
+  perfWarmup = performance.now() - tWarmup
 
   if (!warmedFromCache) {
+    const tClear = performance.now()
     clearIssues()  // Reset issue list so new-issue detection doesn't flash all rows
     clearStats()   // Reset stats so previous project's ready work doesn't persist
+    perfClearState = performance.now() - tClear
   }
 
   // Stop polling + change detection during project switch to prevent:
@@ -584,7 +590,7 @@ return
   }
 
   const perfTotal = performance.now() - perfStart
-  logFrontend('info', `[perf:handlePathChange] pre-flight=${perfPreflight.toFixed(0)}ms fetchIssues=${perfFetchIssues.toFixed(0)}ms fetchStats=${perfFetchStats.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms`).catch(() => {})
+  logFrontend('info', `[perf:handlePathChange] warmup=${perfWarmup.toFixed(0)}ms clearState=${perfClearState.toFixed(0)}ms pre-flight=${perfPreflight.toFixed(0)}ms fetchIssues=${perfFetchIssues.toFixed(0)}ms fetchStats=${perfFetchStats.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms warmedFromCache=${warmedFromCache}`).catch(() => {})
 
   if (thisGeneration !== pathChangeGeneration) {
 return
