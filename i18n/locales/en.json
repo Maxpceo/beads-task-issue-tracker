@@ -375,5 +375,97 @@
       "childSummary": "{closed} closed / {total} child | {closed} closed / {total} children",
       "loadMore": "Load more ({remaining} remaining)"
     }
+  },
+  "details": {
+    "header": {
+      "pin": "Pin",
+      "unpin": "Unpin",
+      "edit": "Edit",
+      "reopen": "Reopen",
+      "close": "Close",
+      "delete": "Delete"
+    },
+    "sections": {
+      "description": "Description",
+      "attachments": "Attachments",
+      "parent": "Parent",
+      "children": "Children",
+      "externalReference": "External Reference",
+      "details": "Details",
+      "dependencies": "Dependencies",
+      "relations": "Relations",
+      "estimate": "Estimate",
+      "designNotes": "Design Notes",
+      "acceptanceCriteria": "Acceptance Criteria",
+      "workingNotes": "Working Notes",
+      "metadata": "Metadata",
+      "specId": "Spec ID",
+      "blockedBy": "Blocked By",
+      "blocks": "Blocks",
+      "assignee": "Assignee",
+      "labels": "Labels",
+      "created": "Created",
+      "started": "Started",
+      "updated": "Updated"
+    },
+    "actions": {
+      "attach": "Attach",
+      "createChild": "Create child",
+      "addBlocker": "Add blocker",
+      "addRelation": "Add relation"
+    },
+    "empty": {
+      "description": "No description provided.",
+      "labels": "No labels",
+      "attachments": "No attachments",
+      "children": "No children yet",
+      "unassigned": "Unassigned"
+    },
+    "form": {
+      "type": "Type",
+      "status": "Status",
+      "priority": "Priority",
+      "parent": "Parent",
+      "title": "Title",
+      "titlePlaceholder": "Issue title",
+      "description": "Description",
+      "descriptionPlaceholder": "Describe the issue...",
+      "assignee": "Assignee",
+      "assigneePlaceholder": "Username",
+      "labels": "Labels",
+      "externalRef": "External Reference",
+      "externalRefPlaceholder": "URLs, IDs, or image paths (pipe-separated)",
+      "attach": "Attach",
+      "specId": "Spec ID",
+      "specIdPlaceholder": "e.g. SPEC-001",
+      "estimateMinutes": "Estimate (minutes)",
+      "estimatePlaceholder": "30",
+      "designNotes": "Design Notes",
+      "designNotesPlaceholder": "Design decisions and architectural notes...",
+      "acceptanceCriteria": "Acceptance Criteria",
+      "acceptanceCriteriaPlaceholder": "What must be true for this to be done...",
+      "workingNotes": "Working Notes",
+      "workingNotesPlaceholder": "Progress notes and observations...",
+      "noParent": "No parent",
+      "cancel": "Cancel",
+      "create": "Create",
+      "save": "Save",
+      "saving": "Saving..."
+    },
+    "comments": {
+      "heading": "Comments ({count})",
+      "toc": "Comments table of contents",
+      "empty": "No comments yet",
+      "placeholder": "Add a comment...",
+      "submit": "Add Comment"
+    },
+    "relationTypes": {
+      "relates-to": "Relates To",
+      "related": "Related",
+      "discovered-from": "Discovered From",
+      "duplicates": "Duplicates",
+      "supersedes": "Supersedes",
+      "caused-by": "Caused By"
+    }
   }
 }

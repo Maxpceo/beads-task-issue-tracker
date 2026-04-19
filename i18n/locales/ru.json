@@ -375,5 +375,97 @@
       "childSummary": "{closed} закрыто / {total} подзадача | {closed} закрыто / {total} подзадачи | {closed} закрыто / {total} подзадач",
       "loadMore": "Загрузить ещё (осталось {remaining})"
     }
+  },
+  "details": {
+    "header": {
+      "pin": "Закрепить",
+      "unpin": "Открепить",
+      "edit": "Править",
+      "reopen": "Открыть заново",
+      "close": "Закрыть",
+      "delete": "Удалить"
+    },
+    "sections": {
+      "description": "Описание",
+      "attachments": "Вложения",
+      "parent": "Родительская задача",
+      "children": "Подзадачи",
+      "externalReference": "Внешние ссылки",
+      "details": "Детали",
+      "dependencies": "Зависимости",
+      "relations": "Связи",
+      "estimate": "Оценка",
+      "designNotes": "Design-заметки",
+      "acceptanceCriteria": "Критерии приёмки",
+      "workingNotes": "Рабочие заметки",
+      "metadata": "Метаданные",
+      "specId": "Spec ID",
+      "blockedBy": "Блокируется",
+      "blocks": "Блокирует",
+      "assignee": "Исполнитель",
+      "labels": "Метки",
+      "created": "Создана",
+      "started": "Начата",
+      "updated": "Обновлена"
+    },
+    "actions": {
+      "attach": "Прикрепить",
+      "createChild": "Создать подзадачу",
+      "addBlocker": "Добавить блокер",
+      "addRelation": "Добавить связь"
+    },
+    "empty": {
+      "description": "Описание не указано.",
+      "labels": "Метки отсутствуют",
+      "attachments": "Вложений нет",
+      "children": "Подзадач пока нет",
+      "unassigned": "Не назначен"
+    },
+    "form": {
+      "type": "Тип",
+      "status": "Статус",
+      "priority": "Приоритет",
+      "parent": "Родительская",
+      "title": "Название",
+      "titlePlaceholder": "Название задачи",
+      "description": "Описание",
+      "descriptionPlaceholder": "Опишите задачу...",
+      "assignee": "Исполнитель",
+      "assigneePlaceholder": "Имя пользователя",
+      "labels": "Метки",
+      "externalRef": "Внешняя ссылка",
+      "externalRefPlaceholder": "URL-ы, ID или пути к изображениям (через вертикальную черту)",
+      "attach": "Прикрепить",
+      "specId": "Spec ID",
+      "specIdPlaceholder": "напр. SPEC-001",
+      "estimateMinutes": "Оценка (минут)",
+      "estimatePlaceholder": "30",
+      "designNotes": "Design-заметки",
+      "designNotesPlaceholder": "Дизайн-решения и архитектурные заметки...",
+      "acceptanceCriteria": "Критерии приёмки",
+      "acceptanceCriteriaPlaceholder": "Что должно быть истинно для завершения...",
+      "workingNotes": "Рабочие заметки",
+      "workingNotesPlaceholder": "Заметки о прогрессе и наблюдения...",
+      "noParent": "Без родителя",
+      "cancel": "Отмена",
+      "create": "Создать",
+      "save": "Сохранить",
+      "saving": "Сохраняем..."
+    },
+    "comments": {
+      "heading": "Комментарии ({count})",
+      "toc": "Оглавление комментариев",
+      "empty": "Комментариев пока нет",
+      "placeholder": "Добавить комментарий...",
+      "submit": "Добавить"
+    },
+    "relationTypes": {
+      "relates-to": "Связана с",
+      "related": "Связана",
+      "discovered-from": "Обнаружена из",
+      "duplicates": "Дубликат",
+      "supersedes": "Заменяет",
+      "caused-by": "Вызвана"
+    }
   }
 }
