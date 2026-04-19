@@ -290,5 +290,90 @@
       "welcomeSubtitle": "Follow the steps below to get started",
       "content": "**Beads** is an AI-native issue tracker that lives directly in your codebase. Issues are stored as files in a `.beads` folder within your repository.\n\n### Prerequisites\n\n#### 1. Install the Beads CLI\n\n```bash\n# Using npm\nnpm install -g @beads/cli\n\n# Or using Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Initialize Beads in your project\n\nNavigate to your project folder and run:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nThis creates a `.beads` folder in your repository.\n\n#### 3. Create your first issue\n\n```bash\nbd create \"My first issue\" --type task --priority p2\n```\n\n### Learn more\n\n- [Beads Documentation](https://beads.dev)\n- [GitHub Repository](https://github.com/steveyegge/beads)\n"
     }
+  },
+  "issues": {
+    "badges": {
+      "statusAria": "Status: {status}",
+      "priorityAria": "Priority: {priority}",
+      "typeAria": "Type: {type}",
+      "labelAria": "Label: {label}",
+      "blockedBy": "Blocked by {ids}"
+    },
+    "columns": {
+      "id": "ID",
+      "type": "Type",
+      "labels": "Labels",
+      "pinned": "Pin",
+      "title": "Title",
+      "status": "Status",
+      "priority": "Priority",
+      "assignee": "Assignee",
+      "createdAt": "Created",
+      "updatedAt": "Updated",
+      "commentCount": "Comments",
+      "reset": "Reset to defaults",
+      "visibleColumns": "Visible Columns",
+      "settingsLabel": "Column settings"
+    },
+    "toolbar": {
+      "multiSelect": "Multi-select",
+      "toggleMultiSelect": "Toggle multi-select",
+      "search": "Search issues...",
+      "new": "New",
+      "delete": "Delete",
+      "selectedCount": "{count} issue selected | {count} issues selected"
+    },
+    "filters": {
+      "filtersLabel": "Filters:",
+      "hiddenLabel": "Hidden:",
+      "clear": "Clear",
+      "clearAllExclusions": "Clear all exclusions",
+      "hideIssues": "Hide Issues",
+      "hideByCriteria": "Hide issues by criteria",
+      "exclusionFilters": "Exclusion filters",
+      "type": "Type",
+      "label": "Labels",
+      "status": "Status",
+      "priority": "Priority",
+      "assignee": "Assignee",
+      "filterByType": "Filter by type",
+      "filterByLabel": "Filter by label",
+      "filterByStatus": "Filter by status",
+      "filterByPriority": "Filter by priority",
+      "filterByAssignee": "Filter by assignee",
+      "noAssignees": "No assignees found",
+      "noLabels": "No labels found"
+    },
+    "priorityLabels": {
+      "p0": "P0 - Critical",
+      "p1": "P1 - High",
+      "p2": "P2 - Medium",
+      "p3": "P3 - Low",
+      "p4": "P4 - Minimal"
+    },
+    "typeLabels": {
+      "bug": "Bug",
+      "task": "Task",
+      "feature": "Feature",
+      "epic": "Epic",
+      "chore": "Chore",
+      "spike": "Spike",
+      "story": "Story",
+      "milestone": "Milestone"
+    },
+    "statusLabels": {
+      "open": "Open",
+      "in_progress": "In Progress",
+      "blocked": "Blocked",
+      "closed": "Closed",
+      "deferred": "Deferred",
+      "pinned": "Pinned",
+      "hooked": "Hooked"
+    },
+    "table": {
+      "empty": "No tasks / issues found",
+      "childSummary": "{closed} closed / {total} child | {closed} closed / {total} children",
+      "loadMore": "Load more ({remaining} remaining)"
+    }
   }
 }

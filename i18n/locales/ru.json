@@ -290,5 +290,90 @@
       "welcomeSubtitle": "Следуйте шагам ниже, чтобы начать",
       "content": "**Beads** — это AI-native трекер задач, который живёт прямо в вашей кодовой базе. Задачи хранятся как файлы в папке `.beads` внутри репозитория.\n\n### Предварительные требования\n\n#### 1. Установите Beads CLI\n\n```bash\n# Через npm\nnpm install -g @beads/cli\n\n# Или через Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Инициализируйте Beads в вашем проекте\n\nПерейдите в папку проекта и выполните:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nЭто создаст папку `.beads` в репозитории.\n\n#### 3. Создайте первую задачу\n\n```bash\nbd create \"Моя первая задача\" --type task --priority p2\n```\n\n### Узнать больше\n\n- [Документация Beads](https://beads.dev)\n- [Репозиторий GitHub](https://github.com/steveyegge/beads)\n"
     }
+  },
+  "issues": {
+    "badges": {
+      "statusAria": "Статус: {status}",
+      "priorityAria": "Приоритет: {priority}",
+      "typeAria": "Тип: {type}",
+      "labelAria": "Метка: {label}",
+      "blockedBy": "Заблокирована задачами: {ids}"
+    },
+    "columns": {
+      "id": "ID",
+      "type": "Тип",
+      "labels": "Метки",
+      "pinned": "Закреп",
+      "title": "Название",
+      "status": "Статус",
+      "priority": "Приоритет",
+      "assignee": "Исполнитель",
+      "createdAt": "Создана",
+      "updatedAt": "Обновлена",
+      "commentCount": "Комментарии",
+      "reset": "Сбросить к значениям по умолчанию",
+      "visibleColumns": "Видимые колонки",
+      "settingsLabel": "Настройки колонок"
+    },
+    "toolbar": {
+      "multiSelect": "Мультивыбор",
+      "toggleMultiSelect": "Переключить мультивыбор",
+      "search": "Поиск по задачам...",
+      "new": "Новая",
+      "delete": "Удалить",
+      "selectedCount": "Выбрана {count} задача | Выбрано {count} задачи | Выбрано {count} задач"
+    },
+    "filters": {
+      "filtersLabel": "Фильтры:",
+      "hiddenLabel": "Скрыто:",
+      "clear": "Очистить",
+      "clearAllExclusions": "Сбросить все исключения",
+      "hideIssues": "Скрыть задачи",
+      "hideByCriteria": "Скрыть задачи по критериям",
+      "exclusionFilters": "Фильтры исключений",
+      "type": "Тип",
+      "label": "Метки",
+      "status": "Статус",
+      "priority": "Приоритет",
+      "assignee": "Исполнитель",
+      "filterByType": "Фильтр по типу",
+      "filterByLabel": "Фильтр по метке",
+      "filterByStatus": "Фильтр по статусу",
+      "filterByPriority": "Фильтр по приоритету",
+      "filterByAssignee": "Фильтр по исполнителю",
+      "noAssignees": "Исполнители не найдены",
+      "noLabels": "Метки не найдены"
+    },
+    "priorityLabels": {
+      "p0": "P0 — Критический",
+      "p1": "P1 — Высокий",
+      "p2": "P2 — Средний",
+      "p3": "P3 — Низкий",
+      "p4": "P4 — Минимальный"
+    },
+    "typeLabels": {
+      "bug": "Баг",
+      "task": "Задача",
+      "feature": "Фича",
+      "epic": "Эпик",
+      "chore": "Рутина",
+      "spike": "Spike",
+      "story": "Story",
+      "milestone": "Milestone"
+    },
+    "statusLabels": {
+      "open": "Открытая",
+      "in_progress": "В работе",
+      "blocked": "Заблокирована",
+      "closed": "Закрытая",
+      "deferred": "Отложена",
+      "pinned": "Закреплена",
+      "hooked": "Hooked"
+    },
+    "table": {
+      "empty": "Задачи не найдены",
+      "childSummary": "{closed} закрыто / {total} подзадача | {closed} закрыто / {total} подзадачи | {closed} закрыто / {total} подзадач",
+      "loadMore": "Загрузить ещё (осталось {remaining})"
+    }
   }
 }

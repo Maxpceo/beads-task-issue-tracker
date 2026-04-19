@@ -19,6 +19,13 @@ const emit = defineEmits<{
   reset: []
 }>()
 
+const { t } = useI18n()
+
+const columnLabel = (col: ColumnConfig) => {
+  const key = `issues.columns.${col.id}`
+  return t(key) !== key ? t(key) : col.label
+}
+
 const isOpen = ref(false)
 const panelRef = ref<HTMLElement | null>(null)
 const triggerRef = ref<HTMLElement | null>(null)
@@ -109,10 +116,10 @@ onBeforeUnmount(() => {
             <rect x="14" y="14" width="7" height="7" />
             <rect x="3" y="14" width="7" height="7" />
           </svg>
-          <span class="sr-only">Column settings</span>
+          <span class="sr-only">{{ t('issues.columns.settingsLabel') }}</span>
         </Button>
       </TooltipTrigger>
-      <TooltipContent>Column settings</TooltipContent>
+      <TooltipContent>{{ t('issues.columns.settingsLabel') }}</TooltipContent>
     </Tooltip>
 
     <div
@@ -121,7 +128,7 @@ onBeforeUnmount(() => {
       class="absolute right-0 top-full mt-1 z-50 w-52 rounded-md border bg-popover text-popover-foreground shadow-md"
     >
       <div class="px-2 py-1.5">
-        <span class="text-xs font-semibold">Visible Columns</span>
+        <span class="text-xs font-semibold">{{ t('issues.columns.visibleColumns') }}</span>
       </div>
       <div class="h-px bg-border" />
       <div ref="listRef" class="py-1">
@@ -144,13 +151,13 @@ onBeforeUnmount(() => {
             class="h-3.5 w-3.5"
             @update:model-value="handleToggle(column.id, !!$event)"
           />
-          <label :for="`col-${column.id}`" class="flex-1 cursor-pointer select-none">{{ column.label }}</label>
+          <label :for="`col-${column.id}`" class="flex-1 cursor-pointer select-none">{{ columnLabel(column) }}</label>
         </div>
       </div>
       <div class="h-px bg-border" />
       <div class="p-1">
         <Button variant="ghost" size="sm" class="w-full text-xs h-7 justify-start" @click="emit('reset')">
-          Reset to defaults
+          {{ t('issues.columns.reset') }}
         </Button>
       </div>
     </div>

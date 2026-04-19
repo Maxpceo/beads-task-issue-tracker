@@ -16,6 +16,8 @@ import LabelFilterDropdown from '~/components/issues/LabelFilterDropdown.vue'
 import AssigneeFilterDropdown from '~/components/issues/AssigneeFilterDropdown.vue'
 import ExclusionFilterDropdown from '~/components/issues/ExclusionFilterDropdown.vue'
 
+const { t } = useI18n()
+
 const search = defineModel<string>('search', { default: '' })
 
 defineProps<{
@@ -93,10 +95,10 @@ const handleFilterClick = (filter: FilterType) => {
                 <line x1="12" y1="8" x2="21" y2="8" />
                 <line x1="12" y1="16" x2="21" y2="16" />
               </svg>
-              <span class="sr-only">Multi-select</span>
+              <span class="sr-only">{{ t('issues.toolbar.multiSelect') }}</span>
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Toggle multi-select</TooltipContent>
+          <TooltipContent>{{ t('issues.toolbar.toggleMultiSelect') }}</TooltipContent>
         </Tooltip>
 
       <div class="relative flex-1">
@@ -113,7 +115,7 @@ const handleFilterClick = (filter: FilterType) => {
         <Input
           v-model="search"
           type="search"
-          placeholder="Search issues..."
+          :placeholder="t('issues.toolbar.search')"
           class="pl-10 h-8 text-xs"
         />
       </div>
@@ -190,7 +192,7 @@ const handleFilterClick = (filter: FilterType) => {
         <line x1="10" y1="11" x2="10" y2="17" />
         <line x1="14" y1="11" x2="14" y2="17" />
       </svg>
-      <span class="sr-only">Delete</span>
+      <span class="sr-only">{{ t('issues.toolbar.delete') }}</span>
     </Button>
 
     <ColumnConfigPopover
@@ -210,13 +212,13 @@ const handleFilterClick = (filter: FilterType) => {
         <line x1="12" y1="5" x2="12" y2="19" />
         <line x1="5" y1="12" x2="19" y2="12" />
       </svg>
-      New
+      {{ t('issues.toolbar.new') }}
     </Button>
     </div>
 
     <!-- Selected count -->
     <div v-if="multiSelectMode && selectedCount" class="text-xs text-primary font-medium">
-      {{ selectedCount }} issue{{ selectedCount > 1 ? 's' : '' }} selected
+      {{ t('issues.toolbar.selectedCount', { count: selectedCount }, selectedCount) }}
     </div>
   </div>
 </template>

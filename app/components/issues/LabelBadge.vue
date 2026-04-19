@@ -4,6 +4,7 @@ const props = defineProps<{
   size?: 'sm' | 'md'
 }>()
 
+const { t } = useI18n()
 const { currentTheme } = useTheme()
 
 // Generate a consistent color based on the label text using djb2 hash
@@ -121,6 +122,7 @@ const sizeClasses = computed(() => {
     class="badge-gradient inline-flex items-center rounded font-medium whitespace-nowrap"
     :class="[sizeClasses, currentTheme.id === 'neon' ? '' : 'text-white']"
     :style="badgeStyle"
+    :aria-label="t('issues.badges.labelAria', { label })"
   >
     {{ label }}
   </span>

@@ -25,7 +25,13 @@ import { formatDate, formatTime } from '~/utils/date-format'
 import { useLocale } from '~/composables/useLocale'
 import { useKeyboardNavigation } from '~/composables/useKeyboardNavigation'
 
+const { t } = useI18n()
 const { locale } = useLocale()
+
+const columnLabel = (colId: string, fallback: string) => {
+  const key = `issues.columns.${colId}`
+  return t(key) !== key ? t(key) : fallback
+}
 
 const props = defineProps<{
   issues: Issue[]
@@ -390,7 +396,7 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                   <path d="M9 4v6l-2 4h10l-2-4V4" /><line x1="12" y1="16" x2="12" y2="21" /><line x1="8" y1="4" x2="16" y2="4" />
                 </svg>
               </template>
-              <span v-else>{{ col.label }}</span>
+              <span v-else>{{ columnLabel(col.id, col.label) }}</span>
               <template v-if="col.sortable">
                 <svg
                   v-if="sortColumn === col.id"
@@ -429,7 +435,7 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
             :colspan="visibleColumns.length + (multiSelectMode ? 1 : 0)"
             class="h-24 text-center text-muted-foreground"
           >
-            No tasks / issues found
+            {{ t('issues.table.empty') }}
           </TableCell>
         </TableRow>
 
@@ -524,7 +530,7 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{{ group.closedChildCount }} closed / {{ group.childCount }} {{ group.childCount === 1 ? 'child' : 'children' }}</p>
+                          <p>{{ t('issues.table.childSummary', { closed: group.closedChildCount, total: group.childCount }, group.childCount) }}</p>
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -943,7 +949,7 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
     <!-- Load More Button -->
     <div v-if="hasMore" class="flex justify-center py-4 border-t border-border">
       <Button variant="outline" size="sm" @click="emit('loadMore')">
-        Load more ({{ (totalCount ?? 0) - issues.length }} remaining)
+        {{ t('issues.table.loadMore', { remaining: (totalCount ?? 0) - issues.length }) }}
       </Button>
     </div>
   </div>
