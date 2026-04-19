@@ -1,13 +1,21 @@
 # Codebase Map - Beads Task-Issue Tracker
 
 > Auto-generated comprehensive map of the codebase for faster AI reasoning.
-> Last updated: 2026-02-26 | App version: 1.24.0
+> Last updated: 2026-04-19 | App version: 2.2.0
+
+## Stack
+
+- **Frontend:** Nuxt 4.4.2, Vue 3.5.27, Vite 7.3.2, TypeScript 5.9.3, Tailwind CSS 4.1.18, shadcn-vue (via `shadcn-nuxt@2.4.3`), reka-ui 2.7 (Radix-based primitives). `vue-router` v5.0.4 comes transitively with Nuxt 4.4 — no direct dep, app code never imports vue-router
+- **Desktop shell:** Tauri 2.10.1 (Rust backend), WKWebView (macOS) / WebView2 (Windows) / WebKitGTK (Linux)
+- **Router mode:** hash (`router.options.hashMode: true`) — no SSR (`ssr: false`), SPA-only for Tauri
+- **Testing:** Vitest 4.0 with `jsdom 28` — tests live in `tests/` mirroring `app/`
+- **Package manager:** pnpm 10.0.0 (enforced)
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Nuxt 4 SPA (Vue 3) — Single page: pages/index.vue     │
+│  Nuxt 4.4 SPA (Vue 3.5) — Single page: pages/index.vue │
 │  ├── Left sidebar: project picker + dashboard           │
 │  ├── Center: issue table with filters/sort/pagination   │
 │  └── Right sidebar: issue detail/preview/edit           │
@@ -453,6 +461,6 @@ Git Sync (built-in backend):
 | `tests/composables/useExclusionFilters.test.ts` | 7 | Fresh install migration, v1→v2 flag upgrade, user-choice respected, no-duplication, project switch via `setPath`, switch-back after user cleared `gt:slot`, `activeCount`/`hasActiveExclusions` reactive state. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test to re-execute the module-level watch |
 | `tests/composables/useFilters.test.ts` | 5 | Fresh install workflow default, reload survival of cleared state, A→B→A round-trip, search/labels/assignee persistence, `hasActiveFilters` reactivity. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test |
 
-**Total: 273 tests** (13 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
+**Total: 294 tests** (19 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
 
 **Rust tests**: Tracker modules contain `#[cfg(test)]` blocks — run via `cargo test` in `src-tauri/`.
