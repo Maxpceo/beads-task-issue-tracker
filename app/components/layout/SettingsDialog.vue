@@ -23,6 +23,8 @@ import { useStatuses } from '~/composables/useStatuses'
 import { useStatusColorOverrides } from '~/composables/useStatusColorOverrides'
 import StatusBadge from '~/components/issues/StatusBadge.vue'
 
+const { t } = useI18n()
+
 const open = defineModel<boolean>('open', { default: false })
 
 const { theme: activeTheme, themes, setTheme } = useTheme()
@@ -174,12 +176,12 @@ async function testConnection() {
 
 // Group statuses by category for display
 const categoryOrder = ['active', 'wip', 'done', 'frozen'] as const
-const categoryLabels: Record<string, string> = {
-  active: 'Active',
-  wip: 'In Progress',
-  done: 'Done',
-  frozen: 'Frozen / Deferred',
-}
+const categoryLabels = computed<Record<string, string>>(() => ({
+  active: t('settings.statusColors.categories.active'),
+  wip: t('settings.statusColors.categories.wip'),
+  done: t('settings.statusColors.categories.done'),
+  frozen: t('settings.statusColors.categories.frozen'),
+}))
 
 const groupedStatuses = computed(() => {
   const groups: Array<{ category: string; label: string; statuses: typeof statuses.value }> = []
@@ -194,7 +196,7 @@ const groupedStatuses = computed(() => {
   for (const cat of categoryOrder) {
     const list = byCategory.get(cat)
     if (list?.length) {
-      groups.push({ category: cat, label: categoryLabels[cat] ?? cat, statuses: list })
+      groups.push({ category: cat, label: categoryLabels.value[cat] ?? cat, statuses: list })
       byCategory.delete(cat)
     }
   }
@@ -215,16 +217,16 @@ const groupedStatuses = computed(() => {
   <Dialog v-model:open="open">
     <DialogContent class="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
       <DialogHeader>
-        <DialogTitle>Settings</DialogTitle>
+        <DialogTitle>{{ t('settings.title') }}</DialogTitle>
         <DialogDescription>
-          Choose which CLI client to use for issue management.
+          {{ t('settings.description') }}
         </DialogDescription>
       </DialogHeader>
 
       <div class="space-y-6 pt-2">
         <!-- Theme Selector -->
         <div class="space-y-3">
-          <Label>Theme</Label>
+          <Label>{{ t('settings.theme') }}</Label>
           <div class="grid grid-cols-4 gap-3">
             <button
               v-for="t in themes"
@@ -274,7 +276,7 @@ const groupedStatuses = computed(() => {
 
         <!-- CLI Client Selector -->
         <div class="space-y-3">
-          <Label>CLI Client</Label>
+          <Label>{{ t('settings.cliClient.title') }}</Label>
           <div class="grid grid-cols-2 gap-3">
             <!-- br option (preferred) -->
             <button
@@ -298,7 +300,7 @@ const groupedStatuses = computed(() => {
                 <span class="font-mono font-semibold text-sm">br</span>
               </div>
               <p class="text-xs text-muted-foreground pl-7">
-                Beads Rust (SQLite + JSONL)
+                {{ t('settings.cliClient.brDescription') }}
               </p>
             </button>
 
@@ -324,7 +326,7 @@ const groupedStatuses = computed(() => {
                 <span class="font-mono font-semibold text-sm">bd</span>
               </div>
               <p class="text-xs text-muted-foreground pl-7">
-                Original Beads CLI (Go)
+                {{ t('settings.cliClient.bdDescription') }}
               </p>
             </button>
           </div>
@@ -332,7 +334,7 @@ const groupedStatuses = computed(() => {
 
         <!-- Display Options -->
         <div class="space-y-3">
-          <Label>Display Options</Label>
+          <Label>{{ t('settings.display.title') }}</Label>
           <div class="flex items-start gap-3 rounded-md border border-border/50 px-3 py-2.5">
             <input
               id="float-active-to-top"
@@ -342,10 +344,10 @@ const groupedStatuses = computed(() => {
             />
             <div class="flex flex-col gap-0.5">
               <label for="float-active-to-top" class="text-sm font-medium cursor-pointer select-none leading-tight">
-                Float active tasks to top
+                {{ t('settings.display.floatActiveLabel') }}
               </label>
               <p class="text-xs text-muted-foreground text-pretty">
-                Tasks in active work categories (in progress, review, etc.) appear at the top of the table regardless of sort field.
+                {{ t('settings.display.floatActiveDescription') }}
               </p>
             </div>
           </div>
@@ -354,14 +356,14 @@ const groupedStatuses = computed(() => {
         <!-- Status Colors -->
         <div class="space-y-3">
           <div>
-            <Label>Status Colors</Label>
+            <Label>{{ t('settings.statusColors.title') }}</Label>
             <p class="text-xs text-muted-foreground mt-0.5">
-              Customize badge colors for each status. Changes are local to this project and machine.
+              {{ t('settings.statusColors.description') }}
             </p>
           </div>
 
           <div v-if="statuses.length === 0" class="text-xs text-muted-foreground py-2">
-            Loading statuses...
+            {{ t('settings.statusColors.loading') }}
           </div>
 
           <div v-else class="space-y-4">
@@ -390,14 +392,14 @@ const groupedStatuses = computed(() => {
                     <!-- From color -->
                     <div class="flex items-center gap-1">
                       <label :for="`color-from-${status.name}`" class="text-[10px] text-muted-foreground shrink-0">
-                        {{ colorState(status.name).useGradient ? 'From' : 'Color' }}
+                        {{ colorState(status.name).useGradient ? t('settings.statusColors.from') : t('settings.statusColors.color') }}
                       </label>
                       <input
                         :id="`color-from-${status.name}`"
                         :value="colorState(status.name).from"
                         type="color"
                         class="size-6 rounded cursor-pointer border border-border/50 p-0.5 bg-transparent"
-                        :title="`${status.label} primary color`"
+                        :title="t('settings.statusColors.primaryColorTitle', { label: status.label })"
                         @input="applyColor(status.name, { from: ($event.target as HTMLInputElement).value })"
                       />
                     </div>
@@ -409,18 +411,18 @@ const groupedStatuses = computed(() => {
                         :checked="colorState(status.name).useGradient"
                         type="checkbox"
                         class="size-4 rounded cursor-pointer accent-primary"
-                        :title="`Enable gradient for ${status.label}`"
+                        :title="t('settings.statusColors.enableGradientTitle', { label: status.label })"
                         @change="applyColor(status.name, { useGradient: ($event.target as HTMLInputElement).checked })"
                       />
                       <label :for="`gradient-${status.name}`" class="text-[10px] text-muted-foreground cursor-pointer select-none">
-                        Grad
+                        {{ t('settings.statusColors.gradient') }}
                       </label>
                       <label
                         v-if="colorState(status.name).useGradient"
                         :for="`color-to-${status.name}`"
                         class="sr-only"
                       >
-                        {{ status.label }} gradient end color
+                        {{ t('settings.statusColors.gradientEndSr', { label: status.label }) }}
                       </label>
                       <input
                         v-if="colorState(status.name).useGradient"
@@ -428,7 +430,7 @@ const groupedStatuses = computed(() => {
                         :value="colorState(status.name).to"
                         type="color"
                         class="size-6 rounded cursor-pointer border border-border/50 p-0.5 bg-transparent"
-                        :title="`${status.label} gradient end color`"
+                        :title="t('settings.statusColors.gradientEndTitle', { label: status.label })"
                         @input="applyColor(status.name, { to: ($event.target as HTMLInputElement).value })"
                       />
                     </div>
@@ -440,10 +442,10 @@ const groupedStatuses = computed(() => {
                     size="sm"
                     class="h-6 px-1.5 text-[10px] shrink-0"
                     :disabled="!getOverride(status.name)"
-                    :aria-label="`Reset ${status.label} color to default`"
+                    :aria-label="t('settings.statusColors.resetAria', { label: status.label })"
                     @click="resetOverride(status.name)"
                   >
-                    Reset
+                    {{ t('settings.statusColors.reset') }}
                   </Button>
                 </div>
               </div>
@@ -454,11 +456,11 @@ const groupedStatuses = computed(() => {
         <!-- Probe Toggle (dev-only until probe is a public feature) -->
         <div v-if="isDev" class="space-y-3">
           <div class="flex items-center justify-between">
-            <Label>Probe (monitoring broadcast)</Label>
+            <Label>{{ t('settings.probe.title') }}</Label>
             <button
               class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
               :class="probeEnabled ? 'bg-primary' : 'bg-muted-foreground/30'"
-              aria-label="Toggle probe monitoring"
+              :aria-label="t('settings.probe.toggleAria')"
               :aria-pressed="probeEnabled"
               @click="probeEnabled = !probeEnabled; healthResult = null"
             >
@@ -469,7 +471,7 @@ const groupedStatuses = computed(() => {
             </button>
           </div>
           <p class="text-xs text-muted-foreground">
-            When enabled, registers projects with the probe for external monitoring.
+            {{ t('settings.probe.description') }}
           </p>
 
           <!-- URL input + Test connection (visible only when probe enabled) -->
@@ -491,7 +493,7 @@ const groupedStatuses = computed(() => {
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                Test connection
+                {{ t('settings.probe.test') }}
               </Button>
             </div>
 
@@ -506,7 +508,7 @@ const groupedStatuses = computed(() => {
                 <line x1="9" y1="9" x2="15" y2="15" />
               </svg>
               <span :class="healthResult ? 'text-green-600 dark:text-green-400' : 'text-destructive'">
-                {{ healthResult ? 'Connected' : 'Disconnected' }}
+                {{ healthResult ? t('settings.probe.connected') : t('settings.probe.disconnected') }}
               </span>
             </div>
           </div>
@@ -518,7 +520,7 @@ const groupedStatuses = computed(() => {
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
-          Switching client...
+          {{ t('settings.cliClient.switching') }}
         </div>
 
         <!-- Result -->

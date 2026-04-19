@@ -14,7 +14,9 @@
     "retry": "Retry",
     "refresh": "Refresh",
     "yes": "Yes",
-    "no": "No"
+    "no": "No",
+    "remove": "Remove",
+    "reset": "Reset"
   },
   "about": {
     "version": "Version {version}",
@@ -25,16 +27,190 @@
     "header": {
       "zoomIn": "Zoom in (⌥ click to reset)",
       "zoomOut": "Zoom out (⌥ click to reset)"
+    },
+    "dialogs": {
+      "delete": {
+        "title": "Delete",
+        "confirm": "Delete",
+        "aboutToDeleteMany": "You are about to permanently delete the following issues:",
+        "aboutToDeleteOne": "You are about to permanently delete the issue:",
+        "andMore": "... and {count} more ({total} total)",
+        "cannotBeUndone": "This action cannot be undone."
+      },
+      "epicDelete": {
+        "title": "Delete Issue with Children",
+        "hasChildren": "The issue \"{title}\" has {count} child issue(s):",
+        "andMore": "... and {count} more",
+        "whatToDo": "What would you like to do?",
+        "deleteAll": "Delete Issue and All Children",
+        "detach": "Delete Issue Only (Detach Children)"
+      },
+      "closeIssue": {
+        "title": "Close issue",
+        "confirm": "Close",
+        "aboutToClose": "You are about to close the issue:",
+        "willBeMarkedCompleted": "The issue will be marked as completed."
+      },
+      "detach": {
+        "title": "Detach attachment",
+        "confirm": "Detach",
+        "confirmQuestion": "Are you sure you want to detach this attachment?",
+        "willBeDeleted": "The attachment file will be permanently deleted.",
+        "onlyReferenceRemoved": "Only the reference will be removed. The original file will not be deleted."
+      },
+      "removeDep": {
+        "title": "Remove dependency",
+        "confirmQuestion": "Are you sure you want to remove this dependency?",
+        "issue": "Issue",
+        "blocker": "Blocker"
+      },
+      "addBlocker": {
+        "title": "Add a blocker",
+        "from": "From",
+        "blockedBy": "Blocked by",
+        "searchPlaceholder": "Search by ID or title...",
+        "noMatches": "No matching issues found",
+        "typeToSearch": "Type to search for issues...",
+        "submit": "Add blocker"
+      },
+      "addRelation": {
+        "title": "Add a relation",
+        "from": "From",
+        "type": "Type",
+        "target": "Target issue",
+        "excludeClosed": "Exclude closed",
+        "searchPlaceholder": "Search by ID or title...",
+        "noMatches": "No matching issues found",
+        "typeToSearch": "Type to search for issues...",
+        "submit": "Add relation"
+      },
+      "removeRelation": {
+        "title": "Remove relation",
+        "confirmQuestion": "Are you sure you want to remove this relation?",
+        "issue": "Issue",
+        "relatedTo": "Related to"
+      },
+      "markdownSave": {
+        "title": "Save changes",
+        "description": "Save the changes to this markdown file?"
+      }
+    },
+    "debug": {
+      "title": "Debug Logs",
+      "live": "Live",
+      "paused": "Paused",
+      "refresh": "Refresh",
+      "bottom": "Bottom",
+      "clear": "Clear",
+      "export": "Export",
+      "verbose": "Verbose",
+      "on": "ON",
+      "off": "OFF",
+      "noLogs": "No logs yet...",
+      "forceSync": "Force Sync",
+      "syncing": "Syncing...",
+      "reset": "Reset",
+      "uptime": "Uptime {seconds}s · Auto-refresh 2s",
+      "tabs": {
+        "logs": "Logs",
+        "pipeline": "Pipeline"
+      },
+      "pipeline": {
+        "watcher": "Watcher",
+        "scheduler": "Scheduler",
+        "pollExecution": "Poll execution",
+        "mtimeCheck": "Mtime check",
+        "triggers": "Triggers",
+        "cooldownSkips": "Cooldown skips",
+        "debounces": "Debounces",
+        "reruns": "Reruns",
+        "requests": "Requests",
+        "executed": "Executed",
+        "deferred": "Deferred",
+        "skipped": "Skipped",
+        "immediate": "Immediate",
+        "started": "Started",
+        "finished": "Finished",
+        "errors": "Errors",
+        "lastMs": "Last ms",
+        "avgMs": "Avg ms",
+        "maxMs": "Max ms",
+        "checks": "Checks",
+        "hits": "Hits",
+        "hitRate": "Hit rate"
+      },
+      "doltTitle": "This project uses the Dolt backend",
+      "updateAvailable": "Update available: v{version} — click to view",
+      "updateReleases": "View bd CLI releases"
+    },
+    "update": {
+      "title": "Check for Updates",
+      "demo": "Demo",
+      "checking": "Checking for updates...",
+      "failed": "Failed to check for updates",
+      "downloading": "Downloading update...",
+      "available": "Update available",
+      "currentVersion": "Current version:",
+      "latestVersion": "Latest version:",
+      "macosNote": "After installing, macOS may block the app. Run this command once to fix it:",
+      "copied": "Copied!",
+      "clickToCopy": "Click to copy",
+      "upToDate": "You're up to date",
+      "latestVersionText": "Version v{version} is the latest version.",
+      "downloadAndQuit": "Download & Quit",
+      "viewOnGitHub": "View on GitHub",
+      "later": "Later"
     }
   },
   "settings": {
     "title": "Settings",
+    "description": "Choose which CLI client to use for issue management.",
+    "theme": "Theme",
     "language": {
       "title": "Language",
       "description": "Choose the interface language. Auto uses your system setting.",
       "auto": "Auto",
       "english": "English",
       "russian": "Русский"
+    },
+    "cliClient": {
+      "title": "CLI Client",
+      "brDescription": "Beads Rust (SQLite + JSONL)",
+      "bdDescription": "Original Beads CLI (Go)",
+      "switching": "Switching client..."
+    },
+    "display": {
+      "title": "Display Options",
+      "floatActiveLabel": "Float active tasks to top",
+      "floatActiveDescription": "Tasks in active work categories (in progress, review, etc.) appear at the top of the table regardless of sort field."
+    },
+    "statusColors": {
+      "title": "Status Colors",
+      "description": "Customize badge colors for each status. Changes are local to this project and machine.",
+      "loading": "Loading statuses...",
+      "color": "Color",
+      "from": "From",
+      "gradient": "Grad",
+      "reset": "Reset",
+      "primaryColorTitle": "{label} primary color",
+      "enableGradientTitle": "Enable gradient for {label}",
+      "gradientEndTitle": "{label} gradient end color",
+      "gradientEndSr": "{label} gradient end color",
+      "resetAria": "Reset {label} color to default",
+      "categories": {
+        "active": "Active",
+        "wip": "In Progress",
+        "done": "Done",
+        "frozen": "Frozen / Deferred"
+      }
+    },
+    "probe": {
+      "title": "Probe (monitoring broadcast)",
+      "toggleAria": "Toggle probe monitoring",
+      "description": "When enabled, registers projects with the probe for external monitoring.",
+      "test": "Test connection",
+      "connected": "Connected",
+      "disconnected": "Disconnected"
     }
   }
 }

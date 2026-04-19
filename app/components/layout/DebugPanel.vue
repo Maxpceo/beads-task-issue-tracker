@@ -3,6 +3,8 @@ import { Button } from '~/components/ui/button'
 import { readLogs, clearLogs, exportLogs as exportLogsApi, getLogPath, getBdVersion, getLoggingEnabled, setLoggingEnabled, getVerboseLogging, setVerboseLogging, checkBdCliUpdate, fsExists, logFrontend, type BdCliUpdateInfo } from '~/utils/bd-api'
 import { openUrl } from '~/utils/open-url'
 
+const { t } = useI18n()
+
 const { isSyncing: isForceSyncing, forceSync, syncMessage, lastSyncSuccess } = useSyncStatus()
 const { beadsPath } = useBeadsPath()
 const { snapshot: diagSnapshot, reset: diagReset } = usePipelineDiagnostics()
@@ -259,12 +261,12 @@ onUnmounted(() => {
             class="px-2 py-0.5 text-xs font-medium transition-colors"
             :class="debugTab === 'logs' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'"
             @click="debugTab = 'logs'"
-          >Logs</button>
+          >{{ t('layout.debug.tabs.logs') }}</button>
           <button
             class="px-2 py-0.5 text-xs font-medium transition-colors"
             :class="debugTab === 'pipeline' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'"
             @click="debugTab = 'pipeline'"
-          >Pipeline</button>
+          >{{ t('layout.debug.tabs.pipeline') }}</button>
         </div>
 
         <!-- Log tab buttons -->
@@ -287,15 +289,15 @@ onUnmounted(() => {
               <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
               <path d="M21 3v5h-5" />
             </svg>
-            {{ isAutoRefresh ? 'Live' : 'Paused' }}
+            {{ isAutoRefresh ? t('layout.debug.live') : t('layout.debug.paused') }}
           </Button>
 
           <Button variant="outline" size="sm" class="h-7 px-2" :disabled="isAutoRefresh" @click="fetchLogs">
-            Refresh
+            {{ t('layout.debug.refresh') }}
           </Button>
 
           <Button variant="outline" size="sm" class="h-7 px-2" @click="scrollToBottom">
-            Bottom
+            {{ t('layout.debug.bottom') }}
           </Button>
 
           <Button
@@ -305,7 +307,7 @@ onUnmounted(() => {
             :class="isVerbose ? 'border-amber-500 text-amber-500' : ''"
             @click="toggleVerbose"
           >
-            Verbose {{ isVerbose ? 'ON' : 'OFF' }}
+            {{ t('layout.debug.verbose') }} {{ isVerbose ? t('layout.debug.on') : t('layout.debug.off') }}
           </Button>
 
           <Button
@@ -315,7 +317,7 @@ onUnmounted(() => {
             :disabled="isLoading"
             @click="handleClearLogs"
           >
-            Clear
+            {{ t('layout.debug.clear') }}
           </Button>
 
           <Button
@@ -325,7 +327,7 @@ onUnmounted(() => {
             class="h-7 px-2"
             @click="exportLogs"
           >
-            Export
+            {{ t('layout.debug.export') }}
           </Button>
           <span v-if="exportedPath" class="text-xs text-green-500 truncate max-w-[300px]" :title="exportedPath">{{ exportedPath }}</span>
 
@@ -350,7 +352,7 @@ onUnmounted(() => {
               <path d="M12 12v9" />
               <path d="m8 17 4 4 4-4" />
             </svg>
-            {{ isForceSyncing ? 'Syncing...' : 'Force Sync' }}
+            {{ isForceSyncing ? t('layout.debug.syncing') : t('layout.debug.forceSync') }}
           </Button>
           <span v-if="syncMessage && lastSyncSuccess" class="text-green-500 text-xs ml-1">{{ syncMessage }}</span>
         </template>
@@ -363,9 +365,9 @@ onUnmounted(() => {
             class="h-7 px-2 text-destructive border-destructive/50 hover:bg-destructive hover:text-destructive-foreground"
             @click="diagReset(); pipelineData = diagSnapshot()"
           >
-            Reset
+            {{ t('layout.debug.reset') }}
           </Button>
-          <span class="text-xs text-muted-foreground">Uptime {{ pipelineData.uptimeSeconds }}s · Auto-refresh 2s</span>
+          <span class="text-xs text-muted-foreground">{{ t('layout.debug.uptime', { seconds: pipelineData.uptimeSeconds }) }}</span>
         </template>
       </div>
 
@@ -373,7 +375,7 @@ onUnmounted(() => {
         <button
           v-if="bdCliUpdate?.hasUpdate"
           class="flex items-center gap-1.5 text-xs font-medium text-foreground hover:text-green-500 transition-colors cursor-pointer"
-          :title="`Update available: v${bdCliUpdate.latestVersion} — click to view`"
+          :title="t('layout.debug.updateAvailable', { version: bdCliUpdate.latestVersion })"
           @click="openUrl(bdCliUpdate.releaseUrl)"
         >
           {{ bdVersion }}
@@ -385,13 +387,13 @@ onUnmounted(() => {
         <button
           v-else-if="bdCliUpdate"
           class="text-xs font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-          title="View bd CLI releases"
+          :title="t('layout.debug.updateReleases')"
           @click="openUrl(bdCliUpdate.releaseUrl)"
         >
           {{ bdVersion }}
         </button>
         <span v-else class="text-xs font-medium text-foreground">{{ bdVersion }}</span>
-        <span v-if="projectUsesDolt" class="text-[#29E3C1] flex items-center" title="This project uses the Dolt backend">
+        <span v-if="projectUsesDolt" class="text-[#29E3C1] flex items-center" :title="t('layout.debug.doltTitle')">
           <svg class="w-8 h-3" viewBox="0 0 163 56" fill="none">
             <path d="M28.87 7.0459V45.8632C28.8654 46.7997 28.498 47.6965 27.8476 48.3591C27.1971 49.0217 26.316 49.3964 25.3957 49.402H10.4953C9.5713 49.402 8.68489 49.0298 8.0299 48.3666C7.3749 47.7035 7.00462 46.8034 7 45.8632V24.7722C7.00462 23.832 7.3749 22.9319 8.0299 22.2688C8.68489 21.6056 9.5713 21.2334 10.4953 21.2334H22.2115" stroke="currentColor" stroke-width="12.6599" stroke-linecap="round" stroke-linejoin="round"/>
             <path d="M156.3 49.4019H145.283" stroke="currentColor" stroke-width="12.6599" stroke-linecap="round" stroke-linejoin="round"/>
@@ -417,7 +419,7 @@ onUnmounted(() => {
     <!-- Log content -->
     <div v-if="debugTab === 'logs'" ref="logContainerRef" class="flex-1 overflow-auto bg-muted/10" @scroll="onScroll">
       <pre v-if="logs" class="p-3 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed" v-html="colorizedLogs"></pre>
-      <pre v-else class="p-3 text-[11px] font-mono text-muted-foreground">No logs yet...</pre>
+      <pre v-else class="p-3 text-[11px] font-mono text-muted-foreground">{{ t('layout.debug.noLogs') }}</pre>
     </div>
 
     <!-- Pipeline diagnostics -->
@@ -425,40 +427,40 @@ onUnmounted(() => {
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
         <!-- Watcher -->
         <div class="space-y-1.5">
-          <div class="text-sm font-semibold text-foreground mb-2">Watcher</div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Triggers</span><span>{{ pipelineData.counters.watcherTriggers }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Cooldown skips</span><span>{{ pipelineData.counters.watcherCooldownSkips }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Debounces</span><span>{{ pipelineData.counters.watcherDebounces }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Reruns</span><span>{{ pipelineData.counters.watcherReruns }}</span></div>
+          <div class="text-sm font-semibold text-foreground mb-2">{{ t('layout.debug.pipeline.watcher') }}</div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.triggers') }}</span><span>{{ pipelineData.counters.watcherTriggers }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.cooldownSkips') }}</span><span>{{ pipelineData.counters.watcherCooldownSkips }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.debounces') }}</span><span>{{ pipelineData.counters.watcherDebounces }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.reruns') }}</span><span>{{ pipelineData.counters.watcherReruns }}</span></div>
         </div>
 
         <!-- Scheduler -->
         <div class="space-y-1.5">
-          <div class="text-sm font-semibold text-foreground mb-2">Scheduler</div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Requests</span><span>{{ pipelineData.counters.pollRequests }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Executed</span><span class="text-green-500">{{ pipelineData.counters.pollExecuted }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Deferred</span><span class="text-amber-500">{{ pipelineData.counters.pollDeferred }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Skipped</span><span class="text-red-400">{{ pipelineData.counters.pollSkipped }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Immediate</span><span>{{ pipelineData.counters.pollImmediateRequests }}</span></div>
+          <div class="text-sm font-semibold text-foreground mb-2">{{ t('layout.debug.pipeline.scheduler') }}</div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.requests') }}</span><span>{{ pipelineData.counters.pollRequests }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.executed') }}</span><span class="text-green-500">{{ pipelineData.counters.pollExecuted }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.deferred') }}</span><span class="text-amber-500">{{ pipelineData.counters.pollDeferred }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.skipped') }}</span><span class="text-red-400">{{ pipelineData.counters.pollSkipped }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.immediate') }}</span><span>{{ pipelineData.counters.pollImmediateRequests }}</span></div>
         </div>
 
         <!-- Poll execution -->
         <div class="space-y-1.5">
-          <div class="text-sm font-semibold text-foreground mb-2">Poll execution</div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Started</span><span>{{ pipelineData.counters.pollStarted }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Finished</span><span>{{ pipelineData.counters.pollFinished }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Errors</span><span :class="pipelineData.counters.pollErrors > 0 ? 'text-red-500' : ''">{{ pipelineData.counters.pollErrors }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Last ms</span><span>{{ pipelineData.counters.pollLastMs }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Avg ms</span><span>{{ pipelineData.pollAvgMs }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Max ms</span><span :class="pipelineData.counters.pollMaxMs > 2000 ? 'text-red-500' : pipelineData.counters.pollMaxMs > 500 ? 'text-amber-500' : ''">{{ pipelineData.counters.pollMaxMs }}</span></div>
+          <div class="text-sm font-semibold text-foreground mb-2">{{ t('layout.debug.pipeline.pollExecution') }}</div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.started') }}</span><span>{{ pipelineData.counters.pollStarted }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.finished') }}</span><span>{{ pipelineData.counters.pollFinished }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.errors') }}</span><span :class="pipelineData.counters.pollErrors > 0 ? 'text-red-500' : ''">{{ pipelineData.counters.pollErrors }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.lastMs') }}</span><span>{{ pipelineData.counters.pollLastMs }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.avgMs') }}</span><span>{{ pipelineData.pollAvgMs }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.maxMs') }}</span><span :class="pipelineData.counters.pollMaxMs > 2000 ? 'text-red-500' : pipelineData.counters.pollMaxMs > 500 ? 'text-amber-500' : ''">{{ pipelineData.counters.pollMaxMs }}</span></div>
         </div>
 
         <!-- Mtime check -->
         <div class="space-y-1.5">
-          <div class="text-sm font-semibold text-foreground mb-2">Mtime check</div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Checks</span><span>{{ pipelineData.counters.mtimeChecks }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Hits</span><span>{{ pipelineData.counters.mtimeHits }}</span></div>
-          <div class="flex justify-between"><span class="text-muted-foreground">Hit rate</span><span>{{ pipelineData.counters.mtimeChecks > 0 ? Math.round(pipelineData.counters.mtimeHits / pipelineData.counters.mtimeChecks * 100) : 0 }}%</span></div>
+          <div class="text-sm font-semibold text-foreground mb-2">{{ t('layout.debug.pipeline.mtimeCheck') }}</div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.checks') }}</span><span>{{ pipelineData.counters.mtimeChecks }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.hits') }}</span><span>{{ pipelineData.counters.mtimeHits }}</span></div>
+          <div class="flex justify-between"><span class="text-muted-foreground">{{ t('layout.debug.pipeline.hitRate') }}</span><span>{{ pipelineData.counters.mtimeChecks > 0 ? Math.round(pipelineData.counters.mtimeHits / pipelineData.counters.mtimeChecks * 100) : 0 }}%</span></div>
         </div>
       </div>
     </div>

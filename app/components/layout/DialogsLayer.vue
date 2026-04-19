@@ -28,23 +28,24 @@ const {
 const { selectedIssue } = useIssues()
 const imagePreview = useImagePreview()
 const markdownPreview = useMarkdownPreview()
+
+const { t } = useI18n()
 </script>
 
 <template>
   <!-- Delete Confirmation Dialog -->
   <ConfirmDialog
     v-model:open="isDeleteDialogOpen"
-    title="Delete"
-    confirm-text="Delete"
-    cancel-text="Cancel"
+    :title="t('layout.dialogs.delete.title')"
+    :confirm-text="t('layout.dialogs.delete.confirm')"
+    :cancel-text="t('common.cancel')"
     variant="destructive"
     :is-loading="isDeleting"
     @confirm="confirmDelete"
   >
     <template #description>
       <p class="text-sm text-muted-foreground">
-        You are about to permanently delete
-        {{ deleteTargetTitles.length > 1 ? 'the following issues' : 'the issue' }}:
+        {{ deleteTargetTitles.length > 1 ? t('layout.dialogs.delete.aboutToDeleteMany') : t('layout.dialogs.delete.aboutToDeleteOne') }}
       </p>
       <div class="mt-2 space-y-1">
         <p
@@ -55,11 +56,11 @@ const markdownPreview = useMarkdownPreview()
           {{ title }}
         </p>
         <p v-if="deleteTargetTitles.length > 5" class="text-sm text-muted-foreground">
-          ... and {{ deleteTargetTitles.length - 5 }} more ({{ deleteTargetTitles.length }} total)
+          {{ t('layout.dialogs.delete.andMore', { count: deleteTargetTitles.length - 5, total: deleteTargetTitles.length }) }}
         </p>
       </div>
       <p class="mt-3 text-sm text-muted-foreground">
-        This action cannot be undone.
+        {{ t('layout.dialogs.delete.cannotBeUndone') }}
       </p>
     </template>
   </ConfirmDialog>
@@ -74,22 +75,27 @@ const markdownPreview = useMarkdownPreview()
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          Delete Issue with Children
+          {{ t('layout.dialogs.epicDelete.title') }}
         </DialogTitle>
         <DialogDescription as="div">
           <p class="text-sm text-muted-foreground">
-            The issue "<span class="font-medium text-sky-400">{{ epicToDelete?.title }}</span>" has {{ epicChildren.length }} child issue{{ epicChildren.length > 1 ? 's' : '' }}:
+            <i18n-t keypath="layout.dialogs.epicDelete.hasChildren" tag="span">
+              <template #title>
+                <span class="font-medium text-sky-400">{{ epicToDelete?.title }}</span>
+              </template>
+              <template #count>{{ epicChildren.length }}</template>
+            </i18n-t>
           </p>
           <div class="mt-2 space-y-1 max-h-32 overflow-y-auto">
             <p v-for="child in epicChildren.slice(0, 5)" :key="child.id" class="text-sm text-muted-foreground">
               <span class="font-medium">{{ child.title }}</span>
             </p>
             <p v-if="epicChildren.length > 5" class="text-sm text-muted-foreground">
-              ... and {{ epicChildren.length - 5 }} more
+              {{ t('layout.dialogs.epicDelete.andMore', { count: epicChildren.length - 5 }) }}
             </p>
           </div>
           <p class="mt-3 text-sm text-muted-foreground">
-            What would you like to do?
+            {{ t('layout.dialogs.epicDelete.whatToDo') }}
           </p>
         </DialogDescription>
       </DialogHeader>
@@ -104,7 +110,7 @@ const markdownPreview = useMarkdownPreview()
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
           </svg>
-          Delete Issue and All Children
+          {{ t('layout.dialogs.epicDelete.deleteAll') }}
         </Button>
         <Button
           variant="outline"
@@ -112,7 +118,7 @@ const markdownPreview = useMarkdownPreview()
           :disabled="isDeletingEpic"
           @click="confirmEpicDelete('detach')"
         >
-          Delete Issue Only (Detach Children)
+          {{ t('layout.dialogs.epicDelete.detach') }}
         </Button>
         <Button
           variant="ghost"
@@ -120,7 +126,7 @@ const markdownPreview = useMarkdownPreview()
           :disabled="isDeletingEpic"
           @click="isEpicDeleteDialogOpen = false"
         >
-          Cancel
+          {{ t('common.cancel') }}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -129,22 +135,22 @@ const markdownPreview = useMarkdownPreview()
   <!-- Close Confirmation Dialog -->
   <ConfirmDialog
     v-model:open="isCloseDialogOpen"
-    title="Close issue"
-    confirm-text="Close"
-    cancel-text="Cancel"
+    :title="t('layout.dialogs.closeIssue.title')"
+    :confirm-text="t('layout.dialogs.closeIssue.confirm')"
+    :cancel-text="t('common.cancel')"
     :is-loading="isClosing"
     @confirm="confirmClose"
   >
     <template #description>
       <p class="text-sm text-muted-foreground">
-        You are about to close the issue:
+        {{ t('layout.dialogs.closeIssue.aboutToClose') }}
       </p>
       <div class="mt-2">
         <p class="text-sm text-sky-400 font-mono">{{ selectedIssue?.id }}</p>
         <p class="text-sm font-medium">{{ selectedIssue?.title }}</p>
       </div>
       <p class="mt-3 text-sm text-muted-foreground">
-        The issue will be marked as completed.
+        {{ t('layout.dialogs.closeIssue.willBeMarkedCompleted') }}
       </p>
     </template>
   </ConfirmDialog>
@@ -152,25 +158,25 @@ const markdownPreview = useMarkdownPreview()
   <!-- Detach Attachment Confirmation Dialog -->
   <ConfirmDialog
     v-model:open="isDetachDialogOpen"
-    title="Detach attachment"
-    confirm-text="Detach"
-    cancel-text="Cancel"
+    :title="t('layout.dialogs.detach.title')"
+    :confirm-text="t('layout.dialogs.detach.confirm')"
+    :cancel-text="t('common.cancel')"
     variant="destructive"
     :is-loading="isDetaching"
     @confirm="handleDetachImage"
   >
     <template #description>
       <p class="text-sm text-muted-foreground">
-        Are you sure you want to detach this attachment?
+        {{ t('layout.dialogs.detach.confirmQuestion') }}
       </p>
       <p class="mt-2 text-xs text-muted-foreground font-mono break-all">
         {{ detachImagePath }}
       </p>
       <p v-if="detachImagePath?.includes('.beads/attachments/')" class="mt-3 text-sm text-destructive">
-        The attachment file will be permanently deleted.
+        {{ t('layout.dialogs.detach.willBeDeleted') }}
       </p>
       <p v-else class="mt-3 text-sm text-muted-foreground">
-        Only the reference will be removed. The original file will not be deleted.
+        {{ t('layout.dialogs.detach.onlyReferenceRemoved') }}
       </p>
     </template>
   </ConfirmDialog>
@@ -178,25 +184,25 @@ const markdownPreview = useMarkdownPreview()
   <!-- Remove Dependency Confirmation Dialog -->
   <ConfirmDialog
     v-model:open="isRemoveDepDialogOpen"
-    title="Remove dependency"
-    confirm-text="Remove"
-    cancel-text="Cancel"
+    :title="t('layout.dialogs.removeDep.title')"
+    :confirm-text="t('common.remove')"
+    :cancel-text="t('common.cancel')"
     variant="destructive"
     :is-loading="isRemovingDep"
     @confirm="handleRemoveDependency"
   >
     <template #description>
       <p class="text-sm text-muted-foreground">
-        Are you sure you want to remove this dependency?
+        {{ t('layout.dialogs.removeDep.confirmQuestion') }}
       </p>
       <div v-if="pendingDepRemoval" class="mt-2 space-y-2">
         <div>
-          <p class="text-xs text-muted-foreground uppercase tracking-wide">Issue</p>
+          <p class="text-xs text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.removeDep.issue') }}</p>
           <p class="text-sm font-mono text-sky-400">{{ pendingDepRemoval.issueId }}</p>
           <p class="text-sm text-muted-foreground">{{ availableIssuesForDeps.find(i => i.id === pendingDepRemoval!.issueId)?.title }}</p>
         </div>
         <div>
-          <p class="text-xs text-muted-foreground uppercase tracking-wide">Blocker</p>
+          <p class="text-xs text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.removeDep.blocker') }}</p>
           <p class="text-sm font-mono text-sky-400">{{ pendingDepRemoval.blockerId }}</p>
           <p class="text-sm text-muted-foreground">{{ availableIssuesForDeps.find(i => i.id === pendingDepRemoval!.blockerId)?.title }}</p>
         </div>
@@ -208,21 +214,21 @@ const markdownPreview = useMarkdownPreview()
   <Dialog v-model:open="isAddBlockerDialogOpen">
     <DialogContent class="sm:max-w-lg overflow-hidden">
       <DialogHeader>
-        <DialogTitle>Add a blocker</DialogTitle>
+        <DialogTitle>{{ t('layout.dialogs.addBlocker.title') }}</DialogTitle>
         <DialogDescription>
-          From <span class="font-mono text-sky-400">{{ addBlockerIssueId }}</span>
+          {{ t('layout.dialogs.addBlocker.from') }} <span class="font-mono text-sky-400">{{ addBlockerIssueId }}</span>
           <br />
           <span class="text-muted-foreground">{{ availableIssuesForDeps.find(i => i.id === addBlockerIssueId)?.title }}</span>
         </DialogDescription>
       </DialogHeader>
       <div class="space-y-4 py-2 overflow-hidden">
         <div class="space-y-1.5 overflow-hidden">
-          <label class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Blocked by</label>
+          <label class="text-xs font-medium text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.addBlocker.blockedBy') }}</label>
           <input
             v-model="addBlockerSearchQuery"
             type="text"
             class="h-9 w-full text-sm px-3 rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="Search by ID or title..."
+            :placeholder="t('layout.dialogs.addBlocker.searchPlaceholder')"
           />
           <div class="max-h-64 overflow-y-auto rounded-md border border-border">
             <button
@@ -237,16 +243,16 @@ const markdownPreview = useMarkdownPreview()
               <StatusBadge :status="opt.status" class="shrink-0 scale-75 origin-right" />
             </button>
             <p v-if="!addBlockerFilteredOptions.length && addBlockerSearchQuery" class="px-3 py-2 text-sm text-muted-foreground">
-              No matching issues found
+              {{ t('layout.dialogs.addBlocker.noMatches') }}
             </p>
             <p v-if="!addBlockerFilteredOptions.length && !addBlockerSearchQuery" class="px-3 py-2 text-sm text-muted-foreground">
-              Type to search for issues...
+              {{ t('layout.dialogs.addBlocker.typeToSearch') }}
             </p>
           </div>
         </div>
       </div>
       <DialogFooter class="gap-3">
-        <Button variant="outline" @click="isAddBlockerDialogOpen = false">Cancel</Button>
+        <Button variant="outline" @click="isAddBlockerDialogOpen = false">{{ t('common.cancel') }}</Button>
         <Button
           :disabled="!addBlockerSelectedTarget || isAddingBlocker"
           @click="handleAddBlocker"
@@ -261,7 +267,7 @@ const markdownPreview = useMarkdownPreview()
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          Add blocker
+          {{ t('layout.dialogs.addBlocker.submit') }}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -271,9 +277,9 @@ const markdownPreview = useMarkdownPreview()
   <Dialog v-model:open="isAddRelDialogOpen">
     <DialogContent class="sm:max-w-lg overflow-hidden">
       <DialogHeader>
-        <DialogTitle>Add a relation</DialogTitle>
+        <DialogTitle>{{ t('layout.dialogs.addRelation.title') }}</DialogTitle>
         <DialogDescription>
-          From <span class="font-mono text-sky-400">{{ addRelIssueId }}</span>
+          {{ t('layout.dialogs.addRelation.from') }} <span class="font-mono text-sky-400">{{ addRelIssueId }}</span>
           <br />
           <span class="text-muted-foreground">{{ availableIssuesForDeps.find(i => i.id === addRelIssueId)?.title }}</span>
         </DialogDescription>
@@ -281,7 +287,7 @@ const markdownPreview = useMarkdownPreview()
       <div class="space-y-4 py-2 overflow-hidden">
         <!-- Relation type selector -->
         <div class="space-y-1.5">
-          <label class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Type</label>
+          <label class="text-xs font-medium text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.addRelation.type') }}</label>
           <select
             v-model="addRelSelectedType"
             class="h-9 w-full text-sm px-3 rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
@@ -292,7 +298,7 @@ const markdownPreview = useMarkdownPreview()
         <!-- Target issue search -->
         <div class="space-y-1.5 overflow-hidden">
           <div class="flex items-center justify-between">
-            <label class="text-xs font-medium text-muted-foreground uppercase tracking-wide">Target issue</label>
+            <label class="text-xs font-medium text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.addRelation.target') }}</label>
             <button
               type="button"
               class="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition-colors select-none"
@@ -302,14 +308,14 @@ const markdownPreview = useMarkdownPreview()
               @click="addRelFilterClosed = !addRelFilterClosed"
             >
               <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" /></svg>
-              Exclude closed
+              {{ t('layout.dialogs.addRelation.excludeClosed') }}
             </button>
           </div>
           <input
             v-model="addRelSearchQuery"
             type="text"
             class="h-9 w-full text-sm px-3 rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            placeholder="Search by ID or title..."
+            :placeholder="t('layout.dialogs.addRelation.searchPlaceholder')"
           />
           <div class="max-h-64 overflow-y-auto rounded-md border border-border">
             <button
@@ -324,16 +330,16 @@ const markdownPreview = useMarkdownPreview()
               <StatusBadge :status="opt.status" class="shrink-0 scale-75 origin-right" />
             </button>
             <p v-if="!addRelFilteredOptions.length && addRelSearchQuery" class="px-3 py-2 text-sm text-muted-foreground">
-              No matching issues found
+              {{ t('layout.dialogs.addRelation.noMatches') }}
             </p>
             <p v-if="!addRelFilteredOptions.length && !addRelSearchQuery" class="px-3 py-2 text-sm text-muted-foreground">
-              Type to search for issues...
+              {{ t('layout.dialogs.addRelation.typeToSearch') }}
             </p>
           </div>
         </div>
       </div>
       <DialogFooter class="gap-3">
-        <Button variant="outline" @click="isAddRelDialogOpen = false">Cancel</Button>
+        <Button variant="outline" @click="isAddRelDialogOpen = false">{{ t('common.cancel') }}</Button>
         <Button
           :disabled="!addRelSelectedTarget || isAddingRel"
           @click="handleAddRelation"
@@ -348,7 +354,7 @@ const markdownPreview = useMarkdownPreview()
             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          Add relation
+          {{ t('layout.dialogs.addRelation.submit') }}
         </Button>
       </DialogFooter>
     </DialogContent>
@@ -357,25 +363,25 @@ const markdownPreview = useMarkdownPreview()
   <!-- Remove Relation Confirmation Dialog -->
   <ConfirmDialog
     v-model:open="isRemoveRelDialogOpen"
-    title="Remove relation"
-    confirm-text="Remove"
-    cancel-text="Cancel"
+    :title="t('layout.dialogs.removeRelation.title')"
+    :confirm-text="t('common.remove')"
+    :cancel-text="t('common.cancel')"
     variant="destructive"
     :is-loading="isRemovingRel"
     @confirm="handleRemoveRelation"
   >
     <template #description>
       <p class="text-sm text-muted-foreground">
-        Are you sure you want to remove this relation?
+        {{ t('layout.dialogs.removeRelation.confirmQuestion') }}
       </p>
       <div v-if="pendingRelRemoval" class="mt-2 space-y-2">
         <div>
-          <p class="text-xs text-muted-foreground uppercase tracking-wide">Issue</p>
+          <p class="text-xs text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.removeRelation.issue') }}</p>
           <p class="text-sm font-mono text-sky-400">{{ pendingRelRemoval.issueId }}</p>
           <p class="text-sm text-muted-foreground">{{ availableIssuesForDeps.find(i => i.id === pendingRelRemoval!.issueId)?.title }}</p>
         </div>
         <div>
-          <p class="text-xs text-muted-foreground uppercase tracking-wide">Related to</p>
+          <p class="text-xs text-muted-foreground uppercase tracking-wide">{{ t('layout.dialogs.removeRelation.relatedTo') }}</p>
           <p class="text-sm font-mono text-sky-400">{{ pendingRelRemoval.targetId }}</p>
           <p class="text-sm text-muted-foreground">{{ availableIssuesForDeps.find(i => i.id === pendingRelRemoval!.targetId)?.title }}</p>
         </div>
@@ -420,10 +426,10 @@ const markdownPreview = useMarkdownPreview()
   <!-- Markdown Save Confirmation -->
   <ConfirmDialog
     v-model:open="markdownPreview.showSaveConfirm.value"
-    title="Save changes"
-    description="Save the changes to this markdown file?"
-    confirm-text="Save"
-    cancel-text="Cancel"
+    :title="t('layout.dialogs.markdownSave.title')"
+    :description="t('layout.dialogs.markdownSave.description')"
+    :confirm-text="t('common.save')"
+    :cancel-text="t('common.cancel')"
     :is-loading="markdownPreview.isSaving.value"
     @confirm="markdownPreview.confirmSave"
     @cancel="markdownPreview.cancelSave"

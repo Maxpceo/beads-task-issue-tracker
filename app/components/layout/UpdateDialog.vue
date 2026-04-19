@@ -11,6 +11,8 @@ import { Button } from '~/components/ui/button'
 import { renderMarkdown } from '~/utils/markdown'
 import { logFrontend } from '~/utils/bd-api'
 
+const { t } = useI18n()
+
 const isDev = import.meta.dev
 
 const open = defineModel<boolean>('open', { default: false })
@@ -69,7 +71,7 @@ const handleViewOnGitHub = () => {
     <DialogContent class="sm:max-w-3xl">
       <DialogHeader>
         <DialogTitle class="flex items-center gap-2">
-          Check for Updates
+          {{ t('layout.update.title') }}
           <button
             v-if="isDev"
             tabindex="-1"
@@ -77,7 +79,7 @@ const handleViewOnGitHub = () => {
             class="text-[10px] font-normal cursor-pointer transition-colors px-1.5 py-0.5 rounded border"
             :class="demoMode ? 'text-amber-500 border-amber-500/50 bg-amber-500/10' : 'text-muted-foreground/40 border-border hover:text-muted-foreground hover:border-muted-foreground/50'"
           >
-            Demo
+            {{ t('layout.update.demo') }}
           </button>
         </DialogTitle>
         <DialogDescription as="div">
@@ -92,7 +94,7 @@ const handleViewOnGitHub = () => {
             >
               <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
             </svg>
-            <span>Checking for updates...</span>
+            <span>{{ t('layout.update.checking') }}</span>
           </div>
 
           <!-- Error state -->
@@ -103,7 +105,7 @@ const handleViewOnGitHub = () => {
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
-              <span>Failed to check for updates</span>
+              <span>{{ t('layout.update.failed') }}</span>
             </div>
             <p class="mt-2 text-sm text-muted-foreground">{{ error }}</p>
           </div>
@@ -121,7 +123,7 @@ const handleViewOnGitHub = () => {
               >
                 <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
               </svg>
-              <span>Downloading update...</span>
+              <span>{{ t('layout.update.downloading') }}</span>
             </div>
 
             <template v-else>
@@ -131,11 +133,11 @@ const handleViewOnGitHub = () => {
                   <polyline points="7 10 12 15 17 10" />
                   <line x1="12" y1="15" x2="12" y2="3" />
                 </svg>
-                <span>Update available</span>
+                <span>{{ t('layout.update.available') }}</span>
               </div>
               <div class="mt-3 space-y-1 text-sm">
-                <p><span class="text-muted-foreground">Current version:</span> v{{ updateInfo.currentVersion }}</p>
-                <p><span class="text-muted-foreground">Latest version:</span> <span class="text-green-500 font-medium">v{{ updateInfo.latestVersion }}</span></p>
+                <p><span class="text-muted-foreground">{{ t('layout.update.currentVersion') }}</span> v{{ updateInfo.currentVersion }}</p>
+                <p><span class="text-muted-foreground">{{ t('layout.update.latestVersion') }}</span> <span class="text-green-500 font-medium">v{{ updateInfo.latestVersion }}</span></p>
               </div>
 
               <!-- Changelog -->
@@ -154,11 +156,11 @@ const handleViewOnGitHub = () => {
               <!-- macOS xattr instructions -->
               <div v-if="updateInfo.platform === 'macos'" class="mt-4 space-y-2">
                 <p class="text-xs text-muted-foreground">
-                  After installing, macOS may block the app. Run this command once to fix it:
+                  {{ t('layout.update.macosNote') }}
                 </p>
                 <button
                   class="flex items-center gap-2 w-full text-left px-3 py-2 rounded bg-muted/50 font-mono text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  :title="xattrCopied ? 'Copied!' : 'Click to copy'"
+                  :title="xattrCopied ? t('layout.update.copied') : t('layout.update.clickToCopy')"
                   @click="copyXattrCommand"
                 >
                   <span class="flex-1 truncate">{{ xattrCommand }}</span>
@@ -195,10 +197,10 @@ const handleViewOnGitHub = () => {
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                 <polyline points="22 4 12 14.01 9 11.01" />
               </svg>
-              <span>You're up to date</span>
+              <span>{{ t('layout.update.upToDate') }}</span>
             </div>
             <p class="mt-2 text-sm text-muted-foreground">
-              Version v{{ updateInfo.currentVersion }} is the latest version.
+              {{ t('layout.update.latestVersionText', { version: updateInfo.currentVersion }) }}
             </p>
             <div v-if="renderedChangelog" class="mt-4">
               <div class="max-h-96 overflow-y-auto rounded border border-border p-3 text-sm markdown-base compact"
@@ -215,7 +217,7 @@ const handleViewOnGitHub = () => {
             @click="handleDownloadAndQuit"
             :disabled="isDownloading"
           >
-            Download &amp; Quit
+            {{ t('layout.update.downloadAndQuit') }}
           </Button>
           <Button
             v-if="(updateInfo || error) && !isChecking"
@@ -223,14 +225,14 @@ const handleViewOnGitHub = () => {
             @click="handleViewOnGitHub"
             :disabled="isDownloading"
           >
-            View on GitHub
+            {{ t('layout.update.viewOnGitHub') }}
           </Button>
           <Button
             v-if="!isDownloading"
             variant="outline"
             @click="open = false"
           >
-            {{ updateInfo?.hasUpdate ? 'Later' : 'Close' }}
+            {{ updateInfo?.hasUpdate ? t('layout.update.later') : t('common.close') }}
           </Button>
         </div>
       </DialogFooter>
