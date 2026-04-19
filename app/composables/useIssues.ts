@@ -1,6 +1,6 @@
 import { useI18n } from 'vue-i18n'
 import type { Issue, CreateIssuePayload, UpdateIssuePayload } from '~/types/issue'
-import { bdList, bdCount, bdShow, bdCreate, bdUpdate, bdClose, bdDelete, bdAddComment, bdAddDependency, bdRemoveDependency, bdAddRelation, bdRemoveRelation, bdPurgeOrphanAttachments, bdPollData, bdPollDataCached, bdSearch, bdLabelAdd, bdLabelRemove, type BdListOptions, type PollData } from '~/utils/bd-api'
+import { bdList, bdCount, bdShow, bdCreate, bdUpdate, bdClose, bdDelete, bdAddComment, bdAddDependency, bdRemoveDependency, bdAddRelation, bdRemoveRelation, bdPurgeOrphanAttachments, bdPollData, bdPollDataCached, bdSearch, bdLabelAdd, bdLabelRemove, logFrontend, type BdListOptions, type PollData } from '~/utils/bd-api'
 import { useProjectStorage } from '~/composables/useProjectStorage'
 import {
   deduplicateIssues,
@@ -210,9 +210,13 @@ export function useIssues() {
    */
   const fetchPollData = async (): Promise<Issue[] | null> => {
     error.value = null
+    const perfStart = performance.now()
+    let perfIpc = 0
     try {
       const path = getPath()
+      const tIpc = performance.now()
       const data = await bdPollData(path)
+      perfIpc = performance.now() - tIpc
 
       const mergedIssues = [...(data.openIssues || []), ...(data.closedIssues || [])]
       const newIssues = deduplicateIssues(mergedIssues)
@@ -289,6 +293,13 @@ export function useIssues() {
       }, '')
       lastKnownUpdated.value = maxUpdated || null
 
+      const perfTotal = performance.now() - perfStart
+      const perfProcess = perfTotal - perfIpc
+      logFrontend(
+        'debug',
+        `[perf:fetchPollData] ipc=${perfIpc.toFixed(0)}ms process=${perfProcess.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms count=${newIssues.length}`,
+      ).catch(() => {})
+
       return data.readyIssues || []
     } catch (e) {
       if (checkMigrateError(e, beadsPath.value)) {
@@ -313,19 +324,31 @@ export function useIssues() {
   const warmUpFromCache = async (
     cwd: string,
   ): Promise<{ issues: Issue[]; readyIssues: Issue[] } | null> => {
+    const perfStart = performance.now()
     const data = await bdPollDataCached(cwd)
-    if (!data) return null
+    const perfIpc = performance.now() - perfStart
 
-    const mergedIssues = [...(data.openIssues || []), ...(data.closedIssues || [])]
-    const newIssues = deduplicateIssues(mergedIssues)
+    let count = 0
+    let result: { issues: Issue[]; readyIssues: Issue[] } | null = null
+    if (data) {
+      const mergedIssues = [...(data.openIssues || []), ...(data.closedIssues || [])]
+      const newIssues = deduplicateIssues(mergedIssues)
 
-    linkParentsAndChildren(newIssues)
-    pruneClosedBlockers(newIssues)
+      linkParentsAndChildren(newIssues)
+      pruneClosedBlockers(newIssues)
 
-    return {
-      issues: newIssues,
-      readyIssues: data.readyIssues || [],
+      count = newIssues.length
+      result = { issues: newIssues, readyIssues: data.readyIssues || [] }
     }
+
+    const perfTotal = performance.now() - perfStart
+    const perfProcess = perfTotal - perfIpc
+    logFrontend(
+      'info',
+      `[perf:warmUpFromCache] ipc=${perfIpc.toFixed(0)}ms process=${perfProcess.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms count=${count} hit=${data !== null}`,
+    ).catch(() => {})
+
+    return result
   }
 
   /**
