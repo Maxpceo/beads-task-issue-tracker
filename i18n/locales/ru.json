@@ -1,0 +1,594 @@
+{
+  "app": {
+    "title": "Beads Task-Issue Tracker"
+  },
+  "common": {
+    "ok": "ОК",
+    "cancel": "Отмена",
+    "save": "Сохранить",
+    "delete": "Удалить",
+    "close": "Закрыть",
+    "confirm": "Подтвердить",
+    "loading": "Загрузка…",
+    "error": "Ошибка",
+    "retry": "Повторить",
+    "refresh": "Обновить",
+    "yes": "Да",
+    "no": "Нет",
+    "remove": "Убрать",
+    "reset": "Сбросить",
+    "areYouSure": "Вы уверены, что хотите продолжить?",
+    "updateCheckFailed": "Не удалось проверить обновления",
+    "downloadFailed": "Не удалось загрузить обновление",
+    "later": "Позже",
+    "searchInDocument": "Поиск по документу..."
+  },
+  "page": {
+    "dashboard": "Дашборд",
+    "details": "Детали",
+    "closeDashboard": "Закрыть дашборд",
+    "openDashboard": "Открыть дашборд",
+    "closeDetails": "Закрыть детали",
+    "openDetails": "Открыть детали",
+    "failedToLoad": "Не удалось загрузить задачи",
+    "selectIssue": "Выберите задачу, чтобы увидеть детали",
+    "editContext": {
+      "new": "Новая задача",
+      "editing": "Редактирование"
+    },
+    "footer": {
+      "toggleDebug": "Переключить отладочную панель (⌘⇧L)",
+      "settings": "Настройки (⌘,)",
+      "probeTitle": "Трансляция probe включена",
+      "probeLabel": "Probe"
+    },
+    "notifications": {
+      "issueCreated": "Задача создана",
+      "issueSaved": "Задача сохранена",
+      "saveFailed": "Не удалось сохранить задачу",
+      "commentAdded": "Комментарий добавлен",
+      "commentFailed": "Не удалось добавить комментарий",
+      "attachmentsMigrated": "Вложения мигрированы",
+      "attachmentsMigratedDesc": "Ссылки и папки вложений обновлены до нового формата.",
+      "attachmentsUpdated": "Вложения обновлены",
+      "attachmentsUpdatedDesc": "Ссылки на файлы обновлены для совместимости с br CLI.",
+      "dbRepaired": "База данных восстановлена",
+      "dbRepairedDesc": "Ваши задачи успешно восстановлены.",
+      "allDbsRepaired": "Все базы восстановлены",
+      "allDbsRepairedDesc": "Восстановлено проектов: {count}.",
+      "reposFailed": "Часть проектов не удалось восстановить",
+      "reposFailedDesc": "Успешно: {success}, с ошибкой: {failed}.",
+      "migrationComplete": "Миграция завершена",
+      "migrationCompleteDesc": "Проект мигрирован на бэкенд Dolt."
+    },
+    "syncErrorTitle": "Ошибка синхронизации",
+    "syncErrorDescription": "Синхронизация завершилась со следующей ошибкой:",
+    "dialogs": {
+      "repair": {
+        "title": "Требуется восстановление базы",
+        "intro": "Обнаружена несовместимость схемы базы данных. Это вызвано багом в обновлении bd CLI (версия 0.49.4).",
+        "whatWillHappen": "Что произойдёт:",
+        "step1": "Текущая база данных будет сохранена в бэкап",
+        "step2": "База будет пересоздана из файла бэкапа задач",
+        "step3": "Все ваши задачи будут сохранены",
+        "progress": "Восстановление {current}/{total}:",
+        "error": "Ошибка: {message}",
+        "repairAll": "Восстановить все ({count})",
+        "repairThis": "Восстановить этот проект",
+        "repairing": "Восстанавливаем..."
+      },
+      "migration": {
+        "title": "Требуется миграция базы",
+        "intro": "Ваша версия bd (>= 0.50) больше не может читать старые SQLite-базы. Проект нужно мигрировать на новый бэкенд Dolt. Это одноразовая операция.",
+        "whatWillHappen": "Что произойдёт:",
+        "step1": "Будет создана новая Dolt-база ({cmd})",
+        "step2": "Задачи будут импортированы из JSONL-бэкапа ({cmd})",
+        "step3": "Ни одна из активных задач не будет потеряна при миграции",
+        "error": "Ошибка: {message}",
+        "migrateNow": "Мигрировать сейчас",
+        "migrating": "Мигрируем..."
+      },
+      "attachmentRefs": {
+        "title": "Требуется обновление вложений",
+        "intro": "Вложения теперь хранятся напрямую в файловой системе. Эта очистка удалит старые пути к вложениям из внешних ссылок. Одноразовая операция.",
+        "backupNote": "Перед изменениями будет создан бэкап ваших данных.",
+        "counter": "нет задач со ссылками для очистки | {count} задача со ссылками для очистки | {count} задачи со ссылками для очистки | {count} задач со ссылками для очистки",
+        "error": "Ошибка: {message}",
+        "updateNow": "Обновить сейчас",
+        "updating": "Обновляем..."
+      }
+    }
+  },
+  "notifications": {
+    "issue": {
+      "closed": "Задача {id} закрыта",
+      "closeFailed": "Не удалось закрыть {id}",
+      "reopened": "Задача {id} открыта заново",
+      "reopenFailed": "Не удалось открыть заново {id}",
+      "deleted": "Задача {id} удалена",
+      "deleteFailed": "Не удалось удалить задачу",
+      "deleteFailedDesc": "Не удалось удалить {id}",
+      "deleteFailedGeneric": "Не удалось удалить задачу",
+      "deletedMany": "нет удалённых задач | Удалена {count} задача | Удалено {count} задачи | Удалено {count} задач",
+      "unblockedOne": "Разблокировано: {ids}",
+      "unblockedMany": "Разблокировано {count}: {ids}"
+    },
+    "epic": {
+      "deleted": "Эпик {id} удалён",
+      "childDeleteFailed": "Не удалось удалить подзадачу"
+    },
+    "dep": {
+      "added": "Зависимость добавлена",
+      "addedDesc": "{issue} теперь заблокирована задачей {blocker}",
+      "addFailed": "Не удалось добавить зависимость",
+      "removed": "Зависимость удалена",
+      "removeFailed": "Не удалось удалить зависимость"
+    },
+    "rel": {
+      "added": "Связь добавлена",
+      "addedDesc": "{issue} → {type} → {target}",
+      "addFailed": "Не удалось добавить связь",
+      "removed": "Связь удалена",
+      "removeFailed": "Не удалось удалить связь"
+    }
+  },
+  "menu": {
+    "about": "О Beads Task-Issue Tracker",
+    "settings": "Настройки...",
+    "checkForUpdate": "Проверить обновления...",
+    "showLogs": "Показать логи...",
+    "app": "Beads Task-Issue Tracker",
+    "edit": "Правка",
+    "window": "Окно"
+  },
+  "about": {
+    "version": "Версия {version}",
+    "poweredBy": "На базе beads (Steve Yegge)",
+    "vibeCoded": "Написано в вайб-режиме через Claude Code"
+  },
+  "layout": {
+    "header": {
+      "zoomIn": "Увеличить (⌥ — сброс)",
+      "zoomOut": "Уменьшить (⌥ — сброс)"
+    },
+    "dialogs": {
+      "delete": {
+        "title": "Удалить",
+        "confirm": "Удалить",
+        "aboutToDeleteMany": "Вы собираетесь навсегда удалить следующие задачи:",
+        "aboutToDeleteOne": "Вы собираетесь навсегда удалить задачу:",
+        "andMore": "... и ещё {count} (всего {total})",
+        "cannotBeUndone": "Это действие нельзя отменить."
+      },
+      "epicDelete": {
+        "title": "Удаление задачи с подзадачами",
+        "hasChildren": "У задачи «{title}» есть подзадач: {count}",
+        "andMore": "... и ещё {count}",
+        "whatToDo": "Что вы хотите сделать?",
+        "deleteAll": "Удалить задачу и все подзадачи",
+        "detach": "Удалить только задачу (отвязать подзадачи)"
+      },
+      "closeIssue": {
+        "title": "Закрыть задачу",
+        "confirm": "Закрыть",
+        "aboutToClose": "Вы собираетесь закрыть задачу:",
+        "willBeMarkedCompleted": "Задача будет помечена как завершённая."
+      },
+      "detach": {
+        "title": "Отвязать вложение",
+        "confirm": "Отвязать",
+        "confirmQuestion": "Отвязать это вложение?",
+        "willBeDeleted": "Файл вложения будет удалён навсегда.",
+        "onlyReferenceRemoved": "Будет удалена только ссылка. Исходный файл останется."
+      },
+      "removeDep": {
+        "title": "Удалить зависимость",
+        "confirmQuestion": "Удалить эту зависимость?",
+        "issue": "Задача",
+        "blocker": "Блокер"
+      },
+      "addBlocker": {
+        "title": "Добавить блокер",
+        "from": "От",
+        "blockedBy": "Заблокирована",
+        "searchPlaceholder": "Поиск по ID или названию...",
+        "noMatches": "Подходящих задач не найдено",
+        "typeToSearch": "Введите запрос для поиска...",
+        "submit": "Добавить блокер"
+      },
+      "addRelation": {
+        "title": "Добавить связь",
+        "from": "От",
+        "type": "Тип",
+        "target": "Целевая задача",
+        "excludeClosed": "Скрыть закрытые",
+        "searchPlaceholder": "Поиск по ID или названию...",
+        "noMatches": "Подходящих задач не найдено",
+        "typeToSearch": "Введите запрос для поиска...",
+        "submit": "Добавить связь"
+      },
+      "removeRelation": {
+        "title": "Удалить связь",
+        "confirmQuestion": "Удалить эту связь?",
+        "issue": "Задача",
+        "relatedTo": "Связана с"
+      },
+      "markdownSave": {
+        "title": "Сохранить изменения",
+        "description": "Сохранить изменения в этом markdown-файле?"
+      }
+    },
+    "debug": {
+      "title": "Отладочные логи",
+      "live": "В реальном времени",
+      "paused": "Приостановлено",
+      "refresh": "Обновить",
+      "bottom": "Вниз",
+      "clear": "Очистить",
+      "export": "Экспорт",
+      "verbose": "Подробно",
+      "on": "ВКЛ",
+      "off": "ВЫКЛ",
+      "noLogs": "Логов пока нет...",
+      "forceSync": "Принудительная синхронизация",
+      "syncing": "Синхронизация...",
+      "reset": "Сбросить",
+      "uptime": "Uptime {seconds}s · Автообновление 2s",
+      "tabs": {
+        "logs": "Логи",
+        "pipeline": "Pipeline"
+      },
+      "pipeline": {
+        "watcher": "Watcher",
+        "scheduler": "Scheduler",
+        "pollExecution": "Выполнение опроса",
+        "mtimeCheck": "Проверка mtime",
+        "triggers": "Сработало",
+        "cooldownSkips": "Пропуски (кулдаун)",
+        "debounces": "Debounce",
+        "reruns": "Перезапуски",
+        "requests": "Запросы",
+        "executed": "Выполнено",
+        "deferred": "Отложено",
+        "skipped": "Пропущено",
+        "immediate": "Немедленно",
+        "started": "Начато",
+        "finished": "Завершено",
+        "errors": "Ошибки",
+        "lastMs": "Последний, мс",
+        "avgMs": "Средний, мс",
+        "maxMs": "Макс, мс",
+        "checks": "Проверок",
+        "hits": "Попаданий",
+        "hitRate": "Hit rate"
+      },
+      "doltTitle": "Этот проект использует бэкенд Dolt",
+      "updateAvailable": "Доступно обновление: v{version} — кликните, чтобы посмотреть",
+      "updateReleases": "Открыть релизы bd CLI"
+    },
+    "update": {
+      "title": "Проверка обновлений",
+      "demo": "Демо",
+      "checking": "Проверяем обновления...",
+      "failed": "Не удалось проверить обновления",
+      "downloading": "Загружаем обновление...",
+      "available": "Доступно обновление",
+      "currentVersion": "Текущая версия:",
+      "latestVersion": "Последняя версия:",
+      "macosNote": "После установки macOS может заблокировать приложение. Выполните эту команду один раз, чтобы это исправить:",
+      "copied": "Скопировано!",
+      "clickToCopy": "Нажмите, чтобы скопировать",
+      "upToDate": "У вас последняя версия",
+      "latestVersionText": "Версия v{version} — самая свежая.",
+      "downloadAndQuit": "Загрузить и выйти",
+      "viewOnGitHub": "Открыть на GitHub",
+      "later": "Позже"
+    }
+  },
+  "settings": {
+    "title": "Настройки",
+    "description": "Выберите, какой CLI-клиент использовать для работы с задачами.",
+    "theme": "Тема",
+    "language": {
+      "title": "Язык",
+      "description": "Выберите язык интерфейса. «Авто» использует системные настройки.",
+      "auto": "Авто",
+      "english": "English",
+      "russian": "Русский"
+    },
+    "cliClient": {
+      "title": "CLI-клиент",
+      "brDescription": "Beads Rust (SQLite + JSONL)",
+      "bdDescription": "Оригинальный Beads CLI (Go)",
+      "switching": "Переключаем клиент..."
+    },
+    "display": {
+      "title": "Отображение",
+      "floatActiveLabel": "Поднимать активные задачи наверх",
+      "floatActiveDescription": "Задачи в активных категориях работы (в работе, на ревью и т.д.) отображаются в начале таблицы независимо от сортировки."
+    },
+    "statusColors": {
+      "title": "Цвета статусов",
+      "description": "Настройте цвета бейджей для каждого статуса. Изменения сохраняются локально для этого проекта и компьютера.",
+      "loading": "Загружаем статусы...",
+      "color": "Цвет",
+      "from": "От",
+      "gradient": "Град.",
+      "reset": "Сбросить",
+      "primaryColorTitle": "Основной цвет для {label}",
+      "enableGradientTitle": "Включить градиент для {label}",
+      "gradientEndTitle": "Конечный цвет градиента для {label}",
+      "gradientEndSr": "Конечный цвет градиента для {label}",
+      "resetAria": "Сбросить цвет {label} на значение по умолчанию",
+      "categories": {
+        "active": "Активные",
+        "wip": "В работе",
+        "done": "Завершённые",
+        "frozen": "Заморожены / Отложены"
+      }
+    },
+    "probe": {
+      "title": "Probe (трансляция мониторинга)",
+      "toggleAria": "Переключить мониторинг probe",
+      "description": "Когда включено, проекты регистрируются в probe для внешнего мониторинга.",
+      "test": "Проверить соединение",
+      "connected": "Соединение есть",
+      "disconnected": "Соединения нет"
+    }
+  },
+  "dashboard": {
+    "kpi": {
+      "workflow": "Workflow",
+      "open": "Открытые",
+      "inProgress": "В работе",
+      "blocked": "Заблокированные",
+      "all": "Все"
+    },
+    "sections": {
+      "charts": "Графики",
+      "inProgress": "В работе",
+      "blocked": "Заблокированные",
+      "checkThisOut": "Обрати внимание",
+      "readyToWork": "Готовы к работе"
+    },
+    "pinnedSort": {
+      "byPinDate": "По дате закрепления (кликни для «по обновлению»)",
+      "byUpdated": "По обновлению (кликни для ручной сортировки)",
+      "manual": "Ручной порядок (кликни для «по дате закрепления»)"
+    },
+    "charts": {
+      "statusTitle": "Распределение по статусу",
+      "priorityTitle": "Распределение по приоритету",
+      "open": "Открытые",
+      "closed": "Закрытые"
+    },
+    "lists": {
+      "noPinned": "Нет закреплённых задач",
+      "noReady": "Нет задач, готовых к работе",
+      "copyTitle": "Скопировать ID задачи {id} (⌘/Ctrl+клик — добавить в буфер)",
+      "copyAria": "Скопировать ID задачи {id}, удерживайте Cmd или Ctrl, чтобы добавить в буфер мульти-копирования"
+    },
+    "onboarding": {
+      "title": "Проект не выбран",
+      "description": "Нажмите Browse, чтобы выбрать папку проекта Beads",
+      "browse": "Выбрать"
+    },
+    "folderPicker": {
+      "title": "Выбор папки проекта Beads",
+      "description": "Перейдите в папку, содержащую базу Beads (папку .beads)",
+      "homeTitle": "Домой",
+      "parentTitle": "Родительская папка",
+      "goTitle": "Перейти",
+      "pathPlaceholder": "/путь/к/папке",
+      "beadsProject": "Проект Beads",
+      "added": "Добавлен",
+      "noSubfolders": "Нет подпапок",
+      "beadsLabel": "beads",
+      "open": "Открыть",
+      "addProject": "Добавить проект",
+      "loadError": "Не удалось загрузить папку"
+    },
+    "pathSelector": {
+      "selectProject": "Выбрать проект",
+      "projects": "Проекты",
+      "sort": {
+        "aToZ": "А-Я (кликни для Я-А)",
+        "zToA": "Я-А (кликни для ручной сортировки)",
+        "manual": "Ручной порядок (кликни для А-Я)",
+        "reset": "Сбросить к А-Я"
+      },
+      "exposed": "Транслируется в мониторинг (кликни, чтобы отключить)",
+      "notExposed": "Не транслируется (кликни, чтобы включить)",
+      "removeTitle": "Удалить проект",
+      "removeDescription": "Удалить «{name}» из списка проектов?",
+      "exposeDialog": {
+        "removeTitle": "Убрать из мониторинга",
+        "exposeTitle": "Включить в мониторинг",
+        "removeConfirm": "Убрать «{name}» из мониторинга?",
+        "exposeConfirm": "Включить «{name}» в мониторинг?"
+      }
+    },
+    "prerequisites": {
+      "welcomeTitle": "Добро пожаловать в Beads Task-Issue Tracker",
+      "welcomeSubtitle": "Следуйте шагам ниже, чтобы начать",
+      "content": "**Beads** — это AI-native трекер задач, который живёт прямо в вашей кодовой базе. Задачи хранятся как файлы в папке `.beads` внутри репозитория.\n\n### Предварительные требования\n\n#### 1. Установите Beads CLI\n\n```bash\n# Через npm\nnpm install -g {'@'}beads/cli\n\n# Или через Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Инициализируйте Beads в вашем проекте\n\nПерейдите в папку проекта и выполните:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nЭто создаст папку `.beads` в репозитории.\n\n#### 3. Создайте первую задачу\n\n```bash\nbd create \"Моя первая задача\" --type task --priority p2\n```\n\n### Узнать больше\n\n- [Документация Beads](https://beads.dev)\n- [Репозиторий GitHub](https://github.com/steveyegge/beads)\n"
+    }
+  },
+  "issues": {
+    "badges": {
+      "statusAria": "Статус: {status}",
+      "priorityAria": "Приоритет: {priority}",
+      "typeAria": "Тип: {type}",
+      "labelAria": "Метка: {label}",
+      "blockedBy": "Заблокирована задачами: {ids}"
+    },
+    "columns": {
+      "id": "ID",
+      "type": "Тип",
+      "labels": "Метки",
+      "pinned": "Закреп",
+      "title": "Название",
+      "status": "Статус",
+      "priority": "Приоритет",
+      "assignee": "Исполнитель",
+      "createdAt": "Создана",
+      "updatedAt": "Обновлена",
+      "commentCount": "Комментарии",
+      "reset": "Сбросить к значениям по умолчанию",
+      "visibleColumns": "Видимые колонки",
+      "settingsLabel": "Настройки колонок"
+    },
+    "toolbar": {
+      "multiSelect": "Мультивыбор",
+      "toggleMultiSelect": "Переключить мультивыбор",
+      "search": "Поиск по задачам...",
+      "new": "Новая",
+      "delete": "Удалить",
+      "selectedCount": "Выбрана {count} задача | Выбрано {count} задачи | Выбрано {count} задач"
+    },
+    "filters": {
+      "filtersLabel": "Фильтры:",
+      "hiddenLabel": "Скрыто:",
+      "clear": "Очистить",
+      "clearAllExclusions": "Сбросить все исключения",
+      "hideIssues": "Скрыть задачи",
+      "hideByCriteria": "Скрыть задачи по критериям",
+      "exclusionFilters": "Фильтры исключений",
+      "type": "Тип",
+      "label": "Метки",
+      "status": "Статус",
+      "priority": "Приоритет",
+      "assignee": "Исполнитель",
+      "filterByType": "Фильтр по типу",
+      "filterByLabel": "Фильтр по метке",
+      "filterByStatus": "Фильтр по статусу",
+      "filterByPriority": "Фильтр по приоритету",
+      "filterByAssignee": "Фильтр по исполнителю",
+      "noAssignees": "Исполнители не найдены",
+      "noLabels": "Метки не найдены"
+    },
+    "priorityLabels": {
+      "p0": "P0 — Критический",
+      "p1": "P1 — Высокий",
+      "p2": "P2 — Средний",
+      "p3": "P3 — Низкий",
+      "p4": "P4 — Минимальный"
+    },
+    "typeLabels": {
+      "bug": "Баг",
+      "task": "Задача",
+      "feature": "Фича",
+      "epic": "Эпик",
+      "chore": "Рутина",
+      "spike": "Spike",
+      "story": "Story",
+      "milestone": "Milestone"
+    },
+    "statusLabels": {
+      "open": "Открытая",
+      "in_progress": "В работе",
+      "blocked": "Заблокирована",
+      "closed": "Закрытая",
+      "deferred": "Отложена",
+      "pinned": "Закреплена",
+      "hooked": "Hooked"
+    },
+    "table": {
+      "empty": "Задачи не найдены",
+      "childSummary": "{closed} закрыто / {total} подзадача | {closed} закрыто / {total} подзадачи | {closed} закрыто / {total} подзадач",
+      "loadMore": "Загрузить ещё (осталось {remaining})"
+    }
+  },
+  "details": {
+    "header": {
+      "pin": "Закрепить",
+      "unpin": "Открепить",
+      "edit": "Править",
+      "reopen": "Открыть заново",
+      "close": "Закрыть",
+      "delete": "Удалить"
+    },
+    "sections": {
+      "description": "Описание",
+      "attachments": "Вложения",
+      "parent": "Родительская задача",
+      "children": "Подзадачи",
+      "externalReference": "Внешние ссылки",
+      "details": "Детали",
+      "dependencies": "Зависимости",
+      "relations": "Связи",
+      "estimate": "Оценка",
+      "designNotes": "Design-заметки",
+      "acceptanceCriteria": "Критерии приёмки",
+      "workingNotes": "Рабочие заметки",
+      "metadata": "Метаданные",
+      "specId": "Spec ID",
+      "blockedBy": "Блокируется",
+      "blocks": "Блокирует",
+      "assignee": "Исполнитель",
+      "labels": "Метки",
+      "created": "Создана",
+      "started": "Начата",
+      "updated": "Обновлена"
+    },
+    "actions": {
+      "attach": "Прикрепить",
+      "createChild": "Создать подзадачу",
+      "addBlocker": "Добавить блокер",
+      "addRelation": "Добавить связь"
+    },
+    "empty": {
+      "description": "Описание не указано.",
+      "labels": "Метки отсутствуют",
+      "attachments": "Вложений нет",
+      "children": "Подзадач пока нет",
+      "unassigned": "Не назначен"
+    },
+    "form": {
+      "type": "Тип",
+      "status": "Статус",
+      "priority": "Приоритет",
+      "parent": "Родительская",
+      "title": "Название",
+      "titlePlaceholder": "Название задачи",
+      "description": "Описание",
+      "descriptionPlaceholder": "Опишите задачу...",
+      "assignee": "Исполнитель",
+      "assigneePlaceholder": "Имя пользователя",
+      "labels": "Метки",
+      "externalRef": "Внешняя ссылка",
+      "externalRefPlaceholder": "URL-ы, ID или пути к изображениям (через вертикальную черту)",
+      "attach": "Прикрепить",
+      "specId": "Spec ID",
+      "specIdPlaceholder": "напр. SPEC-001",
+      "estimateMinutes": "Оценка (минут)",
+      "estimatePlaceholder": "30",
+      "designNotes": "Design-заметки",
+      "designNotesPlaceholder": "Дизайн-решения и архитектурные заметки...",
+      "acceptanceCriteria": "Критерии приёмки",
+      "acceptanceCriteriaPlaceholder": "Что должно быть истинно для завершения...",
+      "workingNotes": "Рабочие заметки",
+      "workingNotesPlaceholder": "Заметки о прогрессе и наблюдения...",
+      "noParent": "Без родителя",
+      "cancel": "Отмена",
+      "create": "Создать",
+      "save": "Сохранить",
+      "saving": "Сохраняем..."
+    },
+    "comments": {
+      "heading": "Комментарии ({count})",
+      "toc": "Оглавление комментариев",
+      "empty": "Комментариев пока нет",
+      "placeholder": "Добавить комментарий...",
+      "submit": "Добавить"
+    },
+    "relationTypes": {
+      "relates-to": "Связана с",
+      "related": "Связана",
+      "discovered-from": "Обнаружена из",
+      "duplicates": "Дубликат",
+      "supersedes": "Заменяет",
+      "caused-by": "Вызвана"
+    }
+  }
+}

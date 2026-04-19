@@ -7,6 +7,7 @@ const props = defineProps<{
   size?: 'default' | 'sm'
 }>()
 
+const { t } = useI18n()
 const { showBadgeIcons } = useTheme()
 
 const typeConfig: Record<IssueType, { label: string; class: string }> = {
@@ -36,7 +37,7 @@ const config = computed(() => typeConfig[props.type] || typeConfig.task)
 </script>
 
 <template>
-  <Badge :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary">
+  <Badge :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary" :aria-label="t('issues.badges.typeAria', { type })">
     <span v-if="showBadgeIcons" class="inline-flex items-center mr-1">
       <svg class="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path :d="typeIcons[type] || typeIcons.task" />

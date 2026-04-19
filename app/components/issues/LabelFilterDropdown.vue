@@ -25,6 +25,8 @@ defineEmits<{
   'update:open': [value: boolean]
 }>()
 
+const { t } = useI18n()
+
 const isSelected = (label: string) => props.selectedLabels.includes(label)
 </script>
 
@@ -44,7 +46,7 @@ const isSelected = (label: string) => props.selectedLabels.includes(label)
               <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
               <line x1="7" y1="7" x2="7.01" y2="7" />
             </svg>
-            Labels
+            {{ t('issues.filters.label') }}
             <span
               v-if="selectedLabels.length > 0"
               class="ml-0.5 rounded-full bg-primary text-primary-foreground text-[10px] px-1.5 min-w-[18px] text-center"
@@ -54,10 +56,10 @@ const isSelected = (label: string) => props.selectedLabels.includes(label)
           </Button>
         </DropdownMenuTrigger>
       </TooltipTrigger>
-      <TooltipContent>Filter by label</TooltipContent>
+      <TooltipContent>{{ t('issues.filters.filterByLabel') }}</TooltipContent>
       <DropdownMenuContent align="start" class="w-48">
       <div v-if="availableLabels.length === 0" class="px-2 py-3 text-xs text-muted-foreground text-center">
-        No labels found
+        {{ t('issues.filters.noLabels') }}
       </div>
       <ScrollArea v-else class="max-h-64">
         <DropdownMenuCheckboxItem

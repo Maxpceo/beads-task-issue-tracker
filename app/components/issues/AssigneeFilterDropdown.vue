@@ -24,6 +24,8 @@ defineEmits<{
   'update:open': [value: boolean]
 }>()
 
+const { t } = useI18n()
+
 const isSelected = (assignee: string) => props.selectedAssignees.includes(assignee)
 </script>
 
@@ -44,7 +46,7 @@ const isSelected = (assignee: string) => props.selectedAssignees.includes(assign
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <circle cx="12" cy="7" r="4" />
             </svg>
-            Assignee
+            {{ t('issues.filters.assignee') }}
             <span
               v-if="selectedAssignees.length > 0"
               class="ml-0.5 rounded-full bg-primary text-primary-foreground text-[10px] px-1.5 min-w-[18px] text-center"
@@ -54,10 +56,10 @@ const isSelected = (assignee: string) => props.selectedAssignees.includes(assign
           </Button>
         </DropdownMenuTrigger>
       </TooltipTrigger>
-      <TooltipContent>Filter by assignee</TooltipContent>
+      <TooltipContent>{{ t('issues.filters.filterByAssignee') }}</TooltipContent>
       <DropdownMenuContent align="start" class="w-48">
         <div v-if="availableAssignees.length === 0" class="px-2 py-3 text-xs text-muted-foreground text-center">
-          No assignees found
+          {{ t('issues.filters.noAssignees') }}
         </div>
         <ScrollArea v-else class="max-h-64">
           <DropdownMenuCheckboxItem

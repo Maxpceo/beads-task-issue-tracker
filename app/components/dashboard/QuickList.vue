@@ -11,6 +11,8 @@ const props = defineProps<{
   issues: Issue[]
 }>()
 
+const { t } = useI18n()
+
 const emit = defineEmits<{
   select: [issue: Issue]
 }>()
@@ -44,7 +46,7 @@ const getShortId = (id: string) => {
   <div class="flex-1 min-h-0">
     <ScrollArea class="h-full">
       <div v-if="issues.length === 0" class="text-center text-muted-foreground py-4">
-        No issues ready to work on
+        {{ t('dashboard.lists.noReady') }}
       </div>
 
       <div v-else class="space-y-1 pr-4 outline-none" tabindex="0" @keydown="handleKeydown">
@@ -69,8 +71,8 @@ const getShortId = (id: string) => {
 
           <button
             class="shrink-0 p-0.5 mt-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-            :title="`Copy issue ID ${issue.id} (⌘/Ctrl+click to add to buffer)`"
-            :aria-label="`Copy issue ID ${issue.id}, hold Cmd or Ctrl to add to multi-copy buffer`"
+            :title="t('dashboard.lists.copyTitle', { id: issue.id })"
+            :aria-label="t('dashboard.lists.copyAria', { id: issue.id })"
             @click="copyIssueId(issue.id, $event)"
           >
             <svg

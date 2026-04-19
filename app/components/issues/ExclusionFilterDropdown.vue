@@ -27,6 +27,8 @@ defineProps<{
   open?: boolean
 }>()
 
+const { t } = useI18n()
+
 const { exclusions, toggleStatus, togglePriority, toggleType, toggleLabel, toggleAssignee, clearAll, activeCount } = useExclusionFilters()
 
 // Collapsible section states - open by default only if they have exclusions
@@ -46,36 +48,36 @@ watchEffect(() => {
 })
 
 // Status options
-const statusOptions: { value: IssueStatus; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'blocked', label: 'Blocked' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'deferred', label: 'Deferred' },
-  { value: 'pinned', label: 'Pinned' },
-  { value: 'hooked', label: 'Hooked' },
-]
+const statusOptions = computed<{ value: IssueStatus; label: string }[]>(() => [
+  { value: 'open', label: t('issues.statusLabels.open') },
+  { value: 'in_progress', label: t('issues.statusLabels.in_progress') },
+  { value: 'blocked', label: t('issues.statusLabels.blocked') },
+  { value: 'closed', label: t('issues.statusLabels.closed') },
+  { value: 'deferred', label: t('issues.statusLabels.deferred') },
+  { value: 'pinned', label: t('issues.statusLabels.pinned') },
+  { value: 'hooked', label: t('issues.statusLabels.hooked') },
+])
 
 // Priority options
-const priorityOptions: { value: IssuePriority; label: string }[] = [
-  { value: 'p0', label: 'P0 - Critical' },
-  { value: 'p1', label: 'P1 - High' },
-  { value: 'p2', label: 'P2 - Medium' },
-  { value: 'p3', label: 'P3 - Low' },
-  { value: 'p4', label: 'P4 - Minimal' },
-]
+const priorityOptions = computed<{ value: IssuePriority; label: string }[]>(() => [
+  { value: 'p0', label: t('issues.priorityLabels.p0') },
+  { value: 'p1', label: t('issues.priorityLabels.p1') },
+  { value: 'p2', label: t('issues.priorityLabels.p2') },
+  { value: 'p3', label: t('issues.priorityLabels.p3') },
+  { value: 'p4', label: t('issues.priorityLabels.p4') },
+])
 
 // Type options
-const typeOptions: { value: IssueType; label: string }[] = [
-  { value: 'bug', label: 'Bug' },
-  { value: 'feature', label: 'Feature' },
-  { value: 'task', label: 'Task' },
-  { value: 'epic', label: 'Epic' },
-  { value: 'chore', label: 'Chore' },
-  { value: 'spike', label: 'Spike' },
-  { value: 'story', label: 'Story' },
-  { value: 'milestone', label: 'Milestone' },
-]
+const typeOptions = computed<{ value: IssueType; label: string }[]>(() => [
+  { value: 'bug', label: t('issues.typeLabels.bug') },
+  { value: 'feature', label: t('issues.typeLabels.feature') },
+  { value: 'task', label: t('issues.typeLabels.task') },
+  { value: 'epic', label: t('issues.typeLabels.epic') },
+  { value: 'chore', label: t('issues.typeLabels.chore') },
+  { value: 'spike', label: t('issues.typeLabels.spike') },
+  { value: 'story', label: t('issues.typeLabels.story') },
+  { value: 'milestone', label: t('issues.typeLabels.milestone') },
+])
 
 const isStatusExcluded = (status: IssueStatus) => exclusions.value.status.includes(status)
 const isPriorityExcluded = (priority: IssuePriority) => exclusions.value.priority.includes(priority)
@@ -107,13 +109,13 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
             >
               {{ activeCount }}
             </span>
-            <span class="sr-only">Exclusion filters</span>
+            <span class="sr-only">{{ t('issues.filters.exclusionFilters') }}</span>
           </Button>
         </DropdownMenuTrigger>
       </TooltipTrigger>
-      <TooltipContent>Hide issues by criteria</TooltipContent>
+      <TooltipContent>{{ t('issues.filters.hideByCriteria') }}</TooltipContent>
       <DropdownMenuContent align="end" class="w-52">
-        <DropdownMenuLabel class="text-xs">Hide Issues</DropdownMenuLabel>
+        <DropdownMenuLabel class="text-xs">{{ t('issues.filters.hideIssues') }}</DropdownMenuLabel>
         <DropdownMenuSeparator />
 
         <!-- Type Section -->
@@ -129,7 +131,7 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
-            Type
+            {{ t('issues.filters.type') }}
             <span v-if="exclusions.type.length > 0" class="ml-auto text-[10px] text-muted-foreground">
               ({{ exclusions.type.length }})
             </span>
@@ -163,7 +165,7 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
-            Labels
+            {{ t('issues.filters.label') }}
             <span v-if="exclusions.labels.length > 0" class="ml-auto text-[10px] text-muted-foreground">
               ({{ exclusions.labels.length }})
             </span>
@@ -197,7 +199,7 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
-            Status
+            {{ t('issues.filters.status') }}
             <span v-if="exclusions.status.length > 0" class="ml-auto text-[10px] text-muted-foreground">
               ({{ exclusions.status.length }})
             </span>
@@ -231,7 +233,7 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
-            Priority
+            {{ t('issues.filters.priority') }}
             <span v-if="exclusions.priority.length > 0" class="ml-auto text-[10px] text-muted-foreground">
               ({{ exclusions.priority.length }})
             </span>
@@ -265,7 +267,7 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
             >
               <polyline points="6 9 12 15 18 9" />
             </svg>
-            Assignee
+            {{ t('issues.filters.assignee') }}
             <span v-if="exclusions.assignee.length > 0" class="ml-auto text-[10px] text-muted-foreground">
               ({{ exclusions.assignee.length }})
             </span>
@@ -291,7 +293,7 @@ const isAssigneeExcluded = (assignee: string) => exclusions.value.assignee.inclu
           <DropdownMenuSeparator />
           <div class="p-1">
             <Button variant="ghost" size="sm" class="w-full text-xs h-7 justify-start" @click="clearAll">
-              Clear all exclusions
+              {{ t('issues.filters.clearAllExclusions') }}
             </Button>
           </div>
         </template>

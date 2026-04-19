@@ -70,6 +70,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Zoom Controls**: Adjust UI scale from 75% to 150% (Alt+Click to reset)
 
 ### Settings & Tools
+- **English + Russian UI**: The interface is fully localized in English and Russian. The language is auto-detected from your system (`navigator.language`); you can override it at any time via Settings → Language (Auto / English / Русский). The choice is persisted to `localStorage['beads:locale']` and takes effect immediately without a restart
 - **Dual CLI support**: Auto-detects [`br`](https://github.com/Dicklesworthstone/beads_rust) (Rust, recommended) and [`bd`](https://github.com/steveyegge/beads) (Go) — switch between them via Settings (`Cmd/Ctrl+,`), feature profiles adapt automatically
 - **Status Color Overrides**: Assign a custom solid color or two-stop gradient to any status badge in Settings. Changes apply instantly across the entire app and are persisted per project. A Reset button returns any badge to its default theme color
 - **Theme System**: 4 themes — Classic Light, Classic Dark, Dark Flat, and Neon — with per-theme badge styling, glow effects, and one-click cycling via the header icon

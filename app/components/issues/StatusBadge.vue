@@ -15,6 +15,7 @@ const props = defineProps<{
   blockedBy?: string[]
 }>()
 
+const { t } = useI18n()
 const { showBadgeIcons } = useTheme()
 const { getMeta } = useStatuses()
 const { getOverride } = useStatusColorOverrides()
@@ -60,6 +61,7 @@ const showBlockedTooltip = computed(() => props.blockedBy?.length && props.statu
         :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']"
         :style="config.style"
         variant="secondary"
+        :aria-label="t('issues.badges.statusAria', { status })"
       >
         <span v-if="showBadgeIcons && config.icon" class="inline-flex items-center mr-1" aria-hidden="true">
           {{ config.icon }}
@@ -68,7 +70,7 @@ const showBlockedTooltip = computed(() => props.blockedBy?.length && props.statu
       </Badge>
     </TooltipTrigger>
     <TooltipContent side="top">
-      <p class="text-xs">Blocked by {{ blockedBy!.join(', ') }}</p>
+      <p class="text-xs">{{ t('issues.badges.blockedBy', { ids: blockedBy!.join(', ') }) }}</p>
     </TooltipContent>
   </Tooltip>
   <Badge
@@ -76,6 +78,7 @@ const showBlockedTooltip = computed(() => props.blockedBy?.length && props.statu
     :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']"
     :style="config.style"
     variant="secondary"
+    :aria-label="t('issues.badges.statusAria', { status })"
   >
     <span v-if="showBadgeIcons && config.icon" class="inline-flex items-center mr-1" aria-hidden="true">
       {{ config.icon }}

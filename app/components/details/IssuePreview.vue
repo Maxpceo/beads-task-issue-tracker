@@ -10,9 +10,13 @@ import PriorityBadge from '~/components/issues/PriorityBadge.vue'
 import ImageThumbnail from '~/components/ui/image-preview/ImageThumbnail.vue'
 import { extractNonImageRefs, isUrl } from '~/utils/markdown'
 import { isIssueBlocked } from '~/utils/issue-helpers'
+import { formatDate, formatTime } from '~/utils/date-format'
+import { useLocale } from '~/composables/useLocale'
 import type { AttachmentFile } from '~/composables/useAttachments'
 
+const { t } = useI18n()
 const { currentTheme } = useTheme()
+const { locale } = useLocale()
 const isNeon = computed(() => currentTheme.value.id === 'neon')
 
 const props = defineProps<{
@@ -289,17 +293,11 @@ const isMetadataOpen = computed(() => previewSections.value.metadata)
 const isSpecIdOpen = computed(() => previewSections.value.specId)
 
 // Relations helpers
-const relationTypeLabels: Record<string, string> = {
-  'relates-to': 'Relates To',
-  'related': 'Related',
-  'discovered-from': 'Discovered From',
-  'duplicates': 'Duplicates',
-  'supersedes': 'Supersedes',
-  'caused-by': 'Caused By',
-}
-
 const getRelationLabel = (type: string): string => {
-  return relationTypeLabels[type] || type.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  const key = `details.relationTypes.${type}`
+  const translated = t(key)
+  if (translated !== key) return translated
+  return type.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 const hasRelations = computed(() => (props.issue.relations?.length ?? 0) > 0)
@@ -341,17 +339,7 @@ const formatMetadata = (raw: string): string => {
   }
 }
 
-const formatDate = (dateStr: string) => {
-  if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString(undefined, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+
 
 const formatEstimate = (minutes: number) => {
   if (minutes < 60) return `${minutes}m`
@@ -381,7 +369,7 @@ const formatEstimate = (minutes: number) => {
             <polyline points="6 9 12 15 18 9" />
           </svg>
           <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
-            Attachments
+            {{ t('details.sections.attachments') }}
             <span v-if="totalAttachments > 0" class="text-muted-foreground">({{ totalAttachments }})</span>
           </h4>
         </button>
@@ -394,7 +382,7 @@ const formatEstimate = (minutes: number) => {
           @click="attachFile"
         >
           <ImageIcon class="w-3 h-3 mr-1" />
-          Attach
+          {{ t('details.actions.attach') }}
         </Button>
       </div>
       <div v-show="isAttachmentsOpen" class="mt-2 pl-4.5">
@@ -436,7 +424,7 @@ const formatEstimate = (minutes: number) => {
             </div>
           </div>
         </div>
-        <p v-else class="text-xs text-muted-foreground">No attachments</p>
+        <p v-else class="text-xs text-muted-foreground">{{ t('details.empty.attachments') }}</p>
       </div>
     </div>
 
@@ -456,10 +444,10 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Description</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.description') }}</h4>
       </button>
       <div v-show="isDescriptionOpen" class="mt-1 pl-4.5">
-        <div class="text-xs"><LinkifiedText :text="issue.description" fallback="No description provided." /></div>
+        <div class="text-xs"><LinkifiedText :text="issue.description" :fallback="t('details.empty.description')" /></div>
       </div>
     </div>
 
@@ -479,7 +467,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Parent</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.parent') }}</h4>
       </button>
       <div v-show="isParentOpen" class="mt-1 pl-4.5">
         <div
@@ -515,7 +503,7 @@ const formatEstimate = (minutes: number) => {
           >
             <polyline points="6 9 12 15 18 9" />
           </svg>
-          <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Children</h4>
+          <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.children') }}</h4>
           <span v-if="issue.children?.length" class="text-[10px] text-muted-foreground">({{ issue.children.length }})</span>
         </button>
         <Button
@@ -527,7 +515,7 @@ const formatEstimate = (minutes: number) => {
           @click="emit('create-child', issue.id)"
         >
           <Plus class="w-3 h-3 mr-1" />
-          Create child
+          {{ t('details.actions.createChild') }}
         </Button>
       </div>
       <div v-show="isChildrenOpen" class="mt-1 pl-4.5 space-y-0.5">
@@ -548,7 +536,7 @@ const formatEstimate = (minutes: number) => {
             </div>
           </div>
         </template>
-        <p v-else class="text-xs text-muted-foreground">No children yet</p>
+        <p v-else class="text-xs text-muted-foreground">{{ t('details.empty.children') }}</p>
       </div>
     </div>
 
@@ -569,7 +557,7 @@ const formatEstimate = (minutes: number) => {
           <polyline points="6 9 12 15 18 9" />
         </svg>
         <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
-          External Reference
+          {{ t('details.sections.externalReference') }}
           <span class="text-muted-foreground">({{ nonImageRefs.length }})</span>
         </h4>
       </button>
@@ -596,36 +584,36 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Details</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.details') }}</h4>
       </button>
       <div v-show="isDetailsOpen" class="mt-1 pl-4.5">
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Assignee</h5>
-            <p class="text-xs">{{ issue.assignee || 'Unassigned' }}</p>
+            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.assignee') }}</h5>
+            <p class="text-xs">{{ issue.assignee || t('details.empty.unassigned') }}</p>
           </div>
 
           <div>
-            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Labels</h5>
+            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.labels') }}</h5>
             <div v-if="issue.labels?.length" class="flex flex-wrap gap-1">
               <LabelBadge v-for="label in issue.labels" :key="label" :label="label" size="sm" />
             </div>
-            <p v-else class="text-xs text-muted-foreground">No labels</p>
+            <p v-else class="text-xs text-muted-foreground">{{ t('details.empty.labels') }}</p>
           </div>
 
           <div>
-            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Created</h5>
-            <p class="text-xs">{{ formatDate(issue.createdAt) }}</p>
+            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.created') }}</h5>
+            <p class="text-xs">{{ formatDate(issue.createdAt, locale) }}<span v-if="formatTime(issue.createdAt, locale)" class="text-muted-foreground">, {{ formatTime(issue.createdAt, locale) }}</span></p>
           </div>
 
           <div v-if="issue.startedAt">
-            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Started</h5>
-            <p class="text-xs">{{ formatDate(issue.startedAt) }}</p>
+            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.started') }}</h5>
+            <p class="text-xs">{{ formatDate(issue.startedAt, locale) }}<span v-if="formatTime(issue.startedAt, locale)" class="text-muted-foreground">, {{ formatTime(issue.startedAt, locale) }}</span></p>
           </div>
 
           <div>
-            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Updated</h5>
-            <p class="text-xs">{{ formatDate(issue.updatedAt) }}</p>
+            <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.updated') }}</h5>
+            <p class="text-xs">{{ formatDate(issue.updatedAt, locale) }}<span v-if="formatTime(issue.updatedAt, locale)" class="text-muted-foreground">, {{ formatTime(issue.updatedAt, locale) }}</span></p>
           </div>
         </div>
       </div>
@@ -648,7 +636,7 @@ const formatEstimate = (minutes: number) => {
           >
             <polyline points="6 9 12 15 18 9" />
           </svg>
-          <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Dependencies</h4>
+          <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.dependencies') }}</h4>
         </button>
         <Button
           v-if="!readonly"
@@ -659,13 +647,13 @@ const formatEstimate = (minutes: number) => {
           @click="emit('open-add-blocker', issue.id)"
         >
           <Plus class="w-3 h-3 mr-1" />
-          Add blocker
+          {{ t('details.actions.addBlocker') }}
         </Button>
       </div>
       <div v-show="isDependenciesOpen" class="mt-1 pl-4.5 space-y-2">
         <!-- Blocked By -->
         <div v-if="issue.blockedBy?.length">
-          <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Blocked By</h5>
+          <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.blockedBy') }}</h5>
           <div class="space-y-0.5">
             <div
               v-for="id in sortedBlockedBy"
@@ -690,7 +678,7 @@ const formatEstimate = (minutes: number) => {
 
         <!-- Blocks -->
         <div v-if="issue.blocks?.length">
-          <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Blocks</h5>
+          <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">{{ t('details.sections.blocks') }}</h5>
           <div class="space-y-0.5">
             <div
               v-for="id in sortedBlocks"
@@ -733,7 +721,7 @@ const formatEstimate = (minutes: number) => {
             <polyline points="6 9 12 15 18 9" />
           </svg>
           <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">
-            Relations
+            {{ t('details.sections.relations') }}
             <span v-if="issue.relations?.length" class="text-muted-foreground">({{ issue.relations.length }})</span>
           </h4>
         </button>
@@ -745,7 +733,7 @@ const formatEstimate = (minutes: number) => {
           @click="emit('open-add-relation', issue.id)"
         >
           <Plus class="w-3 h-3 mr-1" />
-          Add relation
+          {{ t('details.actions.addRelation') }}
         </Button>
       </div>
       <div v-show="isRelationsOpen" class="mt-1 pl-4.5 space-y-2">
@@ -790,7 +778,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Estimate</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.estimate') }}</h4>
       </button>
       <div v-show="isEstimateOpen" class="mt-1 pl-4.5">
         <p class="text-xs">{{ formatEstimate(issue.estimateMinutes) }}</p>
@@ -813,7 +801,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Design Notes</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.designNotes') }}</h4>
       </button>
       <div v-show="isDesignNotesOpen" class="mt-1 pl-4.5">
         <div class="text-xs"><LinkifiedText :text="issue.designNotes" /></div>
@@ -836,7 +824,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Acceptance Criteria</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.acceptanceCriteria') }}</h4>
       </button>
       <div v-show="isAcceptanceCriteriaOpen" class="mt-1 pl-4.5">
         <div class="text-xs"><LinkifiedText :text="issue.acceptanceCriteria" /></div>
@@ -859,7 +847,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Working Notes</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.workingNotes') }}</h4>
       </button>
       <div v-show="isWorkingNotesOpen" class="mt-1 pl-4.5">
         <div class="text-xs"><LinkifiedText :text="issue.workingNotes" /></div>
@@ -882,7 +870,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Metadata</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.metadata') }}</h4>
       </button>
       <div v-show="isMetadataOpen" class="mt-1 pl-4.5">
         <pre class="text-xs bg-muted/50 rounded p-2 overflow-x-auto whitespace-pre-wrap break-words">{{ formatMetadata(issue.metadata) }}</pre>
@@ -905,7 +893,7 @@ const formatEstimate = (minutes: number) => {
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">Spec ID</h4>
+        <h4 class="text-[10px] font-medium text-muted-foreground uppercase tracking-wide group-hover:text-foreground transition-colors">{{ t('details.sections.specId') }}</h4>
       </button>
       <div v-show="isSpecIdOpen" class="mt-1 pl-4.5">
         <p class="text-xs font-mono">{{ issue.specId }}</p>

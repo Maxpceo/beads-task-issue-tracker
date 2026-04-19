@@ -4,6 +4,7 @@ const props = defineProps<{
   closed: number
 }>()
 
+const { t } = useI18n()
 const { currentTheme } = useTheme()
 const isNeon = computed(() => currentTheme.value.id === 'neon')
 
@@ -26,11 +27,11 @@ const neonBarStyle = (rgb: string, percent: number) => {
 
 <template>
   <div class="space-y-3">
-    <h4 class="text-sm font-medium text-muted-foreground">Status Distribution</h4>
+    <h4 class="text-sm font-medium text-muted-foreground">{{ t('dashboard.charts.statusTitle') }}</h4>
 
     <div class="space-y-2">
       <div class="flex items-center gap-2">
-        <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-open)]' : 'text-muted-foreground'">Open</span>
+        <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-open)]' : 'text-muted-foreground'">{{ t('dashboard.charts.open') }}</span>
         <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
           <div
             class="h-full bg-status-open transition-all rounded"
@@ -41,7 +42,7 @@ const neonBarStyle = (rgb: string, percent: number) => {
       </div>
 
       <div class="flex items-center gap-2">
-        <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-closed)]' : 'text-muted-foreground'">Closed</span>
+        <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-closed)]' : 'text-muted-foreground'">{{ t('dashboard.charts.closed') }}</span>
         <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
           <div
             class="h-full bg-status-closed transition-all rounded"

@@ -34,6 +34,7 @@ const props = defineProps<{
   dotNotationParent?: boolean
 }>()
 
+const { t } = useI18n()
 const { beadsPath } = useBeadsPath()
 const { notify } = useNotification()
 
@@ -110,34 +111,34 @@ watch(
   { immediate: true }
 )
 
-const typeOptions: { value: IssueType; label: string }[] = [
-  { value: 'bug', label: 'Bug' },
-  { value: 'task', label: 'Task' },
-  { value: 'feature', label: 'Feature' },
-  { value: 'epic', label: 'Epic' },
-  { value: 'chore', label: 'Chore' },
-  { value: 'spike', label: 'Spike' },
-  { value: 'story', label: 'Story' },
-  { value: 'milestone', label: 'Milestone' },
-]
+const typeOptions = computed<{ value: IssueType; label: string }[]>(() => [
+  { value: 'bug', label: t('issues.typeLabels.bug') },
+  { value: 'task', label: t('issues.typeLabels.task') },
+  { value: 'feature', label: t('issues.typeLabels.feature') },
+  { value: 'epic', label: t('issues.typeLabels.epic') },
+  { value: 'chore', label: t('issues.typeLabels.chore') },
+  { value: 'spike', label: t('issues.typeLabels.spike') },
+  { value: 'story', label: t('issues.typeLabels.story') },
+  { value: 'milestone', label: t('issues.typeLabels.milestone') },
+])
 
-const statusOptions: { value: IssueStatus; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'blocked', label: 'Blocked' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'deferred', label: 'Deferred' },
-  { value: 'pinned', label: 'Pinned' },
-  { value: 'hooked', label: 'Hooked' },
-]
+const statusOptions = computed<{ value: IssueStatus; label: string }[]>(() => [
+  { value: 'open', label: t('issues.statusLabels.open') },
+  { value: 'in_progress', label: t('issues.statusLabels.in_progress') },
+  { value: 'blocked', label: t('issues.statusLabels.blocked') },
+  { value: 'closed', label: t('issues.statusLabels.closed') },
+  { value: 'deferred', label: t('issues.statusLabels.deferred') },
+  { value: 'pinned', label: t('issues.statusLabels.pinned') },
+  { value: 'hooked', label: t('issues.statusLabels.hooked') },
+])
 
-const priorityOptions: { value: IssuePriority; label: string }[] = [
-  { value: 'p0', label: 'P0 - Critical' },
-  { value: 'p1', label: 'P1 - High' },
-  { value: 'p2', label: 'P2 - Medium' },
-  { value: 'p3', label: 'P3 - Low' },
-  { value: 'p4', label: 'P4 - Minimal' },
-]
+const priorityOptions = computed<{ value: IssuePriority; label: string }[]>(() => [
+  { value: 'p0', label: t('issues.priorityLabels.p0') },
+  { value: 'p1', label: t('issues.priorityLabels.p1') },
+  { value: 'p2', label: t('issues.priorityLabels.p2') },
+  { value: 'p3', label: t('issues.priorityLabels.p3') },
+  { value: 'p4', label: t('issues.priorityLabels.p4') },
+])
 
 // Special value for "no parent" since SelectItem doesn't allow empty string
 const NO_PARENT_VALUE = '__none__'
@@ -217,10 +218,10 @@ const attachFile = async () => {
     <div class="space-y-3 pb-3 border-b border-border">
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-1.5">
-          <Label for="type" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">Type</Label>
+          <Label for="type" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">{{ t('details.form.type') }}</Label>
           <Select v-model="form.type">
             <SelectTrigger class="h-7 text-xs w-28">
-              <SelectValue placeholder="Type" />
+              <SelectValue :placeholder="t('details.form.type')" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem
@@ -236,10 +237,10 @@ const attachFile = async () => {
         </div>
 
         <div class="flex items-center gap-1.5">
-          <Label for="status" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">Status</Label>
+          <Label for="status" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">{{ t('details.form.status') }}</Label>
           <Select v-model="form.status" :disabled="isNew">
             <SelectTrigger class="h-7 text-xs w-32">
-              <SelectValue placeholder="Status" />
+              <SelectValue :placeholder="t('details.form.status')" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem
@@ -255,10 +256,10 @@ const attachFile = async () => {
         </div>
 
         <div class="flex items-center gap-1.5">
-          <Label for="priority" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">Priority</Label>
+          <Label for="priority" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">{{ t('details.form.priority') }}</Label>
           <Select v-model="form.priority">
             <SelectTrigger class="h-7 text-xs w-36">
-              <SelectValue placeholder="Priority" />
+              <SelectValue :placeholder="t('details.form.priority')" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem
@@ -274,14 +275,14 @@ const attachFile = async () => {
         </div>
 
         <div v-if="filteredEpics.length > 0 && form.type !== 'epic' && !dotNotationParent" class="flex items-center gap-1.5">
-          <Label for="parent" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">Parent</Label>
+          <Label for="parent" class="text-[10px] uppercase tracking-wide text-sky-400 whitespace-nowrap">{{ t('details.form.parent') }}</Label>
           <Select v-model="parentSelectValue">
             <SelectTrigger class="h-7 text-xs w-40">
-              <SelectValue placeholder="No parent" />
+              <SelectValue :placeholder="t('details.form.noParent')" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__" class="text-xs text-muted-foreground">
-                No parent
+                {{ t('details.form.noParent') }}
               </SelectItem>
               <SelectItem
                 v-for="epic in filteredEpics"
@@ -297,11 +298,11 @@ const attachFile = async () => {
       </div>
 
       <div class="space-y-1">
-        <Label for="title" class="text-[10px] uppercase tracking-wide text-sky-400">Title</Label>
+        <Label for="title" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.title') }}</Label>
         <Input
           id="title"
           v-model="form.title"
-          placeholder="Issue title"
+          :placeholder="t('details.form.titlePlaceholder')"
           required
           class="h-8 text-xs"
         />
@@ -312,28 +313,28 @@ const attachFile = async () => {
     <ScrollArea class="flex-1 min-h-0">
       <div class="space-y-3 py-3">
         <div class="space-y-1">
-          <Label for="description" class="text-[10px] uppercase tracking-wide text-sky-400">Description</Label>
+          <Label for="description" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.description') }}</Label>
           <Textarea
             id="description"
             v-model="form.description"
-            placeholder="Describe the issue..."
+            :placeholder="t('details.form.descriptionPlaceholder')"
             rows="3"
             class="text-xs"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="assignee" class="text-[10px] uppercase tracking-wide text-sky-400">Assignee</Label>
+          <Label for="assignee" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.assignee') }}</Label>
           <Input
             id="assignee"
             v-model="form.assignee"
-            placeholder="Username"
+            :placeholder="t('details.form.assigneePlaceholder')"
             class="h-8 text-xs"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="labels" class="text-[10px] uppercase tracking-wide text-sky-400">Labels</Label>
+          <Label for="labels" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.labels') }}</Label>
           <LabelMultiSelect
             v-model="form.labels"
             :available-labels="availableLabels || []"
@@ -342,7 +343,7 @@ const attachFile = async () => {
 
         <div class="space-y-1">
           <div class="flex items-center gap-2">
-            <Label for="externalRef" class="text-[10px] uppercase tracking-wide text-sky-400">External Reference</Label>
+            <Label for="externalRef" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.externalRef') }}</Label>
             <Button
               type="button"
               variant="outline"
@@ -351,68 +352,68 @@ const attachFile = async () => {
               @click="attachFile"
             >
               <ImageIcon class="w-3 h-3 mr-1" />
-              Attach
+              {{ t('details.form.attach') }}
             </Button>
           </div>
           <Textarea
             id="externalRef"
             v-model="form.externalRef"
-            placeholder="URLs, IDs, or image paths (pipe-separated)"
+            :placeholder="t('details.form.externalRefPlaceholder')"
             rows="2"
             class="text-xs"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="specId" class="text-[10px] uppercase tracking-wide text-sky-400">Spec ID</Label>
+          <Label for="specId" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.specId') }}</Label>
           <Input
             id="specId"
             v-model="form.specId"
-            placeholder="e.g. SPEC-001"
+            :placeholder="t('details.form.specIdPlaceholder')"
             class="h-8 text-xs"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="estimateMinutes" class="text-[10px] uppercase tracking-wide text-sky-400">Estimate (minutes)</Label>
+          <Label for="estimateMinutes" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.estimateMinutes') }}</Label>
           <Input
             id="estimateMinutes"
             v-model.number="form.estimateMinutes"
             type="number"
             min="0"
-            placeholder="30"
+            :placeholder="t('details.form.estimatePlaceholder')"
             class="h-8 text-xs w-32"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="designNotes" class="text-[10px] uppercase tracking-wide text-sky-400">Design Notes</Label>
+          <Label for="designNotes" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.designNotes') }}</Label>
           <Textarea
             id="designNotes"
             v-model="form.designNotes"
-            placeholder="Design decisions and architectural notes..."
+            :placeholder="t('details.form.designNotesPlaceholder')"
             rows="3"
             class="text-xs"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="acceptanceCriteria" class="text-[10px] uppercase tracking-wide text-sky-400">Acceptance Criteria</Label>
+          <Label for="acceptanceCriteria" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.acceptanceCriteria') }}</Label>
           <Textarea
             id="acceptanceCriteria"
             v-model="form.acceptanceCriteria"
-            placeholder="What must be true for this to be done..."
+            :placeholder="t('details.form.acceptanceCriteriaPlaceholder')"
             rows="3"
             class="text-xs"
           />
         </div>
 
         <div class="space-y-1">
-          <Label for="workingNotes" class="text-[10px] uppercase tracking-wide text-sky-400">Working Notes</Label>
+          <Label for="workingNotes" class="text-[10px] uppercase tracking-wide text-sky-400">{{ t('details.form.workingNotes') }}</Label>
           <Textarea
             id="workingNotes"
             v-model="form.workingNotes"
-            placeholder="Progress notes and observations..."
+            :placeholder="t('details.form.workingNotesPlaceholder')"
             rows="3"
             class="text-xs"
           />
@@ -423,14 +424,14 @@ const attachFile = async () => {
     <!-- Footer fixe: boutons -->
     <div class="flex justify-end gap-2 pt-3 border-t border-border">
       <Button type="button" variant="outline" size="sm" class="h-7 text-xs" :disabled="isSaving" @click="$emit('cancel')">
-        Cancel
+        {{ t('details.form.cancel') }}
       </Button>
       <Button type="submit" size="sm" class="h-7 text-xs" :disabled="isSaving">
         <svg v-if="isSaving" class="animate-spin -ml-1 mr-1.5 h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
-        {{ isSaving ? 'Saving...' : (isNew ? 'Create' : 'Save') }}
+        {{ isSaving ? t('details.form.saving') : (isNew ? t('details.form.create') : t('details.form.save')) }}
       </Button>
     </div>
   </form>

@@ -43,6 +43,8 @@ const emit = defineEmits<{
   browse: []
 }>()
 
+const { t } = useI18n()
+
 // Collapsible state (per-project, singleton)
 const isChartsCollapsed = useProjectStorage('chartsCollapsed', true)
 const isInProgressCollapsed = useProjectStorage('inProgressCollapsed', true)
@@ -55,11 +57,11 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
   <template v-if="stats">
     <!-- KPI cards (hidden in desktop scrollable section where KPIs are in the fixed section) -->
     <div v-if="!hideKpis" :class="['flex flex-wrap p-0.5 -m-0.5', kpiGridCols === 5 ? 'gap-1.5' : 'gap-3']">
-      <KpiCard title="Workflow" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" @click="emit('kpi-click', 'workflow')" />
-      <KpiCard title="Open" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="emit('kpi-click', 'open')" />
-      <KpiCard title="In Progress" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" @click="emit('kpi-click', 'in_progress')" />
-      <KpiCard title="Blocked" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" @click="emit('kpi-click', 'blocked')" />
-      <KpiCard title="All" :value="stats.total" :active="activeKpiFilter === 'total'" @click="emit('kpi-click', 'total')" />
+      <KpiCard :title="t('dashboard.kpi.workflow')" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" @click="emit('kpi-click', 'workflow')" />
+      <KpiCard :title="t('dashboard.kpi.open')" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="emit('kpi-click', 'open')" />
+      <KpiCard :title="t('dashboard.kpi.inProgress')" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" @click="emit('kpi-click', 'in_progress')" />
+      <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" @click="emit('kpi-click', 'blocked')" />
+      <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" @click="emit('kpi-click', 'total')" />
     </div>
 
     <!-- Collapsible Charts Section -->
@@ -78,7 +80,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <span class="uppercase tracking-wide">Charts</span>
+        <span class="uppercase tracking-wide">{{ t('dashboard.sections.charts') }}</span>
       </button>
       <div v-show="!isChartsCollapsed" class="space-y-4 pl-5">
         <StatusChart :open="stats.open" :closed="stats.closed" />
@@ -102,7 +104,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <span class="uppercase tracking-wide">In Progress</span>
+        <span class="uppercase tracking-wide">{{ t('dashboard.sections.inProgress') }}</span>
         <span class="text-[10px] ml-auto">({{ inProgressIssues.length }})</span>
       </button>
       <div v-show="!isInProgressCollapsed" class="pl-5">
@@ -126,7 +128,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <span class="uppercase tracking-wide">Blocked</span>
+        <span class="uppercase tracking-wide">{{ t('dashboard.sections.blocked') }}</span>
         <span class="text-[10px] ml-auto">({{ blockedIssues.length }})</span>
       </button>
       <div v-show="!isBlockedCollapsed" class="pl-5">
@@ -151,7 +153,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
           >
             <polyline points="6 9 12 15 18 9" />
           </svg>
-          <span class="uppercase tracking-wide">Check This Out</span>
+          <span class="uppercase tracking-wide">{{ t('dashboard.sections.checkThisOut') }}</span>
         </button>
         <span class="text-[10px] ml-auto">({{ pinnedIssues.length }})</span>
         <!-- Sort mode toggle -->
@@ -180,7 +182,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
                 </button>
               </TooltipTrigger>
               <TooltipContent>
-                {{ pinnedSortMode === 'added' ? 'By pin date (click for updated)' : pinnedSortMode === 'updated' ? 'By updated (click for manual)' : 'Manual order (click for pin date)' }}
+                {{ pinnedSortMode === 'added' ? t('dashboard.pinnedSort.byPinDate') : pinnedSortMode === 'updated' ? t('dashboard.pinnedSort.byUpdated') : t('dashboard.pinnedSort.manual') }}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -213,7 +215,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <span class="uppercase tracking-wide">Ready to Work</span>
+        <span class="uppercase tracking-wide">{{ t('dashboard.sections.readyToWork') }}</span>
         <span class="text-[10px] ml-auto">({{ readyIssues.length }})</span>
       </button>
       <div v-show="!isReadyCollapsed" class="pl-5">
@@ -224,6 +226,6 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
 
   <div v-else class="flex items-center justify-center py-8">
     <OnboardingCard v-if="showOnboarding" @browse="emit('browse')" />
-    <span v-else class="text-muted-foreground text-sm">Loading...</span>
+    <span v-else class="text-muted-foreground text-sm">{{ t('common.loading') }}</span>
   </div>
 </template>

@@ -1,3 +1,4 @@
+import { useI18n } from 'vue-i18n'
 import type { Issue, CreateIssuePayload, UpdateIssuePayload } from '~/types/issue'
 import { bdList, bdCount, bdShow, bdCreate, bdUpdate, bdClose, bdDelete, bdAddComment, bdAddDependency, bdRemoveDependency, bdAddRelation, bdRemoveRelation, bdPurgeOrphanAttachments, bdPollData, bdSearch, bdLabelAdd, bdLabelRemove, type BdListOptions, type PollData } from '~/utils/bd-api'
 import { useProjectStorage } from '~/composables/useProjectStorage'
@@ -83,7 +84,11 @@ export function useEpicExpand() {
 /**
  * Detect and notify status transitions (close, reopen, delete) between two issue snapshots.
  */
-function notifyStatusTransitions(oldIssues: Issue[], newIssues: Issue[]) {
+function notifyStatusTransitions(
+  oldIssues: Issue[],
+  newIssues: Issue[],
+  t: (key: string, params?: Record<string, unknown>) => string,
+) {
   const { success: notifySuccess } = useNotification()
   const oldStatusMap = new Map(oldIssues.map(i => [i.id, { status: i.status }]))
 
@@ -91,9 +96,9 @@ function notifyStatusTransitions(oldIssues: Issue[], newIssues: Issue[]) {
     const old = oldStatusMap.get(issue.id)
     if (old && old.status !== issue.status) {
       if (issue.status === 'closed') {
-        notifySuccess(`Issue ${issue.id} closed`, issue.title)
+        notifySuccess(t('notifications.issue.closed', { id: issue.id }), issue.title)
       } else if (old.status === 'closed') {
-        notifySuccess(`Issue ${issue.id} reopened`, issue.title)
+        notifySuccess(t('notifications.issue.reopened', { id: issue.id }), issue.title)
       }
     }
   }
@@ -102,12 +107,13 @@ function notifyStatusTransitions(oldIssues: Issue[], newIssues: Issue[]) {
   const newIds = new Set(newIssues.map(i => i.id))
   for (const old of oldIssues) {
     if (!newIds.has(old.id)) {
-      notifySuccess(`Issue ${old.id} deleted`, old.title)
+      notifySuccess(t('notifications.issue.deleted', { id: old.id }), old.title)
     }
   }
 }
 
 export function useIssues() {
+  const { t } = useI18n()
   const { filters } = useFilters()
   const { beadsPath } = useBeadsPath()
   const { checkError: checkRepairError } = useRepairDatabase()
@@ -205,7 +211,7 @@ export function useIssues() {
               markAsNewlyAdded(issue.id)
             }
 
-            notifyStatusTransitions(issues.value, newIssues)
+            notifyStatusTransitions(issues.value, newIssues, t)
           }
         }
         issues.value = newIssues
@@ -346,7 +352,7 @@ export function useIssues() {
             for (const id of [...addedIds, ...modifiedIds]) {
               markAsNewlyAdded(id)
             }
-            notifyStatusTransitions(issues.value, newIssues)
+            notifyStatusTransitions(issues.value, newIssues, t)
           }
         }
         issues.value = newIssues

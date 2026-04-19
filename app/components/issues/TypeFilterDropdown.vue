@@ -24,16 +24,18 @@ defineEmits<{
   'update:open': [value: boolean]
 }>()
 
-const typeOptions: { value: IssueType; label: string }[] = [
-  { value: 'bug', label: 'Bug' },
-  { value: 'task', label: 'Task' },
-  { value: 'feature', label: 'Feature' },
-  { value: 'epic', label: 'Epic' },
-  { value: 'chore', label: 'Chore' },
-  { value: 'spike', label: 'Spike' },
-  { value: 'story', label: 'Story' },
-  { value: 'milestone', label: 'Milestone' },
-]
+const { t } = useI18n()
+
+const typeOptions = computed<{ value: IssueType; label: string }[]>(() => [
+  { value: 'bug', label: t('issues.typeLabels.bug') },
+  { value: 'task', label: t('issues.typeLabels.task') },
+  { value: 'feature', label: t('issues.typeLabels.feature') },
+  { value: 'epic', label: t('issues.typeLabels.epic') },
+  { value: 'chore', label: t('issues.typeLabels.chore') },
+  { value: 'spike', label: t('issues.typeLabels.spike') },
+  { value: 'story', label: t('issues.typeLabels.story') },
+  { value: 'milestone', label: t('issues.typeLabels.milestone') },
+])
 
 const isSelected = (type: IssueType) => props.selectedTypes.includes(type)
 </script>
@@ -54,7 +56,7 @@ const isSelected = (type: IssueType) => props.selectedTypes.includes(type)
               <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
               <polyline points="14 2 14 8 20 8" />
             </svg>
-            Type
+            {{ t('issues.filters.type') }}
             <span
               v-if="selectedTypes.length > 0"
               class="ml-0.5 rounded-full bg-primary text-primary-foreground text-[10px] px-1.5 min-w-[18px] text-center"
@@ -64,7 +66,7 @@ const isSelected = (type: IssueType) => props.selectedTypes.includes(type)
           </Button>
         </DropdownMenuTrigger>
       </TooltipTrigger>
-      <TooltipContent>Filter by type</TooltipContent>
+      <TooltipContent>{{ t('issues.filters.filterByType') }}</TooltipContent>
       <DropdownMenuContent align="start" class="w-36">
       <DropdownMenuCheckboxItem
         v-for="opt in typeOptions"

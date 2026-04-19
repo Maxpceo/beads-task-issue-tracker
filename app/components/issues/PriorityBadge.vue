@@ -7,6 +7,7 @@ const props = defineProps<{
   size?: 'default' | 'sm'
 }>()
 
+const { t } = useI18n()
 const { showBadgeIcons } = useTheme()
 
 const priorityConfig: Record<IssuePriority, { label: string; class: string }> = {
@@ -30,7 +31,7 @@ const config = computed(() => priorityConfig[props.priority] || priorityConfig.p
 </script>
 
 <template>
-  <Badge :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary">
+  <Badge :class="[config.class, size === 'sm' ? 'text-[10px] px-1.5 py-0' : '']" variant="secondary" :aria-label="t('issues.badges.priorityAria', { priority })">
     <span v-if="showBadgeIcons" class="inline-flex items-center mr-1">
       <svg class="w-3 h-3" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <path :d="priorityIcons[priority] || priorityIcons.p3" />

@@ -1,0 +1,594 @@
+{
+  "app": {
+    "title": "Beads Task-Issue Tracker"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "close": "Close",
+    "confirm": "Confirm",
+    "loading": "Loading…",
+    "error": "Error",
+    "retry": "Retry",
+    "refresh": "Refresh",
+    "yes": "Yes",
+    "no": "No",
+    "remove": "Remove",
+    "reset": "Reset",
+    "areYouSure": "Are you sure you want to continue?",
+    "updateCheckFailed": "Failed to check for updates",
+    "downloadFailed": "Failed to download update",
+    "later": "Later",
+    "searchInDocument": "Search in document..."
+  },
+  "page": {
+    "dashboard": "Dashboard",
+    "details": "Details",
+    "closeDashboard": "Close dashboard",
+    "openDashboard": "Open dashboard",
+    "closeDetails": "Close details",
+    "openDetails": "Open details",
+    "failedToLoad": "Failed to load issues",
+    "selectIssue": "Select an issue to view details",
+    "editContext": {
+      "new": "New issue",
+      "editing": "Editing"
+    },
+    "footer": {
+      "toggleDebug": "Toggle Debug Panel (⌘⇧L)",
+      "settings": "Settings (⌘,)",
+      "probeTitle": "Probe broadcasting enabled",
+      "probeLabel": "Probe"
+    },
+    "notifications": {
+      "issueCreated": "Issue created",
+      "issueSaved": "Issue saved",
+      "saveFailed": "Failed to save issue",
+      "commentAdded": "Comment added",
+      "commentFailed": "Failed to add comment",
+      "attachmentsMigrated": "Attachments migrated",
+      "attachmentsMigratedDesc": "Attachment references and folders have been updated to the new format.",
+      "attachmentsUpdated": "Attachments updated",
+      "attachmentsUpdatedDesc": "File references have been updated for br CLI compatibility.",
+      "dbRepaired": "Database repaired",
+      "dbRepairedDesc": "Your issues have been restored successfully.",
+      "allDbsRepaired": "All databases repaired",
+      "allDbsRepairedDesc": "{count} project(s) repaired successfully.",
+      "reposFailed": "Some repairs failed",
+      "reposFailedDesc": "{success} succeeded, {failed} failed.",
+      "migrationComplete": "Migration complete",
+      "migrationCompleteDesc": "Project has been migrated to the Dolt backend."
+    },
+    "syncErrorTitle": "Sync Error",
+    "syncErrorDescription": "The sync operation failed with the following error:",
+    "dialogs": {
+      "repair": {
+        "title": "Database Repair Required",
+        "intro": "A database schema incompatibility was detected. This is caused by a bug in the bd CLI update (version 0.49.4).",
+        "whatWillHappen": "What will happen:",
+        "step1": "Your current database will be backed up",
+        "step2": "The database will be recreated from your issues backup file",
+        "step3": "All your issues will be preserved",
+        "progress": "Repairing {current}/{total}:",
+        "error": "Error: {message}",
+        "repairAll": "Repair All ({count})",
+        "repairThis": "Repair This Project",
+        "repairing": "Repairing..."
+      },
+      "migration": {
+        "title": "Database Migration Required",
+        "intro": "Your bd version (>= 0.50) can no longer read previous SQLite databases. This project needs to be migrated to the new Dolt backend. This is a one-time operation.",
+        "whatWillHappen": "What will happen:",
+        "step1": "A new Dolt database will be created ({cmd})",
+        "step2": "Your issues will be imported from the JSONL backup file ({cmd})",
+        "step3": "None of your active issues will be lost during migration",
+        "error": "Error: {message}",
+        "migrateNow": "Migrate Now",
+        "migrating": "Migrating..."
+      },
+      "attachmentRefs": {
+        "title": "Attachment Update Required",
+        "intro": "Attachments now use the filesystem directly. This cleanup removes old attachment paths from external references. One-time operation.",
+        "backupNote": "A backup of your data will be created before any changes are made.",
+        "counter": "no issues with references to clean up | {count} issue with references to clean up | {count} issues with references to clean up",
+        "error": "Error: {message}",
+        "updateNow": "Update Now",
+        "updating": "Updating..."
+      }
+    }
+  },
+  "notifications": {
+    "issue": {
+      "closed": "Issue {id} closed",
+      "closeFailed": "Failed to close {id}",
+      "reopened": "Issue {id} reopened",
+      "reopenFailed": "Failed to reopen {id}",
+      "deleted": "Issue {id} deleted",
+      "deleteFailed": "Failed to delete issue",
+      "deleteFailedDesc": "Could not delete {id}",
+      "deleteFailedGeneric": "Could not delete the issue",
+      "deletedMany": "no issues deleted | {count} issue deleted | {count} issues deleted",
+      "unblockedOne": "Unblocked: {ids}",
+      "unblockedMany": "{count} unblocked: {ids}"
+    },
+    "epic": {
+      "deleted": "Epic {id} deleted",
+      "childDeleteFailed": "Failed to delete child issue"
+    },
+    "dep": {
+      "added": "Dependency added",
+      "addedDesc": "{issue} is now blocked by {blocker}",
+      "addFailed": "Failed to add dependency",
+      "removed": "Dependency removed",
+      "removeFailed": "Failed to remove dependency"
+    },
+    "rel": {
+      "added": "Relation added",
+      "addedDesc": "{issue} → {type} → {target}",
+      "addFailed": "Failed to add relation",
+      "removed": "Relation removed",
+      "removeFailed": "Failed to remove relation"
+    }
+  },
+  "menu": {
+    "about": "About Beads Task-Issue Tracker",
+    "settings": "Settings...",
+    "checkForUpdate": "Check for Update...",
+    "showLogs": "Show Logs...",
+    "app": "Beads Task-Issue Tracker",
+    "edit": "Edit",
+    "window": "Window"
+  },
+  "about": {
+    "version": "Version {version}",
+    "poweredBy": "Powered by beads (Steve Yegge)",
+    "vibeCoded": "Vibe coded with Claude Code"
+  },
+  "layout": {
+    "header": {
+      "zoomIn": "Zoom in (⌥ click to reset)",
+      "zoomOut": "Zoom out (⌥ click to reset)"
+    },
+    "dialogs": {
+      "delete": {
+        "title": "Delete",
+        "confirm": "Delete",
+        "aboutToDeleteMany": "You are about to permanently delete the following issues:",
+        "aboutToDeleteOne": "You are about to permanently delete the issue:",
+        "andMore": "... and {count} more ({total} total)",
+        "cannotBeUndone": "This action cannot be undone."
+      },
+      "epicDelete": {
+        "title": "Delete Issue with Children",
+        "hasChildren": "The issue \"{title}\" has {count} child issue(s):",
+        "andMore": "... and {count} more",
+        "whatToDo": "What would you like to do?",
+        "deleteAll": "Delete Issue and All Children",
+        "detach": "Delete Issue Only (Detach Children)"
+      },
+      "closeIssue": {
+        "title": "Close issue",
+        "confirm": "Close",
+        "aboutToClose": "You are about to close the issue:",
+        "willBeMarkedCompleted": "The issue will be marked as completed."
+      },
+      "detach": {
+        "title": "Detach attachment",
+        "confirm": "Detach",
+        "confirmQuestion": "Are you sure you want to detach this attachment?",
+        "willBeDeleted": "The attachment file will be permanently deleted.",
+        "onlyReferenceRemoved": "Only the reference will be removed. The original file will not be deleted."
+      },
+      "removeDep": {
+        "title": "Remove dependency",
+        "confirmQuestion": "Are you sure you want to remove this dependency?",
+        "issue": "Issue",
+        "blocker": "Blocker"
+      },
+      "addBlocker": {
+        "title": "Add a blocker",
+        "from": "From",
+        "blockedBy": "Blocked by",
+        "searchPlaceholder": "Search by ID or title...",
+        "noMatches": "No matching issues found",
+        "typeToSearch": "Type to search for issues...",
+        "submit": "Add blocker"
+      },
+      "addRelation": {
+        "title": "Add a relation",
+        "from": "From",
+        "type": "Type",
+        "target": "Target issue",
+        "excludeClosed": "Exclude closed",
+        "searchPlaceholder": "Search by ID or title...",
+        "noMatches": "No matching issues found",
+        "typeToSearch": "Type to search for issues...",
+        "submit": "Add relation"
+      },
+      "removeRelation": {
+        "title": "Remove relation",
+        "confirmQuestion": "Are you sure you want to remove this relation?",
+        "issue": "Issue",
+        "relatedTo": "Related to"
+      },
+      "markdownSave": {
+        "title": "Save changes",
+        "description": "Save the changes to this markdown file?"
+      }
+    },
+    "debug": {
+      "title": "Debug Logs",
+      "live": "Live",
+      "paused": "Paused",
+      "refresh": "Refresh",
+      "bottom": "Bottom",
+      "clear": "Clear",
+      "export": "Export",
+      "verbose": "Verbose",
+      "on": "ON",
+      "off": "OFF",
+      "noLogs": "No logs yet...",
+      "forceSync": "Force Sync",
+      "syncing": "Syncing...",
+      "reset": "Reset",
+      "uptime": "Uptime {seconds}s · Auto-refresh 2s",
+      "tabs": {
+        "logs": "Logs",
+        "pipeline": "Pipeline"
+      },
+      "pipeline": {
+        "watcher": "Watcher",
+        "scheduler": "Scheduler",
+        "pollExecution": "Poll execution",
+        "mtimeCheck": "Mtime check",
+        "triggers": "Triggers",
+        "cooldownSkips": "Cooldown skips",
+        "debounces": "Debounces",
+        "reruns": "Reruns",
+        "requests": "Requests",
+        "executed": "Executed",
+        "deferred": "Deferred",
+        "skipped": "Skipped",
+        "immediate": "Immediate",
+        "started": "Started",
+        "finished": "Finished",
+        "errors": "Errors",
+        "lastMs": "Last ms",
+        "avgMs": "Avg ms",
+        "maxMs": "Max ms",
+        "checks": "Checks",
+        "hits": "Hits",
+        "hitRate": "Hit rate"
+      },
+      "doltTitle": "This project uses the Dolt backend",
+      "updateAvailable": "Update available: v{version} — click to view",
+      "updateReleases": "View bd CLI releases"
+    },
+    "update": {
+      "title": "Check for Updates",
+      "demo": "Demo",
+      "checking": "Checking for updates...",
+      "failed": "Failed to check for updates",
+      "downloading": "Downloading update...",
+      "available": "Update available",
+      "currentVersion": "Current version:",
+      "latestVersion": "Latest version:",
+      "macosNote": "After installing, macOS may block the app. Run this command once to fix it:",
+      "copied": "Copied!",
+      "clickToCopy": "Click to copy",
+      "upToDate": "You're up to date",
+      "latestVersionText": "Version v{version} is the latest version.",
+      "downloadAndQuit": "Download & Quit",
+      "viewOnGitHub": "View on GitHub",
+      "later": "Later"
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Choose which CLI client to use for issue management.",
+    "theme": "Theme",
+    "language": {
+      "title": "Language",
+      "description": "Choose the interface language. Auto uses your system setting.",
+      "auto": "Auto",
+      "english": "English",
+      "russian": "Русский"
+    },
+    "cliClient": {
+      "title": "CLI Client",
+      "brDescription": "Beads Rust (SQLite + JSONL)",
+      "bdDescription": "Original Beads CLI (Go)",
+      "switching": "Switching client..."
+    },
+    "display": {
+      "title": "Display Options",
+      "floatActiveLabel": "Float active tasks to top",
+      "floatActiveDescription": "Tasks in active work categories (in progress, review, etc.) appear at the top of the table regardless of sort field."
+    },
+    "statusColors": {
+      "title": "Status Colors",
+      "description": "Customize badge colors for each status. Changes are local to this project and machine.",
+      "loading": "Loading statuses...",
+      "color": "Color",
+      "from": "From",
+      "gradient": "Grad",
+      "reset": "Reset",
+      "primaryColorTitle": "{label} primary color",
+      "enableGradientTitle": "Enable gradient for {label}",
+      "gradientEndTitle": "{label} gradient end color",
+      "gradientEndSr": "{label} gradient end color",
+      "resetAria": "Reset {label} color to default",
+      "categories": {
+        "active": "Active",
+        "wip": "In Progress",
+        "done": "Done",
+        "frozen": "Frozen / Deferred"
+      }
+    },
+    "probe": {
+      "title": "Probe (monitoring broadcast)",
+      "toggleAria": "Toggle probe monitoring",
+      "description": "When enabled, registers projects with the probe for external monitoring.",
+      "test": "Test connection",
+      "connected": "Connected",
+      "disconnected": "Disconnected"
+    }
+  },
+  "dashboard": {
+    "kpi": {
+      "workflow": "Workflow",
+      "open": "Open",
+      "inProgress": "In Progress",
+      "blocked": "Blocked",
+      "all": "All"
+    },
+    "sections": {
+      "charts": "Charts",
+      "inProgress": "In Progress",
+      "blocked": "Blocked",
+      "checkThisOut": "Check This Out",
+      "readyToWork": "Ready to Work"
+    },
+    "pinnedSort": {
+      "byPinDate": "By pin date (click for updated)",
+      "byUpdated": "By updated (click for manual)",
+      "manual": "Manual order (click for pin date)"
+    },
+    "charts": {
+      "statusTitle": "Status Distribution",
+      "priorityTitle": "Priority Distribution",
+      "open": "Open",
+      "closed": "Closed"
+    },
+    "lists": {
+      "noPinned": "No pinned issues",
+      "noReady": "No issues ready to work on",
+      "copyTitle": "Copy issue ID {id} (⌘/Ctrl+click to add to buffer)",
+      "copyAria": "Copy issue ID {id}, hold Cmd or Ctrl to add to multi-copy buffer"
+    },
+    "onboarding": {
+      "title": "No project selected",
+      "description": "Browse to select a Beads project folder to get started",
+      "browse": "Browse"
+    },
+    "folderPicker": {
+      "title": "Select Beads Project Folder",
+      "description": "Navigate to a folder containing a Beads database (.beads folder)",
+      "homeTitle": "Home",
+      "parentTitle": "Parent folder",
+      "goTitle": "Go",
+      "pathPlaceholder": "/path/to/folder",
+      "beadsProject": "Beads Project",
+      "added": "Added",
+      "noSubfolders": "No subfolders",
+      "beadsLabel": "beads",
+      "open": "Open",
+      "addProject": "Add Project",
+      "loadError": "Failed to load directory"
+    },
+    "pathSelector": {
+      "selectProject": "Select Project",
+      "projects": "Projects",
+      "sort": {
+        "aToZ": "A-Z (click for Z-A)",
+        "zToA": "Z-A (click for manual)",
+        "manual": "Manual (click for A-Z)",
+        "reset": "Reset to A-Z"
+      },
+      "exposed": "Exposed to monitoring (click to disable)",
+      "notExposed": "Not exposed (click to expose)",
+      "removeTitle": "Remove project",
+      "removeDescription": "Are you sure you want to remove '{name}' from your projects?",
+      "exposeDialog": {
+        "removeTitle": "Remove from monitoring",
+        "exposeTitle": "Expose to monitoring",
+        "removeConfirm": "Are you sure you want to remove '{name}' from monitoring?",
+        "exposeConfirm": "Are you sure you want to expose '{name}' to monitoring?"
+      }
+    },
+    "prerequisites": {
+      "welcomeTitle": "Welcome to Beads Task-Issue Tracker",
+      "welcomeSubtitle": "Follow the steps below to get started",
+      "content": "**Beads** is an AI-native issue tracker that lives directly in your codebase. Issues are stored as files in a `.beads` folder within your repository.\n\n### Prerequisites\n\n#### 1. Install the Beads CLI\n\n```bash\n# Using npm\nnpm install -g {'@'}beads/cli\n\n# Or using Homebrew (macOS)\nbrew install beads\n```\n\n#### 2. Initialize Beads in your project\n\nNavigate to your project folder and run:\n\n```bash\ncd /path/to/your/project\nbd init\n```\n\nThis creates a `.beads` folder in your repository.\n\n#### 3. Create your first issue\n\n```bash\nbd create \"My first issue\" --type task --priority p2\n```\n\n### Learn more\n\n- [Beads Documentation](https://beads.dev)\n- [GitHub Repository](https://github.com/steveyegge/beads)\n"
+    }
+  },
+  "issues": {
+    "badges": {
+      "statusAria": "Status: {status}",
+      "priorityAria": "Priority: {priority}",
+      "typeAria": "Type: {type}",
+      "labelAria": "Label: {label}",
+      "blockedBy": "Blocked by {ids}"
+    },
+    "columns": {
+      "id": "ID",
+      "type": "Type",
+      "labels": "Labels",
+      "pinned": "Pin",
+      "title": "Title",
+      "status": "Status",
+      "priority": "Priority",
+      "assignee": "Assignee",
+      "createdAt": "Created",
+      "updatedAt": "Updated",
+      "commentCount": "Comments",
+      "reset": "Reset to defaults",
+      "visibleColumns": "Visible Columns",
+      "settingsLabel": "Column settings"
+    },
+    "toolbar": {
+      "multiSelect": "Multi-select",
+      "toggleMultiSelect": "Toggle multi-select",
+      "search": "Search issues...",
+      "new": "New",
+      "delete": "Delete",
+      "selectedCount": "{count} issue selected | {count} issues selected"
+    },
+    "filters": {
+      "filtersLabel": "Filters:",
+      "hiddenLabel": "Hidden:",
+      "clear": "Clear",
+      "clearAllExclusions": "Clear all exclusions",
+      "hideIssues": "Hide Issues",
+      "hideByCriteria": "Hide issues by criteria",
+      "exclusionFilters": "Exclusion filters",
+      "type": "Type",
+      "label": "Labels",
+      "status": "Status",
+      "priority": "Priority",
+      "assignee": "Assignee",
+      "filterByType": "Filter by type",
+      "filterByLabel": "Filter by label",
+      "filterByStatus": "Filter by status",
+      "filterByPriority": "Filter by priority",
+      "filterByAssignee": "Filter by assignee",
+      "noAssignees": "No assignees found",
+      "noLabels": "No labels found"
+    },
+    "priorityLabels": {
+      "p0": "P0 - Critical",
+      "p1": "P1 - High",
+      "p2": "P2 - Medium",
+      "p3": "P3 - Low",
+      "p4": "P4 - Minimal"
+    },
+    "typeLabels": {
+      "bug": "Bug",
+      "task": "Task",
+      "feature": "Feature",
+      "epic": "Epic",
+      "chore": "Chore",
+      "spike": "Spike",
+      "story": "Story",
+      "milestone": "Milestone"
+    },
+    "statusLabels": {
+      "open": "Open",
+      "in_progress": "In Progress",
+      "blocked": "Blocked",
+      "closed": "Closed",
+      "deferred": "Deferred",
+      "pinned": "Pinned",
+      "hooked": "Hooked"
+    },
+    "table": {
+      "empty": "No tasks / issues found",
+      "childSummary": "{closed} closed / {total} child | {closed} closed / {total} children",
+      "loadMore": "Load more ({remaining} remaining)"
+    }
+  },
+  "details": {
+    "header": {
+      "pin": "Pin",
+      "unpin": "Unpin",
+      "edit": "Edit",
+      "reopen": "Reopen",
+      "close": "Close",
+      "delete": "Delete"
+    },
+    "sections": {
+      "description": "Description",
+      "attachments": "Attachments",
+      "parent": "Parent",
+      "children": "Children",
+      "externalReference": "External Reference",
+      "details": "Details",
+      "dependencies": "Dependencies",
+      "relations": "Relations",
+      "estimate": "Estimate",
+      "designNotes": "Design Notes",
+      "acceptanceCriteria": "Acceptance Criteria",
+      "workingNotes": "Working Notes",
+      "metadata": "Metadata",
+      "specId": "Spec ID",
+      "blockedBy": "Blocked By",
+      "blocks": "Blocks",
+      "assignee": "Assignee",
+      "labels": "Labels",
+      "created": "Created",
+      "started": "Started",
+      "updated": "Updated"
+    },
+    "actions": {
+      "attach": "Attach",
+      "createChild": "Create child",
+      "addBlocker": "Add blocker",
+      "addRelation": "Add relation"
+    },
+    "empty": {
+      "description": "No description provided.",
+      "labels": "No labels",
+      "attachments": "No attachments",
+      "children": "No children yet",
+      "unassigned": "Unassigned"
+    },
+    "form": {
+      "type": "Type",
+      "status": "Status",
+      "priority": "Priority",
+      "parent": "Parent",
+      "title": "Title",
+      "titlePlaceholder": "Issue title",
+      "description": "Description",
+      "descriptionPlaceholder": "Describe the issue...",
+      "assignee": "Assignee",
+      "assigneePlaceholder": "Username",
+      "labels": "Labels",
+      "externalRef": "External Reference",
+      "externalRefPlaceholder": "URLs, IDs, or image paths (pipe-separated)",
+      "attach": "Attach",
+      "specId": "Spec ID",
+      "specIdPlaceholder": "e.g. SPEC-001",
+      "estimateMinutes": "Estimate (minutes)",
+      "estimatePlaceholder": "30",
+      "designNotes": "Design Notes",
+      "designNotesPlaceholder": "Design decisions and architectural notes...",
+      "acceptanceCriteria": "Acceptance Criteria",
+      "acceptanceCriteriaPlaceholder": "What must be true for this to be done...",
+      "workingNotes": "Working Notes",
+      "workingNotesPlaceholder": "Progress notes and observations...",
+      "noParent": "No parent",
+      "cancel": "Cancel",
+      "create": "Create",
+      "save": "Save",
+      "saving": "Saving..."
+    },
+    "comments": {
+      "heading": "Comments ({count})",
+      "toc": "Comments table of contents",
+      "empty": "No comments yet",
+      "placeholder": "Add a comment...",
+      "submit": "Add Comment"
+    },
+    "relationTypes": {
+      "relates-to": "Relates To",
+      "related": "Related",
+      "discovered-from": "Discovered From",
+      "duplicates": "Duplicates",
+      "supersedes": "Supersedes",
+      "caused-by": "Caused By"
+    }
+  }
+}

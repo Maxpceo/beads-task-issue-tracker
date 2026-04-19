@@ -11,6 +11,8 @@ const props = defineProps<{
   readonly?: boolean
 }>()
 
+const { t } = useI18n()
+
 // Collapsible state for the whole section (persisted per project)
 const commentsSectionState = useProjectStorage<{ open: boolean }>('commentsSection', { open: true })
 const isCommentsOpen = computed(() => commentsSectionState.value.open)
@@ -151,7 +153,7 @@ const handleSubmit = () => {
           <polyline points="6 9 12 15 18 9" />
         </svg>
         <h4 class="text-[10px] font-medium uppercase tracking-wide text-muted-foreground group-hover:text-foreground transition-colors">
-          Comments ({{ comments.length }})
+          {{ t('details.comments.heading', { count: comments.length }) }}
         </h4>
       </button>
 
@@ -160,7 +162,7 @@ const handleSubmit = () => {
         v-if="isCommentsOpen && sortedComments.length > 1"
         class="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded"
         :class="{ 'text-foreground bg-muted': isTocOpen }"
-        title="Оглавление комментариев"
+        :title="t('details.comments.toc')"
         @click="isTocOpen = !isTocOpen"
       >
         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -231,19 +233,19 @@ const handleSubmit = () => {
       </div>
 
       <div v-else class="text-center text-muted-foreground text-xs py-3">
-        No comments yet
+        {{ t('details.comments.empty') }}
       </div>
 
       <form v-if="!readonly" class="space-y-2" @submit.prevent="handleSubmit">
         <Textarea
           v-model="newComment"
-          placeholder="Add a comment..."
+          :placeholder="t('details.comments.placeholder')"
           rows="2"
           class="text-xs"
         />
         <div class="flex justify-end">
           <Button type="submit" size="sm" class="h-7 text-xs" :disabled="!newComment.trim()">
-            Add Comment
+            {{ t('details.comments.submit') }}
           </Button>
         </div>
       </form>
