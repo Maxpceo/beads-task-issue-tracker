@@ -125,12 +125,21 @@
 | `AppHeader.vue` | Top bar: title, zoom controls, theme toggle, Tauri drag region |
 | `UpdateIndicator.vue` | Sync/watcher status badges |
 | `UpdateDialog.vue` | Available updates UI |
-| `SettingsDialog.vue` | Theme, CLI client, backend selector, probe toggle (dev-only), Status Colors section (per-status color overrides with solid/gradient pickers and Reset button) |
+| `SettingsDialog.vue` | Sidebar-layout settings dialog (`sm:max-w-3xl`, `grid-cols-[180px_1fr]`): left sidebar nav (lucide icons + labels + `aria-current`) + right content panel. Active section stored in `useLocalStorage('beads:settingsTab')`. Section content delegated to `settings/` sub-components |
 | `AboutDialog.vue` | App info, credits |
 | `DebugPanel.vue` | Live log viewer with filters |
 | `DebugDialog.vue` | BD CLI version, compatibility info |
 | `DialogsLayer.vue` | All issue-management dialogs (delete, epic delete, close, detach, deps, relations) + image/markdown preview |
 | `CollapsibleSection.vue` | Generic collapsible header+content wrapper |
+
+#### Layout › Settings (`layout/settings/`)
+| Component | Purpose |
+|-----------|---------|
+| `SettingsAppearance.vue` | Theme selector + Language picker (radio: Auto / English / Русский) — both grouped as "Appearance" |
+| `SettingsCliClient.vue` | CLI client switcher (`bd` / `br`) with inline `switchResult` feedback and `isSwitching` spinner rendered directly under the buttons (`role="status" aria-live="polite"`) |
+| `SettingsDisplay.vue` | Display options — `floatActiveToTop` toggle |
+| `SettingsStatusColors.vue` | Per-status color overrides (solid/gradient pickers + Reset); has its own internal scroll so the grid never overflows `max-h-[80dvh]` |
+| `SettingsProbe.vue` | Dev-only probe toggle (`role="switch" aria-checked`, sr-only URL label) — hidden in production builds |
 
 #### Dashboard (`dashboard/`)
 | Component | Purpose |

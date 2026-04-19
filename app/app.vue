@@ -19,6 +19,12 @@
 
   onMounted(() => {
     initializeMenu()
+    if (import.meta.dev) {
+      // Dev-only hook for Tauri MCP visual QA — lets headless tests open Settings.
+      ;(window as unknown as { __openSettings?: () => void }).__openSettings = () => {
+        showSettingsDialog.value = true
+      }
+    }
   })
 </script>
 
