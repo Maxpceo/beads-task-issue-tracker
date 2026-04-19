@@ -28,6 +28,9 @@ static LAST_KNOWN_MTIME: LazyLock<Mutex<HashMap<String, std::time::SystemTime>>>
 static DOLT_COLDSTART_LOGGED: LazyLock<Mutex<std::collections::HashSet<String>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
 
+// [perf] Log the first `bd --version` spawn once per process (cold-FS indicator).
+static BD_VERSION_PROBE_LOGGED: AtomicBool = AtomicBool::new(false);
+
 // Configurable CLI binary name (default: "bd")
 static CLI_BINARY: LazyLock<Mutex<String>> = LazyLock::new(|| Mutex::new("bd".to_string()));
 
@@ -1021,6 +1024,9 @@ fn get_cli_client_info() -> Option<(CliClient, u32, u32, u32)> {
     }
 
     let binary = get_cli_binary();
+    // [perf] Measure the first --version spawn: it can be slow on cold FS caches and
+    // contributes to cold-open latency. Logged once per process.
+    let t_probe = std::time::Instant::now();
     // Run from temp dir to avoid bd auto-migrating projects in cwd
     let output = new_command(&binary)
         .arg("--version")
@@ -1028,6 +1034,14 @@ fn get_cli_client_info() -> Option<(CliClient, u32, u32, u32)> {
         .env("PATH", get_extended_path())
         .output()
         .ok()?;
+    let probe_ms = t_probe.elapsed().as_millis();
+    // compare_exchange ensures exactly-once logging across threads without a Mutex.
+    if BD_VERSION_PROBE_LOGGED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+    {
+        log_info!("[perf:bd_version_probe] first_call_ms={}", probe_ms);
+    }
 
     if !output.status.success() {
         log_warn!("[cli_detect] Failed to get version from {}", binary);
@@ -1253,8 +1267,11 @@ fn execute_bd(command: &str, args: &[String], cwd: Option<&str>) -> Result<Strin
             .or_insert_with(|| std::sync::Arc::new(Mutex::new(())))
             .clone()
     };
+    let t_lock = std::time::Instant::now();
     let _guard = project_lock.lock().unwrap();
+    let lock_wait_ms = t_lock.elapsed().as_millis();
 
+    let t_spawn = std::time::Instant::now();
     let output = new_command(&binary)
         .args(&full_args)
         .current_dir(&working_dir)
@@ -1265,6 +1282,7 @@ fn execute_bd(command: &str, args: &[String], cwd: Option<&str>) -> Result<Strin
             log_error!("[bd] Failed to execute {}: {}", binary, e);
             format!("Failed to execute {}: {}", binary, e)
         })?;
+    let spawn_ms = t_spawn.elapsed().as_millis();
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1284,6 +1302,13 @@ fn execute_bd(command: &str, args: &[String], cwd: Option<&str>) -> Result<Strin
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     log_info!("[bd] OK | {} bytes", stdout.len());
+
+    // [perf:execute_bd] JSON parsing is done by callers (e.g. parse_issues_tolerant
+    // in bd_poll_data), so we only split lock-wait from subprocess spawn here.
+    log_debug!(
+        "[perf:execute_bd] op={} lock_wait={}ms spawn={}ms",
+        command, lock_wait_ms, spawn_ms
+    );
 
     // Log output preview only if verbose mode is enabled
     if VERBOSE_LOGGING.load(Ordering::Relaxed) {
@@ -2512,7 +2537,9 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     let t_total = std::time::Instant::now();
 
     // Single sync for the entire poll cycle
+    let t_sync = std::time::Instant::now();
     sync_bd_database(cwd_ref);
+    let sync_ms = t_sync.elapsed().as_millis();
 
     // Fetch issues: single --all call for bd >= 0.55, fallback to 2 calls for older versions.
     // [perf] Measure subprocess spawn time separately from JSON parsing so we can tell
@@ -2603,22 +2630,29 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     let total_ms = t_total.elapsed().as_millis();
 
     log_debug!(
-        "[perf:bd_poll_data] spawn={}ms parse={}ms transform={}ms total={}ms issues={}",
-        spawn_ms, parse_ms, transform_ms, total_ms, issues_count
+        "[perf:bd_poll_data] sync={}ms spawn={}ms parse={}ms transform={}ms total={}ms issues={}",
+        sync_ms, spawn_ms, parse_ms, transform_ms, total_ms, issues_count
     );
 
     // [perf] Dolt cold-start: log once per project per process lifetime.
     // The very first bd_poll_data call on a Dolt-backed project pays for
     // `dolt sql-server` startup — which dominates switch latency on large projects.
+    //
+    // Canonicalize `working_dir` first: when cwd_ref is None and BEADS_PATH is unset, it
+    // can fall back to "." (Tauri-process cwd), which makes `project_uses_dolt(./.beads)`
+    // check the wrong directory and the coldstart set key collide across projects.
     {
-        let beads_dir = std::path::Path::new(&working_dir).join(".beads");
+        let working_dir_canon = std::fs::canonicalize(&working_dir)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| working_dir.clone());
+        let beads_dir = std::path::Path::new(&working_dir_canon).join(".beads");
         if project_uses_dolt(&beads_dir) {
             let mut logged = DOLT_COLDSTART_LOGGED.lock().unwrap();
-            if !logged.contains(&working_dir) {
-                logged.insert(working_dir.clone());
+            if !logged.contains(&working_dir_canon) {
+                logged.insert(working_dir_canon.clone());
                 log_info!(
                     "[perf:dolt_coldstart] path={} init_ms={}",
-                    working_dir, total_ms
+                    working_dir_canon, total_ms
                 );
             }
         }

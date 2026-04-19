@@ -285,6 +285,9 @@ const { start: startPolling, stop: stopPolling } = useAdaptivePolling(
 )
 
 onMounted(async () => {
+  // [perf:app_boot] Mark the moment onMounted fires so we can attribute cold-open latency
+  // between (a) mount→first-poll-trigger and (b) first-poll-trigger→first-data-ready.
+  const perfAppBootStart = performance.now()
   checkViewport()
   if (import.meta.client) {
     window.addEventListener('resize', checkViewport)
@@ -333,7 +336,12 @@ onMounted(async () => {
       }
 
       // Sequential: bd commands can't run concurrently (Dolt SIGSEGV on parallel access)
-      fetchIssues().then(() => fetchStats(issues.value))
+      const perfFirstPollTrigger = performance.now()
+      fetchIssues().then(async () => {
+        await fetchStats(issues.value)
+        const perfFirstDataReady = performance.now()
+        logFrontend('info', `[perf:app_boot] mount→trigger=${(perfFirstPollTrigger - perfAppBootStart).toFixed(0)}ms trigger→data=${(perfFirstDataReady - perfFirstPollTrigger).toFixed(0)}ms total=${(perfFirstDataReady - perfAppBootStart).toFixed(0)}ms`).catch(() => {})
+      })
     }
   }
 
