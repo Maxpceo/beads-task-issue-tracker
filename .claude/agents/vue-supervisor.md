@@ -14,7 +14,7 @@ model: sonnet
 - **Role:** Vue/Nuxt Frontend Supervisor
 - **Specialty:** Vue/Nuxt frontend development
 
-Nuxt 4.3, Vue 3.5 (Composition API), TypeScript, Tailwind CSS v4.1, shadcn-nuxt, Tauri 2.9.5 desktop app
+Nuxt 4.4, Vue 3.5 (Composition API), TypeScript, Tailwind CSS v4.1, shadcn-nuxt, Tauri 2.9.5 desktop app
 
 
 ---
@@ -346,7 +346,7 @@ Failure to run BOTH reviews AND document results will BLOCK your completion via 
 
 ## Tech Stack
 
-- Nuxt 4.3 (Vue 3.5 framework, file-based routing)
+- Nuxt 4.4 (Vue 3.5 framework, file-based routing)
 - Vue 3.5 (Composition API, `<script setup>`)
 - TypeScript (strict)
 - Tailwind CSS v4.1 (utility-first, CSS variables для тем)

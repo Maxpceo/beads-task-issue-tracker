@@ -6,7 +6,7 @@ _Критические правила для AI агентов. Детали �
 
 ## Стек
 
-- **Frontend:** Nuxt 4.3 + Vue 3.5 + Tailwind CSS v4.1 + shadcn-nuxt
+- **Frontend:** Nuxt 4.4 + Vue 3.5 + Tailwind CSS v4.1 + shadcn-nuxt
 - **Backend:** Tauri 2.9.5 (Rust)
 - **Тесты:** Vitest 4.0 (jsdom)
 - **PM:** pnpm 10.0
