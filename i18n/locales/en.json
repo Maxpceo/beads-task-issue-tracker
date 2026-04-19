@@ -287,7 +287,15 @@
   },
   "settings": {
     "title": "Settings",
-    "description": "Choose which CLI client to use for issue management.",
+    "description": "Configure your workspace preferences.",
+    "sections": {
+      "appearance": "Appearance",
+      "cli": "CLI Client",
+      "display": "Display",
+      "colors": "Status Colors",
+      "probe": "Probe",
+      "navigationLabel": "Settings sections"
+    },
     "theme": "Theme",
     "language": {
       "title": "Language",
@@ -331,6 +339,7 @@
       "title": "Probe (monitoring broadcast)",
       "toggleAria": "Toggle probe monitoring",
       "description": "When enabled, registers projects with the probe for external monitoring.",
+      "urlLabel": "Probe URL",
       "test": "Test connection",
       "connected": "Connected",
       "disconnected": "Disconnected"
