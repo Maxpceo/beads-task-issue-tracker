@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Save, Search, X } from 'lucide-vue-next'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 import {
   Dialog,
   DialogContent,
@@ -385,7 +388,7 @@ onUnmounted(() => {
               ref="searchInputRef"
               v-model="searchQuery"
               type="text"
-              placeholder="Search in document..."
+              :placeholder="t('common.searchInDocument')"
               class="w-full h-8 pl-8 pr-3 text-sm rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             >
           </div>

@@ -1,3 +1,4 @@
+import { useI18n } from 'vue-i18n'
 import type { Issue, ChildIssue } from '~/types/issue'
 import { bdAvailableRelationTypes, checkBdCompatibility, logFrontend } from '~/utils/bd-api'
 
@@ -62,6 +63,7 @@ const pendingRelRemoval = ref<{ issueId: string; targetId: string } | null>(null
 const isRemovingRel = ref(false)
 
 export function useIssueDialogs() {
+  const { t } = useI18n()
   const { issues, filteredIssues, selectedIssue, isUpdating, error: issueError, fetchIssues, fetchIssue, updateIssue, closeIssue, deleteIssue, addDependency, removeDependency, addRelation, removeRelation, selectIssue } = useIssues()
   const { beadsPath } = useBeadsPath()
   const { notify, success: notifySuccess, error: notifyError } = useNotification()
@@ -148,15 +150,15 @@ export function useIssueDialogs() {
           hasSuggestions = true
           const unblockedList = suggested.map(s => s.id).join(', ')
           const unblockedMsg = suggested.length === 1
-            ? `Unblocked: ${unblockedList}`
-            : `${suggested.length} unblocked: ${unblockedList}`
+            ? t('notifications.issue.unblockedOne', { ids: unblockedList })
+            : t('notifications.issue.unblockedMany', { count: suggested.length, ids: unblockedList })
           closeDesc = closeDesc ? `${closeDesc} — ${unblockedMsg}` : unblockedMsg
         }
       }
       // Longer duration when showing unblocked issues so user has time to read
-      notifySuccess(`Issue ${issueId} closed`, closeDesc, hasSuggestions ? 6000 : undefined)
+      notifySuccess(t('notifications.issue.closed', { id: issueId }), closeDesc, hasSuggestions ? 6000 : undefined)
     } catch {
-      notifyError(`Failed to close ${issueId}`, issueTitle)
+      notifyError(t('notifications.issue.closeFailed', { id: issueId }), issueTitle)
     } finally {
       isClosing.value = false
       isCloseDialogOpen.value = false
@@ -171,9 +173,9 @@ export function useIssueDialogs() {
     try {
       await updateIssue(issueId, { status: 'open' })
       await fetchStats(issues.value)
-      notifySuccess(`Issue ${issueId} reopened`, issueTitle)
+      notifySuccess(t('notifications.issue.reopened', { id: issueId }), issueTitle)
     } catch {
-      notifyError(`Failed to reopen ${issueId}`, issueTitle)
+      notifyError(t('notifications.issue.reopenFailed', { id: issueId }), issueTitle)
     }
   }
 
@@ -289,25 +291,25 @@ export function useIssueDialogs() {
         for (const id of selectedIds.value) {
           const success = await deleteIssue(id)
           if (!success) {
-            notifyError('Failed to delete issue', issueError.value || `Could not delete ${id}`)
+            notifyError(t('notifications.issue.deleteFailed'), issueError.value || t('notifications.issue.deleteFailedDesc', { id }))
           } else {
             successfullyDeleted.push(id)
           }
         }
         selectedIds.value = selectedIds.value.filter(id => !successfullyDeleted.includes(id))
         if (successfullyDeleted.length > 0) {
-          notifySuccess(`${successfullyDeleted.length} issue(s) deleted`)
+          notifySuccess(t('notifications.issue.deletedMany', { count: successfullyDeleted.length }, successfullyDeleted.length))
         }
       } else if (selectedIssue.value) {
         const issueId = selectedIssue.value.id
         const issueTitle = selectedIssue.value.title
         const success = await deleteIssue(issueId)
         if (!success) {
-          notifyError('Failed to delete issue', issueError.value || 'Could not delete the issue')
+          notifyError(t('notifications.issue.deleteFailed'), issueError.value || t('notifications.issue.deleteFailedGeneric'))
         } else {
           isEditMode.value = false
           isCreatingNew.value = false
-          notifySuccess(`Issue ${issueId} deleted`, issueTitle)
+          notifySuccess(t('notifications.issue.deleted', { id: issueId }), issueTitle)
         }
       }
       await fetchIssues()
@@ -331,7 +333,7 @@ export function useIssueDialogs() {
         for (const child of epicChildren.value) {
           const success = await deleteIssue(child.id)
           if (!success) {
-            notifyError('Failed to delete child issue', issueError.value || `Could not delete ${child.id}`)
+            notifyError(t('notifications.epic.childDeleteFailed'), issueError.value || t('notifications.issue.deleteFailedDesc', { id: child.id }))
           }
         }
       }
@@ -339,9 +341,9 @@ export function useIssueDialogs() {
       const epicTitle = epicToDelete.value.title
       const epicSuccess = await deleteIssue(epicId)
       if (!epicSuccess) {
-        notifyError('Failed to delete issue', issueError.value || `Could not delete ${epicId}`)
+        notifyError(t('notifications.issue.deleteFailed'), issueError.value || t('notifications.issue.deleteFailedDesc', { id: epicId }))
       } else {
-        notifySuccess(`Epic ${epicId} deleted`, epicTitle)
+        notifySuccess(t('notifications.epic.deleted', { id: epicId }), epicTitle)
       }
 
       if (epicSuccess && selectedIssue.value?.id === epicToDelete.value.id) {
@@ -372,7 +374,7 @@ export function useIssueDialogs() {
           for (const id of remainingDeleteIds.value) {
             const success = await deleteIssue(id)
             if (!success) {
-              notifyError('Failed to delete issue', issueError.value || `Could not delete ${id}`)
+              notifyError(t('notifications.issue.deleteFailed'), issueError.value || t('notifications.issue.deleteFailedDesc', { id }))
             } else {
               successfullyDeleted.push(id)
             }
@@ -405,10 +407,10 @@ export function useIssueDialogs() {
     isAddingBlocker.value = true
     try {
       await addDependency(addBlockerIssueId.value, addBlockerSelectedTarget.value)
-      notifySuccess('Dependency added', `${addBlockerIssueId.value} is now blocked by ${addBlockerSelectedTarget.value}`)
+      notifySuccess(t('notifications.dep.added'), t('notifications.dep.addedDesc', { issue: addBlockerIssueId.value, blocker: addBlockerSelectedTarget.value }))
       isAddBlockerDialogOpen.value = false
     } catch {
-      notifyError('Failed to add dependency')
+      notifyError(t('notifications.dep.addFailed'))
     } finally {
       isAddingBlocker.value = false
     }
@@ -425,9 +427,9 @@ export function useIssueDialogs() {
     isRemovingDep.value = true
     try {
       await removeDependency(pendingDepRemoval.value.issueId, pendingDepRemoval.value.blockerId)
-      notifySuccess('Dependency removed')
+      notifySuccess(t('notifications.dep.removed'))
     } catch {
-      notifyError('Failed to remove dependency')
+      notifyError(t('notifications.dep.removeFailed'))
     } finally {
       isRemovingDep.value = false
       isRemoveDepDialogOpen.value = false
@@ -450,11 +452,11 @@ export function useIssueDialogs() {
     isAddingRel.value = true
     try {
       await addRelation(addRelIssueId.value, addRelSelectedTarget.value, addRelSelectedType.value)
-      const typeLabel = availableRelationTypes.value.find(t => t.value === addRelSelectedType.value)?.label || addRelSelectedType.value
-      notifySuccess('Relation added', `${addRelIssueId.value} → ${typeLabel} → ${addRelSelectedTarget.value}`)
+      const typeLabel = availableRelationTypes.value.find(rt => rt.value === addRelSelectedType.value)?.label || addRelSelectedType.value
+      notifySuccess(t('notifications.rel.added'), t('notifications.rel.addedDesc', { issue: addRelIssueId.value, type: typeLabel, target: addRelSelectedTarget.value }))
       isAddRelDialogOpen.value = false
     } catch {
-      notifyError('Failed to add relation')
+      notifyError(t('notifications.rel.addFailed'))
     } finally {
       isAddingRel.value = false
     }
@@ -471,9 +473,9 @@ export function useIssueDialogs() {
     isRemovingRel.value = true
     try {
       await removeRelation(pendingRelRemoval.value.issueId, pendingRelRemoval.value.targetId)
-      notifySuccess('Relation removed')
+      notifySuccess(t('notifications.rel.removed'))
     } catch {
-      notifyError('Failed to remove relation')
+      notifyError(t('notifications.rel.removeFailed'))
     } finally {
       isRemovingRel.value = false
       isRemoveRelDialogOpen.value = false

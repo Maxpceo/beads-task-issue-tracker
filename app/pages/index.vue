@@ -1393,29 +1393,27 @@ watch(
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
-            Database Repair Required
+            {{ t('page.dialogs.repair.title') }}
           </DialogTitle>
           <DialogDescription class="text-left space-y-3 pt-2">
-            <p>
-              A database schema incompatibility was detected. This is caused by a bug in the bd CLI update (version 0.49.4).
-            </p>
+            <p>{{ t('page.dialogs.repair.intro') }}</p>
             <p v-if="affectedProject" class="text-sm bg-muted p-2 rounded font-mono break-all">
               {{ affectedProject }}
             </p>
             <p>
-              <strong>What will happen:</strong>
+              <strong>{{ t('page.dialogs.repair.whatWillHappen') }}</strong>
             </p>
             <ul class="list-disc list-inside text-sm space-y-1 ml-2">
-              <li>Your current database will be backed up</li>
-              <li>The database will be recreated from your issues backup file</li>
-              <li>All your issues will be preserved</li>
+              <li>{{ t('page.dialogs.repair.step1') }}</li>
+              <li>{{ t('page.dialogs.repair.step2') }}</li>
+              <li>{{ t('page.dialogs.repair.step3') }}</li>
             </ul>
             <p v-if="repairProgress" class="text-sm text-muted-foreground">
-              Repairing {{ repairProgress.current }}/{{ repairProgress.total }}:
+              {{ t('page.dialogs.repair.progress', { current: repairProgress.current, total: repairProgress.total }) }}
               <span class="font-mono text-xs">{{ repairProgress.currentPath.split('/').pop() }}</span>
             </p>
             <p v-if="repairError" class="text-destructive text-sm">
-              Error: {{ repairError }}
+              {{ t('page.dialogs.repair.error', { message: repairError }) }}
             </p>
           </DialogDescription>
         </DialogHeader>
@@ -1425,18 +1423,18 @@ watch(
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            Repair All ({{ projects.length }})
+            {{ t('page.dialogs.repair.repairAll', { count: projects.length }) }}
           </Button>
           <div class="flex gap-2 ml-auto">
             <Button variant="outline" :disabled="isRepairing" @click="dismissRepair">
-              Later
+              {{ t('common.later') }}
             </Button>
             <Button :disabled="isRepairing" @click="handleRepair">
               <svg v-if="isRepairing && !repairProgress" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              {{ isRepairing && !repairProgress ? 'Repairing...' : 'Repair This Project' }}
+              {{ isRepairing && !repairProgress ? t('page.dialogs.repair.repairing') : t('page.dialogs.repair.repairThis') }}
             </Button>
           </div>
         </div>
@@ -1451,39 +1449,40 @@ watch(
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
-            Database Migration Required
+            {{ t('page.dialogs.migration.title') }}
           </DialogTitle>
           <DialogDescription class="text-left space-y-3 pt-2">
-            <p>
-              Your bd version (>= 0.50) can no longer read previous SQLite databases.
-              This project needs to be migrated to the new Dolt backend. This is a one-time operation.
-            </p>
+            <p>{{ t('page.dialogs.migration.intro') }}</p>
             <p v-if="migrateAffectedProject" class="text-sm bg-muted p-2 rounded font-mono break-all">
               {{ migrateAffectedProject }}
             </p>
             <p>
-              <strong>What will happen:</strong>
+              <strong>{{ t('page.dialogs.migration.whatWillHappen') }}</strong>
             </p>
             <ul class="list-disc list-inside text-sm space-y-1 ml-2">
-              <li>A new Dolt database will be created (<code class="text-xs">bd init</code>)</li>
-              <li>Your issues will be imported from the JSONL backup file (<code class="text-xs">bd import</code>)</li>
-              <li>None of your active issues will be lost during migration</li>
+              <i18n-t keypath="page.dialogs.migration.step1" tag="li">
+                <template #cmd><code class="text-xs">bd init</code></template>
+              </i18n-t>
+              <i18n-t keypath="page.dialogs.migration.step2" tag="li">
+                <template #cmd><code class="text-xs">bd import</code></template>
+              </i18n-t>
+              <li>{{ t('page.dialogs.migration.step3') }}</li>
             </ul>
             <p v-if="migrateError" class="text-destructive text-sm">
-              Error: {{ migrateError }}
+              {{ t('page.dialogs.migration.error', { message: migrateError }) }}
             </p>
           </DialogDescription>
         </DialogHeader>
         <div class="flex justify-end gap-2 mt-4">
           <Button variant="outline" :disabled="isMigrating" @click="dismissMigration">
-            Later
+            {{ t('common.later') }}
           </Button>
           <Button :disabled="isMigrating" class="bg-[#29E3C1] hover:bg-[#22c9aa] text-black" @click="handleMigrateToDolt">
             <svg v-if="isMigrating" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {{ isMigrating ? 'Migrating...' : 'Migrate Now' }}
+            {{ isMigrating ? t('page.dialogs.migration.migrating') : t('page.dialogs.migration.migrateNow') }}
           </Button>
         </div>
       </DialogContent>
@@ -1497,34 +1496,31 @@ watch(
             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
             </svg>
-            Attachment Update Required
+            {{ t('page.dialogs.attachmentRefs.title') }}
           </DialogTitle>
           <DialogDescription as="div" class="space-y-3 text-sm">
-            <p>
-              Attachments now use the filesystem directly.
-              This cleanup removes old attachment paths from external references. One-time operation.
-            </p>
+            <p>{{ t('page.dialogs.attachmentRefs.intro') }}</p>
             <p class="text-muted-foreground">
-              A backup of your data will be created before any changes are made.
+              {{ t('page.dialogs.attachmentRefs.backupNote') }}
             </p>
             <p class="bg-muted p-2 rounded text-xs font-mono">
-              {{ refsRefCount }} issue(s) with references to clean up
+              {{ t('page.dialogs.attachmentRefs.counter', { count: refsRefCount }, refsRefCount) }}
             </p>
             <p v-if="refsMigrateError" class="text-destructive text-sm">
-              Error: {{ refsMigrateError }}
+              {{ t('page.dialogs.attachmentRefs.error', { message: refsMigrateError }) }}
             </p>
           </DialogDescription>
         </DialogHeader>
         <div class="flex justify-end gap-2 mt-4">
           <Button variant="outline" :disabled="isRefsMigrating" @click="dismissRefsMigration">
-            Later
+            {{ t('common.later') }}
           </Button>
           <Button :disabled="isRefsMigrating" class="bg-[#29E3C1] hover:bg-[#22c9aa] text-black" @click="handleMigrateRefs">
             <svg v-if="isRefsMigrating" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            {{ isRefsMigrating ? 'Updating...' : 'Update Now' }}
+            {{ isRefsMigrating ? t('page.dialogs.attachmentRefs.updating') : t('page.dialogs.attachmentRefs.updateNow') }}
           </Button>
         </div>
       </DialogContent>
