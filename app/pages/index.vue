@@ -462,6 +462,11 @@ const handlePathChange = async () => {
   // Increment generation — any in-flight handlePathChange with an older generation will bail out
   const thisGeneration = ++pathChangeGeneration
 
+  const perfStart = performance.now()
+  let perfPreflight = 0
+  let perfFetchIssues = 0
+  let perfFetchStats = 0
+
   // Show loading indicator immediately
   isLoading.value = true
 
@@ -490,12 +495,14 @@ return
   }
 
   try {
+    const tPreflight = performance.now()
     // Pre-flight checks in parallel: cleanup stale locks + migration check + mtime reset
 const [, , migrationNeeded] = await Promise.all([
       bdCleanupStaleLocks(beadsPath.value),
       bdResetMtime(),
       checkMigrationNeeded(),
     ])
+    perfPreflight = performance.now() - tPreflight
 
     if (thisGeneration !== pathChangeGeneration) {
 return
@@ -520,14 +527,32 @@ return
 
       // IMPORTANT: bd commands must run sequentially — concurrent Dolt embedded access
       // causes SIGSEGV crashes (nil pointer dereference in dolthub/driver).
-      await fetchIssues()
-      // Fire-and-forget: stats update doesn't block issue list display
-      fetchStats(issues.value)
+      // Use batched fetchPollData (1 IPC: bd list + bd ready) + updateFromPollData
+      // to avoid a redundant bd ready cold-start from fetchStats.
+      const tFetchIssues = performance.now()
+      const readyData = await fetchPollData()
+      perfFetchIssues = performance.now() - tFetchIssues
+
+      const tFetchStats = performance.now()
+      if (readyData) {
+        updateFromPollData(issues.value, readyData)
+      } else {
+        // Poll failed — fall back to stats computation without ready data
+        fetchStats(issues.value)
+      }
+      perfFetchStats = performance.now() - tFetchStats
     }
   } catch (e) {
     // Don't let pre-flight errors block the app — log and continue
     logFrontend('error', '[handlePathChange] Error during project switch: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
+  } finally {
+    // fetchPollData (unlike fetchIssues) doesn't manage isLoading — clear it here
+    // so the "Loading..." indicator disappears after the switch completes.
+    isLoading.value = false
   }
+
+  const perfTotal = performance.now() - perfStart
+  logFrontend('info', `[perf:handlePathChange] pre-flight=${perfPreflight.toFixed(0)}ms fetchIssues=${perfFetchIssues.toFixed(0)}ms fetchStats=${perfFetchStats.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms`).catch(() => {})
 
   if (thisGeneration !== pathChangeGeneration) {
 return
