@@ -353,7 +353,16 @@
       "inReview": "In Review",
       "blocked": "Blocked",
       "deferred": "Deferred",
-      "all": "All"
+      "all": "All",
+      "tooltip": {
+        "workflow": "Everything except closed/deleted issues — active work pipeline",
+        "ready": "Open issues with no blockers — can be started right now",
+        "inProgress": "Currently being worked on",
+        "inReview": "Review chain: inreview, simplified, reviewed, accepted",
+        "blocked": "Blocked by dependencies or explicit blocked status",
+        "deferred": "Postponed, frozen for later",
+        "all": "All issues including closed"
+      }
     },
     "sections": {
       "charts": "Charts",

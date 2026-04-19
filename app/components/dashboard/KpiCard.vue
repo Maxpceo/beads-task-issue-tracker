@@ -1,9 +1,16 @@
 <script setup lang="ts">
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '~/components/ui/tooltip'
+
 const props = defineProps<{
   title: string
   value: number
   color?: string
   active?: boolean
+  tooltip?: string
 }>()
 
 defineEmits<{
@@ -53,7 +60,35 @@ const neonTitleStyle = computed(() => {
 </script>
 
 <template>
+  <Tooltip v-if="tooltip">
+    <TooltipTrigger as-child>
+      <button
+        class="px-2.5 py-1.5 rounded-md text-left transition-colors min-w-[90px]"
+        :class="[
+          active ? 'outline-2 outline-primary' : '',
+          isNeon
+            ? 'border hover:brightness-125'
+            : 'bg-secondary/30 border border-border/50 hover:bg-secondary/50'
+        ]"
+        :style="isNeon ? neonStyle : {}"
+        @click="$emit('click')"
+      >
+        <div
+          class="text-[9px] uppercase tracking-wide mb-0.5 whitespace-nowrap"
+          :class="isNeon && color ? '' : 'text-muted-foreground'"
+          :style="neonTitleStyle"
+        >
+          {{ title }}
+        </div>
+        <div class="text-lg font-bold" :style="color ? { color } : {}">
+          {{ value }}
+        </div>
+      </button>
+    </TooltipTrigger>
+    <TooltipContent>{{ tooltip }}</TooltipContent>
+  </Tooltip>
   <button
+    v-else
     class="px-2.5 py-1.5 rounded-md text-left transition-colors min-w-[90px]"
     :class="[
       active ? 'outline-2 outline-primary' : '',
