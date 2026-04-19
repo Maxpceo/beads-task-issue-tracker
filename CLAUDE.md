@@ -139,6 +139,9 @@ Full merge cycle (PR → docs update → merge → checkout main) — skill `mer
 ### Logging
 All logging rules (no `console.*` in `app/`, `logFrontend()` for TS, `log_*!` macros for Rust, log-file paths per platform) auto-load from **[.claude/rules/logging.md](.claude/rules/logging.md)** when you Read any `.ts`/`.vue`/`.rs` file.
 
+### i18n (locale-sync)
+All UI strings go through `$t('namespace.key')` (or `t(...)` from `useI18n()`); keys must stay in sync between `i18n/locales/en.json` and `ru.json`; user content and bd identifiers (status/type/priority/labels) are NOT translated. Full rules auto-load from **[.claude/rules/locale-sync.md](.claude/rules/locale-sync.md)** when you Read any `.vue`/`.ts` in `app/` or any `i18n/locales/*.json`.
+
 ### bd Version Compatibility (orchestrator-level)
 - The app works with **any bd version** — Rust backend auto-detects via `parse_bd_version()` and version-gated helpers. Handles both pre-1.0 (`major == 0`) and 1.x+ (`major >= 1`).
 - **bd 0.57+** uses a self-managing Dolt server; auto-flush/auto-import keeps JSONL in sync. No manual `bd sync` needed — that command no longer exists; use `bd dolt push` or `bd export`.

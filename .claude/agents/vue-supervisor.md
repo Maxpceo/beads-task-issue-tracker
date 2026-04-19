@@ -450,6 +450,13 @@ public/                  # Статические файлы
 - `logFrontend('info', '[context] message')` — никогда `console.log`
 - Импорт из `~/utils/bd-api`
 
+**i18n (locale-sync):**
+- Все UI-строки через `$t('namespace.key')` — никаких литералов в `<template>` и UI-логике
+- Ключ одновременно в `i18n/locales/en.json` и `ru.json` (структуры идентичны)
+- Naming: nested dot-separated, переиспользуй namespace (`common`, `settings`, `issues`, `dashboard`, `details`, `layout`, `menu`, `notifications`, `page`, `about`)
+- Пользовательский контент и bd-идентификаторы (status/type/priority/label) НЕ переводятся
+- Подробности: `.claude/rules/locale-sync.md`
+
 **Тестирование:**
 - Vitest 4.0 + jsdom
 - Тесты в tests/ зеркалят структуру app/
