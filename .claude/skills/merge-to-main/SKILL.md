@@ -94,18 +94,31 @@ Behavior:
 
 **Important:** If the PR has no CI configured (`gh pr checks` reports "no checks reported"), treat that as a warning and ask the user whether to proceed. Do NOT silently skip.
 
-## Step 5: Merge PR
+## Step 5: Merge PR (через merge-slot)
+
+Захватить `bd merge-slot` ПЕРЕД `gh pr merge` — гарантирует, что merge + последующий `git pull origin main` (Step 6) атомарны относительно других параллельных сессий, которые тоже могут мёрджить свои PR. Слот удерживается ~10–30 секунд.
 
 ```bash
+bd merge-slot acquire
+
 gh pr merge <PR_NUMBER> --merge --delete-branch
 ```
 
-If merge fails (conflicts) → tell user and help resolve.
+**При любом исходе — release слота:** если `gh pr merge` упал (конфликты, permission denied, branch out-of-date, и т.д.) — ОБЯЗАТЕЛЬНО выполнить `bd merge-slot release` ДО того как репортить пользователю. Слот, который не освободили, заблокирует все остальные сессии до ручного release.
 
-## Step 6: Switch to main
+```bash
+# на любой ошибке merge:
+bd merge-slot release
+# затем сообщить пользователю об ошибке и помочь разрешить
+```
+
+## Step 6: Switch to main + release слота
 
 ```bash
 git checkout main && git pull origin main
+
+# Освободить merge-slot — следующая параллельная сессия может мёрджить.
+bd merge-slot release
 ```
 
 ## Step 7: Report
