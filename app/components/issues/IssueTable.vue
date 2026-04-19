@@ -21,7 +21,11 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 import { isIssueBlocked } from '~/utils/issue-helpers'
+import { formatDate, formatTime } from '~/utils/date-format'
+import { useLocale } from '~/composables/useLocale'
 import { useKeyboardNavigation } from '~/composables/useKeyboardNavigation'
+
+const { locale } = useLocale()
 
 const props = defineProps<{
   issues: Issue[]
@@ -269,25 +273,6 @@ const getShortId = (id: string) => {
     return baseId.slice(lastHyphen + 1) + indexSuffix
   }
   return id
-}
-
-const formatDate = (dateStr: string) => {
-  if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString(undefined, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  })
-}
-
-const formatTime = (dateStr: string) => {
-  if (!dateStr) return ''
-  const date = new Date(dateStr)
-  return date.toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 // Epic border colors for visual grouping (left and right)
@@ -575,15 +560,15 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
 
                   <template v-else-if="col.id === 'createdAt'">
                     <div class="flex flex-col">
-                      <span class="text-xs text-muted-foreground">{{ formatDate(group.epic.createdAt) }}</span>
-                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(group.epic.createdAt) }}</span>
+                      <span class="text-xs text-muted-foreground">{{ formatDate(group.epic.createdAt, locale) }}</span>
+                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(group.epic.createdAt, locale) }}</span>
                     </div>
                   </template>
 
                   <template v-else-if="col.id === 'updatedAt'">
                     <div class="flex flex-col">
-                      <span class="text-xs text-muted-foreground">{{ formatDate(group.epic.updatedAt) }}</span>
-                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(group.epic.updatedAt) }}</span>
+                      <span class="text-xs text-muted-foreground">{{ formatDate(group.epic.updatedAt, locale) }}</span>
+                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(group.epic.updatedAt, locale) }}</span>
                     </div>
                   </template>
 
@@ -712,15 +697,15 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
 
                     <template v-else-if="col.id === 'createdAt'">
                       <div class="flex flex-col">
-                        <span class="text-xs text-muted-foreground">{{ formatDate(child.createdAt) }}</span>
-                        <span class="text-[10px] text-muted-foreground/70">{{ formatTime(child.createdAt) }}</span>
+                        <span class="text-xs text-muted-foreground">{{ formatDate(child.createdAt, locale) }}</span>
+                        <span class="text-[10px] text-muted-foreground/70">{{ formatTime(child.createdAt, locale) }}</span>
                       </div>
                     </template>
 
                     <template v-else-if="col.id === 'updatedAt'">
                       <div class="flex flex-col">
-                        <span class="text-xs text-muted-foreground">{{ formatDate(child.updatedAt) }}</span>
-                        <span class="text-[10px] text-muted-foreground/70">{{ formatTime(child.updatedAt) }}</span>
+                        <span class="text-xs text-muted-foreground">{{ formatDate(child.updatedAt, locale) }}</span>
+                        <span class="text-[10px] text-muted-foreground/70">{{ formatTime(child.updatedAt, locale) }}</span>
                       </div>
                     </template>
 
@@ -820,15 +805,15 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
 
                   <template v-else-if="col.id === 'createdAt'">
                     <div class="flex flex-col">
-                      <span class="text-xs text-muted-foreground">{{ formatDate(issue.createdAt) }}</span>
-                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.createdAt) }}</span>
+                      <span class="text-xs text-muted-foreground">{{ formatDate(issue.createdAt, locale) }}</span>
+                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.createdAt, locale) }}</span>
                     </div>
                   </template>
 
                   <template v-else-if="col.id === 'updatedAt'">
                     <div class="flex flex-col">
-                      <span class="text-xs text-muted-foreground">{{ formatDate(issue.updatedAt) }}</span>
-                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.updatedAt) }}</span>
+                      <span class="text-xs text-muted-foreground">{{ formatDate(issue.updatedAt, locale) }}</span>
+                      <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.updatedAt, locale) }}</span>
                     </div>
                   </template>
 
@@ -929,15 +914,15 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
 
               <template v-else-if="col.id === 'createdAt'">
                 <div class="flex flex-col">
-                  <span class="text-xs text-muted-foreground">{{ formatDate(issue.createdAt) }}</span>
-                  <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.createdAt) }}</span>
+                  <span class="text-xs text-muted-foreground">{{ formatDate(issue.createdAt, locale) }}</span>
+                  <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.createdAt, locale) }}</span>
                 </div>
               </template>
 
               <template v-else-if="col.id === 'updatedAt'">
                 <div class="flex flex-col">
-                  <span class="text-xs text-muted-foreground">{{ formatDate(issue.updatedAt) }}</span>
-                  <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.updatedAt) }}</span>
+                  <span class="text-xs text-muted-foreground">{{ formatDate(issue.updatedAt, locale) }}</span>
+                  <span class="text-[10px] text-muted-foreground/70">{{ formatTime(issue.updatedAt, locale) }}</span>
                 </div>
               </template>
 

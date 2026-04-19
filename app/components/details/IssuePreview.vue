@@ -10,9 +10,12 @@ import PriorityBadge from '~/components/issues/PriorityBadge.vue'
 import ImageThumbnail from '~/components/ui/image-preview/ImageThumbnail.vue'
 import { extractNonImageRefs, isUrl } from '~/utils/markdown'
 import { isIssueBlocked } from '~/utils/issue-helpers'
+import { formatDate, formatTime } from '~/utils/date-format'
+import { useLocale } from '~/composables/useLocale'
 import type { AttachmentFile } from '~/composables/useAttachments'
 
 const { currentTheme } = useTheme()
+const { locale } = useLocale()
 const isNeon = computed(() => currentTheme.value.id === 'neon')
 
 const props = defineProps<{
@@ -341,17 +344,7 @@ const formatMetadata = (raw: string): string => {
   }
 }
 
-const formatDate = (dateStr: string) => {
-  if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString(undefined, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
+
 
 const formatEstimate = (minutes: number) => {
   if (minutes < 60) return `${minutes}m`
@@ -615,17 +608,17 @@ const formatEstimate = (minutes: number) => {
 
           <div>
             <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Created</h5>
-            <p class="text-xs">{{ formatDate(issue.createdAt) }}</p>
+            <p class="text-xs">{{ formatDate(issue.createdAt, locale) }}<span v-if="formatTime(issue.createdAt, locale)" class="text-muted-foreground">, {{ formatTime(issue.createdAt, locale) }}</span></p>
           </div>
 
           <div v-if="issue.startedAt">
             <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Started</h5>
-            <p class="text-xs">{{ formatDate(issue.startedAt) }}</p>
+            <p class="text-xs">{{ formatDate(issue.startedAt, locale) }}<span v-if="formatTime(issue.startedAt, locale)" class="text-muted-foreground">, {{ formatTime(issue.startedAt, locale) }}</span></p>
           </div>
 
           <div>
             <h5 class="text-[10px] font-medium text-sky-400 uppercase tracking-wide mb-0.5">Updated</h5>
-            <p class="text-xs">{{ formatDate(issue.updatedAt) }}</p>
+            <p class="text-xs">{{ formatDate(issue.updatedAt, locale) }}<span v-if="formatTime(issue.updatedAt, locale)" class="text-muted-foreground">, {{ formatTime(issue.updatedAt, locale) }}</span></p>
           </div>
         </div>
       </div>
