@@ -348,10 +348,21 @@
   "dashboard": {
     "kpi": {
       "workflow": "Workflow",
-      "open": "Открытые",
-      "inProgress": "В работе",
-      "blocked": "Заблокированные",
-      "all": "Все"
+      "ready": "Ready",
+      "inProgress": "In Progress",
+      "inReview": "In Review",
+      "blocked": "Blocked",
+      "deferred": "Deferred",
+      "all": "All",
+      "tooltip": {
+        "workflow": "Всё кроме закрытых и удалённых — активный поток работ",
+        "ready": "Открытые без блокеров — можно взять прямо сейчас",
+        "inProgress": "В работе прямо сейчас",
+        "inReview": "В процессе ревью: inreview, simplified, reviewed, accepted",
+        "blocked": "Заблокированы зависимостями или статусом blocked",
+        "deferred": "Отложены на потом",
+        "all": "Все задачи, включая закрытые"
+      }
     },
     "sections": {
       "charts": "Графики",

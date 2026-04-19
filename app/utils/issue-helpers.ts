@@ -441,13 +441,17 @@ export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
     total: issues.length,
     open: 0,
     inProgress: 0,
+    inReview: 0,
     blocked: 0,
     closed: 0,
+    deferred: 0,
     workflow: 0,
     ready: 0,
     byType: { bug: 0, task: 0, feature: 0, epic: 0, chore: 0, spike: 0, story: 0, milestone: 0 },
     byPriority: { p0: 0, p1: 0, p2: 0, p3: 0, p4: 0 },
   }
+
+  const REVIEW_STATUSES = new Set(['inreview', 'simplified', 'reviewed', 'accepted'])
 
   for (const issue of issues) {
     if (isIssueWorkflow(issue)) {
@@ -456,6 +460,8 @@ export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
 
     if (isIssueBlocked(issue)) {
       stats.blocked++
+    } else if (REVIEW_STATUSES.has(issue.status)) {
+      stats.inReview++
     } else {
       switch (issue.status) {
         case 'open':
@@ -466,6 +472,9 @@ export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
           break
         case 'closed':
           stats.closed++
+          break
+        case 'deferred':
+          stats.deferred++
           break
       }
     }

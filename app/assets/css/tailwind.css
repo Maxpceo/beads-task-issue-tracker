@@ -43,8 +43,10 @@
   /* Status colors */
   --color-status-open: #3b82f6;
   --color-status-in-progress: #15803d;
+  --color-status-inreview: #7c3aed;
   --color-status-blocked: #ef4444;
   --color-status-closed: #6b7280;
+  --color-status-deferred: #f59e0b;
 
   /* Type colors */
   --color-type-bug: #ef4444;
@@ -189,8 +191,10 @@
   /* Status/Type/Priority theme colors for KPI cards, charts, etc. */
   --color-status-open: #00d4ff;
   --color-status-in-progress: #00ff87;
+  --color-status-inreview: #a855f7;
   --color-status-blocked: #ff3366;
   --color-status-closed: #8892a0;
+  --color-status-deferred: #ffaa00;
 
   --color-type-bug: #ff3366;
   --color-type-task: #3399ff;

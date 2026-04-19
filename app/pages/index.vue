@@ -42,6 +42,7 @@ import {
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 
@@ -826,7 +827,7 @@ const handleRemoveLabelFilter = (label: string) => {
 }
 
 // KPI filter handlers
-type KpiFilter = 'total' | 'open' | 'in_progress' | 'blocked' | 'workflow'
+type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow'
 
 /** Set-equality: порядок элементов не важен */
 const isStatusSetEqual = (selected: IssueStatus[], expected: IssueStatus[]) => {
@@ -835,6 +836,8 @@ const isStatusSetEqual = (selected: IssueStatus[], expected: IssueStatus[]) => {
   return expected.every(s => set.has(s))
 }
 
+const REVIEW_STATUSES_KPI = ['inreview', 'simplified', 'reviewed', 'accepted'] as const
+
 const activeKpiFilter = computed<KpiFilter | null>(() => {
   const sel = filters.value.status
   if (sel.length === 0 || isStatusSetEqual(sel, workflowStatuses.value)) return 'workflow'
@@ -842,6 +845,8 @@ const activeKpiFilter = computed<KpiFilter | null>(() => {
   if (sel.length === 1 && sel[0] === 'open') return 'open'
   if (sel.length === 1 && sel[0] === 'in_progress') return 'in_progress'
   if (sel.length === 1 && sel[0] === 'blocked') return 'blocked'
+  if (sel.length === 1 && sel[0] === 'deferred') return 'deferred'
+  if (isStatusSetEqual(sel, [...REVIEW_STATUSES_KPI])) return 'in_review'
   return null
 })
 
@@ -856,6 +861,10 @@ const handleKpiClick = (kpi: KpiFilter) => {
     setStatusFilter(['in_progress'])
   } else if (kpi === 'blocked') {
     setStatusFilter(['blocked'])
+  } else if (kpi === 'deferred') {
+    setStatusFilter(['deferred'])
+  } else if (kpi === 'in_review') {
+    setStatusFilter([...REVIEW_STATUSES_KPI])
   }
 }
 
@@ -940,13 +949,17 @@ watch(
             </div>
 
             <div v-if="stats" class="space-y-4 mt-6">
-              <div class="flex flex-wrap gap-1.5 p-0.5 -m-0.5">
-                <KpiCard :title="t('dashboard.kpi.workflow')" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" @click="handleKpiClick('workflow')" />
-                <KpiCard :title="t('dashboard.kpi.open')" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="handleKpiClick('open')" />
-                <KpiCard :title="t('dashboard.kpi.inProgress')" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" @click="handleKpiClick('in_progress')" />
-                <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" @click="handleKpiClick('blocked')" />
-                <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" @click="handleKpiClick('total')" />
-            </div>
+              <TooltipProvider>
+                <div class="flex flex-wrap gap-1.5 p-0.5 -m-0.5">
+                  <KpiCard :title="t('dashboard.kpi.workflow')" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" :tooltip="t('dashboard.kpi.tooltip.workflow')" @click="handleKpiClick('workflow')" />
+                  <KpiCard :title="t('dashboard.kpi.ready')" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" :tooltip="t('dashboard.kpi.tooltip.ready')" @click="handleKpiClick('open')" />
+                  <KpiCard :title="t('dashboard.kpi.inProgress')" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" :tooltip="t('dashboard.kpi.tooltip.inProgress')" @click="handleKpiClick('in_progress')" />
+                  <KpiCard :title="t('dashboard.kpi.inReview')" :value="stats.inReview" color="var(--color-status-inreview)" :active="activeKpiFilter === 'in_review'" :tooltip="t('dashboard.kpi.tooltip.inReview')" @click="handleKpiClick('in_review')" />
+                  <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" :tooltip="t('dashboard.kpi.tooltip.blocked')" @click="handleKpiClick('blocked')" />
+                  <KpiCard :title="t('dashboard.kpi.deferred')" :value="stats.deferred" color="var(--color-status-deferred)" :active="activeKpiFilter === 'deferred'" :tooltip="t('dashboard.kpi.tooltip.deferred')" @click="handleKpiClick('deferred')" />
+                  <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" :tooltip="t('dashboard.kpi.tooltip.all')" @click="handleKpiClick('total')" />
+                </div>
+              </TooltipProvider>
             </div>
 
             <div v-if="!stats" class="flex items-center justify-center py-8">
