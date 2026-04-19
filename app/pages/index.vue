@@ -712,7 +712,6 @@ const navigationBackTarget = computed(() => {
 
 // Search handler - search is prioritary over filters (always starts empty)
 const searchValue = ref('')
-const isSearchActive = computed(() => !!searchValue.value?.trim())
 
 // Debounced br search to avoid spawning too many CLI processes
 let searchTimeout: ReturnType<typeof setTimeout> | null = null
@@ -980,7 +979,6 @@ watch(
             :multi-select-mode="multiSelectMode"
             :selected-count="selectedIds.length"
             :columns="columns"
-            :is-search-active="isSearchActive"
             :issues="paginatedIssues"
             :grouped-issues="groupedIssues"
             :selected-id="selectedIssue?.id"
@@ -1205,7 +1203,6 @@ watch(
           :multi-select-mode="multiSelectMode"
           :selected-count="selectedIds.length"
           :columns="columns"
-          :is-search-active="isSearchActive"
           :issues="paginatedIssues"
           :grouped-issues="groupedIssues"
           :selected-id="selectedIssue?.id"
