@@ -1,5 +1,28 @@
 {
   "app": {
     "title": "Beads Task-Issue Tracker"
+  },
+  "common": {
+    "ok": "ОК",
+    "cancel": "Отмена",
+    "save": "Сохранить",
+    "delete": "Удалить",
+    "close": "Закрыть",
+    "confirm": "Подтвердить",
+    "loading": "Загрузка…",
+    "error": "Ошибка",
+    "retry": "Повторить",
+    "yes": "Да",
+    "no": "Нет"
+  },
+  "settings": {
+    "title": "Настройки",
+    "language": {
+      "title": "Язык",
+      "description": "Выберите язык интерфейса. «Авто» использует системные настройки.",
+      "auto": "Авто",
+      "english": "English",
+      "russian": "Русский"
+    }
   }
 }

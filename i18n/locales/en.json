@@ -1,5 +1,28 @@
 {
   "app": {
     "title": "Beads Task-Issue Tracker"
+  },
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "close": "Close",
+    "confirm": "Confirm",
+    "loading": "Loading…",
+    "error": "Error",
+    "retry": "Retry",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": {
+      "title": "Language",
+      "description": "Choose the interface language. Auto uses your system setting.",
+      "auto": "Auto",
+      "english": "English",
+      "russian": "Русский"
+    }
   }
 }
