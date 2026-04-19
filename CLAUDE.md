@@ -20,6 +20,7 @@ Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/S
 
 ### Issues
 - Полный справочник команд bd (создание, запросы, формулы, lifecycle, worktrees): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
+- **Язык**: title, description, notes, design, acceptance — **на русском**. Английскими остаются только технические идентификаторы (имена файлов/функций, label'ы, типы, статусы, команды). Это персональный трекер Максима — он читатель, не команда/CI.
 
 ### Enrich bead with context
 
