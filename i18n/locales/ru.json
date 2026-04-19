@@ -16,7 +16,60 @@
     "yes": "Да",
     "no": "Нет",
     "remove": "Убрать",
-    "reset": "Сбросить"
+    "reset": "Сбросить",
+    "areYouSure": "Вы уверены, что хотите продолжить?",
+    "updateCheckFailed": "Не удалось проверить обновления",
+    "downloadFailed": "Не удалось загрузить обновление"
+  },
+  "page": {
+    "dashboard": "Дашборд",
+    "details": "Детали",
+    "closeDashboard": "Закрыть дашборд",
+    "openDashboard": "Открыть дашборд",
+    "closeDetails": "Закрыть детали",
+    "openDetails": "Открыть детали",
+    "failedToLoad": "Не удалось загрузить задачи",
+    "selectIssue": "Выберите задачу, чтобы увидеть детали",
+    "editContext": {
+      "new": "Новая задача",
+      "editing": "Редактирование"
+    },
+    "footer": {
+      "toggleDebug": "Переключить отладочную панель (⌘⇧L)",
+      "settings": "Настройки (⌘,)",
+      "probeTitle": "Трансляция probe включена",
+      "probeLabel": "Probe"
+    },
+    "notifications": {
+      "issueCreated": "Задача создана",
+      "issueSaved": "Задача сохранена",
+      "saveFailed": "Не удалось сохранить задачу",
+      "commentAdded": "Комментарий добавлен",
+      "commentFailed": "Не удалось добавить комментарий",
+      "attachmentsMigrated": "Вложения мигрированы",
+      "attachmentsMigratedDesc": "Ссылки и папки вложений обновлены до нового формата.",
+      "attachmentsUpdated": "Вложения обновлены",
+      "attachmentsUpdatedDesc": "Ссылки на файлы обновлены для совместимости с br CLI.",
+      "dbRepaired": "База данных восстановлена",
+      "dbRepairedDesc": "Ваши задачи успешно восстановлены.",
+      "allDbsRepaired": "Все базы восстановлены",
+      "allDbsRepairedDesc": "Восстановлено проектов: {count}.",
+      "reposFailed": "Часть проектов не удалось восстановить",
+      "reposFailedDesc": "Успешно: {success}, с ошибкой: {failed}.",
+      "migrationComplete": "Миграция завершена",
+      "migrationCompleteDesc": "Проект мигрирован на бэкенд Dolt."
+    },
+    "syncErrorTitle": "Ошибка синхронизации",
+    "syncErrorDescription": "Синхронизация завершилась со следующей ошибкой:"
+  },
+  "menu": {
+    "about": "О Beads Task-Issue Tracker",
+    "settings": "Настройки...",
+    "checkForUpdate": "Проверить обновления...",
+    "showLogs": "Показать логи...",
+    "app": "Beads Task-Issue Tracker",
+    "edit": "Правка",
+    "window": "Окно"
   },
   "about": {
     "version": "Версия {version}",

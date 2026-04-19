@@ -45,6 +45,8 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 
+const { t } = useI18n()
+
 // Composables
 const { filters, workflowStatuses, allStatuses, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
 const { columns, toggleColumn, setColumns, resetColumns } = useColumnConfig()
@@ -159,10 +161,10 @@ const handleOnboardingFolderSelect = async (path: string) => {
 // Edit context for header
 const editContext = computed(() => {
   if (isCreatingNew.value) {
-    return 'New issue'
+    return t('page.editContext.new')
   }
   if (isEditMode.value && selectedIssue.value) {
-    return 'Editing'
+    return t('page.editContext.editing')
   }
   return undefined
 })
@@ -321,10 +323,10 @@ onMounted(async () => {
       // Check attachment refs migration (may have been auto-migrated before sync)
       const migrationResult = await checkRefsMigration()
       if (migrationResult === 'just_migrated') {
-        notifySuccess('Attachments migrated', 'Attachment references and folders have been updated to the new format.')
+        notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
       } else if (migrationResult) {
         await migrateRefs()
-        notifySuccess('Attachments migrated', 'Attachment references and folders have been updated to the new format.')
+        notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
       }
 
       // Sequential: bd commands can't run concurrently (Dolt SIGSEGV on parallel access)
@@ -402,7 +404,7 @@ const handleRefresh = () => {
 const handleRepair = async () => {
   const success = await repairDatabase()
   if (success) {
-    notifySuccess('Database repaired', 'Your issues have been restored successfully.')
+    notifySuccess(t('page.notifications.dbRepaired'), t('page.notifications.dbRepairedDesc'))
     // Reload data after repair
     await fetchIssues()
     await fetchStats(issues.value)
@@ -414,19 +416,19 @@ const handleRepairAll = async () => {
   const results = await repairAll(projectPaths)
 
   if (results.failed === 0) {
-    notifySuccess('All databases repaired', `${results.success} project(s) repaired successfully.`)
+    notifySuccess(t('page.notifications.allDbsRepaired'), t('page.notifications.allDbsRepairedDesc', { count: results.success }))
     // Reload data after repair
     await fetchIssues()
     await fetchStats(issues.value)
   } else {
-    notifyError('Some repairs failed', `${results.success} succeeded, ${results.failed} failed.`)
+    notifyError(t('page.notifications.reposFailed'), t('page.notifications.reposFailedDesc', { success: results.success, failed: results.failed }))
   }
 }
 
 const handleMigrateToDolt = async () => {
   const success = await migrateToDolt()
   if (success) {
-    notifySuccess('Migration complete', 'Project has been migrated to the Dolt backend.')
+    notifySuccess(t('page.notifications.migrationComplete'), t('page.notifications.migrationCompleteDesc'))
 
     // Start change detection + polling that were deferred during migration
     if (import.meta.client) {
@@ -446,7 +448,7 @@ const handleMigrateToDolt = async () => {
 const handleMigrateRefs = async () => {
   const success = await migrateRefs()
   if (success) {
-    notifySuccess('Attachments updated', 'File references have been updated for br CLI compatibility.')
+    notifySuccess(t('page.notifications.attachmentsUpdated'), t('page.notifications.attachmentsUpdatedDesc'))
     // Reload data after migration
     await fetchIssues()
     await fetchStats(issues.value)
@@ -510,10 +512,10 @@ return
       // Check attachment refs migration (may have been auto-migrated before sync)
       const migrationResult2 = await checkRefsMigration()
       if (migrationResult2 === 'just_migrated') {
-        notifySuccess('Attachments migrated', 'Attachment references and folders have been updated to the new format.')
+        notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
       } else if (migrationResult2) {
         await migrateRefs()
-        notifySuccess('Attachments migrated', 'Attachment references and folders have been updated to the new format.')
+        notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
       }
 
       // IMPORTANT: bd commands must run sequentially — concurrent Dolt embedded access
@@ -634,20 +636,20 @@ const handleSaveIssue = async (payload: UpdateIssuePayload) => {
         selectIssue(result)
         // Fetch full issue details to get all fields
         await fetchIssue(result.id)
-        notifySuccess('Issue created')
+        notifySuccess(t('page.notifications.issueCreated'))
       }
       defaultParent.value = undefined
     } else if (selectedIssue.value) {
       await updateIssue(selectedIssue.value.id, payload)
       // Fetch full issue details to get comments and all fields
       await fetchIssue(selectedIssue.value.id)
-      notifySuccess('Issue saved')
+      notifySuccess(t('page.notifications.issueSaved'))
     }
     isEditMode.value = false
     isCreatingNew.value = false
     await fetchStats(issues.value)
   } catch {
-    notifyError('Failed to save issue')
+    notifyError(t('page.notifications.saveFailed'))
   }
 }
 
@@ -656,9 +658,9 @@ const handleAddComment = async (content: string) => {
   if (!selectedIssue.value) return
   try {
     await addComment(selectedIssue.value.id, content)
-    notifySuccess('Comment added')
+    notifySuccess(t('page.notifications.commentAdded'))
   } catch {
-    notifyError('Failed to add comment')
+    notifyError(t('page.notifications.commentFailed'))
   }
 }
 
@@ -876,7 +878,7 @@ watch(
         />
         <!-- Sidebar toggle -->
         <div class="p-2 border-b border-border flex items-center" :class="isLeftSidebarOpen ? 'justify-between' : 'justify-center'">
-          <span v-if="isLeftSidebarOpen" class="text-sm font-medium px-2">Dashboard</span>
+          <span v-if="isLeftSidebarOpen" class="text-sm font-medium px-2">{{ t('page.dashboard') }}</span>
           <Tooltip>
             <TooltipTrigger as-child>
               <Button
@@ -897,7 +899,7 @@ watch(
                 </svg>
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{{ isLeftSidebarOpen ? 'Close dashboard' : 'Open dashboard' }}</TooltipContent>
+            <TooltipContent>{{ isLeftSidebarOpen ? t('page.closeDashboard') : t('page.openDashboard') }}</TooltipContent>
           </Tooltip>
         </div>
 
@@ -908,23 +910,23 @@ watch(
             <PathSelector v-if="!showOnboarding" ref="pathSelectorRef" :is-loading="isLoading" @change="handlePathChange" @reset="handleReset" />
 
             <div v-if="issuesError && stats?.total === 0" class="mt-6 rounded-lg border border-destructive/50 bg-destructive/10 p-3">
-              <p class="text-xs font-medium text-destructive mb-1">Failed to load issues</p>
+              <p class="text-xs font-medium text-destructive mb-1">{{ t('page.failedToLoad') }}</p>
               <p class="text-xs text-muted-foreground break-words">{{ issuesError }}</p>
             </div>
 
             <div v-if="stats" class="space-y-4 mt-6">
               <div class="flex flex-wrap gap-1.5 p-0.5 -m-0.5">
-                <KpiCard title="Workflow" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" @click="handleKpiClick('workflow')" />
-                <KpiCard title="Open" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="handleKpiClick('open')" />
-                <KpiCard title="In Progress" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" @click="handleKpiClick('in_progress')" />
-                <KpiCard title="Blocked" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" @click="handleKpiClick('blocked')" />
-                <KpiCard title="All" :value="stats.total" :active="activeKpiFilter === 'total'" @click="handleKpiClick('total')" />
+                <KpiCard :title="t('dashboard.kpi.workflow')" :value="stats.workflow" color="var(--color-status-deferred)" :active="activeKpiFilter === 'workflow'" @click="handleKpiClick('workflow')" />
+                <KpiCard :title="t('dashboard.kpi.open')" :value="stats.open" color="var(--color-status-open)" :active="activeKpiFilter === 'open'" @click="handleKpiClick('open')" />
+                <KpiCard :title="t('dashboard.kpi.inProgress')" :value="stats.inProgress" color="var(--color-status-in-progress)" :active="activeKpiFilter === 'in_progress'" @click="handleKpiClick('in_progress')" />
+                <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" @click="handleKpiClick('blocked')" />
+                <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" @click="handleKpiClick('total')" />
             </div>
             </div>
 
             <div v-if="!stats" class="flex items-center justify-center py-8">
               <OnboardingCard v-if="showOnboarding" @browse="openFolderPicker" />
-              <span v-else class="text-muted-foreground text-sm">Loading...</span>
+              <span v-else class="text-muted-foreground text-sm">{{ t('common.loading') }}</span>
             </div>
           </div>
 
@@ -1054,7 +1056,7 @@ watch(
               <polyline points="15 18 9 12 15 6" />
             </svg>
           </Button>
-          <span v-if="isRightSidebarOpen" class="text-sm font-medium px-2">Details</span>
+          <span v-if="isRightSidebarOpen" class="text-sm font-medium px-2">{{ t('page.details') }}</span>
         </div>
 
         <!-- Sidebar content -->
@@ -1114,7 +1116,7 @@ watch(
               </div>
 
               <div v-else class="text-center text-muted-foreground py-8">
-                Select an issue to view details
+                {{ t('page.selectIssue') }}
               </div>
             </div>
           </ScrollArea>
@@ -1289,7 +1291,7 @@ watch(
             </div>
 
             <div v-else class="text-center text-muted-foreground py-8">
-              Select an issue to view details
+              {{ t('page.selectIssue') }}
             </div>
           </div>
         </ScrollArea>
@@ -1307,7 +1309,7 @@ watch(
         <button
           class="flex items-center gap-1.5 hover:text-foreground transition-colors"
           :class="showDebugPanel ? 'text-foreground' : ''"
-          title="Toggle Debug Panel (⌘⇧L)"
+          :title="t('page.footer.toggleDebug')"
           @click="showDebugPanel = !showDebugPanel"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1324,7 +1326,7 @@ watch(
         <!-- Settings -->
         <button
           class="flex items-center hover:text-foreground transition-colors"
-          title="Settings (⌘,)"
+          :title="t('page.footer.settings')"
           @click="showSettingsDialog = true"
         >
           <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1337,7 +1339,7 @@ watch(
         <span
           v-if="probeEnabled && isDev"
           class="flex items-center gap-1 text-green-500"
-          title="Probe broadcasting enabled"
+          :title="t('page.footer.probeTitle')"
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
@@ -1346,7 +1348,7 @@ watch(
             <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.4" />
             <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1" />
           </svg>
-          <span class="uppercase text-[10px] font-semibold tracking-wider">Probe</span>
+          <span class="uppercase text-[10px] font-semibold tracking-wider">{{ t('page.footer.probeLabel') }}</span>
         </span>
       </div>
 
@@ -1370,14 +1372,14 @@ watch(
     <!-- Sync Error Dialog -->
     <ConfirmDialog
       v-model:open="showSyncErrorDialog"
-      title="Sync Error"
-      confirm-text="OK"
+      :title="t('page.syncErrorTitle')"
+      :confirm-text="t('common.ok')"
       :show-cancel="false"
       @confirm="closeSyncErrorDialog"
     >
       <template #description>
         <p class="text-sm text-muted-foreground mb-2">
-          The sync operation failed with the following error:
+          {{ t('page.syncErrorDescription') }}
         </p>
         <pre class="text-sm text-destructive bg-muted p-3 rounded-md overflow-x-auto whitespace-pre-wrap break-words">{{ lastSyncError }}</pre>
       </template>

@@ -14,6 +14,8 @@ const demoMode = ref(false)
 let checkInterval: ReturnType<typeof setInterval> | null = null
 
 export function useUpdateChecker() {
+  const { t } = useI18n()
+
   const check = async () => {
     if (isChecking.value) return
 
@@ -25,7 +27,7 @@ export function useUpdateChecker() {
         ? await checkForUpdatesDemo()
         : await checkForUpdates()
     } catch (e) {
-      error.value = e instanceof Error ? e.message : 'Failed to check for updates'
+      error.value = e instanceof Error ? e.message : t('common.updateCheckFailed')
       logFrontend('error', '[update] Update check failed: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
     } finally {
       isChecking.value = false
@@ -76,7 +78,7 @@ export function useUpdateChecker() {
         await openReleasesPage()
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : (typeof e === 'string' ? e : 'Failed to download update')
+      const msg = e instanceof Error ? e.message : (typeof e === 'string' ? e : t('common.downloadFailed'))
       downloadError.value = msg
       logFrontend('error', `[update] Download failed: ${msg}`).catch(() => {})
       isDownloading.value = false

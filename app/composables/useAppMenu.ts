@@ -6,21 +6,20 @@ const showAboutDialog = ref(false)
 const showSettingsDialog = ref(false)
 const showDebugPanel = ref(false)
 let menuInitialized = false
+let menuLocaleWatcherInstalled = false
 
 export function useAppMenu() {
-  const initializeMenu = async () => {
-    // Only initialize once and only in Tauri environment
-    if (menuInitialized) return
-    if (typeof window === 'undefined' || (!window.__TAURI__ && !window.__TAURI_INTERNALS__)) return
+  const { t, locale } = useI18n()
 
-    menuInitialized = true
+  const buildMenu = async () => {
+    if (typeof window === 'undefined' || (!window.__TAURI__ && !window.__TAURI_INTERNALS__)) return
 
     try {
       const { Menu, Submenu, MenuItem, PredefinedMenuItem } = await import('@tauri-apps/api/menu')
 
       // App menu items
       const aboutItem = await MenuItem.new({
-        text: 'About Beads Task-Issue Tracker',
+        text: t('menu.about'),
         action: () => {
           showAboutDialog.value = true
         },
@@ -28,7 +27,7 @@ export function useAppMenu() {
       const separator1 = await PredefinedMenuItem.new({ item: 'Separator' })
 
       const settingsItem = await MenuItem.new({
-        text: 'Settings...',
+        text: t('menu.settings'),
         accelerator: 'CmdOrCtrl+,',
         action: () => {
           showSettingsDialog.value = true
@@ -36,14 +35,14 @@ export function useAppMenu() {
       })
 
       const checkUpdateItem = await MenuItem.new({
-        text: 'Check for Update...',
+        text: t('menu.checkForUpdate'),
         action: () => {
           showUpdateDialog.value = true
         },
       })
 
       const showLogsItem = await MenuItem.new({
-        text: 'Show Logs...',
+        text: t('menu.showLogs'),
         accelerator: 'CmdOrCtrl+Shift+L',
         action: () => {
           showDebugPanel.value = !showDebugPanel.value
@@ -60,7 +59,7 @@ export function useAppMenu() {
       const quitItem = await PredefinedMenuItem.new({ item: 'Quit' })
 
       const appMenu = await Submenu.new({
-        text: 'Beads Task-Issue Tracker',
+        text: t('menu.app'),
         items: [
           aboutItem,
           separator1,
@@ -88,7 +87,7 @@ export function useAppMenu() {
       const selectAllItem = await PredefinedMenuItem.new({ item: 'SelectAll' })
 
       const editMenu = await Submenu.new({
-        text: 'Edit',
+        text: t('menu.edit'),
         items: [
           undoItem,
           redoItem,
@@ -107,7 +106,7 @@ export function useAppMenu() {
       const closeItem = await PredefinedMenuItem.new({ item: 'CloseWindow' })
 
       const windowMenu = await Submenu.new({
-        text: 'Window',
+        text: t('menu.window'),
         items: [
           minimizeItem,
           maximizeItem,
@@ -124,6 +123,21 @@ export function useAppMenu() {
       await menu.setAsAppMenu()
     } catch (error) {
       logFrontend('error', '[useAppMenu] Failed to initialize app menu: ' + (error instanceof Error ? error.message : String(error))).catch(() => {})
+    }
+  }
+
+  const initializeMenu = async () => {
+    if (menuInitialized) return
+    if (typeof window === 'undefined' || (!window.__TAURI__ && !window.__TAURI_INTERNALS__)) return
+
+    menuInitialized = true
+    await buildMenu()
+
+    if (!menuLocaleWatcherInstalled) {
+      menuLocaleWatcherInstalled = true
+      watch(locale, () => {
+        buildMenu().catch(() => {})
+      })
     }
   }
 

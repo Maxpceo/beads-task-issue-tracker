@@ -16,7 +16,60 @@
     "yes": "Yes",
     "no": "No",
     "remove": "Remove",
-    "reset": "Reset"
+    "reset": "Reset",
+    "areYouSure": "Are you sure you want to continue?",
+    "updateCheckFailed": "Failed to check for updates",
+    "downloadFailed": "Failed to download update"
+  },
+  "page": {
+    "dashboard": "Dashboard",
+    "details": "Details",
+    "closeDashboard": "Close dashboard",
+    "openDashboard": "Open dashboard",
+    "closeDetails": "Close details",
+    "openDetails": "Open details",
+    "failedToLoad": "Failed to load issues",
+    "selectIssue": "Select an issue to view details",
+    "editContext": {
+      "new": "New issue",
+      "editing": "Editing"
+    },
+    "footer": {
+      "toggleDebug": "Toggle Debug Panel (⌘⇧L)",
+      "settings": "Settings (⌘,)",
+      "probeTitle": "Probe broadcasting enabled",
+      "probeLabel": "Probe"
+    },
+    "notifications": {
+      "issueCreated": "Issue created",
+      "issueSaved": "Issue saved",
+      "saveFailed": "Failed to save issue",
+      "commentAdded": "Comment added",
+      "commentFailed": "Failed to add comment",
+      "attachmentsMigrated": "Attachments migrated",
+      "attachmentsMigratedDesc": "Attachment references and folders have been updated to the new format.",
+      "attachmentsUpdated": "Attachments updated",
+      "attachmentsUpdatedDesc": "File references have been updated for br CLI compatibility.",
+      "dbRepaired": "Database repaired",
+      "dbRepairedDesc": "Your issues have been restored successfully.",
+      "allDbsRepaired": "All databases repaired",
+      "allDbsRepairedDesc": "{count} project(s) repaired successfully.",
+      "reposFailed": "Some repairs failed",
+      "reposFailedDesc": "{success} succeeded, {failed} failed.",
+      "migrationComplete": "Migration complete",
+      "migrationCompleteDesc": "Project has been migrated to the Dolt backend."
+    },
+    "syncErrorTitle": "Sync Error",
+    "syncErrorDescription": "The sync operation failed with the following error:"
+  },
+  "menu": {
+    "about": "About Beads Task-Issue Tracker",
+    "settings": "Settings...",
+    "checkForUpdate": "Check for Update...",
+    "showLogs": "Show Logs...",
+    "app": "Beads Task-Issue Tracker",
+    "edit": "Edit",
+    "window": "Window"
   },
   "about": {
     "version": "Version {version}",
