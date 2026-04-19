@@ -97,6 +97,30 @@ If the orchestrator's approach would break something, explain what you found and
 </during-implementation>
 
 <on-completion>
+🚨 **CRITICAL: RAMS findings are DIAGNOSTIC, not TERMINAL.** 🚨
+
+After running RAMS + Web Interface Guidelines reviews, you are NOT done.
+The orchestrator will NOT accept a completion report that consists only
+of a RAMS score. If you stop after RAMS without running the steps below,
+the orchestrator has to finish your job manually — which wastes the
+entire supervisor dispatch and erodes trust in the handoff contract.
+
+**The terminal state is `bd update --status inreview` AFTER `git push`.**
+**Nothing before `inreview` is "done".**
+
+Your completion report MUST include fresh evidence (actual command output +
+exit code) for each of these AFTER RAMS:
+  ✓ Tests run (exit 0)
+  ✓ Commit SHA
+  ✓ Push confirmation
+  ✓ `bd update ... --status inreview` confirmation
+
+If your context is exhausted and you cannot finish — return **BLOCKED**
+with a precise handoff note ("finished RAMS, all green; commit+push
+remaining on files X, Y, Z"). Do NOT return "DONE" after only RAMS.
+
+---
+
 WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
 
 1. **Commit ONLY your changes (НЕ использовать git add -A или git add .):**
@@ -318,8 +342,14 @@ Skill(skill="web-interface-guidelines")
 ### Workflow
 
 ```
-Implement → Run tests → Run RAMS → Run web-interface-guidelines → Fix issues → Mark inreview
+Implement → Run tests → Run RAMS → Run WIG → Fix issues → Commit → Push → Mark inreview
 ```
+
+**The step between "Fix issues" and "Mark inreview" is `git commit` + `git push`.**
+RAMS/WIG findings are DIAGNOSTIC — after fixing what's in scope, you still
+need to cut a real commit and push it. Mark inreview AFTER push, not before.
+If you return a completion report before push, the orchestrator has to
+finish the handoff manually.
 
 ### 3. Document Results on Bead
 
