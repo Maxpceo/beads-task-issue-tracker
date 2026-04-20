@@ -318,11 +318,8 @@ export function filterIssues(
   filters: { status: string[]; type: string[]; priority: string[]; assignee: string[]; search: string; labels: string[] },
   exclusions: { status: string[]; priority: string[]; type: string[]; labels: string[]; assignee: string[] },
 ): Issue[] {
-  // При активном поиске — игнорируем все фильтры и exclusions (global-search
-  // семантика Jira/Linear). Поля поиска ограничены тем, что реально приходит
-  // в `bd list --json` (id/title/description/labels). Расширение на
-  // workingNotes/acceptanceCriteria/designNotes/comments требует изменения
-  // backend-слоя (bd_list не возвращает эти поля) — см. follow-up bead.
+  // Global-search semantics (Jira/Linear): active search bypasses all
+  // filters/exclusions so the user can locate issues hidden by the current view.
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
