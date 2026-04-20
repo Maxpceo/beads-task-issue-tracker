@@ -98,7 +98,9 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 - **`land`** — «пора заканчивать», «я закончил»: close beads → commit → push via merge-slot.
 - **`merge-to-main`** — «мержим в main», «давай PR»: feature-ветка → PR → update docs → merge → checkout main.
 
-**Orchestrator execution style:** прогоняй все шаги skill'а подряд без промежуточных вопросов «запускать следующий шаг?». Один сводный отчёт по всем шагам — в самом конце, структурированный по шагам (Step 1 findings, Step 2 verdict, ...). Прерывайся вопросом ТОЛЬКО при реальной точке принятия решения вне плана: code-reviewer `NOT APPROVED` (redispatch vs force-accept), acceptance не прошёл, обнаружена проблема требующая scope-решения. «Промежуточный статус» или «следующий шаг?» — не спрашиваются.
+**Orchestrator execution style:** прогоняй все шаги skill'а подряд без промежуточных вопросов «запускать следующий шаг?». Один сводный отчёт по всем шагам — в самом конце. Прерывайся вопросом ТОЛЬКО при реальной точке принятия решения вне плана: code-reviewer `NOT APPROVED` (redispatch vs force-accept), acceptance не прошёл, обнаружена проблема требующая scope-решения. «Промежуточный статус» или «следующий шаг?» — не спрашиваются.
+
+**Формат итогового отчёта workflow-skill'а** — markdown-таблица `| Шаг | Результат |` (две колонки). В правой колонке — краткий итог шага: exit codes, ID коммитов, PR-ссылки, verdict, PASSED/SKIP/N/A. После таблицы — короткая секция «Текущее состояние» (куда перешли + open follow-up beads). Без preamble, без эмодзи, без длинных параграфов.
 
 ### Testing
 - **Run before committing**: `pnpm test` (Vitest unit tests).
