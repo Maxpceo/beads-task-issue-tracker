@@ -24,7 +24,7 @@ Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/S
 
 ### Enrich bead with context
 
-For non-trivial beads (> 20 lines OR > 1 file), right after `bd create` add context via `bd update {ID} --notes` or `--design`: files with exact paths + line ranges, current state, target state, investigation findings, pattern reference. Short title = "what and why"; notes/design = the detailed "how and where". **Skip** for trivial fixes (< 20 lines, 1 file).
+Полный heredoc-шаблон (`### Files` / `### Current state` / `### Target state` markers) + примеры + override — **[.claude/references/workflow-templates.md §1](.claude/references/workflow-templates.md)**. Hook `enforce-bead-enrichment.sh` блокирует `bd create` без markers (exempt: `--type=epic`, `--ephemeral`, `--from-markdown`/`--from-graph`/`--file`). Также блокирует Task→supervisor без enrich + PLAN-comment. Override: `SKIP_ENRICH_CHECK=1`.
 
 ### Labels
 When creating issues with `bd create`, **always** add `--label` based on which domain the issue touches. Pick 1-2 most relevant labels.
