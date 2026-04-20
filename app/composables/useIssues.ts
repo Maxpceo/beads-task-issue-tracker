@@ -86,8 +86,8 @@ export function useEpicExpand() {
 
 /**
  * Detect and notify status transitions (close, reopen, delete) between two issue snapshots.
- * @param skipNotifications — если true, уведомления полностью пропускаются (project switch).
- * Экспортируется для unit-тестирования.
+ * @param skipNotifications — when true, all notifications are suppressed (used during project switch
+ *   where diff inevitably sees previous project's issues as "deleted").
  */
 export function notifyStatusTransitions(
   oldIssues: Issue[],
@@ -111,13 +111,26 @@ export function notifyStatusTransitions(
     }
   }
 
-  // Detect deleted issues (present before, completely absent now)
   const newIds = new Set(newIssues.map(i => i.id))
   for (const old of oldIssues) {
     if (!newIds.has(old.id)) {
       notifySuccess(t('notifications.issue.deleted', { id: old.id }), old.title)
     }
   }
+}
+
+/**
+ * Project switch heuristic: old and new issue sets barely overlap relative to BOTH sizes.
+ * Covers symmetric swap and asymmetric (big→small, small→big) — a plain ratio on one side
+ * misclassifies the small→big case.
+ */
+function isProjectSwitchByOverlap(
+  oldCount: number,
+  newCount: number,
+  addedCount: number,
+): boolean {
+  const commonCount = newCount - addedCount
+  return commonCount < oldCount * 0.5 && commonCount < newCount * 0.5
 }
 
 export function useIssues() {
@@ -141,7 +154,6 @@ export function useIssues() {
     try {
       // Single call with --all to get all issues (bd >= 0.55 fixed the --all flag)
       const path = getPath()
-
       const allIssues = await bdList({ path, includeAll: true })
       const newIssues = deduplicateIssues(allIssues || [])
 
@@ -161,8 +173,11 @@ export function useIssues() {
           const existingIds = new Set(issues.value.map(i => i.id))
           const addedIds = newIssues.filter(i => !existingIds.has(i.id))
 
-          // If most IDs changed, this is a project switch — don't flash or notify
-          const isProjectSwitch = addedIds.length > issues.value.length * 0.5
+          const isProjectSwitch = isProjectSwitchByOverlap(
+            issues.value.length,
+            newIssues.length,
+            addedIds.length,
+          )
           if (!isProjectSwitch) {
             for (const issue of addedIds) {
               markAsNewlyAdded(issue.id)
@@ -271,8 +286,11 @@ export function useIssues() {
             }
           }
 
-          // If most IDs changed, this is a project switch — don't flash
-          const isProjectSwitch = addedIds.length > issues.value.length * 0.5
+          const isProjectSwitch = isProjectSwitchByOverlap(
+            issues.value.length,
+            newIssues.length,
+            addedIds.length,
+          )
           if (!isProjectSwitch) {
             for (const id of [...addedIds, ...modifiedIds]) {
               markAsNewlyAdded(id)

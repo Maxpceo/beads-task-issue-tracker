@@ -102,7 +102,6 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
   let currentPath: string | null = null
   let unlisten: (() => void) | null = null
   let lastProcessedAt = 0
-  // Флаг: если stop() вызван пока inflight — игнорируем результат onChanged
   let abandoned = false
 
   const queue = createQueuedHandler(
@@ -120,7 +119,6 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
 
   const start = async (path: string) => {
     stop()
-    // Сбросить abandoned при повторном старте для нового проекта
     abandoned = false
     currentPath = path
 
@@ -146,7 +144,7 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
   }
 
   const stop = () => {
-    // Пометить как abandoned ПЕРЕД cancel чтобы inflight onChanged не попал в UI
+    // Order matters: set abandoned before cancel() so a resolving inflight onChanged sees the flag.
     abandoned = true
     queue.cancel()
     if (unlisten) {

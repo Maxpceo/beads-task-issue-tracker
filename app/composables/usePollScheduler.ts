@@ -28,8 +28,6 @@ export function usePollScheduler(
   let lastPollEnd = 0
   let inflight = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
-  // Флаг остановки: после stop() результат inflight poll не изменяет lastPollEnd
-  // и не открывает новые deferred poll'ы
   let stopped = false
 
   // Lightweight instrumentation (plain object — no reactivity needed for counters)
@@ -61,8 +59,7 @@ export function usePollScheduler(
       }
     } finally {
       inflight = false
-      // Обновлять lastPollEnd только если не остановлены — иначе
-      // следующий requestPoll после restart будет думать что cooldown истёк
+      // Skip lastPollEnd update when stopped so requestPoll after resume() doesn't think cooldown elapsed during stop.
       if (!stopped) {
         lastPollEnd = Date.now()
       }
@@ -122,17 +119,12 @@ export function usePollScheduler(
     clearDeferred()
   }
 
-  /**
-   * Остановить планировщик: отменить deferred poll и заблокировать inflight.
-   * Вызывать при смене проекта. Для повторного старта — создать новый экземпляр
-   * или вызвать resume().
-   */
+  /** Block poll execution and cancel any pending deferred poll. Reverse with resume(). */
   const stop = () => {
     stopped = true
     clearDeferred()
   }
 
-  /** Возобновить работу после stop(). */
   const resume = () => {
     stopped = false
   }

@@ -511,14 +511,12 @@ const handlePathChange = async () => {
   isEditMode.value = false
   isCreatingNew.value = false
 
-  // Остановить polling и watcher НЕМЕДЛЕННО — до любых async операций.
-  // Это предотвращает deferred poll'ы от срабатывания пока идёт warm-up/clear:
-  // deferred timer мог быть запланирован за 2 с до switch и выстрелит в самый
-  // неподходящий момент — сравнит issues старого проекта с пустым массивом
-  // после clearIssues() и триггернёт N toast'ов «задача удалена».
-  stopScheduler()    // Отменить deferred и заблокировать inflight в scheduler
-  stopPolling()      // Остановить adaptive polling таймеры
-  await stopListening()  // Остановить watcher + пометить inflight как abandoned
+  // Order matters: stop sources before any await, otherwise a deferred poll scheduled earlier
+  // fires mid-switch and diffs old-project issues against an empty (cleared) array, producing
+  // a burst of "issue deleted" toasts.
+  stopScheduler()
+  stopPolling()
+  await stopListening()
 
   // Bail out if another handlePathChange was triggered while we awaited stopListening
   if (thisGeneration !== pathChangeGeneration) {
@@ -595,8 +593,7 @@ return
       // causes SIGSEGV crashes (nil pointer dereference in dolthub/driver).
       // Use batched fetchPollData (1 IPC: bd list + bd ready) + updateFromPollData
       // to avoid a redundant bd ready cold-start from fetchStats.
-      // skipNotifications=true: при project switch diff неизбежно покажет "удалённые"
-      // задачи из старого проекта — глушим notify для этого первого fetch.
+      // skipNotifications: cross-project diff would otherwise fire "deleted" toasts for every issue in the old project.
       const tFetchIssues = performance.now()
       const readyData = await fetchPollData({ skipNotifications: true })
       perfFetchIssues = performance.now() - tFetchIssues
@@ -626,12 +623,12 @@ return
 return
   }
 
-  // Resume change detection + polling AFTER data is loaded (avoids self-triggered cascade)
+  // Resume scheduler BEFORE startListening so the first watcher event after switch isn't dropped.
+  resumeScheduler()
   if (beadsPath.value) {
     await startListening(beadsPath.value)
     notifySelfWrite()  // Arm cooldown so backend ignores bd's recent .beads/ writes
   }
-  resumeScheduler()  // Снять блокировку scheduler'а перед запуском polling
   startPolling()
 }
 
@@ -943,7 +940,10 @@ watch(
   () => {
     // Don't refetch if search is active (search ignores filters)
     if (!filters.value.search?.trim()) {
-      fetchIssues()
+      // skipNotifications: filters are per-project (persisted) and re-materialize on project switch,
+      // firing this watch with a full diff between projects. A filter change never implies an issue
+      // was deleted, so notifications here are never meaningful.
+      fetchIssues(false, false, { skipNotifications: true })
     }
   }
 )
