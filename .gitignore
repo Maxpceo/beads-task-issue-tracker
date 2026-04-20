@@ -48,6 +48,7 @@ coverage
 .serena/
 # bd worktree
 slot-hide/
+.worktrees/
 
 # BMAD methodology — personal planning tooling, not product code
 _bmad/

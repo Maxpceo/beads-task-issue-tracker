@@ -99,6 +99,8 @@ bd merge-slot release           # Освободить
 
 **Зачем:** без worktrees несколько сессий могут одновременно делать `git push` на одну ветку → race condition и non-fast-forward отказы. Slot гарантирует, что push сериализуется.
 
+**Stale worktree guard:** хук `enforce-worktree-fresh-vs-main.sh` блокирует commit в worktree, отставшем от origin/main с пересечением staged-файлов. Escape: `CLAUDE_SKIP_STALE_CHECK=1`. Детали: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
+
 ### Session Completion (Landing the Plane)
 All steps mandatory. Work is NOT complete until `git push` succeeds.
 1. File issues for remaining work.
