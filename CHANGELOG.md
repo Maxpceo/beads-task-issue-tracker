@@ -2,8 +2,8 @@
 
 ## [Unreleased]
 
-### New Features
-- **Global search bypasses active filters**: when the search field is non-empty, active status/type/priority/assignee/label filters and exclusions are ignored — matching Jira/Linear semantics so closed or filtered-out issues are always reachable by search. Search covers 8 fields: `id`, `title`, `description`, `labels`, `type`, `status`, `priority`, and `assignee`. Empty search restores normal filter behavior.
+### Changed
+- **Global search bypasses active filters** (`beads-task-issue-tracker-kqc`): when the toolbar search field is non-empty, active `status/type/priority/assignee/label` filters and exclusions are ignored — matching Jira/Linear semantics so closed or filtered-out issues stay reachable. Search covers 4 fields: `id`, `title`, `description`, `labels[]` (case-insensitive substring). Fields `workingNotes/acceptanceCriteria/designNotes/comments` are not included because `bd list --json` does not return them; extending the set requires backend work — tracked as follow-up spike `beads-task-issue-tracker-du6`. Empty search preserves previous filter behaviour.
 
 ### Fixed
 - **Hook escape hatches теперь работают inline из Bash tool** (follow-up эпика `a4q`): `CLAUDE_SKIP_STALE_CHECK=1 git commit ...` и `SKIP_ENRICH_CHECK=1 bd create ...` раньше не обходили хуки, потому что Claude Code запускает hook отдельным процессом ДО исполнения Bash tool'а — inline ENV-префикс виден только дочернему shell'у команды, не хуку. Хуки `enforce-worktree-fresh-vs-main.sh` и `enforce-bead-enrichment.sh` (Bash matcher) теперь дополнительно парсят `COMMAND` на inline-префикс через регулярку с shell-token boundaries. Env-переменная на уровне Claude Code процесса работает как раньше. Найдено smoke-тестом в свежей сессии (см. `.claude/plans/a4q-test-results.md` B6).
