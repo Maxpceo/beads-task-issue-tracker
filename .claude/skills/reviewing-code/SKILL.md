@@ -12,6 +12,8 @@ inreview → simplified → reviewed → accepted → closed
            Step 1       Step 2     Step 3     Step 4
 ```
 
+Execution style для всех workflow-skills — см. CLAUDE.md § «Workflow Skills» (без промежуточных вопросов, один отчёт в конце, вопрос только на реальной точке решения).
+
 В начале **проверь** что текущий статус bead'а действительно `inreview`:
 ```bash
 bd show {BEAD_ID} --json | jq -r '.[0].status'

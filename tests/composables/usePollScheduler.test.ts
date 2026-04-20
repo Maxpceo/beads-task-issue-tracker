@@ -113,4 +113,39 @@ describe('usePollScheduler', () => {
     await vi.advanceTimersByTimeAsync(200)
     expect(pollFn).toHaveBeenCalledTimes(1) // no deferred poll ran
   })
+
+  it('stop() cancels deferred poll and blocks new polls', async () => {
+    const { pollFn, scheduler } = setup({ minInterval: 100 })
+
+    scheduler.requestPoll()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pollFn).toHaveBeenCalledTimes(1)
+
+    // Запланировать deferred, потом остановить
+    scheduler.requestPoll() // deferred — слишком рано
+    scheduler.stop()
+
+    await vi.advanceTimersByTimeAsync(200)
+    // Deferred не должен сработать после stop()
+    expect(pollFn).toHaveBeenCalledTimes(1)
+
+    // Новые requestPoll тоже должны быть заблокированы
+    scheduler.requestPoll()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(pollFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('resume() после stop() разрешает новые poll', async () => {
+    const { pollFn, scheduler } = setup({ minInterval: 100 })
+
+    scheduler.stop()
+    scheduler.requestPoll()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(pollFn).toHaveBeenCalledTimes(0) // заблокировано
+
+    scheduler.resume()
+    scheduler.requestPoll()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pollFn).toHaveBeenCalledTimes(1) // разблокировано
+  })
 })

@@ -1,5 +1,7 @@
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Issue, CreateIssuePayload, UpdateIssuePayload } from '~/types/issue'
+import { useNotification } from '~/composables/useNotification'
 import { bdList, bdCount, bdShow, bdCreate, bdUpdate, bdClose, bdDelete, bdAddComment, bdAddDependency, bdRemoveDependency, bdAddRelation, bdRemoveRelation, bdPurgeOrphanAttachments, bdPollData, bdPollDataCached, bdSearch, bdLabelAdd, bdLabelRemove, logFrontend, type BdListOptions, type PollData } from '~/utils/bd-api'
 import { useProjectStorage } from '~/composables/useProjectStorage'
 import {
@@ -84,12 +86,17 @@ export function useEpicExpand() {
 
 /**
  * Detect and notify status transitions (close, reopen, delete) between two issue snapshots.
+ * @param skipNotifications — when true, all notifications are suppressed (used during project switch
+ *   where diff inevitably sees previous project's issues as "deleted").
  */
-function notifyStatusTransitions(
+export function notifyStatusTransitions(
   oldIssues: Issue[],
   newIssues: Issue[],
   t: (key: string, params?: Record<string, unknown>) => string,
+  skipNotifications = false,
 ) {
+  if (skipNotifications) return
+
   const { success: notifySuccess } = useNotification()
   const oldStatusMap = new Map(oldIssues.map(i => [i.id, { status: i.status }]))
 
@@ -104,13 +111,26 @@ function notifyStatusTransitions(
     }
   }
 
-  // Detect deleted issues (present before, completely absent now)
   const newIds = new Set(newIssues.map(i => i.id))
   for (const old of oldIssues) {
     if (!newIds.has(old.id)) {
       notifySuccess(t('notifications.issue.deleted', { id: old.id }), old.title)
     }
   }
+}
+
+/**
+ * Project switch heuristic: old and new issue sets barely overlap relative to BOTH sizes.
+ * Covers symmetric swap and asymmetric (big→small, small→big) — a plain ratio on one side
+ * misclassifies the small→big case.
+ */
+function isProjectSwitchByOverlap(
+  oldCount: number,
+  newCount: number,
+  addedCount: number,
+): boolean {
+  const commonCount = newCount - addedCount
+  return commonCount < oldCount * 0.5 && commonCount < newCount * 0.5
 }
 
 export function useIssues() {
@@ -125,7 +145,7 @@ export function useIssues() {
   // Helper to get the current path (for IPC or web)
   const getPath = () => beadsPath.value && beadsPath.value !== '.' ? beadsPath.value : undefined
 
-  const fetchIssues = async (ignoreFilters = false, silent = false) => {
+  const fetchIssues = async (ignoreFilters = false, silent = false, options?: { skipNotifications?: boolean }) => {
     if (!silent) {
       isLoading.value = true
     }
@@ -134,7 +154,6 @@ export function useIssues() {
     try {
       // Single call with --all to get all issues (bd >= 0.55 fixed the --all flag)
       const path = getPath()
-
       const allIssues = await bdList({ path, includeAll: true })
       const newIssues = deduplicateIssues(allIssues || [])
 
@@ -154,14 +173,17 @@ export function useIssues() {
           const existingIds = new Set(issues.value.map(i => i.id))
           const addedIds = newIssues.filter(i => !existingIds.has(i.id))
 
-          // If most IDs changed, this is a project switch — don't flash or notify
-          const isProjectSwitch = addedIds.length > issues.value.length * 0.5
+          const isProjectSwitch = isProjectSwitchByOverlap(
+            issues.value.length,
+            newIssues.length,
+            addedIds.length,
+          )
           if (!isProjectSwitch) {
             for (const issue of addedIds) {
               markAsNewlyAdded(issue.id)
             }
 
-            notifyStatusTransitions(issues.value, newIssues, t)
+            notifyStatusTransitions(issues.value, newIssues, t, options?.skipNotifications)
           }
         }
         issues.value = newIssues
@@ -207,8 +229,10 @@ export function useIssues() {
    * Fetch all poll data in a single batched IPC call.
    * Used by the polling system for lower overhead (1 IPC instead of 3).
    * Returns the ready issues for dashboard use.
+   * @param options.skipNotifications — передаётся true при project switch чтобы заглушить
+   *   «задача удалена» toast'ы, вызванные diff'ом между проектами.
    */
-  const fetchPollData = async (): Promise<Issue[] | null> => {
+  const fetchPollData = async (options?: { skipNotifications?: boolean }): Promise<Issue[] | null> => {
     error.value = null
     const perfStart = performance.now()
     let perfIpc = 0
@@ -262,13 +286,16 @@ export function useIssues() {
             }
           }
 
-          // If most IDs changed, this is a project switch — don't flash
-          const isProjectSwitch = addedIds.length > issues.value.length * 0.5
+          const isProjectSwitch = isProjectSwitchByOverlap(
+            issues.value.length,
+            newIssues.length,
+            addedIds.length,
+          )
           if (!isProjectSwitch) {
             for (const id of [...addedIds, ...modifiedIds]) {
               markAsNewlyAdded(id)
             }
-            notifyStatusTransitions(issues.value, newIssues, t)
+            notifyStatusTransitions(issues.value, newIssues, t, options?.skipNotifications)
           }
         }
         issues.value = newIssues

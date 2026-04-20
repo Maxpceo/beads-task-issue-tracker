@@ -28,6 +28,7 @@ export function usePollScheduler(
   let lastPollEnd = 0
   let inflight = false
   let deferredTimer: ReturnType<typeof setTimeout> | null = null
+  let stopped = false
 
   // Lightweight instrumentation (plain object — no reactivity needed for counters)
   const stats = {
@@ -51,12 +52,17 @@ export function usePollScheduler(
     }
     inflight = true
     try {
-      await pollFn()
-      stats.executed++
-      recordPollDecision('executed')
+      if (!stopped) {
+        await pollFn()
+        stats.executed++
+        recordPollDecision('executed')
+      }
     } finally {
       inflight = false
-      lastPollEnd = Date.now()
+      // Skip lastPollEnd update when stopped so requestPoll after resume() doesn't think cooldown elapsed during stop.
+      if (!stopped) {
+        lastPollEnd = Date.now()
+      }
     }
   }
 
@@ -113,10 +119,22 @@ export function usePollScheduler(
     clearDeferred()
   }
 
+  /** Block poll execution and cancel any pending deferred poll. Reverse with resume(). */
+  const stop = () => {
+    stopped = true
+    clearDeferred()
+  }
+
+  const resume = () => {
+    stopped = false
+  }
+
   return {
     requestPoll,
     requestImmediatePoll,
     cancel,
+    stop,
+    resume,
     stats,
   }
 }
