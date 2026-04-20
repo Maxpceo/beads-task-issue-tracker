@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Project Nature
+
+Трекер задач **для AI-агентов** (Claude Code, supervisor'ы, reviewer'ы). Человек — постановщик; **~99% контента** в issues (title, description, notes, design, acceptance, comments) заполняют агенты.
+
 ## Context Documents
 
 - **[.claude/codebase-map.md](.claude/codebase-map.md)** — Architecture, pages, components, composables, utils, Tauri commands, types, data flow.
