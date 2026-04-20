@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Hook escape hatches теперь работают inline из Bash tool** (follow-up эпика `a4q`): `CLAUDE_SKIP_STALE_CHECK=1 git commit ...` и `SKIP_ENRICH_CHECK=1 bd create ...` раньше не обходили хуки, потому что Claude Code запускает hook отдельным процессом ДО исполнения Bash tool'а — inline ENV-префикс виден только дочернему shell'у команды, не хуку. Хуки `enforce-worktree-fresh-vs-main.sh` и `enforce-bead-enrichment.sh` (Bash matcher) теперь дополнительно парсят `COMMAND` на inline-префикс через регулярку с shell-token boundaries. Env-переменная на уровне Claude Code процесса работает как раньше. Найдено smoke-тестом в свежей сессии (см. `.claude/plans/a4q-test-results.md` B6).
+
 ### Removed
 - **`.claude/skills/react-best-practices/`** (`beads-task-issue-tracker-7g3`, child #5 эпика `a4q`): удалён как нерелевантный — проект на Vue 3 / Nuxt 4. Эквивалент для React (если когда-нибудь понадобится) уже доступен через plugin `vercel-react-best-practices` + `vercel-composition-patterns`. Дублирование убрано.
 
