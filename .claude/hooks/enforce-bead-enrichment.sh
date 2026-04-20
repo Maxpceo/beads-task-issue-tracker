@@ -21,11 +21,21 @@
 
 INSTALL_DATE="2026-04-20"
 
-# Global kill-switch
+# Global kill-switch из env процесса hook'а
 [[ "$SKIP_ENRICH_CHECK" == "1" ]] && exit 0
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
+
+# Inline-префикс SKIP_ENRICH_CHECK=1 в COMMAND: hook запускается отдельным процессом
+# до исполнения Bash tool'а, inline ENV-префикс виден только дочернему shell'у команды,
+# не hook'у. Для Bash matcher'а парсим вручную.
+if [[ "$TOOL" == "Bash" ]]; then
+  CMD_PREFIX_CHECK=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+  if echo "$CMD_PREFIX_CHECK" | grep -qE '(^|[[:space:];&|(])SKIP_ENRICH_CHECK=1([[:space:]]|$)'; then
+    exit 0
+  fi
+fi
 
 # ============================================================
 # BRANCH C — Bash matcher (bd create без embedded enrichment)

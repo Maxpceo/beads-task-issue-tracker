@@ -17,7 +17,7 @@
 # коммитом origin/main может уйти дальше — это известное ограничение.
 #
 
-# Escape hatch первым делом
+# Escape hatch из env процесса hook'а (работает, если Claude Code CLI запущен с этой переменной)
 [[ "${CLAUDE_SKIP_STALE_CHECK:-}" == "1" ]] && exit 0
 
 INPUT=$(cat)
@@ -28,6 +28,13 @@ TOOL_NAME=$(printf '%s' "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 
 COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null)
 [[ -z "$COMMAND" ]] && exit 0
+
+# Escape hatch inline-префиксом в COMMAND (CLAUDE_SKIP_STALE_CHECK=1 git commit ...).
+# Hook запускается отдельным процессом до исполнения Bash tool'а, поэтому inline ENV-префикс
+# виден только дочернему shell'у команды — не hook'у. Парсим вручную.
+if echo "$COMMAND" | grep -qE '(^|[[:space:];&|(])CLAUDE_SKIP_STALE_CHECK=1([[:space:]]|$)'; then
+  exit 0
+fi
 
 # Claude Code запускает хуки с CWD процесса = project root, не CWD Bash tool'а.
 # Для корректной работы git-команд в worktree читаем .cwd из envelope.
