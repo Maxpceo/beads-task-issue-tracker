@@ -136,6 +136,8 @@ const hasProjects = computed(() => projects.value.length > 0)
           :aria-activedescendant="results.length > 0 ? `palette-item-${focusedIndex}` : undefined"
           :aria-expanded="results.length > 0"
           type="text"
+          autocomplete="off"
+          spellcheck="false"
           :placeholder="t('commandPalette.placeholder')"
           class="flex-1 py-3 text-sm bg-transparent outline-none placeholder:text-muted-foreground"
           @keydown="handleKey"
@@ -173,7 +175,7 @@ const hasProjects = computed(() => projects.value.length > 0)
           id="palette-list"
           role="listbox"
           :aria-label="t('commandPalette.title')"
-          class="max-h-80 overflow-y-auto py-1"
+          class="max-h-80 overflow-y-auto overscroll-contain py-1"
         >
           <li
             v-for="(r, i) in results"
@@ -198,10 +200,10 @@ const hasProjects = computed(() => projects.value.length > 0)
             <div class="flex items-center gap-1 shrink-0">
               <!-- Status badge -->
               <span
-                class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium"
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium break-all"
                 :class="statusClass(r.issue.status)"
               >
-                {{ r.issue.status.replace('_', '\u200b_') }}
+                {{ r.issue.status }}
               </span>
 
               <!-- Priority badge -->
@@ -226,6 +228,8 @@ const hasProjects = computed(() => projects.value.length > 0)
         <!-- Errors badge -->
         <div
           v-if="errors.length > 0"
+          role="status"
+          aria-live="polite"
           class="px-3 py-1.5 border-t text-[11px] text-destructive bg-destructive/5 flex items-center gap-1"
         >
           <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
