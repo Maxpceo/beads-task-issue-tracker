@@ -318,19 +318,21 @@ export function filterIssues(
   filters: { status: string[]; type: string[]; priority: string[]; assignee: string[]; search: string; labels: string[] },
   exclusions: { status: string[]; priority: string[]; type: string[]; labels: string[]; assignee: string[] },
 ): Issue[] {
-  let result = issues
-
-  // Text search filter
+  // Global-search semantics (Jira/Linear): active search bypasses all
+  // filters/exclusions so the user can locate issues hidden by the current view.
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
-    result = result.filter(
+    return issues.filter(
       (issue) =>
         issue.title.toLowerCase().includes(search) ||
         issue.id.toLowerCase().includes(search) ||
-        issue.description?.toLowerCase().includes(search),
+        issue.description?.toLowerCase().includes(search) ||
+        issue.labels?.some(l => l.toLowerCase().includes(search)),
     )
   }
+
+  let result = issues
 
   // Status filter (default: WORKFLOW view)
   if (filters.status.length > 0) {
