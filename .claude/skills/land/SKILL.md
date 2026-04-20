@@ -57,8 +57,13 @@ git add .beads/ && git diff --cached --quiet || git commit -m "sync beads"
 
 Push выполняется через `bd merge-slot` для сериализации с параллельными сессиями — две сессии не могут одновременно `pull --rebase && push` и создать cascading-конфликты.
 
+**Важно: если `bd merge-slot acquire` упал (non-zero exit, `Slot held by X` или другая ошибка) — STOP, НЕ вызывай `git pull --rebase && git push`.** Merge-slot advisory: `git push` не знает про него и отправит коммиты без сериализации, создавая гонку с параллельной сессией (non-fast-forward, cascading rebase). Покажи пользователю `bd show beads-<repo>-merge-slot` и спроси (wait / queue `--wait` / abort). Без явного согласия не форсируй.
+
 ```bash
-bd merge-slot acquire
+if ! bd merge-slot acquire; then
+  bd show beads-<repo>-merge-slot  # покажи holder
+  # STOP. Спросить пользователя, не делать git push.
+fi
 git pull --rebase && git push && echo "===OK===" && git log --oneline -3
 bd merge-slot release
 ```
