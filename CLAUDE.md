@@ -59,24 +59,9 @@ Examples:
 
 ### Bead Status Lifecycle
 
-bd 1.x использует структурированные статусы. Review chain отслеживается через `bd query "status=..."`.
+bd 1.x lifecycle: `open → in_progress → inreview → simplified → reviewed → accepted → closed`. Supervisor ставит `in_progress` (через `--claim`) и `inreview` (после commit+push); orchestrator — `simplified`/`reviewed`/`accepted`/`closed` через skill **`reviewing-code`**. Хук `block-supervisor-close-and-signing.sh` блокирует попытки supervisor'ов вызывать `bd close` или ставить orchestrator-статусы.
 
-```
-open → in_progress → inreview → simplified → reviewed → accepted → closed
-  ↑        ↑            ↑           ↑           ↑          ↑         ↑
-create  --claim     supervisor  orchestr.   orchestr.  orchestr.  bd close
-                    после push  после       после      после     --suggest-next
-                                simplify    review     acceptance
-```
-
-**Кто что ставит:**
-- `in_progress` → supervisor через `bd update {ID} --claim` (атомарный claim: assignee + in_progress = lock).
-- `inreview` → supervisor после commit+push.
-- `simplified` / `reviewed` / `accepted` / `closed` → **orchestrator** (code-simplifier / code-reviewer APPROVED / acceptance checks / `bd close --suggest-next`).
-
-Supervisor'ы НЕ ставят `simplified`/`reviewed`/`accepted` и не вызывают `bd close` — это работа orchestrator'а. Хук `block-supervisor-close-and-signing.sh` блокирует попытки.
-
-Сокращённые пути и fast path: **[.claude/references/review-chain.md](.claude/references/review-chain.md)**. Полный справочник команд bd + запросы + формулы: **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
+Сокращённые пути, fast path и hook-детали: **[.claude/references/review-chain.md](.claude/references/review-chain.md)**. Полный справочник команд: **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
 
 ### bd todo vs bd create
 
@@ -89,41 +74,24 @@ Supervisor'ы НЕ ставят `simplified`/`reviewed`/`accepted` и не вы�
 
 ### Merge-slot для параллельных сессий
 
-```bash
-bd merge-slot acquire           # Захватить (ждёт если занято)
-git pull --rebase && git push
-bd merge-slot release           # Освободить
-```
-
-Инициализация (один раз на проект): `bd merge-slot create`. Slot: `beads-task-issue-tracker-merge-slot`.
-
-**Зачем:** без worktrees несколько сессий могут одновременно делать `git push` на одну ветку → race condition и non-fast-forward отказы. Slot гарантирует, что push сериализуется.
-
-**Stale worktree guard:** хук `enforce-worktree-fresh-vs-main.sh` блокирует commit в worktree, отставшем от origin/main с пересечением staged-файлов. Escape: `CLAUDE_SKIP_STALE_CHECK=1`. Детали: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
+Merge-slot сериализует `git push` между параллельными сессиями (без него гонка → non-fast-forward). Commit+push внутри сессии — skill **`land`**. Финальный PR → merge в main — skill **`merge-to-main`**. Инициализация: `bd merge-slot create` (один раз на проект). Stale worktree guard (`enforce-worktree-fresh-vs-main.sh`, escape `CLAUDE_SKIP_STALE_CHECK=1`) + детали worktrees: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
 
 ### Session Completion (Landing the Plane)
-All steps mandatory. Work is NOT complete until `git push` succeeds.
-1. File issues for remaining work.
-2. Run quality gates (if code changed): `pnpm test && npx vue-tsc --noEmit`.
-3. Close finished issues — `bd close <id> --suggest-next`.
-4. **Update CHANGELOG.md** — entries under `[Unreleased]` for all code changes in this session.
-5. Commit only files you changed: `git add file1 file2 ...` (NEVER `git add -A`/`git add .`).
-6. **Push via merge-slot:**
-   ```bash
-   bd merge-slot acquire
-   git pull --rebase && git push
-   bd merge-slot release
-   ```
-7. Verify: `git status` must show "up to date with origin".
+
+Завершение сессии (close beads, quality gates, commit, push via merge-slot) — skill **`land`**. Quality gates: `pnpm test && npx vue-tsc --noEmit`. CHANGELOG.md обязателен под `[Unreleased]` для всех code-изменений. Hook `block-git-add-all.sh` запрещает `git add -A`/`git add .` — указывай файлы по именам.
 
 ### Before Merge to main
-**MANDATORY checklist** — do not merge without:
-1. Tests pass: `pnpm test && npx vue-tsc --noEmit`.
-2. `CHANGELOG.md` updated (under `[Unreleased]` or version heading).
-3. `README.md` reflects any user-facing changes.
-4. All beads closed.
 
-Full merge cycle (PR → docs update → merge → checkout main) — skill `merge-to-main`.
+Перед merge в main: tests pass, CHANGELOG + README обновлены (если user-facing), все beads закрыты. Полный цикл (PR → docs update → merge → checkout main) — skill **`merge-to-main`**.
+
+### Workflow Skills
+
+Auto-trigger по триггер-фразам, процедуры в `.claude/skills/`:
+- **`claiming-bead`** — «возьми <ID>», «делай <ID>», «автономно <ID>»: claim + auto Plan Mode.
+- **`pre-dispatch`** — после approved плана: собирает BRANCH/START_COMMIT, формирует supervisor prompt.
+- **`managing-epics`** — «создай эпик», «cross-domain задача»: design doc → children → sequential dispatch.
+- **`reviewing-code`** — bead в `inreview` / «запусти ревью»: simplify → review → RAMS/WIG → locale-sync → acceptance → close.
+- **`land`** — «пора заканчивать», «я закончил»: close beads → commit → push via merge-slot.
 
 ### Testing
 - **Run before committing**: `pnpm test` (Vitest unit tests).

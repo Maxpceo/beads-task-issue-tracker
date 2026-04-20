@@ -1,69 +1,44 @@
 ---
 name: frontend-reviews
-description: Mandatory RAMS accessibility + Web Interface Guidelines reviews on modified Vue components before marking inreview.
+description: RAMS accessibility + Web Interface Guidelines выполняются orchestrator'ом через skill `reviewing-code` после `inreview` (plugin skills не наследуются subagent'ами).
 paths:
   - "app/components/**/*.vue"
   - "app/pages/**/*.vue"
 ---
 
-## Mandatory: Frontend Reviews (RAMS + Web Interface Guidelines)
+## Frontend Reviews (RAMS + WIG) — orchestrator step
 
-<CRITICAL-REQUIREMENT>
-You MUST run BOTH review skills on ALL modified component files BEFORE marking the task as complete.
+**Важно:** RAMS и web-interface-guidelines — это plugin skills. Subagent'ы (vue-supervisor и пр.) их **не наследуют** и не могут вызывать `Skill()`. Поэтому supervisor НЕ запускает RAMS/WIG.
 
-This is NOT optional. Before marking `inreview`:
+### Supervisor workflow (внутри subagent)
 
-### 1. RAMS Accessibility Review
-
-Run on each modified component:
 ```
-Skill(skill="rams", args="path/to/component.vue")
+Implement → Run pnpm test + vue-tsc --noEmit → Commit → Mark inreview (через --status inreview)
 ```
 
-**What RAMS Checks:**
-| Category | Issues Caught |
-|----------|---------------|
-| **Critical** | Missing alt text, buttons without accessible names, inputs without labels |
-| **Serious** | Missing focus outlines, no keyboard handlers, color-only information |
-| **Moderate** | Heading hierarchy issues, positive tabIndex values |
-| **Visual** | Spacing inconsistencies, contrast issues, missing states |
+После этого supervisor завершает работу. Любой результат RAMS/WIG из supervisor body — устаревший хардкод.
 
-### 2. Web Interface Guidelines Review
+### Orchestrator workflow (после возврата supervisor'а)
 
-Run after implementing UI:
+Запускается skill `reviewing-code`:
+
 ```
+inreview → simplify → code review (двухэтапный) → RAMS + WIG для каждого .vue в diff → locale-sync → acceptance → close
+```
+
+Конкретные команды:
+
+```python
+# Для каждого модифицированного компонента:
+Skill(skill="rams", args="path/to/Component.vue")
 Skill(skill="web-interface-guidelines")
 ```
 
-**What It Checks:**
-- Vercel Web Interface Guidelines compliance
-- Design system consistency
-- Component patterns and best practices
-- Layout and spacing standards
-
-### Workflow
-
-```
-Implement → Run tests → Run RAMS → Run web-interface-guidelines → Fix issues → Mark inreview
-```
-
-### 3. Document Results on Bead
-
-After running both reviews, add a comment to the bead:
+**Audit trail в bead:**
 ```bash
 bd comments add {BEAD_ID} "Reviews: RAMS 95/100, WIG passed. Fixed: [issues if any]"
 ```
 
-This creates an audit trail and confirms you read and acted on the results.
+Если RAMS находит CRITICAL accessibility issues или WIG — violations → orchestrator делает redispatch vue-supervisor с fix list.
 
-### Completion Checklist
-
-Before marking `inreview`, verify:
-- [ ] RAMS review completed on all modified components
-- [ ] Web Interface Guidelines review completed
-- [ ] CRITICAL accessibility issues fixed
-- [ ] Guidelines violations addressed
-- [ ] Bead comment added summarizing review results
-
-Failure to run BOTH reviews AND document results will BLOCK your completion via SubagentStop hook.
-</CRITICAL-REQUIREMENT>
+Полный workflow: `.claude/skills/reviewing-code/SKILL.md` Step 2.5.

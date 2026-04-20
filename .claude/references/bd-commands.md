@@ -75,6 +75,8 @@ bd worktree create name --branch branch           # Worktree для паралл
 bd merge-slot acquire / release                   # Сериализация push (см. L1 CLAUDE.md)
 ```
 
+В сессии: push через skill **`land`**. Финальный merge в main: skill **`merge-to-main`**. Оба используют `bd merge-slot`.
+
 ## Lifecycle Hygiene
 
 ```bash

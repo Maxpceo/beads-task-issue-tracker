@@ -176,6 +176,8 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    **Tests field is subject to the Iron Law (see `.claude/skills/subagents-discipline/SKILL.md`).** Banned: "tests pass", "should work", "probably OK". Required: real command, real exit code, real output excerpt.
 
 The SubagentStop hook verifies: no unpushed commits, bead status updated, completion format present.
+
+> Note: последовательность commit + inreview + push выше — это inline-версия процедуры `land`. Orchestrator после возврата может запустить skill `land` для финального закрытия других beads сессии; полный review chain (simplify → review → accept → close) — через skill `reviewing-code`.
 </on-completion>
 
 <banned>
