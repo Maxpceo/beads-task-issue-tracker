@@ -97,27 +97,17 @@ If the orchestrator's approach would break something, explain what you found and
 </during-implementation>
 
 <on-completion>
-🚨 **CRITICAL: RAMS findings are DIAGNOSTIC, not TERMINAL.** 🚨
+🚨 **Supervisor НЕ запускает RAMS / Web Interface Guidelines.** 🚨
 
-After running RAMS + Web Interface Guidelines reviews, you are NOT done.
-The orchestrator will NOT accept a completion report that consists only
-of a RAMS score. If you stop after RAMS without running the steps below,
-the orchestrator has to finish your job manually — which wastes the
-entire supervisor dispatch and erodes trust in the handoff contract.
+RAMS и WIG — это plugin skills; subagent'ы их **не наследуют** и не могут вызывать `Skill()`. После `inreview` orchestrator запускает skill `reviewing-code`, который делает RAMS + WIG + locale-sync + acceptance. Подробнее: `.claude/rules/frontend-reviews.md`.
 
-**The terminal state is `bd update --status inreview` AFTER `git push`.**
-**Nothing before `inreview` is "done".**
+**Терминал supervisor'а: `bd update --status inreview` ПОСЛЕ `git push`.** Всё, что до `inreview` — не "done". Если контекст закончился — возврат **BLOCKED** с handoff-нотой.
 
-Your completion report MUST include fresh evidence (actual command output +
-exit code) for each of these AFTER RAMS:
+Completion report обязан содержать свежие evidence (актуальный output + exit code) для:
   ✓ Tests run (exit 0)
   ✓ Commit SHA
   ✓ Push confirmation
   ✓ `bd update ... --status inreview` confirmation
-
-If your context is exhausted and you cannot finish — return **BLOCKED**
-with a precise handoff note ("finished RAMS, all green; commit+push
-remaining on files X, Y, Z"). Do NOT return "DONE" after only RAMS.
 
 ---
 
@@ -177,7 +167,7 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    **Evidence:**
    - Did I actually run the commands I'm about to cite in `Tests:`? (Iron Law)
 
-   Note: vue-supervisor has additional mandatory frontend reviews (RAMS + Web Interface Guidelines) described in the CRITICAL-REQUIREMENT section. Self-review is the baseline; RAMS/WIG are additional.
+   Note: RAMS + Web Interface Guidelines — orchestrator step (skill `reviewing-code` Step 2.5). Supervisor выполняет только self-review.
 
    If you find problems on self-review — FIX them before reporting.
 
@@ -205,6 +195,8 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    **Tests field is subject to the Iron Law (see `.claude/skills/subagents-discipline/SKILL.md`).** Banned: "tests pass", "should work", "probably OK". Required: real command, real exit code, real output excerpt.
 
 The SubagentStop hook verifies: no unpushed commits, bead status updated, completion format present.
+
+> Note: последовательность commit + inreview + push выше — это inline-версия процедуры `land`. Orchestrator после возврата может запустить skill `land` для финального закрытия других beads сессии, а полный review chain (simplify → review → RAMS/WIG → accept → close) — через skill `reviewing-code`. Supervisor НЕ вызывает RAMS/WIG: plugin skills не наследуются subagent'ами.
 </on-completion>
 
 <banned>
@@ -306,71 +298,17 @@ Apply these opinionated constraints when building interfaces.
 
 ## Mandatory: Frontend Reviews (RAMS + Web Interface Guidelines)
 
-<CRITICAL-REQUIREMENT>
-You MUST run BOTH review skills on ALL modified component files BEFORE marking the task as complete.
+## Frontend Reviews — orchestrator step
 
-This is NOT optional. Before marking `inreview`:
+RAMS (accessibility) и Web Interface Guidelines — это plugin skills. Subagent (vue-supervisor) **не наследует** их и не может вызывать `Skill()`. Поэтому supervisor НЕ запускает их.
 
-### 1. RAMS Accessibility Review
+**Workflow:**
+- Supervisor: `Implement → pnpm test + vue-tsc --noEmit → Commit → Push → Mark inreview`.
+- Orchestrator (после возврата): запускает skill `reviewing-code` → simplify → code review → **RAMS + WIG для каждого .vue в diff** → locale-sync → acceptance → close.
 
-Run on each modified component:
-```
-Skill(skill="rams", args="path/to/component.tsx")
-```
+Что супервизор делает сам — self-review (раздел `<on-completion>` пункт 6): completeness, quality, discipline, testing, evidence.
 
-**What RAMS Checks:**
-| Category | Issues Caught |
-|----------|---------------|
-| **Critical** | Missing alt text, buttons without accessible names, inputs without labels |
-| **Serious** | Missing focus outlines, no keyboard handlers, color-only information |
-| **Moderate** | Heading hierarchy issues, positive tabIndex values |
-| **Visual** | Spacing inconsistencies, contrast issues, missing states |
-
-### 2. Web Interface Guidelines Review
-
-Run after implementing UI:
-```
-Skill(skill="web-interface-guidelines")
-```
-
-**What It Checks:**
-- Vercel Web Interface Guidelines compliance
-- Design system consistency
-- Component patterns and best practices
-- Layout and spacing standards
-
-### Workflow
-
-```
-Implement → Run tests → Run RAMS → Run WIG → Fix issues → Commit → Push → Mark inreview
-```
-
-**The step between "Fix issues" and "Mark inreview" is `git commit` + `git push`.**
-RAMS/WIG findings are DIAGNOSTIC — after fixing what's in scope, you still
-need to cut a real commit and push it. Mark inreview AFTER push, not before.
-If you return a completion report before push, the orchestrator has to
-finish the handoff manually.
-
-### 3. Document Results on Bead
-
-After running both reviews, add a comment to the bead:
-```bash
-bd comments add {BEAD_ID} "Reviews: RAMS 95/100, WIG passed. Fixed: [issues if any]"
-```
-
-This creates an audit trail and confirms you read and acted on the results.
-
-### Completion Checklist
-
-Before marking `inreview`, verify:
-- [ ] RAMS review completed on all modified components
-- [ ] Web Interface Guidelines review completed
-- [ ] CRITICAL accessibility issues fixed
-- [ ] Guidelines violations addressed
-- [ ] Bead comment added summarizing review results
-
-Failure to run BOTH reviews AND document results will BLOCK your completion via SubagentStop hook.
-</CRITICAL-REQUIREMENT>
+Полные правила: `.claude/rules/frontend-reviews.md`. Workflow review-цепочки orchestrator'а: `.claude/skills/reviewing-code/SKILL.md`.
 
 ---
 

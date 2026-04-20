@@ -115,4 +115,8 @@ The SubagentStop hook verifies: no unpushed commits, bead status updated, comple
 - Merging your own branch (user merges via PR when feature is done)
 - Force-pushing
 </banned>
+
+<note>
+Схема выше — supervisor-side workflow. Orchestrator после возврата supervisor'а запускает skill `reviewing-code` (simplify → review → RAMS/WIG → locale-sync → acceptance → close). Supervisor НЕ вызывает skill `land` — push выполняется inline как часть Step 3 в `<on-completion>` выше.
+</note>
 </beads-workflow>

@@ -1,6 +1,6 @@
 ---
 name: merge-to-main
-description: "Full merge cycle: feature branch → PR → update docs → merge → checkout main. Use PROACTIVELY when user says: make a PR, let's merge, merge to main, pull request, we're done with this branch, push to main, let's finish this feature, давай мержить, сделай PR, мержим в мастер, пора мержить, переходим в main, создай PR, влей в main, заканчиваем с этой веткой."
+description: "Full merge cycle: feature branch → PR → update docs → merge → checkout main. Use PROACTIVELY when user says: make a PR, let's merge, merge to main, pull request, we're done with this branch, push to main, let's finish this feature, давай мержить, сделай PR, мержим в мастер, пора мержить, переходим в main, создай PR, влей в main, заканчиваем с этой веткой. НЕ путай с `land`: `land` — это commit + push в feature-ветку внутри сессии; `merge-to-main` — финальный PR → merge в main → checkout main. Не запускай `merge-to-main`, пока bead не reviewed + accepted."
 ---
 
 # Merge to Master — Full PR + Docs + Merge Cycle

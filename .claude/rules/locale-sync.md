@@ -41,3 +41,7 @@ jq -S 'paths(scalars)' i18n/locales/en.json i18n/locales/ru.json | diff -
 2. Добавь ключ в `en.json` и `ru.json` одновременно.
 3. Используй `$t('...')` в UI / `t('...')` в TS.
 4. Прогон sync-check командой выше.
+
+## Автоматическая проверка при review
+
+Skill `reviewing-code` Step 2.7 автоматически сверяет добавленные `$t('...')` ключи с `en.json` и `ru.json` после `inreview`. Ручная проверка — `jq -S` команда выше.

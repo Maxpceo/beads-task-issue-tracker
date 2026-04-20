@@ -7,6 +7,10 @@
 - **Без `acceptance_criteria`:** `reviewed → closed` (skip `accepted`).
 - **Fast path:** `open → in_progress → closed` (skip весь review chain) — для todo и мелких правок, которые не нуждаются в code-simplifier / code-reviewer.
 
+## Orchestrator skill для review chain
+
+Orchestrator-процедура от `inreview` до `closed` — **skill `reviewing-code`** (simplify через built-in `simplify` → двухэтапный code review → RAMS/WIG для Vue → locale-sync → acceptance → close).
+
 ## Hook enforcement
 
 - `block-supervisor-close-and-signing.sh` — блокирует попытки supervisor'ов вызывать `bd close` или ставить `simplified`/`reviewed`/`accepted`.
