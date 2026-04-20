@@ -56,7 +56,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Workflow filter derived from bd categories**: The Workflow KPI filter automatically includes every status whose bd category is `active`, `wip`, or `frozen` — so `blocked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` status you define with `bd statuses` are all covered without manual configuration. Click the Workflow KPI card to apply the filter
 - **Advanced Filters**: Multi-select filters by type, status, priority, labels, and assignee
 - **Exclusion Filters**: Hide specific issues by criteria (inverse filtering)
-- **Search**: Find issues by title, ID, or description
+- **Search**: Find issues by title, ID, description, labels, type, status, priority, or assignee. When the search field is non-empty, active filters and exclusions are bypassed — matching Jira/Linear semantics so any issue is reachable regardless of the current filter state
 - **Column Customization**: Show/hide and configure table columns per project
 - **Smart Short IDs**: Common prefix is automatically detected and hidden for readability
 - **Collapsible Sections**: All preview sections (description, attachments, dependencies, etc.) are independently collapsible with persistent state

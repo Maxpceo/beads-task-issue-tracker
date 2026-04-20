@@ -2,8 +2,8 @@
 
 ## [Unreleased]
 
-### Changed
-- **Поиск в поле тулбара теперь работает как global search** (`beads-task-issue-tracker-kqc`): при непустом значении в поле «Поиск» фильтры `status/type/priority/assignee/labels` и exclusions игнорируются (Jira/Linear-семантика) — чтобы закрытая задача, не проходящая через активный фильтр Workflow, всё равно находилась по совпадению. Набор полей поиска расширен с 3 до 4: `id`, `title`, `description`, `labels[]`. Расширение до `workingNotes/acceptanceCriteria/designNotes/comments` не выполнено — `bd_list` IPC (→ `bd list --json`) не возвращает эти поля, они приходят только через `bd_show` по конкретной задаче; включение требует backend-изменений (отдельный follow-up bead для исследования стоимости). Реализация — ранний return в `filterIssues()` (`app/utils/issue-helpers.ts`). Обратная совместимость: пустой `search` → поведение как раньше. Unit-тесты: 3 существующих переписаны под новую семантику, добавлены тесты на игнор всех фильтров, игнор exclusions, поиск по labels, case-insensitivity.
+### New Features
+- **Global search bypasses active filters**: when the search field is non-empty, active status/type/priority/assignee/label filters and exclusions are ignored — matching Jira/Linear semantics so closed or filtered-out issues are always reachable by search. Search covers 8 fields: `id`, `title`, `description`, `labels`, `type`, `status`, `priority`, and `assignee`. Empty search restores normal filter behavior.
 
 ### Fixed
 - **Hook escape hatches теперь работают inline из Bash tool** (follow-up эпика `a4q`): `CLAUDE_SKIP_STALE_CHECK=1 git commit ...` и `SKIP_ENRICH_CHECK=1 bd create ...` раньше не обходили хуки, потому что Claude Code запускает hook отдельным процессом ДО исполнения Bash tool'а — inline ENV-префикс виден только дочернему shell'у команды, не хуку. Хуки `enforce-worktree-fresh-vs-main.sh` и `enforce-bead-enrichment.sh` (Bash matcher) теперь дополнительно парсят `COMMAND` на inline-префикс через регулярку с shell-token boundaries. Env-переменная на уровне Claude Code процесса работает как раньше. Найдено smoke-тестом в свежей сессии (см. `.claude/plans/a4q-test-results.md` B6).
