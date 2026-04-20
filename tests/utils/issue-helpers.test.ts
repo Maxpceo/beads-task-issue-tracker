@@ -450,25 +450,110 @@ describe('filterIssues', () => {
     expect(result.map(i => i.id)).toEqual(['1'])
   })
 
-  it('search respects active filters (excludes closed by default)', () => {
-    const result = filterIssues(issues, { ...noFilters, search: 'old feature' }, noExclusions)
-    expect(result).toEqual([])
-  })
+  // Search semantics: активный search игнорирует ВСЕ фильтры и exclusions
+  // (global-search Jira/Linear). Пустой search → фильтры работают как обычно.
 
-  it('search combined with status filter returns matching results', () => {
-    const result = filterIssues(issues, { ...noFilters, status: ['closed'], search: 'old feature' }, noExclusions)
+  it('search игнорирует дефолтный workflow-фильтр и находит closed задачу', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'old feature' }, noExclusions)
     expect(result.map(i => i.id)).toEqual(['3'])
   })
 
-  it('search combined with type filter narrows results', () => {
-    const result = filterIssues(issues, { ...noFilters, search: 'Login', type: ['task'] }, noExclusions)
-    expect(result).toEqual([])
+  it('search игнорирует status filter', () => {
+    const result = filterIssues(issues, { ...noFilters, status: ['open'], search: 'old feature' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['3'])
   })
 
-  it('search matches title, id, and description', () => {
+  it('search игнорирует type filter', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'Login', type: ['task'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['1'])
+  })
+
+  it('search игнорирует priority filter', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'Login', priority: ['p2'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['1'])
+  })
+
+  it('search игнорирует labels filter', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'Login', labels: ['backend'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['1'])
+  })
+
+  it('search игнорирует assignee filter', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'Login', assignee: ['bob'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['1'])
+  })
+
+  it('search игнорирует exclusions (priority/labels/assignee/status)', () => {
+    const result = filterIssues(
+      issues,
+      { ...noFilters, search: 'Login' },
+      { status: ['open'], priority: ['p0'], type: ['bug'], labels: ['frontend'], assignee: ['alice'] },
+    )
+    expect(result.map(i => i.id)).toEqual(['1'])
+  })
+
+  it('search matches title', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'Login' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['1'])
+  })
+
+  it('search matches id', () => {
+    const custom = [makeIssue({ id: 'bead-xyz-123', title: 'Nothing' })]
+    const result = filterIssues(custom, { ...noFilters, search: 'xyz' }, noExclusions)
+    expect(result).toHaveLength(1)
+  })
+
+  it('search matches description', () => {
     const withDesc = [makeIssue({ id: 'x', title: 'Nothing', description: 'hidden keyword' })]
     const result = filterIssues(withDesc, { ...noFilters, search: 'keyword' }, noExclusions)
     expect(result).toHaveLength(1)
+  })
+
+  it('search matches workingNotes', () => {
+    const withNotes = [makeIssue({ id: 'x', title: 'Nothing', workingNotes: 'investigation of flaky spec' })]
+    const result = filterIssues(withNotes, { ...noFilters, search: 'flaky' }, noExclusions)
+    expect(result).toHaveLength(1)
+  })
+
+  it('search matches acceptanceCriteria', () => {
+    const withAcc = [makeIssue({ id: 'x', title: 'Nothing', acceptanceCriteria: 'deployed to prod' })]
+    const result = filterIssues(withAcc, { ...noFilters, search: 'prod' }, noExclusions)
+    expect(result).toHaveLength(1)
+  })
+
+  it('search matches designNotes', () => {
+    const withDesign = [makeIssue({ id: 'x', title: 'Nothing', designNotes: 'redis pubsub architecture' })]
+    const result = filterIssues(withDesign, { ...noFilters, search: 'redis' }, noExclusions)
+    expect(result).toHaveLength(1)
+  })
+
+  it('search matches label', () => {
+    const result = filterIssues(issues, { ...noFilters, search: 'backend' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['2'])
+  })
+
+  it('search matches comment content', () => {
+    const withComment = [makeIssue({
+      id: 'x',
+      title: 'Nothing',
+      comments: [{ id: 'c1', author: 'bob', content: 'regression found on Safari', createdAt: '2025-01-01T00:00:00Z' }],
+    })]
+    const result = filterIssues(withComment, { ...noFilters, search: 'safari' }, noExclusions)
+    expect(result).toHaveLength(1)
+  })
+
+  it('search case-insensitive для всех полей', () => {
+    const mixed = [
+      makeIssue({ id: 'a', title: 'UPPERCASE TITLE' }),
+      makeIssue({ id: 'b', title: 'Nothing', workingNotes: 'MiXeD CaSe NoTeS' }),
+    ]
+    expect(filterIssues(mixed, { ...noFilters, search: 'uppercase' }, noExclusions)).toHaveLength(1)
+    expect(filterIssues(mixed, { ...noFilters, search: 'MIXED CASE' }, noExclusions)).toHaveLength(1)
+  })
+
+  it('пустой search → фильтры работают как обычно (обратная совместимость)', () => {
+    const result = filterIssues(issues, { ...noFilters, status: ['open'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['1'])
   })
 
   it('applies exclusion filters', () => {

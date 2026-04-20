@@ -318,19 +318,26 @@ export function filterIssues(
   filters: { status: string[]; type: string[]; priority: string[]; assignee: string[]; search: string; labels: string[] },
   exclusions: { status: string[]; priority: string[]; type: string[]; labels: string[]; assignee: string[] },
 ): Issue[] {
-  let result = issues
-
-  // Text search filter
+  // При активном поиске — игнорируем все фильтры и exclusions (global-search
+  // семантика Jira/Linear). Ищем по 8 полям: ~99% контента в issues пишут
+  // AI-агенты, поэтому релевантный текст может быть в любом текстовом поле.
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
-    result = result.filter(
+    return issues.filter(
       (issue) =>
         issue.title.toLowerCase().includes(search) ||
         issue.id.toLowerCase().includes(search) ||
-        issue.description?.toLowerCase().includes(search),
+        issue.description?.toLowerCase().includes(search) ||
+        issue.workingNotes?.toLowerCase().includes(search) ||
+        issue.acceptanceCriteria?.toLowerCase().includes(search) ||
+        issue.designNotes?.toLowerCase().includes(search) ||
+        issue.labels?.some(l => l.toLowerCase().includes(search)) ||
+        issue.comments?.some(c => c.content.toLowerCase().includes(search)),
     )
   }
+
+  let result = issues
 
   // Status filter (default: WORKFLOW view)
   if (filters.status.length > 0) {
