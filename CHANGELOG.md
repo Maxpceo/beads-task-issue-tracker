@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Removed
+- **`.claude/skills/react-best-practices/`** (`beads-task-issue-tracker-7g3`, child #5 эпика `a4q`): удалён как нерелевантный — проект на Vue 3 / Nuxt 4. Эквивалент для React (если когда-нибудь понадобится) уже доступен через plugin `vercel-react-best-practices` + `vercel-composition-patterns`. Дублирование убрано.
+
+### Changed
+- **`.claude/skills/merge-to-main/SKILL.md`** (`beads-task-issue-tracker-7g3`): frontmatter description явно разводит `merge-to-main` с `land` — добавлено правило «не запускай merge-to-main, пока bead не reviewed + accepted». `subagents-discipline/SKILL.md` — sync пропущен, наша версия (с Iron Law секцией наверху) богаче source.
+
 ### Added
 - **5 orchestrator workflow skills + сокращение CLAUDE.md** (`beads-task-issue-tracker-31p`, child #3 эпика `a4q`): портированы skills `claiming-bead` (claim-first на триггер-фразы + auto Plan Mode), `pre-dispatch` (claim → собрать BRANCH/START_COMMIT → готовый Task-промпт; supervisor mapping адаптирован под наши labels: frontend/ui/data/sync→vue-supervisor, backend/tracker→tauri-supervisor, ci/dx→test-supervisor), `land` (commit + push в feature-ветку через merge-slot; разведено с `merge-to-main` через триггер-фразы), `managing-epics` (design doc → children с deps + acceptance → sequential dispatch; примеры адаптированы под Tauri/Vue/tracker), `reviewing-code` (simplify через built-in skill `simplify` → двухэтапный code review → RAMS+WIG для каждого .vue → новый Step 2.7 locale-sync check → acceptance через Tauri dev / chrome-devtools MCP / agent-browser → close --claim-next).
 
