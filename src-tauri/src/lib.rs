@@ -899,14 +899,12 @@ fn parse_issues_jsonl_tolerant(output: &str, context: &str) -> Result<Vec<BdRawI
             _ => {}
         }
 
-        // Deserialize into BdRawIssue
-        let obj_str = serde_json::to_string(&value).unwrap_or_default();
-        match serde_json::from_str::<BdRawIssue>(&obj_str) {
+        let id_for_log = value.get("id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        match serde_json::from_value::<BdRawIssue>(value) {
             Ok(issue) => issues.push(issue),
             Err(e) => {
                 skipped_malformed += 1;
-                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-                log_warn!("[{}] Malformed issue record (id={}, skipping): {}", context, id, e);
+                log_warn!("[{}] Malformed issue record (id={}, skipping): {}", context, id_for_log, e);
             }
         }
     }
