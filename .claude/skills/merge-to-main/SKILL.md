@@ -98,8 +98,13 @@ Behavior:
 
 Захватить `bd merge-slot` ПЕРЕД `gh pr merge` — гарантирует, что merge + последующий `git pull origin main` (Step 6) атомарны относительно других параллельных сессий, которые тоже могут мёрджить свои PR. Слот удерживается ~10–30 секунд.
 
+**Важно: если `bd merge-slot acquire` упал (non-zero exit, сообщение `Slot held by X` или любая другая ошибка) — STOP, НЕ вызывай `gh pr merge`.** Merge-slot advisory — `gh pr merge` не знает про него и смёржит PR, игнорируя замок, что создаёт гонку с параллельной сессией (non-fast-forward, потерянный push, конфликт в pull). Если acquire failed — покажи пользователю кто держит слот (`bd show beads-task-issue-tracker-merge-slot`) и спроси: ждать (повторить acquire после release), встать в очередь (`bd merge-slot acquire --wait`), или отменить merge. Не форсируй без явного согласия.
+
 ```bash
-bd merge-slot acquire
+if ! bd merge-slot acquire; then
+  bd show beads-task-issue-tracker-merge-slot
+  # STOP. Спросить пользователя, не запускать gh pr merge.
+fi
 
 gh pr merge <PR_NUMBER> --merge --delete-branch
 ```
