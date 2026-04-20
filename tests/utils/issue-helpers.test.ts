@@ -509,43 +509,15 @@ describe('filterIssues', () => {
     expect(result).toHaveLength(1)
   })
 
-  it('search matches workingNotes', () => {
-    const withNotes = [makeIssue({ id: 'x', title: 'Nothing', workingNotes: 'investigation of flaky spec' })]
-    const result = filterIssues(withNotes, { ...noFilters, search: 'flaky' }, noExclusions)
-    expect(result).toHaveLength(1)
-  })
-
-  it('search matches acceptanceCriteria', () => {
-    const withAcc = [makeIssue({ id: 'x', title: 'Nothing', acceptanceCriteria: 'deployed to prod' })]
-    const result = filterIssues(withAcc, { ...noFilters, search: 'prod' }, noExclusions)
-    expect(result).toHaveLength(1)
-  })
-
-  it('search matches designNotes', () => {
-    const withDesign = [makeIssue({ id: 'x', title: 'Nothing', designNotes: 'redis pubsub architecture' })]
-    const result = filterIssues(withDesign, { ...noFilters, search: 'redis' }, noExclusions)
-    expect(result).toHaveLength(1)
-  })
-
   it('search matches label', () => {
     const result = filterIssues(issues, { ...noFilters, search: 'backend' }, noExclusions)
     expect(result.map(i => i.id)).toEqual(['2'])
   })
 
-  it('search matches comment content', () => {
-    const withComment = [makeIssue({
-      id: 'x',
-      title: 'Nothing',
-      comments: [{ id: 'c1', author: 'bob', content: 'regression found on Safari', createdAt: '2025-01-01T00:00:00Z' }],
-    })]
-    const result = filterIssues(withComment, { ...noFilters, search: 'safari' }, noExclusions)
-    expect(result).toHaveLength(1)
-  })
-
   it('search case-insensitive для всех полей', () => {
     const mixed = [
       makeIssue({ id: 'a', title: 'UPPERCASE TITLE' }),
-      makeIssue({ id: 'b', title: 'Nothing', workingNotes: 'MiXeD CaSe NoTeS' }),
+      makeIssue({ id: 'b', title: 'Nothing', description: 'MiXeD CaSe DeScRiPtIoN' }),
     ]
     expect(filterIssues(mixed, { ...noFilters, search: 'uppercase' }, noExclusions)).toHaveLength(1)
     expect(filterIssues(mixed, { ...noFilters, search: 'MIXED CASE' }, noExclusions)).toHaveLength(1)

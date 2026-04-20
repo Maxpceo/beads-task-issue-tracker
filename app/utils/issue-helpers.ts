@@ -319,8 +319,10 @@ export function filterIssues(
   exclusions: { status: string[]; priority: string[]; type: string[]; labels: string[]; assignee: string[] },
 ): Issue[] {
   // При активном поиске — игнорируем все фильтры и exclusions (global-search
-  // семантика Jira/Linear). Ищем по 8 полям: ~99% контента в issues пишут
-  // AI-агенты, поэтому релевантный текст может быть в любом текстовом поле.
+  // семантика Jira/Linear). Поля поиска ограничены тем, что реально приходит
+  // в `bd list --json` (id/title/description/labels). Расширение на
+  // workingNotes/acceptanceCriteria/designNotes/comments требует изменения
+  // backend-слоя (bd_list не возвращает эти поля) — см. follow-up bead.
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
@@ -329,11 +331,7 @@ export function filterIssues(
         issue.title.toLowerCase().includes(search) ||
         issue.id.toLowerCase().includes(search) ||
         issue.description?.toLowerCase().includes(search) ||
-        issue.workingNotes?.toLowerCase().includes(search) ||
-        issue.acceptanceCriteria?.toLowerCase().includes(search) ||
-        issue.designNotes?.toLowerCase().includes(search) ||
-        issue.labels?.some(l => l.toLowerCase().includes(search)) ||
-        issue.comments?.some(c => c.content.toLowerCase().includes(search)),
+        issue.labels?.some(l => l.toLowerCase().includes(search)),
     )
   }
 
