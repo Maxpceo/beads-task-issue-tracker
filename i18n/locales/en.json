@@ -620,6 +620,7 @@
     "loading": "Loading…",
     "projectBadge": "Project:",
     "error": "Failed to load issues from {project}",
+    "errorsMultiple": "{count} projects failed to load",
     "issueNotFound": "Issue {id} not found after switch",
     "hint": "⏎ open · ↑↓ navigate · Esc close"
   }

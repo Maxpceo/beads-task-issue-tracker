@@ -121,6 +121,7 @@ const hasProjects = computed(() => projects.value.length > 0)
           fill="none"
           stroke="currentColor"
           stroke-width="2"
+          aria-hidden="true"
         >
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -213,7 +214,7 @@ const hasProjects = computed(() => projects.value.length > 0)
 
               <!-- Project badge -->
               <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted text-[10px] text-muted-foreground truncate max-w-24">
-                <svg class="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg class="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
                 {{ r.projectName }}
@@ -227,12 +228,12 @@ const hasProjects = computed(() => projects.value.length > 0)
           v-if="errors.length > 0"
           class="px-3 py-1.5 border-t text-[11px] text-destructive bg-destructive/5 flex items-center gap-1"
         >
-          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="12" cy="12" r="10" />
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          {{ errors.length }} {{ errors.length === 1 ? t('commandPalette.error', { project: errors[0] }) : `${errors.length} projects failed to load` }}
+          {{ errors.length === 1 ? t('commandPalette.error', { project: errors[0] }) : t('commandPalette.errorsMultiple', { count: errors.length }) }}
         </div>
       </div>
 
