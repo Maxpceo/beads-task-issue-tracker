@@ -859,6 +859,126 @@ fn parse_issues_tolerant(output: &str, context: &str) -> Result<Vec<BdRawIssue>,
     Ok(issues)
 }
 
+/// Parse JSONL output from `bd export` with tolerance for non-issue records and malformed lines.
+///
+/// Whitelist approach: accept a record only if `_type` is absent OR `_type == "issue"`.
+/// This correctly handles mixed output (e.g. `_type: "memory"`) and is forward-compatible
+/// with future bd record types.
+fn parse_issues_jsonl_tolerant(output: &str, context: &str) -> Result<Vec<BdRawIssue>, String> {
+    if output.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut issues = Vec::new();
+    let mut skipped_non_issue = 0usize;
+    let mut skipped_malformed = 0usize;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Parse as generic JSON value first to check _type whitelist
+        let value: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(e) => {
+                skipped_malformed += 1;
+                log_warn!("[{}] Malformed JSONL line (skipping): {}", context, e);
+                continue;
+            }
+        };
+
+        // Whitelist: accept if _type absent or _type == "issue"
+        let type_field = value.get("_type").and_then(|v| v.as_str());
+        match type_field {
+            Some(t) if t != "issue" => {
+                skipped_non_issue += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        // Deserialize into BdRawIssue
+        let obj_str = serde_json::to_string(&value).unwrap_or_default();
+        match serde_json::from_str::<BdRawIssue>(&obj_str) {
+            Ok(issue) => issues.push(issue),
+            Err(e) => {
+                skipped_malformed += 1;
+                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                log_warn!("[{}] Malformed issue record (id={}, skipping): {}", context, id, e);
+            }
+        }
+    }
+
+    if skipped_non_issue > 0 {
+        log_info!("[{}] skipped {} non-issue records", context, skipped_non_issue);
+    }
+    if skipped_malformed > 0 {
+        log_warn!("[{}] skipped {} malformed lines", context, skipped_malformed);
+    }
+    log_info!("[{}] parsed {} issues", context, issues.len());
+
+    Ok(issues)
+}
+
+/// Apply ListOptions filters to a Vec<BdRawIssue> on the Rust side.
+///
+/// Used after `bd export` which returns all records without server-side filtering.
+/// Mirrors the filter flags that `bd list` would apply server-side.
+fn apply_list_filters(issues: Vec<BdRawIssue>, options: &ListOptions) -> Vec<BdRawIssue> {
+    issues
+        .into_iter()
+        .filter(|issue| {
+            // Status filter: match any of the given statuses (case-insensitive)
+            if let Some(ref statuses) = options.status {
+                if !statuses.is_empty() {
+                    let issue_status = issue.status.to_lowercase();
+                    if !statuses.iter().any(|s| s.to_lowercase() == issue_status) {
+                        return false;
+                    }
+                }
+            }
+
+            // Type filter: match any of the given types (case-insensitive)
+            if let Some(ref types) = options.issue_type {
+                if !types.is_empty() {
+                    let issue_type = issue.issue_type.to_lowercase();
+                    if !types.iter().any(|t| t.to_lowercase() == issue_type) {
+                        return false;
+                    }
+                }
+            }
+
+            // Priority filter: options.priority may be ["P0","p1"] style → normalise to lowercase
+            // before calling priority_to_number which expects lowercase "p0" prefix.
+            if let Some(ref priorities) = options.priority {
+                if !priorities.is_empty() {
+                    let wanted_nums: Vec<i32> = priorities
+                        .iter()
+                        .filter_map(|p| priority_to_number(&p.to_lowercase()).parse::<i32>().ok())
+                        .collect();
+                    if !wanted_nums.contains(&issue.priority) {
+                        return false;
+                    }
+                }
+            }
+
+            // Assignee filter: exact match
+            if let Some(ref assignee) = options.assignee {
+                if !assignee.is_empty() {
+                    match &issue.assignee {
+                        Some(a) if a == assignee => {}
+                        _ => return false,
+                    }
+                }
+            }
+
+            true
+        })
+        .collect()
+}
+
 fn get_extended_path() -> String {
     let current_path = env::var("PATH").unwrap_or_default();
 
@@ -1107,6 +1227,25 @@ fn supports_list_all_flag() -> bool {
     match get_cli_client_info() {
         Some((CliClient::Bd, major, minor, _)) => major > 0 || minor >= 55,
         Some((CliClient::Br, _, _, _)) => true, // br always supports --all
+        _ => false,
+    }
+}
+
+/// Returns true if `bd export` (JSONL) is supported and should be used.
+/// `bd export` returns all fields including design/notes/acceptance_criteria/comments.
+/// - bd >= 1.0: YES (JSONL with full fields)
+/// - bd < 1.0 (major == 0): NO (use `bd list --json`)
+/// - br (any version): YES (br supports JSONL export)
+/// - unknown: NO (safe default — fall back to `bd list`)
+fn supports_bd_export() -> bool {
+    should_use_export(get_cli_client_info())
+}
+
+/// Pure helper for unit-testing — takes client info directly.
+fn should_use_export(info: Option<(CliClient, u32, u32, u32)>) -> bool {
+    match info {
+        Some((CliClient::Bd, major, _, _)) => major >= 1,
+        Some((CliClient::Br, _, _, _)) => true,
         _ => false,
     }
 }
@@ -2873,6 +3012,17 @@ async fn bd_list(options: ListOptions) -> Result<Vec<Issue>, String> {
         args.push(format!("--assignee={}", assignee));
     }
 
+    // bd >= 1.0 (or br any version): use `bd export` — returns JSONL with all fields
+    // including design/notes/acceptance_criteria/comments. Apply filters on Rust side.
+    if supports_bd_export() {
+        log_info!("[bd_list] export path (bd>=1.0 or br) — using bd export for full fields");
+        let output = execute_bd("export", &[], options.cwd.as_deref())?;
+        let raw_issues = parse_issues_jsonl_tolerant(&output, "bd_list_export")?;
+        let filtered = apply_list_filters(raw_issues, &options);
+        log_info!("[bd_list] export path: {} issues after filters", filtered.len());
+        return Ok(filtered.into_iter().map(transform_issue).collect());
+    }
+
     // Always disable limit to get all issues (bd defaults to 50)
     args.push("--limit=0".to_string());
 
@@ -2880,7 +3030,7 @@ async fn bd_list(options: ListOptions) -> Result<Vec<Issue>, String> {
 
     let raw_issues = parse_issues_tolerant(&output, "bd_list")?;
 
-    log_info!("[bd_list] Found {} issues", raw_issues.len());
+    log_info!("[bd_list] list path: Found {} issues", raw_issues.len());
     Ok(raw_issues.into_iter().map(transform_issue).collect())
 }
 
@@ -5414,4 +5564,210 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // should_use_export (pure helper, testable without global CLI_CLIENT_INFO)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_should_use_export_bd_major0_false() {
+        assert!(!should_use_export(Some((CliClient::Bd, 0, 57, 0))));
+    }
+
+    #[test]
+    fn test_should_use_export_bd_major1_true() {
+        assert!(should_use_export(Some((CliClient::Bd, 1, 0, 0))));
+    }
+
+    #[test]
+    fn test_should_use_export_bd_major2_true() {
+        assert!(should_use_export(Some((CliClient::Bd, 2, 0, 0))));
+    }
+
+    #[test]
+    fn test_should_use_export_br_any_true() {
+        assert!(should_use_export(Some((CliClient::Br, 0, 1, 0))));
+        assert!(should_use_export(Some((CliClient::Br, 1, 0, 0))));
+    }
+
+    #[test]
+    fn test_should_use_export_unknown_false() {
+        assert!(!should_use_export(Some((CliClient::Unknown, 1, 0, 0))));
+        assert!(!should_use_export(None));
+    }
+
+    // -------------------------------------------------------------------------
+    // parse_issues_jsonl_tolerant
+    // -------------------------------------------------------------------------
+
+    fn make_issue_line(id: &str) -> String {
+        format!(
+            r#"{{"id":"{id}","title":"Test {id}","description":null,"status":"open","priority":3,"issue_type":"task","owner":null,"assignee":null,"labels":null,"created_at":"2024-01-01T00:00:00Z","created_by":null,"updated_at":"2024-01-01T00:00:00Z","closed_at":null,"started_at":null,"close_reason":null,"blocked_by":null,"blocks":null,"comments":null,"external_ref":null,"estimate":null,"design":null,"acceptance_criteria":null,"notes":null,"parent":null,"dependents":null,"dependencies":null,"dependency_count":null,"dependent_count":null,"metadata":null,"spec_id":null,"comment_count":null}}"#,
+            id = id
+        )
+    }
+
+    fn make_issue_line_with_type(id: &str, type_val: &str) -> String {
+        format!(
+            r#"{{"_type":"{type_val}","id":"{id}","title":"Test","description":null,"status":"open","priority":3,"issue_type":"task","owner":null,"assignee":null,"labels":null,"created_at":"2024-01-01T00:00:00Z","created_by":null,"updated_at":"2024-01-01T00:00:00Z","closed_at":null,"started_at":null,"close_reason":null,"blocked_by":null,"blocks":null,"comments":null,"external_ref":null,"estimate":null,"design":null,"acceptance_criteria":null,"notes":null,"parent":null,"dependents":null,"dependencies":null,"dependency_count":null,"dependent_count":null,"metadata":null,"spec_id":null,"comment_count":null}}"#,
+            type_val = type_val,
+            id = id
+        )
+    }
+
+    #[test]
+    fn test_parse_issues_jsonl_tolerant_mixed_input() {
+        // 3 valid issues + 1 memory record + 1 malformed + 1 empty line → 3 issues
+        let lines = vec![
+            make_issue_line("issue-1"),
+            make_issue_line("issue-2"),
+            // memory record — should be filtered by whitelist
+            r#"{"_type":"memory","id":"mem-1","content":"some note","created_at":"2024-01-01T00:00:00Z"}"#.to_string(),
+            make_issue_line("issue-3"),
+            // malformed JSON — should be skipped
+            "{ this is not valid json".to_string(),
+            // empty line — should be skipped
+            "".to_string(),
+        ];
+        let output = lines.join("\n");
+
+        let result = parse_issues_jsonl_tolerant(&output, "test").unwrap();
+        assert_eq!(result.len(), 3, "Expected 3 issues, got {}", result.len());
+        let ids: Vec<&str> = result.iter().map(|i| i.id.as_str()).collect();
+        assert!(ids.contains(&"issue-1"));
+        assert!(ids.contains(&"issue-2"));
+        assert!(ids.contains(&"issue-3"));
+    }
+
+    #[test]
+    fn test_parse_issues_jsonl_tolerant_type_issue_whitelisted() {
+        // Records with explicit _type: "issue" must be accepted
+        let line = make_issue_line_with_type("issue-typed", "issue");
+        let result = parse_issues_jsonl_tolerant(&line, "test").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "issue-typed");
+    }
+
+    #[test]
+    fn test_parse_issues_jsonl_tolerant_empty_output() {
+        let result = parse_issues_jsonl_tolerant("", "test").unwrap();
+        assert_eq!(result.len(), 0);
+
+        let result_whitespace = parse_issues_jsonl_tolerant("   \n  \n  ", "test").unwrap();
+        assert_eq!(result_whitespace.len(), 0);
+    }
+
+    // -------------------------------------------------------------------------
+    // apply_list_filters
+    // -------------------------------------------------------------------------
+
+    fn make_raw_issue(id: &str, status: &str, issue_type: &str, priority: i32, assignee: Option<&str>) -> BdRawIssue {
+        BdRawIssue {
+            id: id.to_string(),
+            title: format!("Issue {}", id),
+            description: None,
+            status: status.to_string(),
+            priority,
+            issue_type: issue_type.to_string(),
+            owner: None,
+            assignee: assignee.map(|s| s.to_string()),
+            labels: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+            closed_at: None,
+            started_at: None,
+            close_reason: None,
+            blocked_by: None,
+            blocks: None,
+            comments: None,
+            external_ref: None,
+            estimate: None,
+            design: None,
+            acceptance_criteria: None,
+            notes: None,
+            parent: None,
+            dependents: None,
+            dependencies: None,
+            dependency_count: None,
+            dependent_count: None,
+            metadata: None,
+            spec_id: None,
+            comment_count: None,
+        }
+    }
+
+    #[test]
+    fn test_apply_list_filters_priority_mapping() {
+        // priority P0 → 0, P1 → 1; should keep only P0 issues
+        let issues = vec![
+            make_raw_issue("a", "open", "task", 0, None),
+            make_raw_issue("b", "open", "task", 1, None),
+            make_raw_issue("c", "open", "task", 2, None),
+        ];
+
+        let options = ListOptions {
+            status: None,
+            issue_type: None,
+            priority: Some(vec!["P0".to_string(), "p1".to_string()]),
+            assignee: None,
+            include_all: None,
+            cwd: None,
+        };
+
+        let result = apply_list_filters(issues, &options);
+        assert_eq!(result.len(), 2);
+        let ids: Vec<&str> = result.iter().map(|i| i.id.as_str()).collect();
+        assert!(ids.contains(&"a"));
+        assert!(ids.contains(&"b"));
+        assert!(!ids.contains(&"c"));
+    }
+
+    #[test]
+    fn test_apply_list_filters_status() {
+        let issues = vec![
+            make_raw_issue("a", "open", "task", 3, None),
+            make_raw_issue("b", "in_progress", "task", 3, None),
+            make_raw_issue("c", "closed", "task", 3, None),
+        ];
+
+        let options = ListOptions {
+            status: Some(vec!["open".to_string(), "in_progress".to_string()]),
+            issue_type: None,
+            priority: None,
+            assignee: None,
+            include_all: None,
+            cwd: None,
+        };
+
+        let result = apply_list_filters(issues, &options);
+        assert_eq!(result.len(), 2);
+        let ids: Vec<&str> = result.iter().map(|i| i.id.as_str()).collect();
+        assert!(!ids.contains(&"c"));
+    }
+
+    #[test]
+    fn test_apply_list_filters_no_filters_passes_all() {
+        let issues = vec![
+            make_raw_issue("a", "open", "task", 3, None),
+            make_raw_issue("b", "closed", "bug", 1, Some("user1")),
+        ];
+
+        let options = ListOptions {
+            status: None,
+            issue_type: None,
+            priority: None,
+            assignee: None,
+            include_all: None,
+            cwd: None,
+        };
+
+        let result = apply_list_filters(issues, &options);
+        assert_eq!(result.len(), 2);
+    }
 }

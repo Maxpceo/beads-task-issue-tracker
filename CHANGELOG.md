@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- **`bd_list` migrated to `bd export` on bd>=1.0** (`beads-task-issue-tracker-nif.2`): IPC command `bd_list` now uses version-gated path — `bd export` (JSONL) on bd>=1.0 or any br, `bd list --json` on bd<1.0. The export path returns all fields including `workingNotes`, `acceptanceCriteria`, `designNotes`, `comments` that were previously empty. JSONL parser (`parse_issues_jsonl_tolerant`) uses a whitelist (`_type` absent or `"issue"`) to filter out non-issue records (e.g. `_type: "memory"`). Server-side filters (`status/type/priority/assignee`) are applied on the Rust side via `apply_list_filters`. IPC contract `bd_list(options) -> Vec<Issue>` is unchanged.
+
+### Changed
 - **Global search bypasses active filters** (`beads-task-issue-tracker-kqc`): when the toolbar search field is non-empty, active `status/type/priority/assignee/label` filters and exclusions are ignored — matching Jira/Linear semantics so closed or filtered-out issues stay reachable. Search covers 4 fields: `id`, `title`, `description`, `labels[]` (case-insensitive substring). Fields `workingNotes/acceptanceCriteria/designNotes/comments` are not included because `bd list --json` does not return them; extending the set requires backend work — tracked as follow-up spike `beads-task-issue-tracker-du6`. Empty search preserves previous filter behaviour.
 
 ### Fixed
