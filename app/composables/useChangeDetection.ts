@@ -102,9 +102,13 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
   let currentPath: string | null = null
   let unlisten: (() => void) | null = null
   let lastProcessedAt = 0
+  // Флаг: если stop() вызван пока inflight — игнорируем результат onChanged
+  let abandoned = false
 
   const queue = createQueuedHandler(
-    options.onChanged,
+    async () => {
+      if (!abandoned) await options.onChanged()
+    },
     () => Date.now() - lastProcessedAt < SELF_TRIGGER_COOLDOWN_MS,
     () => { lastProcessedAt = Date.now() },
   )
@@ -116,6 +120,8 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
 
   const start = async (path: string) => {
     stop()
+    // Сбросить abandoned при повторном старте для нового проекта
+    abandoned = false
     currentPath = path
 
     try {
@@ -140,6 +146,8 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
   }
 
   const stop = () => {
+    // Пометить как abandoned ПЕРЕД cancel чтобы inflight onChanged не попал в UI
+    abandoned = true
     queue.cancel()
     if (unlisten) {
       unlisten()

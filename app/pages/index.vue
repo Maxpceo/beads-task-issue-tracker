@@ -254,7 +254,7 @@ const pollForChanges = async () => {
 }
 
 // Layer 2: Backpressure gate — merges watcher + timer triggers, enforces min interval
-const { requestPoll, requestImmediatePoll, cancel: cancelScheduledPoll, stats: pollStats } = usePollScheduler(pollForChanges)
+const { requestPoll, requestImmediatePoll, cancel: cancelScheduledPoll, stop: stopScheduler, resume: resumeScheduler, stats: pollStats } = usePollScheduler(pollForChanges)
 
 const { active: changeDetectionActive, startListening, stopListening, notifySelfWrite } = useChangeDetection({
   onChanged: async () => {
@@ -511,6 +511,20 @@ const handlePathChange = async () => {
   isEditMode.value = false
   isCreatingNew.value = false
 
+  // Остановить polling и watcher НЕМЕДЛЕННО — до любых async операций.
+  // Это предотвращает deferred poll'ы от срабатывания пока идёт warm-up/clear:
+  // deferred timer мог быть запланирован за 2 с до switch и выстрелит в самый
+  // неподходящий момент — сравнит issues старого проекта с пустым массивом
+  // после clearIssues() и триггернёт N toast'ов «задача удалена».
+  stopScheduler()    // Отменить deferred и заблокировать inflight в scheduler
+  stopPolling()      // Остановить adaptive polling таймеры
+  await stopListening()  // Остановить watcher + пометить inflight как abandoned
+
+  // Bail out if another handlePathChange was triggered while we awaited stopListening
+  if (thisGeneration !== pathChangeGeneration) {
+    return
+  }
+
   // Stale-while-revalidate: try to prefill UI from the on-disk PollData snapshot.
   // If we have a warm snapshot, skip the clearIssues/clearStats wipe so the user
   // sees the last-known state instantly while fresh data loads in parallel below.
@@ -544,17 +558,6 @@ const handlePathChange = async () => {
     clearIssues()  // Reset issue list so new-issue detection doesn't flash all rows
     clearStats()   // Reset stats so previous project's ready work doesn't persist
     perfClearState = performance.now() - tClear
-  }
-
-  // Stop polling + change detection during project switch to prevent:
-  // 1. Concurrent bd calls from old project's poll cycle
-  // 2. Change detection events triggering stale refreshes
-  stopPolling()
-  await stopListening()
-
-  // Bail out if another handlePathChange was triggered while we awaited
-  if (thisGeneration !== pathChangeGeneration) {
-return
   }
 
   try {
@@ -592,8 +595,10 @@ return
       // causes SIGSEGV crashes (nil pointer dereference in dolthub/driver).
       // Use batched fetchPollData (1 IPC: bd list + bd ready) + updateFromPollData
       // to avoid a redundant bd ready cold-start from fetchStats.
+      // skipNotifications=true: при project switch diff неизбежно покажет "удалённые"
+      // задачи из старого проекта — глушим notify для этого первого fetch.
       const tFetchIssues = performance.now()
-      const readyData = await fetchPollData()
+      const readyData = await fetchPollData({ skipNotifications: true })
       perfFetchIssues = performance.now() - tFetchIssues
 
       const tFetchStats = performance.now()
@@ -626,6 +631,7 @@ return
     await startListening(beadsPath.value)
     notifySelfWrite()  // Arm cooldown so backend ignores bd's recent .beads/ writes
   }
+  resumeScheduler()  // Снять блокировку scheduler'а перед запуском polling
   startPolling()
 }
 

@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Fixed
+- **Вал toast'ов «Задача удалена» при переключении проектов** (`beads-task-issue-tracker-dp9`): устранены три источника ложных уведомлений при project switch. (1) `usePollScheduler` получил `stop()`/`resume()` — deferred poll теперь не выстреливает пока идёт переключение; inflight poll, запущенный до `stop()`, помечается как заблокированный и не вызывает `pollFn`. (2) `useChangeDetection` теперь устанавливает флаг `abandoned=true` в `stop()` — если watcher получил событие и запустил `onChanged` (inflight), результат не попадёт в UI. (3) `handlePathChange` (index.vue) переносит `stopScheduler()`/`stopPolling()`/`stopListening()` в самое начало (до async `warmUpFromCache`) — больше нет окна где deferred poll срабатывает после начала switch. (4) `fetchPollData` и `fetchIssues` получили опцию `{ skipNotifications: true }` — при project switch первый fetch нового проекта всегда вызывается с этим флагом как дополнительная страховка: diff неизбежно видит «удалённые» задачи из старого проекта, но уведомления подавляются. `notifyStatusTransitions` экспортирована для unit-тестирования. Добавлен явный `import { ref, computed, watch } from 'vue'` и `import useNotification` в `useIssues.ts` для testability. 334/334 тестов зелёные.
+
+
 - **Hook escape hatches теперь работают inline из Bash tool** (follow-up эпика `a4q`): `CLAUDE_SKIP_STALE_CHECK=1 git commit ...` и `SKIP_ENRICH_CHECK=1 bd create ...` раньше не обходили хуки, потому что Claude Code запускает hook отдельным процессом ДО исполнения Bash tool'а — inline ENV-префикс виден только дочернему shell'у команды, не хуку. Хуки `enforce-worktree-fresh-vs-main.sh` и `enforce-bead-enrichment.sh` (Bash matcher) теперь дополнительно парсят `COMMAND` на inline-префикс через регулярку с shell-token boundaries. Env-переменная на уровне Claude Code процесса работает как раньше. Найдено smoke-тестом в свежей сессии (см. `.claude/plans/a4q-test-results.md` B6).
 
 ### Removed
