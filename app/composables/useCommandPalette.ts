@@ -1,4 +1,4 @@
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Issue } from '~/types/issue'
 import { bdList, logFrontend } from '~/utils/bd-api'
 import { matchesSearch } from '~/utils/issue-helpers'
@@ -67,6 +67,8 @@ const errors = ref<string[]>([])
 const focusedIndex = ref(0)
 const allResults = ref<PaletteResult[]>([])
 let lastRefreshAt = 0
+
+watch(query, () => { focusedIndex.value = 0 })
 
 const results = computed<PaletteResult[]>(() => {
   const term = query.value.toLowerCase().trim()
