@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Internal
+- **Worktree layout migrated to external parent** (`beads-task-issue-tracker-x3w`): worktrees now live under `~/Projects/worktrees/beads-task-issue-tracker/<branch>/` instead of `<repo>/.worktrees/`. External layout keeps repo `git status` clean, lets worktrees be removed physically without touching the repo, and gives hooks reliable CWD-based orchestrator/supervisor detection. Six hooks updated to the new path pattern: `lib/subagent-detect.sh`, `enforce-branch-before-edit.sh`, `session-start.sh`, `block-supervisor-close-and-signing.sh`, `block-orchestrator-tools.sh`, `memory-capture.sh`.
+- **`scripts/setup-worktree.sh`** (`beads-task-issue-tracker-x3w`): new script that prepares a fresh worktree (`.env` symlink + `pnpm install` via pnpm global store). Cargo `target/` and Nuxt `.nuxt/` are intentionally not shared — symlinking `target/` breaks `cargo clean` (cargo#7510) and global `CARGO_TARGET_DIR` serializes parallel builds; `.nuxt/` is cheap to regenerate and shared access breaks concurrent `pnpm dev`.
+- **`merge-to-main` skill now auto-lands feature branches** (`beads-task-issue-tracker-x3w`): Step 0 lists open feature-related beads and offers `AskUserQuestion` to close them in place (delegating `reviewing-code` or `bd close`). Step 0.5 detects a dirty working tree or an ahead-of-remote branch and delegates the `land` skill (commit + push via merge-slot) before `gh pr create`. The two-phase "run `/land` first, then merge" is gone.
+- **`merge-to-main` documentation step — skip flag + auto-detect + DOCS REPORT** (`beads-task-issue-tracker-x3w`): skill recognizes skip-docs trigger phrases («без документации», «без доки», «no-docs», «skip-docs», «пропусти документацию»). When the flag is absent, an auto-detect pass checks whether the diff is limited to tests/config/docs-meta files with no new public APIs (`export`/`function`/`class`/Rust `fn`/`#[tauri::command]`) and whether any changed symbol is mentioned in `docs/` or `README.md`; if none, Step 3 is skipped automatically. Step 3 dispatch of `documentation-expert` now requires a mandatory `### DOCS REPORT` markdown table (status + commit SHA + file-by-file changes); after the agent returns, orchestrator always prints a factual markdown table sourced from `git log -1` + `git show --name-only` instead of trusting the agent's words.
+- **`claiming-bead` skill recognizes worktree requests** (`beads-task-issue-tracker-x3w`): phrases like «в worktree», «создай worktree», «изолированно» trigger automatic `bd worktree create` + `setup-worktree.sh` provisioning in the external layout.
+- **Hook-level shell tests** (`beads-task-issue-tracker-x3w`): added `.claude/hooks/tests/` with `test_helpers.sh`, `test_subagent_detect.sh` (6 cases, incl. legacy-layout negative), `test_shell_tokens.sh` (16 cases, incl. multiline quote-strip). Manual run: `bash .claude/hooks/tests/<file>.sh`.
+
 ## [2.3.0] - 2026-04-21
 
 ### Highlights

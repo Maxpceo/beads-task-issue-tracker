@@ -39,6 +39,32 @@ bd update <ID> --claim
 
 Если `bd show` показал enriched description/comments — Session A наполнила bead, контекст уже в prompt после `bd show`. Если bead создан до `INSTALL_DATE=2026-04-20` (grandfathered) или enrichment не видно — начинай с investigate в Plan Mode (Step 4), это и есть ожидаемый fallback.
 
+## Step 2.5. Работа в worktree (если пользователь запросил)
+
+**Если пользователь запросил работу в worktree** (фразы «в worktree», «создай worktree», «изолированно», «в отдельной ветке/окружении»):
+
+Ветки и директории worktree именуются с префиксом `bd-<bead-id>`. Это соглашение используется в `session-start.sh` auto-cleanup: он ищет директории `bd-*` и снимает префикс через `${BRANCH#bd-}`, чтобы восстановить ID для `bd close`. Worktree без префикса не попадёт в авто-уведомление о смёрженной ветке.
+
+```bash
+# 1. Родительская директория (идемпотентно)
+mkdir -p ~/Projects/worktrees/beads-task-issue-tracker
+
+# 2. Создать worktree + ветку (префикс bd- обязателен)
+bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id> --branch bd-<bead-id>
+
+# 3. Обязательный setup (.env symlink + pnpm install)
+./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id>
+
+# 4. Дальше вся работа идёт из worktree
+cd ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id>
+```
+
+Без `setup-worktree.sh` в worktree не будет `.env` и `node_modules` — supervisor упадёт на первом же `pnpm test`. Детали layout'а: `.claude/references/bd-worktrees.md`.
+
+Первый `cargo check` / `pnpm tauri:dev` в новой worktree скомпилирует Rust с нуля (минуты) — это ожидаемо. Каждая worktree имеет свой `src-tauri/target/` (shared target ломает Cargo lock и cargo clean).
+
+Если worktree не запрошен — переходи к Step 3 как обычно.
+
 ## Step 3. Определить путь: Fast Path vs Supervisor Path
 
 **Fast Path** — все условия true:

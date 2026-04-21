@@ -18,22 +18,60 @@
 - Fast Path (1 файл, <20 строк) — создание worktree дороже самой задачи.
 - Последовательные задачи в одной сессии — ветка + рабочая директория справляются.
 
-## Команды
+## Layout (external)
+
+Worktrees живут во внешней директории `~/Projects/worktrees/beads-task-issue-tracker/<branch>/`, а не внутри репо. Это даёт:
+- чистое `git status` в корне репо (не видит чужие worktrees);
+- возможность удалить worktree физически, не трогая репо;
+- хуки надёжно различают orchestrator ↔ supervisor по пути CWD.
+
+### Создание
 
 ```bash
-bd worktree create <name> --branch <branch>   # Создать worktree в .worktrees/<name>
-bd worktree list                              # Список активных worktrees
-bd worktree info                              # Инфо о текущем (если внутри worktree)
-bd worktree remove <name>                     # Удалить (с safety checks)
+# 1. Родительская директория (один раз)
+mkdir -p ~/Projects/worktrees/beads-task-issue-tracker
+
+# 2. Создать worktree + ветку
+bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/<name> --branch <name>
+
+# 3. MANDATORY: настроить окружение worktree
+./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/<name>
+
+# 4. Зайти и работать
+cd ~/Projects/worktrees/beads-task-issue-tracker/<name>
 ```
 
-Worktrees создаются в `.worktrees/` (в `.gitignore`).
+### Что делает `setup-worktree.sh`
+
+- Создаёт symlink `.env → $REPO_ROOT/.env` (если `.env` в репо есть).
+- Запускает `pnpm install` в worktree. pnpm использует глобальный content-addressable store (`~/Library/pnpm/store`) — установка создаёт symlinks в store, не копирует мегабайты.
+
+### Что НЕ шарится и почему
+
+- **`src-tauri/target/`** — каждая worktree имеет свой. Symlink ломает `cargo clean` (cargo#7510), общий `CARGO_TARGET_DIR` даёт global lock и блокирует параллельную сборку. Первая `cargo build` в новой worktree займёт минуты — это ожидаемо.
+- **`.nuxt/`** — генерируется Nuxt'ом за 10–30 сек. Шаринг ломает параллельный `pnpm dev` из двух worktree (они будут перезаписывать одну и ту же папку).
+
+### Удаление
+
+```bash
+bd worktree remove <name>               # удаляет worktree (with safety checks)
+git branch -D <name>                    # удалить ветку, если уже не нужна
+```
+
+## Команды bd worktree
+
+```bash
+bd worktree create <path> --branch <branch>  # создать external worktree
+bd worktree list                             # список активных
+bd worktree info                             # инфо о текущем (если внутри worktree)
+bd worktree remove <name>                    # удалить (safety checks)
+```
 
 ## Stale vs main guard
 
-Хук `.claude/hooks/enforce-worktree-fresh-vs-main.sh` автоматически ловит коммиты в worktree, когда feature-ветка отстала от `origin/main` и staged файлы пересекаются с изменениями в main.
+Хук `.claude/hooks/enforce-worktree-fresh-vs-main.sh` ловит коммиты в worktree, когда feature-ветка отстала от `origin/main` и staged файлы пересекаются с изменениями в main.
 
-- Hard deny при пересечении файлов (есть риск франкенштейн-коммита).
+- Hard deny при пересечении файлов (риск франкенштейн-коммита).
 - Soft reminder, если пересечения нет.
 - Escape: `CLAUDE_SKIP_STALE_CHECK=1 git commit ...`.
 - Recovery: `git fetch origin && git rebase origin/main`.
@@ -41,10 +79,14 @@ Worktrees создаются в `.worktrees/` (в `.gitignore`).
 ## Ручная проверка хука (E2E)
 
 ```bash
-# E2E: hard deny при пересечении
-git worktree add .worktrees/test-stale -b test-stale main
-cd .worktrees/test-stale
-git reset --hard HEAD~5  # отстать от main
+# Подготовить smoke worktree
+mkdir -p ~/Projects/worktrees/beads-task-issue-tracker
+bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/smoke-stale --branch smoke-stale
+./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/smoke-stale
+cd ~/Projects/worktrees/beads-task-issue-tracker/smoke-stale
+
+# Отстать от main + править файл, пересекающийся с main-diff
+git reset --hard HEAD~5
 echo "x" >> app/pages/index.vue
 git add app/pages/index.vue
 git commit -m "test"   # должен быть DENIED
@@ -53,7 +95,7 @@ git commit -m "test"   # должен быть DENIED
 CLAUDE_SKIP_STALE_CHECK=1 git commit -m "test"  # должен пройти
 
 # Cleanup
-cd ../..
-git worktree remove .worktrees/test-stale --force
-git branch -D test-stale
+cd -
+bd worktree remove smoke-stale
+git branch -D smoke-stale
 ```

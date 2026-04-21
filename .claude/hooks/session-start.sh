@@ -31,17 +31,18 @@ fi
 
 # ============================================================
 # Auto-cleanup: Detect merged PRs and cleanup worktrees
+# External layout: ~/Projects/worktrees/beads-task-issue-tracker/<branch>/
 # ============================================================
-WORKTREES_DIR="$CLAUDE_PROJECT_DIR/.worktrees"
-if [[ -d "$WORKTREES_DIR" ]]; then
-  for worktree in $(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | grep "^worktree.*\.worktrees/bd-" | awk '{print $2}'); do
-    BEAD_ID=$(basename "$worktree" | sed 's/bd-//')
+WORKTREES_PARENT="$HOME/Projects/worktrees/beads-task-issue-tracker"
+if [[ -d "$WORKTREES_PARENT" ]]; then
+  for worktree in $(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree .*\/Projects\/worktrees\/beads-task-issue-tracker\// {print $2}'); do
     BRANCH=$(basename "$worktree")
-    
+    BEAD_ID="${BRANCH#bd-}"
+
     # Check if branch was merged to main
     if git -C "$REPO_ROOT" branch --merged main 2>/dev/null | grep -q "$BRANCH"; then
       echo "✓ $BRANCH was merged - consider cleaning up"
-      echo "   Run: git worktree remove \"$worktree\" && bd close \"$BEAD_ID\""
+      echo "   Run: bd worktree remove \"$BRANCH\" && bd close \"$BEAD_ID\""
       echo ""
     fi
   done

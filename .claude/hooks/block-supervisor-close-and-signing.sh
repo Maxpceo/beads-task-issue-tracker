@@ -10,7 +10,7 @@
 # that hole by blocking the write commands from subagent context in the first place.
 #
 # Detection of subagent context mirrors block-orchestrator-tools.sh:
-#   1. CWD inside */.worktrees/*  → subagent
+#   1. CWD inside */Projects/worktrees/*  → subagent (external worktree layout)
 #   2. Transcript has matching agent-*.jsonl for TOOL_USE_ID → subagent
 #
 
@@ -27,7 +27,7 @@ SUBAGENT_FILE=""
 
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 [[ -z "$CWD" ]] && CWD=$(pwd 2>/dev/null || echo "")
-if [[ "$CWD" == *"/.worktrees/"* ]]; then
+if [[ "$CWD" == *"/Projects/worktrees/"* ]]; then
   IS_SUBAGENT="true"
 fi
 

@@ -11,7 +11,8 @@
 #   # Also sets $SUBAGENT_FILE if detected via transcript method.
 #
 # Detection methods (in order, first match wins):
-#   1. CWD inside */.worktrees/*  → subagent (reliable, worktree-mode dispatch)
+#   1. CWD inside */Projects/worktrees/*  → subagent (reliable, worktree-mode dispatch).
+#      Worktrees live in ~/Projects/worktrees/<project>/<branch>/ — external layout.
 #   2. Transcript: agent transcript has TOOL_USE_ID match → subagent
 #      Also sets global SUBAGENT_FILE for downstream use (e.g. subagent_type lookup)
 #   3. Marker lock /tmp/claude-subagent-${SESSION_ID}.lock with TTL-guard:
@@ -42,8 +43,8 @@ is_subagent() {
   cwd=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
   [[ -z "$cwd" ]] && cwd=$(pwd 2>/dev/null || echo "")
 
-  # Method 1: CWD worktree detection
-  if [[ "$cwd" == *"/.worktrees/"* ]]; then
+  # Method 1: CWD worktree detection (external layout: ~/Projects/worktrees/<project>/<branch>/)
+  if [[ "$cwd" == *"/Projects/worktrees/"* ]]; then
     return 0
   fi
 
