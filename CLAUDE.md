@@ -96,7 +96,7 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 - **`managing-epics`** — «создай эпик», «cross-domain задача»: design doc → children → sequential dispatch.
 - **`reviewing-code`** — bead в `inreview` / «запусти ревью»: simplify → review → RAMS/WIG → locale-sync → acceptance → close.
 - **`land`** — «пора заканчивать», «я закончил»: close beads → commit → push via merge-slot.
-- **`merge-to-main`** — «мержим в main», «давай PR»: feature-ветка → PR → update docs → merge → checkout main.
+- **`merge-to-main`** — «мержим в main», «давай PR»: feature-ветка → auto-land (commit + push через Step 0.5) → PR → update docs → merge → checkout main. Запускать `/land` перед ним не нужно — skill сам подхватит dirty tree / ahead-of-remote.
 - **`release`** — «сделай релиз», «пора релизить»: pre-flight → curated `### Highlights` в CHANGELOG → preview release body → handoff на `./release.sh`.
 
 **Orchestrator execution style:** прогоняй все шаги skill'а подряд без промежуточных вопросов «запускать следующий шаг?». Один сводный отчёт по всем шагам — в самом конце. Прерывайся вопросом ТОЛЬКО при реальной точке принятия решения вне плана: code-reviewer `NOT APPROVED` (redispatch vs force-accept), acceptance не прошёл, обнаружена проблема требующая scope-решения. «Промежуточный статус» или «следующий шаг?» — не спрашиваются.

@@ -1,11 +1,13 @@
 ---
 name: merge-to-main
-description: "Full merge cycle: feature branch → PR → update docs → merge → checkout main. Use PROACTIVELY when user says: make a PR, let's merge, merge to main, pull request, we're done with this branch, push to main, let's finish this feature, давай мержить, сделай PR, мержим в мастер, пора мержить, переходим в main, создай PR, влей в main, заканчиваем с этой веткой. НЕ путай с `land`: `land` — это commit + push в feature-ветку внутри сессии; `merge-to-main` — финальный PR → merge в main → checkout main. Не запускай `merge-to-main`, пока bead не reviewed + accepted."
+description: "Full merge cycle: feature branch → auto-land (commit + push) → PR → update docs → merge → checkout main. Use PROACTIVELY when user says: make a PR, let's merge, merge to main, pull request, we're done with this branch, push to main, let's finish this feature, давай мержить, сделай PR, мержим в мастер, пора мержить, переходим в main, создай PR, влей в main, заканчиваем с этой веткой. Запускать `/land` перед этим skill'ом НЕ нужно — Step 0.5 сам подтягивает незакоммиченные файлы и пушит ветку. НЕ путай с `land`: `land` = только commit + push в feature-ветку внутри сессии; `merge-to-main` = полный цикл до main."
 ---
 
 # Merge to Master — Full PR + Docs + Merge Cycle
 
 Automated workflow for merging a feature branch into main.
+
+**ВАЖНО:** Запускать `/land` перед этим skill'ом НЕ нужно. Step 0.5 сам обнаруживает dirty tree / ahead-of-remote и делегирует `land`, чтобы код был закоммичен и запушен до создания PR.
 
 ## Current state
 
@@ -37,21 +39,39 @@ echo "=== inreview ===" && bd list --status=inreview --assignee="$(git config us
 
 Skip-триггер: если в сообщении пользователя есть фразы «skip bead check», «без проверки beads», «merge as-is» — пропустить Step 0 целиком.
 
+## Step 0.5: Auto-land (commit + push если нужно)
+
+Цель: не дать `gh pr create` упасть на «no commits between» или на dirty working tree. Skill сам подтягивает локальное состояние ветки до origin.
+
+```bash
+git status --short
+git rev-list --count "@{u}..HEAD" 2>/dev/null || echo "no upstream"
+```
+
+Разветвление:
+
+| Ситуация | Действие |
+|---|---|
+| Clean working tree И 0 коммитов ahead | Ничего не делаем, переходим к Step 1 |
+| Dirty working tree (есть изменения в отслеживаемых файлах) ИЛИ >0 коммитов ahead | Делегировать skill `land` — он сделает commit (если нужно) + `bd merge-slot acquire` + `git pull --rebase && git push`, освободит слот. После возврата `land` → Step 1. |
+| Upstream не настроен (ветка никогда не пушилась) | Делегировать `land` — он сам сделает `git push -u origin <branch>` |
+| Untracked файлы, НЕ относящиеся к фиче (например, случайные артефакты) | Показать список пользователю, спросить через `AskUserQuestion`: «Add to commit / Leave alone / Abort» |
+
+Skill `land` уже обрабатывает merge-slot contention, `git pull --rebase` race, и безусловный release слота при любой ошибке. Не дублируй эту логику — просто делегируй.
+
+**Skip-триггер:** фразы «skip land», «не пуши», «без push» — переходим к Step 1, и если `gh pr create` потом упадёт — показываем ошибку пользователю, он сам решит.
+
 ## Step 1: Pre-flight Checks
 
 ```bash
 git status --short
 git branch --show-current
 git log --oneline main..HEAD
-bd list --status=open
-bd list --status=in_progress
 ```
 
 Verify:
 - Current branch is NOT main (if on main → STOP, tell user "Already on main")
-- No uncommitted changes (if any → commit first)
-- No open/in_progress beads (if any → close them first)
-- All code is pushed (`git log origin/<branch>..HEAD` should be empty)
+- После Step 0.5: working tree clean и ветка в синхроне с origin (если нет — Step 0.5 не отработал, STOP и разобраться)
 
 Run quality gates:
 ```bash
