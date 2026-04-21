@@ -82,7 +82,7 @@ Merge-slot сериализует `git push` между параллельным
 
 ### Session Completion (Landing the Plane)
 
-Завершение сессии (close beads, quality gates, commit, push via merge-slot) — skill **`land`**. Quality gates: `pnpm test && npx vue-tsc --noEmit`. CHANGELOG.md обязателен под `[Unreleased]` для всех code-изменений. Hook `block-git-add-all.sh` запрещает `git add -A`/`git add .` — указывай файлы по именам.
+Завершение сессии (close beads, quality gates, commit, push via merge-slot) — skill **`land`**. Quality gates: `pnpm test && npx vue-tsc --noEmit`. CHANGELOG.md обязателен под `[Unreleased]` для всех code-изменений — **пиши записи на английском** (в отличие от bead issues, которые на русском: это open-source convention, и CHANGELOG.md / README.md / commit messages — единственные места в проекте, где контент строго English). Hook `block-git-add-all.sh` запрещает `git add -A`/`git add .` — указывай файлы по именам.
 
 ### Before Merge to main
 

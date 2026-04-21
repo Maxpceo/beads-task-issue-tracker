@@ -57,3 +57,4 @@ _bmad/
 # Claude Code local artifacts (personal, not shared)
 .claude/plans/
 .claude/scheduled_tasks.lock
+scripts/__pycache__/

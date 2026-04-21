@@ -54,9 +54,11 @@ if [[ "${1:-}" == "--publish" ]]; then
 
   echo -e "  ${GREEN}Все $ASSET_COUNT файлов на месте${NC}"
   echo ""
-  read -p "Опубликовать $DRAFT_TAG? (y/n): " -n 1 -r
+  # Publish is irreversible (release becomes visible to everyone).
+  # Default NO — user must explicitly type 'y'.
+  read -p "Опубликовать $DRAFT_TAG? [y/N]: " -r
   echo ""
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  if [[ -z "$REPLY" || ! "${REPLY:0:1}" =~ [Yy] ]]; then
     echo -e "${RED}Отменено.${NC}"
     exit 1
   fi
@@ -79,13 +81,46 @@ NC='\033[0m'
 PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$PROJECT_ROOT"
 
-# Функция подтверждения
+# Функция подтверждения.
+# Usage:
+#   confirm "Message"            — default YES (safe/expected ops). Enter = yes.
+#   confirm "Message" yes        — explicit default yes
+#   confirm "Message" no         — default NO (destructive/irreversible ops). Enter = no.
+# Пользователю показывается [Y/n] или [y/N] соответственно — capital = default.
 confirm() {
+  local message="$1"
+  local default="${2:-yes}"
+  local prompt
+  if [[ "$default" == "no" ]]; then
+    prompt="Продолжить? [y/N]: "
+  else
+    prompt="Продолжить? [Y/n]: "
+  fi
+
   echo ""
-  echo -e "${YELLOW}$1${NC}"
-  read -p "Продолжить? (y/n): " -n 1 -r
+  echo -e "${YELLOW}$message${NC}"
+  # -r: no backslash escape. Enter (empty REPLY) keeps default.
+  # We intentionally do NOT use -n 1 here: allowing the user to type a full
+  # word (e.g. "yes", "no") before Enter is more forgiving. The single-char
+  # fast path works too — 'y' or 'n' followed by Enter is still 1 keystroke
+  # after the input finishes.
+  read -p "$prompt" -r
   echo ""
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+
+  # Normalize: empty → default; otherwise take first char lowercase.
+  local answer
+  if [[ -z "$REPLY" ]]; then
+    answer="$default"
+  elif [[ "${REPLY:0:1}" =~ [Yy] ]]; then
+    answer="yes"
+  elif [[ "${REPLY:0:1}" =~ [Nn] ]]; then
+    answer="no"
+  else
+    echo -e "${RED}Неверный ответ: $REPLY. Ожидалось y/n.${NC}"
+    exit 1
+  fi
+
+  if [[ "$answer" == "no" ]]; then
     echo -e "${RED}Отменено.${NC}"
     exit 1
   fi
@@ -126,9 +161,11 @@ echo ""
 echo -e "${CYAN}Шаг 3: Запуск тестов${NC}"
 echo ""
 echo -e "${YELLOW}Запустить pnpm test && npx vue-tsc --noEmit?${NC}"
-read -p "Продолжить? (y/n): " -n 1 -r
+# Tests are default-yes (Enter = run). This does not mirror confirm()'s exit-on-no
+# behaviour because skipping tests is allowed here (user may have run them already).
+read -p "Продолжить? [Y/n]: " -r
 echo ""
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [[ -z "$REPLY" || "${REPLY:0:1}" =~ [Yy] ]]; then
   echo -e "  Запускаю тесты..."
   if ! pnpm test 2>&1; then
     echo -e "${RED}  Тесты упали! Исправь перед релизом.${NC}"
@@ -191,20 +228,50 @@ echo ""
 echo -e "  ${GREEN}Новая версия: v$NEW_VERSION${NC}"
 echo ""
 
-# ── Шаг 5: Проверить CHANGELOG ──
+# ── Шаг 5: Проверить / подготовить CHANGELOG ──
 echo -e "${CYAN}Шаг 5: Проверка CHANGELOG${NC}"
-if grep -q "\[$NEW_VERSION\]" CHANGELOG.md; then
-  echo -e "  ${GREEN}Запись [$NEW_VERSION] найдена в CHANGELOG.md${NC}"
+TODAY=$(date +%Y-%m-%d)
+
+if grep -q "^## \[$NEW_VERSION\]" CHANGELOG.md; then
+  echo -e "  ${GREEN}Запись [$NEW_VERSION] уже есть в CHANGELOG.md — пропускаю промоушен${NC}"
 else
-  echo -e "${RED}  Запись [$NEW_VERSION] НЕ найдена в CHANGELOG.md!${NC}"
-  echo -e "  ${YELLOW}Добавь запись перед релизом:${NC}"
+  # Нет явной записи на версию — проверяем, есть ли содержимое в [Unreleased].
+  # awk вытягивает строки между '## [Unreleased]' и следующим '## ['.
+  UNRELEASED_BODY=$(awk '
+    /^## \[Unreleased\]/ { in_section = 1; next }
+    in_section && /^## \[/ { in_section = 0 }
+    in_section { print }
+  ' CHANGELOG.md | sed '/^$/d')
+
+  if [[ -z "$UNRELEASED_BODY" ]]; then
+    echo -e "${RED}  Секция [Unreleased] пустая и нет [$NEW_VERSION] — нечего релизить.${NC}"
+    echo -e "  ${YELLOW}Добавь записи в [Unreleased] или вручную создай [$NEW_VERSION].${NC}"
+    exit 1
+  fi
+
+  echo -e "  ${YELLOW}Найдены записи в [Unreleased]:${NC}"
+  echo "$UNRELEASED_BODY" | head -8 | sed 's/^/    /'
+  UNRELEASED_LINES=$(echo "$UNRELEASED_BODY" | wc -l | tr -d ' ')
+  if [[ "$UNRELEASED_LINES" -gt 8 ]]; then
+    echo -e "    ${YELLOW}... ещё $((UNRELEASED_LINES - 8)) строк${NC}"
+  fi
   echo ""
-  echo -e "    ## [$NEW_VERSION] - $(date +%Y-%m-%d)"
-  echo -e "    "
-  echo -e "    ### New Features"
-  echo -e "    - ..."
-  echo ""
-  exit 1
+  confirm "Переименовать [Unreleased] → [$NEW_VERSION] - $TODAY и вставить пустой [Unreleased] сверху?"
+
+  # Атомарная правка CHANGELOG через awk: первое вхождение '## [Unreleased]'
+  # заменяем на новый пустой [Unreleased] + пустая строка + [VERSION] - DATE.
+  awk -v ver="$NEW_VERSION" -v today="$TODAY" '
+    !replaced && /^## \[Unreleased\]/ {
+      print "## [Unreleased]"
+      print ""
+      print "## [" ver "] - " today
+      replaced = 1
+      next
+    }
+    { print }
+  ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+
+  echo -e "  ${GREEN}CHANGELOG.md обновлён: [Unreleased] → [$NEW_VERSION] - $TODAY${NC}"
 fi
 echo ""
 
@@ -214,7 +281,17 @@ TAURI_CONF="src-tauri/tauri.conf.json"
 if [[ "$CURRENT_VERSION" == "$NEW_VERSION" ]]; then
   echo -e "${CYAN}Шаг 6: Версия уже $NEW_VERSION — пропускаю обновление файлов${NC}"
   echo ""
-  echo -e "${CYAN}Шаг 7: Коммит не нужен — версия не изменилась${NC}"
+  # Step 5 may have modified CHANGELOG.md (e.g. re-run with same version but
+  # Unreleased was promoted). Commit it separately so we don't leave a dirty tree.
+  if ! git diff --quiet -- CHANGELOG.md; then
+    echo -e "${CYAN}Шаг 7: CHANGELOG.md изменён в шаге 5 — коммичу отдельно${NC}"
+    confirm "Создать коммит 'docs: promote [Unreleased] to v$NEW_VERSION'?"
+    git add CHANGELOG.md
+    git commit -m "docs: promote [Unreleased] to v$NEW_VERSION"
+    echo -e "  ${GREEN}Коммит создан${NC}"
+  else
+    echo -e "${CYAN}Шаг 7: Коммит не нужен — tree чистый${NC}"
+  fi
   echo ""
 else
   CARGO_TOML="src-tauri/Cargo.toml"
@@ -268,13 +345,34 @@ else
   echo -e "${CYAN}Шаг 7: Создание коммита${NC}"
   echo ""
   echo -e "  Сообщение: ${GREEN}release: v$NEW_VERSION${NC}"
-  echo -e "  Файлы: package.json, $TAURI_CONF, $CARGO_TOML, $CARGO_LOCK"
+  echo -e "  Файлы: package.json, $TAURI_CONF, $CARGO_TOML, $CARGO_LOCK, CHANGELOG.md"
   confirm "Создать коммит?"
 
-  git add package.json "$TAURI_CONF" "$CARGO_TOML" "$CARGO_LOCK"
+  # CHANGELOG.md добавляем всегда — даже если шаг 5 не трогал его (idempotent),
+  # чтобы не терять ранее закоммиченные правки CHANGELOG в релиз-коммите.
+  git add package.json "$TAURI_CONF" "$CARGO_TOML" "$CARGO_LOCK" CHANGELOG.md
   git commit -m "release: v$NEW_VERSION"
   echo -e "  ${GREEN}Коммит создан${NC}"
   echo ""
+fi
+
+# ── Шаг 7.5: Preview release notes ──
+echo -e "${CYAN}Шаг 7.5: Предпросмотр release notes${NC}"
+echo -e "  GitHub Actions соберёт release body автоматически из CHANGELOG.md"
+echo -e "  по правилам ${YELLOW}scripts/release-notes.py${NC} (фильтр internal/dev-tooling)."
+echo ""
+if python3 scripts/release-notes.py "$NEW_VERSION" > /tmp/release-notes-preview.md 2> /tmp/release-notes-preview.err; then
+  echo -e "${YELLOW}─── Release body preview ───${NC}"
+  head -40 /tmp/release-notes-preview.md
+  echo -e "${YELLOW}─── (truncated; full: /tmp/release-notes-preview.md) ───${NC}"
+  echo ""
+  confirm "Release notes выглядят корректно?"
+else
+  echo -e "${RED}  Не удалось сгенерировать preview:${NC}"
+  cat /tmp/release-notes-preview.err | sed 's/^/    /'
+  echo ""
+  # Preview failed — caller should think twice. Default NO.
+  confirm "Продолжить релиз без preview?" no
 fi
 
 # ── Шаг 8: Тег ──
@@ -294,7 +392,9 @@ echo ""
 echo -e "  Будет отправлено:"
 echo -e "    1. Коммит с версией → ${GREEN}origin/$CURRENT_BRANCH${NC}"
 echo -e "    2. Тег v$NEW_VERSION → GitHub Actions начнёт сборку"
-confirm "Отправить на GitHub?"
+# Push is irreversible (tag triggers GitHub Actions → public draft release).
+# Default NO — user must explicitly type 'y'.
+confirm "Отправить на GitHub?" no
 
 git push origin "$CURRENT_BRANCH"
 git push origin "v$NEW_VERSION"
