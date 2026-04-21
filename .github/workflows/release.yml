@@ -151,44 +151,31 @@ jobs:
             }
           }
 
-      - name: Generate release notes from CHANGELOG
-        if: startsWith(github.ref_name, 'v')
+      - name: Generate release notes body
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          python3 scripts/release-notes.py "$VERSION" > release-notes-body.md
-          {
-            echo ""
-            echo "---"
-            echo ""
-            echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."
-            echo ""
-            echo "## Requirements"
-            echo ""
-            echo "> **Requires bd 0.49.x.** Do **not** use bd 0.50–0.56+ — those versions progressively remove embedded Dolt and CGO support, which breaks the file-watcher path this app depends on. If you upgrade bd via Homebrew, pin it after installing 0.49: \`brew pin bd\`."
-            echo ""
-            echo "## Installation"
-            echo ""
-            echo "| Platform | File | Notes |"
-            echo "|----------|------|-------|"
-            echo "| **macOS (Apple Silicon M1/M2/M3)** | \`*_macOS-ARM64.dmg\` | For Mac 2020+ |"
-            echo "| **macOS (Intel)** | \`*_macOS-Intel.dmg\` | For Mac pre-2020 |"
-            echo "| **Windows** | \`*_Windows.msi\` | Recommended installer |"
-            echo "| **Linux (Debian/Ubuntu)** | \`*_Linux-amd64.deb\` | Recommended for Debian 12+, Ubuntu 22+ |"
-            echo "| **Linux (other)** | \`*_Linux-amd64.AppImage\` | Requires \`libfuse2\` |"
-            echo ""
-            echo "### macOS — unsigned app workaround"
-            echo ""
-            echo "This app is **not signed with an Apple Developer certificate**. On first launch macOS will show *\"Apple cannot verify this developer\"* and refuse to open the app. After dragging the app to \`/Applications\`, run this in Terminal once:"
-            echo ""
-            echo '```bash'
-            echo 'xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app'
-            echo '```'
-            echo ""
-            echo "This strips the quarantine attribute Gatekeeper adds to downloaded files. The app will then launch normally."
-          } >> release-notes-body.md
-          echo "=== Preview (first 60 lines) ==="
-          head -60 release-notes-body.md
+          if [[ "$GITHUB_REF_NAME" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            python3 scripts/release-notes.py "$VERSION" > release-notes-body.md
+            {
+              echo ""
+              echo "---"
+              echo ""
+              echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."
+              echo ""
+              cat .github/release-footer.md
+            } >> release-notes-body.md
+          else
+            {
+              echo "**This is an automatically generated development build from the latest code on \`main\`.**"
+              echo ""
+              echo "This release is updated on each \`/create-release latest\` invocation. It always reflects the most recent development state."
+              echo ""
+              cat .github/release-footer.md
+            } > release-notes-body.md
+          fi
+          echo "=== Preview (first 80 lines) ==="
+          head -80 release-notes-body.md
 
       - name: Upload artifacts to versioned release
         if: startsWith(github.ref_name, 'v')
@@ -197,33 +184,6 @@ jobs:
           draft: true
           name: 'Beads Task-Issue Tracker ${{ github.ref_name }}'
           body_path: release-notes-body.md
-          # Kept as fallback; body_path takes precedence when the file exists.
-          body: |
-            See the [CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for details.
-
-            ## Requirements
-
-            > **Requires bd 0.49.x.** Do **not** use bd 0.50–0.56+ — those versions progressively remove embedded Dolt and CGO support, which breaks the file-watcher path this app depends on. If you upgrade bd via Homebrew, pin it after installing 0.49: `brew pin bd`.
-
-            ## Installation
-
-            | Platform | File | Notes |
-            |----------|------|-------|
-            | **macOS (Apple Silicon M1/M2/M3)** | `*_macOS-ARM64.dmg` | For Mac 2020+ |
-            | **macOS (Intel)** | `*_macOS-Intel.dmg` | For Mac pre-2020 |
-            | **Windows** | `*_Windows.msi` | Recommended installer |
-            | **Linux (Debian/Ubuntu)** | `*_Linux-amd64.deb` | Recommended for Debian 12+, Ubuntu 22+ |
-            | **Linux (other)** | `*_Linux-amd64.AppImage` | Requires `libfuse2` |
-
-            ### macOS — unsigned app workaround
-
-            This app is **not signed with an Apple Developer certificate**. On first launch macOS will show *"Apple cannot verify this developer"* and refuse to open the app. After dragging the app to `/Applications`, run this in Terminal once:
-
-            ```bash
-            xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
-            ```
-
-            This strips the quarantine attribute Gatekeeper adds to downloaded files. The app will then launch normally.
           files: |
             src-tauri/target/*/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/deb/*.deb
@@ -240,34 +200,7 @@ jobs:
           draft: false
           prerelease: true
           name: 'Beads Task-Issue Tracker - Latest Development Build'
-          body: |
-            **This is an automatically generated development build from the latest code on `main`.**
-
-            This release is updated on each `/create-release latest` invocation. It always reflects the most recent development state.
-
-            ## Requirements
-
-            > **Requires bd 0.49.x.** Do **not** use bd 0.50–0.56+ — those versions progressively remove embedded Dolt and CGO support, which breaks the file-watcher path this app depends on. If you upgrade bd via Homebrew, pin it after installing 0.49: `brew pin bd`.
-
-            ## Installation
-
-            | Platform | File | Notes |
-            |----------|------|-------|
-            | **macOS (Apple Silicon M1/M2/M3)** | `*_macOS-ARM64.dmg` | For Mac 2020+ |
-            | **macOS (Intel)** | `*_macOS-Intel.dmg` | For Mac pre-2020 |
-            | **Windows** | `*_Windows.msi` | Recommended installer |
-            | **Linux (Debian/Ubuntu)** | `*_Linux-amd64.deb` | Recommended for Debian 12+, Ubuntu 22+ |
-            | **Linux (other)** | `*_Linux-amd64.AppImage` | Requires `libfuse2` |
-
-            ### macOS — unsigned app workaround
-
-            This app is **not signed with an Apple Developer certificate**. On first launch macOS will show *"Apple cannot verify this developer"* and refuse to open the app. After dragging the app to `/Applications`, run this in Terminal once:
-
-            ```bash
-            xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
-            ```
-
-            This strips the quarantine attribute Gatekeeper adds to downloaded files. The app will then launch normally.
+          body_path: release-notes-body.md
           files: |
             src-tauri/target/*/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/deb/*.deb

@@ -85,18 +85,32 @@ awk '/^## \[Unreleased\]/{p=1;next} /^## \[/{p=0} p' CHANGELOG.md | head -80
 
 Это даёт пользователю шанс оспорить выбор до preview.
 
-## Блок 3: Preview release body
+## Блок 3: Preview release body (Highlights + What's New + Footer)
 
-Запусти скрипт и покажи первые ~40 строк:
+Release body = Highlights/What's New (из CHANGELOG, через `release-notes.py`) + **Footer** (`.github/release-footer.md`: Requirements, Installation, macOS workaround).
+
+Запусти полный preview в том же порядке, в каком workflow собирает body:
 
 ```bash
-python3 scripts/release-notes.py Unreleased 2>&1 | head -40
+{ python3 scripts/release-notes.py Unreleased; echo; echo "---"; echo; echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."; echo; cat .github/release-footer.md; } 2>&1 | head -80
 ```
 
 Проверки:
 - Если в stderr есть `note: no curated ### Highlights section found` — значит секция не попала туда, куда нужно. Перечитай CHANGELOG, исправь расположение.
 - Если output содержит секцию `## Highlights` с записанными тобой пунктами — OK.
-- Если секции `## What's New` содержат `### Highlights` (дублирование) — баг в скрипте, но такого не должно быть (фильтр в `release-notes.py`).
+- Если секции `## What's New` содержат `### Highlights` (дублирование) — баг в скрипте (фильтр в `release-notes.py`).
+- **Footer sanity-check**: `## Requirements` упоминает **актуальную версию bd** (сейчас `1.0.x`). Если в footer устарел bd/Installation/macOS workaround — правь **только `.github/release-footer.md`** (single source of truth для footer); workflow делает `cat` этого файла в двух местах (v* и latest).
+
+### Когда править footer
+
+| Изменилось | Действие |
+|---|---|
+| Bumped bd major (e.g. 1.0 → 2.0) | обнови строку `> **Requires bd ...**` |
+| Новая платформа/artifact | добавь строку в таблицу Installation |
+| Apple Developer signing появился | удали секцию «macOS workaround» |
+| Переименование artifact (e.g. `_macOS-ARM64` → `_macOS-AppleSilicon`) | синхронно поправь таблицу Installation + rename-блоки в `.github/workflows/release.yml` |
+
+Правки footer'а идут отдельным PR (не в release-коммите). После merge в main — следующий тег `v*` автоматически подхватит новый footer.
 
 ## Блок 4: Handoff
 
