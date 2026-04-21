@@ -49,8 +49,8 @@ KEY="${TYPE}-${SLUG}"
 # Detect source agent from CWD or transcript context
 SOURCE="orchestrator"
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
-if echo "$CWD" | grep -q '\.worktrees/'; then
-  # Inside a worktree = supervisor is running
+if echo "$CWD" | grep -q '/Projects/worktrees/'; then
+  # Inside an external worktree = supervisor is running
   SOURCE="supervisor"
 fi
 

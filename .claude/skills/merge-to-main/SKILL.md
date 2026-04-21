@@ -7,11 +7,35 @@ description: "Full merge cycle: feature branch → PR → update docs → merge 
 
 Automated workflow for merging a feature branch into main.
 
-**IMPORTANT:** Before starting, ensure all beads are closed and code is pushed. If not — close beads and push first.
-
 ## Current state
 
 !`git status --short && echo "===" && git branch --show-current && echo "===" && git log --oneline main..HEAD 2>/dev/null | head -20`
+
+## Step 0: Pre-flight bead check (auto-land)
+
+Цель: убрать ручную двухфазность «сначала `/land`, потом merge». Skill сам обнаруживает незакрытые beads текущей фичи и предлагает закрыть через `AskUserQuestion`.
+
+```bash
+echo "=== in_progress ===" && bd list --status=in_progress --assignee="$(git config user.name)" 2>&1 | head -20
+echo "=== inreview ===" && bd list --status=inreview --assignee="$(git config user.name)" 2>&1 | head -20
+```
+
+Логика:
+
+1. Извлечь bead-ID текущей фичи из `git log main..HEAD` + branch name (regex: `beads-task-issue-tracker-[a-z0-9]{4}`).
+2. Разделить списки `in_progress`/`inreview` на **feature-related** (ID из шага 1) и **background** (ID не связанные с текущей веткой).
+3. Разветвление:
+
+   | Ситуация | Действие |
+   |----------|----------|
+   | Оба списка пусты | Тихо переходим к Step 1 |
+   | Feature-beads открыты | `AskUserQuestion`: «Close these beads before merge?» → `Close now` / `Leave open` |
+   | Пользователь выбрал `Close now` | Делегировать `reviewing-code` (для статуса `inreview`) ИЛИ `bd close` (для `in_progress`), затем возобновить Step 1 |
+   | Пользователь выбрал `Leave open` | Перейти к Step 1 (beads останутся открытыми) |
+   | Только background beads | Перечислить их как «background tasks (другие сессии)», перейти к Step 1 без вопросов |
+   | Пользователь явно сказал «skip bead check» | Перейти к Step 1 |
+
+Skip-триггер: если в сообщении пользователя есть фразы «skip bead check», «без проверки beads», «merge as-is» — пропустить Step 0 целиком.
 
 ## Step 1: Pre-flight Checks
 

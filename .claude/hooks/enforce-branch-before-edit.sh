@@ -19,16 +19,16 @@ if [[ "$FILE_PATH" == *"/.claude/plans/"* ]]; then
   exit 0
 fi
 
-# Allow if editing within .worktrees/ directory
-if [[ "$FILE_PATH" == *"/.worktrees/"* ]] || [[ "$FILE_PATH" == *"\.worktrees\"* ]]; then
+# Allow if editing within external worktree layout (~/Projects/worktrees/<project>/<branch>/)
+if [[ "$FILE_PATH" == *"/Projects/worktrees/"* ]]; then
   exit 0
 fi
 
 # Get current working directory
 CWD=$(pwd)
 
-# Allow if currently inside a .worktrees/ directory
-if [[ "$CWD" == *"/.worktrees/"* ]] || [[ "$CWD" == *"\.worktrees\"* ]]; then
+# Allow if currently inside an external worktree
+if [[ "$CWD" == *"/Projects/worktrees/"* ]]; then
   exit 0
 fi
 

@@ -16,12 +16,12 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 IS_SUBAGENT="false"
 
 # Method 1: CWD-based detection (reliable)
-# Legacy: If running inside .worktrees/, this is a supervisor subagent
+# External layout: worktrees live under ~/Projects/worktrees/<project>/<branch>/
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 if [[ -z "$CWD" ]]; then
   CWD=$(pwd 2>/dev/null || echo "")
 fi
-if [[ "$CWD" == *"/.worktrees/"* ]]; then
+if [[ "$CWD" == *"/Projects/worktrees/"* ]]; then
   IS_SUBAGENT="true"
 fi
 

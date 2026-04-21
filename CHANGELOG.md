@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Internal
+- **Worktree layout migrated to external parent** (`beads-task-issue-tracker-x3w`): worktrees now live under `~/Projects/worktrees/beads-task-issue-tracker/<branch>/` instead of `<repo>/.worktrees/`. External layout keeps repo `git status` clean, lets worktrees be removed physically without touching the repo, and gives hooks reliable CWD-based orchestrator/supervisor detection. Six hooks updated to the new path pattern: `lib/subagent-detect.sh`, `enforce-branch-before-edit.sh`, `session-start.sh`, `block-supervisor-close-and-signing.sh`, `block-orchestrator-tools.sh`, `memory-capture.sh`.
+- **`scripts/setup-worktree.sh`** (`beads-task-issue-tracker-x3w`): new script that prepares a fresh worktree (`.env` symlink + `pnpm install` via pnpm global store). Cargo `target/` and Nuxt `.nuxt/` are intentionally not shared — symlinking `target/` breaks `cargo clean` (cargo#7510) and global `CARGO_TARGET_DIR` serializes parallel builds; `.nuxt/` is cheap to regenerate and shared access breaks concurrent `pnpm dev`.
+- **`merge-to-main` skill Step 0 pre-flight bead check** (`beads-task-issue-tracker-x3w`): skill now lists open feature-related beads before the merge and offers `AskUserQuestion` to close them in place (delegating `reviewing-code` or `bd close`). No more manual "first `/land`, then merge" two-phase.
+- **`claiming-bead` skill recognizes worktree requests** (`beads-task-issue-tracker-x3w`): phrases like «в worktree», «создай worktree», «изолированно» trigger automatic `bd worktree create` + `setup-worktree.sh` provisioning in the external layout.
+- **Hook-level shell tests** (`beads-task-issue-tracker-x3w`): added `.claude/hooks/tests/` with `test_helpers.sh`, `test_subagent_detect.sh` (6 cases, incl. legacy-layout negative), `test_shell_tokens.sh` (16 cases, incl. multiline quote-strip). Manual run: `bash .claude/hooks/tests/<file>.sh`.
+
 ## [2.3.0] - 2026-04-21
 
 ### Highlights
