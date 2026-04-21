@@ -109,7 +109,7 @@ const hasProjects = computed(() => projects.value.length > 0)
 <template>
   <Dialog :open="open" @update:open="(v) => !v && closePalette()">
     <DialogContent
-      class="p-0 gap-0 max-w-2xl overflow-hidden"
+      class="p-0 gap-0 max-w-2xl overflow-hidden top-[15vh] translate-y-0"
       :show-close-button="false"
       :aria-label="t('commandPalette.title')"
     >
@@ -183,22 +183,21 @@ const hasProjects = computed(() => projects.value.length > 0)
             :key="`${r.projectPath}::${r.issue.id}`"
             role="option"
             :aria-selected="i === focusedIndex"
-            class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-sm transition-colors"
+            class="flex flex-col gap-0.5 px-3 py-1.5 cursor-pointer select-none text-sm transition-colors"
             :class="i === focusedIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'"
             @click="selectResult(r)"
             @mousemove="onMouseMove(i)"
           >
-            <!-- ID -->
-            <span class="font-mono text-xs text-muted-foreground shrink-0 truncate max-w-32">
-              {{ r.issue.id }}
-            </span>
+            <!-- Row 1: ID + Title -->
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="font-mono text-[11px] text-muted-foreground shrink-0 truncate max-w-[160px]">
+                {{ r.issue.id }}
+              </span>
+              <span class="flex-1 truncate text-pretty">{{ r.issue.title }}</span>
+            </div>
 
-            <!-- Title -->
-            <span class="flex-1 truncate text-pretty">{{ r.issue.title }}</span>
-
-            <!-- Badges -->
-            <div class="flex items-center gap-1 shrink-0">
-              <!-- Status badge -->
+            <!-- Row 2: Badges (status, priority, project) -->
+            <div class="flex items-center gap-1.5 min-w-0 pl-[calc(160px+0.5rem)]">
               <span
                 class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium break-all"
                 :class="statusClass(r.issue.status)"
@@ -206,7 +205,6 @@ const hasProjects = computed(() => projects.value.length > 0)
                 {{ r.issue.status }}
               </span>
 
-              <!-- Priority badge -->
               <span
                 class="text-[10px] font-mono font-semibold uppercase tabular-nums"
                 :class="priorityClass(r.issue.priority)"
@@ -214,8 +212,7 @@ const hasProjects = computed(() => projects.value.length > 0)
                 {{ r.issue.priority.toUpperCase() }}
               </span>
 
-              <!-- Project badge -->
-              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted text-[10px] text-muted-foreground truncate max-w-24">
+              <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-muted text-[10px] text-muted-foreground truncate max-w-40">
                 <svg class="w-2.5 h-2.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                 </svg>
