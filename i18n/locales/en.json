@@ -610,5 +610,18 @@
       "supersedes": "Supersedes",
       "caused-by": "Caused By"
     }
+  },
+  "commandPalette": {
+    "title": "Search across projects",
+    "placeholder": "Type to search: id, title, description, notes, comments…",
+    "emptyPrompt": "Start typing to find issues",
+    "emptyProjectsPrompt": "Add a project from the sidebar to start searching",
+    "noResults": "Nothing matches your query",
+    "loading": "Loading…",
+    "projectBadge": "Project:",
+    "error": "Failed to load issues from {project}",
+    "errorsMultiple": "{count} projects failed to load",
+    "issueNotFound": "Issue {id} not found after switch",
+    "hint": "⏎ open · ↑↓ navigate · Esc close"
   }
 }

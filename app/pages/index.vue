@@ -2,6 +2,8 @@
 import type { Issue, IssueStatus, UpdateIssuePayload } from '~/types/issue'
 import { isIssueBlocked } from '~/utils/issue-helpers'
 import { logFrontend } from '~/utils/bd-api'
+import { watchDebounced } from '@vueuse/core'
+import CommandPalette from '~/components/CommandPalette.vue'
 
 // Layout components
 import AppHeader from '~/components/layout/AppHeader.vue'
@@ -49,11 +51,15 @@ import {
 const { t } = useI18n()
 
 // Composables
+const { closePalette } = useCommandPalette()
 const { filters, workflowStatuses, allStatuses, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
 const { columns, toggleColumn, setColumns, resetColumns } = useColumnConfig()
 const { beadsPath, hasStoredPath } = useBeadsPath()
-const { success: notifySuccess, error: notifyError } = useNotification()
+const { success: notifySuccess, error: notifyError, warning: notifyWarning } = useNotification()
 const { isBr, init: initCliClient } = useCliClient()
+
+// Global keyboard shortcuts (Cmd+K palette)
+useGlobalShortcuts()
 const { projects } = useProjects()
 const {
   issues,
@@ -640,6 +646,36 @@ const handleReset = () => {
   isCreatingNew.value = false
 }
 
+// Command palette: generation guard для быстрых повторных cross-project switch
+let paletteSwitchGen = 0
+
+const onPaletteSelect = async ({ id, path }: { id: string; path: string }) => {
+  closePalette()
+  if (path === beadsPath.value) {
+    const found = issues.value.find(i => i.id === id)
+    if (found) {
+      selectIssue(found)
+      isRightSidebarOpen.value = true
+    } else {
+      notifyWarning(t('commandPalette.issueNotFound', { id }))
+    }
+    return
+  }
+  const gen = ++paletteSwitchGen
+  // Переключить проект: PathSelector обновит beadsPath через setPath
+  const { setPath } = useBeadsPath()
+  setPath(path)
+  await handlePathChange()
+  if (gen !== paletteSwitchGen) return
+  const found = issues.value.find(i => i.id === id)
+  if (found) {
+    selectIssue(found)
+    isRightSidebarOpen.value = true
+  } else {
+    notifyWarning(t('commandPalette.issueNotFound', { id }))
+  }
+}
+
 const handleAddIssue = () => {
   selectIssue(null)
   isCreatingNew.value = true
@@ -806,30 +842,24 @@ const navigationBackTarget = computed(() => {
 // Search handler - search is prioritary over filters (always starts empty)
 const searchValue = ref('')
 
-// Debounced br search to avoid spawning too many CLI processes
-let searchTimeout: ReturnType<typeof setTimeout> | null = null
-
-watch(searchValue, async (value) => {
-  if (searchTimeout) clearTimeout(searchTimeout)
-
+// Debounced search: 180ms for bd (client-side), 300ms kept for br (server-side)
+watchDebounced(searchValue, async (value) => {
   const term = value.trim()
   if (isBr.value && term) {
     // br: delegate to full-text search via Tauri — skip client-side setSearch
     // to avoid flickering (client-side filter would render first, then br results replace)
-    searchTimeout = setTimeout(async () => {
-      const { searchIssues } = useIssues()
-      await searchIssues(term)
-    }, 300)
+    const { searchIssues } = useIssues()
+    await searchIssues(term)
   } else if (isBr.value && !term) {
     // br: search cleared — restore the full list
     setSearch('')
     await fetchIssues()
   } else {
-    // bd: client-side filtering (existing behavior)
+    // bd: client-side filtering with debounce 180ms to avoid jitter on large projects
     setSearch(value)
     await fetchIssues(!!term)
   }
-})
+}, { debounce: 180 })
 
 // Available labels computed from all issues
 const availableLabels = computed(() => {
@@ -1631,6 +1661,9 @@ watch(
         </div>
       </DialogContent>
     </Dialog>
+
+    <!-- Command Palette (Cmd+K cross-project search) -->
+    <CommandPalette @select="onPaletteSelect" />
 
   </div>
 </template>

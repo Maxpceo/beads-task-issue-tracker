@@ -56,7 +56,8 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Workflow filter derived from bd categories**: The Workflow KPI filter automatically includes every status whose bd category is `active`, `wip`, or `frozen` — so `blocked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` status you define with `bd statuses` are all covered without manual configuration. Click the Workflow KPI card to apply the filter
 - **Advanced Filters**: Multi-select filters by type, status, priority, labels, and assignee
 - **Exclusion Filters**: Hide specific issues by criteria (inverse filtering)
-- **Search**: Find issues by `id`, `title`, `description`, or `labels` (case-insensitive substring). When the search field is non-empty, active filters and exclusions are bypassed — matching Jira/Linear semantics so any issue is reachable regardless of the current filter state
+- **Search**: Find issues by `id`, `title`, `description`, `labels`, `workingNotes`, `acceptanceCriteria`, `designNotes`, or `comments` — 8 fields, case-insensitive substring. When the search field is non-empty, active filters and exclusions are bypassed — matching Jira/Linear semantics so any issue is reachable regardless of the current filter state
+- **Cmd+K Command Palette**: Global cross-project search (`Cmd+K` / `Ctrl+K`). Linear/VS Code-style overlay that searches all sidebar projects simultaneously — results show id, title, status, priority, and project badges. Selecting a result switches to that project and opens the issue. Full keyboard navigation (↑↓ Enter Esc); errors for individual projects shown as non-blocking badges
 - **Column Customization**: Show/hide and configure table columns per project
 - **Smart Short IDs**: Common prefix is automatically detected and hidden for readability
 - **Collapsible Sections**: All preview sections (description, attachments, dependencies, etc.) are independently collapsible with persistent state
@@ -76,7 +77,7 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Theme System**: 4 themes — Classic Light, Classic Dark, Dark Flat, and Neon — with per-theme badge styling, glow effects, and one-click cycling via the header icon
 - **Debug Panel**: Live log viewer with auto-refresh, accessible via `Cmd/Ctrl+Shift+L`
 - **Database Repair**: Automatic detection and repair of schema migration issues
-- **Keyboard Shortcuts**: `Cmd/Ctrl+,` (settings), `Cmd/Ctrl+F` (search in markdown), `Cmd/Ctrl+Shift+L` (debug logs), arrow keys (gallery navigation), `Cmd/Ctrl+click` on any copy-ID button (multi-copy accumulate)
+- **Keyboard Shortcuts**: `Cmd/Ctrl+K` (command palette), `Cmd/Ctrl+,` (settings), `Cmd/Ctrl+F` (search in markdown), `Cmd/Ctrl+Shift+L` (debug logs), arrow keys (gallery navigation), `Cmd/Ctrl+click` on any copy-ID button (multi-copy accumulate)
 
 ### New in v2.0.0
 - **Resizable comment section**: Drag the bottom edge to resize (160-500px), height persisted per project

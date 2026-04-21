@@ -311,6 +311,25 @@ export function sortIssues(
 }
 
 /**
+ * Check if an issue matches a search term across 8 fields.
+ * @param issue - The issue to check.
+ * @param term - Already lowercased and trimmed search term. Empty string → false.
+ */
+export function matchesSearch(issue: Issue, term: string): boolean {
+  if (!term) return false
+  return (
+    issue.id.toLowerCase().includes(term) ||
+    issue.title.toLowerCase().includes(term) ||
+    (issue.description?.toLowerCase().includes(term) ?? false) ||
+    (issue.labels?.some(l => l.toLowerCase().includes(term)) ?? false) ||
+    (issue.workingNotes?.toLowerCase().includes(term) ?? false) ||
+    (issue.acceptanceCriteria?.toLowerCase().includes(term) ?? false) ||
+    (issue.designNotes?.toLowerCase().includes(term) ?? false) ||
+    (issue.comments?.some(c => c.content?.toLowerCase().includes(term)) ?? false)
+  )
+}
+
+/**
  * Filter issues based on inclusion filters, exclusion filters, and search.
  */
 export function filterIssues(
@@ -323,13 +342,7 @@ export function filterIssues(
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
-    return issues.filter(
-      (issue) =>
-        issue.title.toLowerCase().includes(search) ||
-        issue.id.toLowerCase().includes(search) ||
-        issue.description?.toLowerCase().includes(search) ||
-        issue.labels?.some(l => l.toLowerCase().includes(search)),
-    )
+    return issues.filter(issue => matchesSearch(issue, search))
   }
 
   let result = issues

@@ -8,6 +8,7 @@ import {
   compareChildIssues,
   sortIssues,
   filterIssues,
+  matchesSearch,
   groupIssues,
   pruneClosedBlockers,
   computeReadyIssues,
@@ -747,5 +748,91 @@ describe('computeReadyIssues', () => {
 
   it('returns empty array for empty input', () => {
     expect(computeReadyIssues([])).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// matchesSearch
+// ---------------------------------------------------------------------------
+describe('matchesSearch', () => {
+  it('returns false for empty term', () => {
+    const issue = makeIssue({ id: 'abc-1', title: 'hello' })
+    expect(matchesSearch(issue, '')).toBe(false)
+  })
+
+  it('matches by id (lowercase contains)', () => {
+    const issue = makeIssue({ id: 'beads-task-nif', title: 'irrelevant' })
+    expect(matchesSearch(issue, 'nif')).toBe(true)
+    expect(matchesSearch(issue, 'xyz')).toBe(false)
+  })
+
+  it('matches by title (case-insensitive)', () => {
+    const issue = makeIssue({ title: 'Add Command Palette' })
+    expect(matchesSearch(issue, 'command')).toBe(true)
+    expect(matchesSearch(issue, 'PALETTE')).toBe(false) // term is already lowercased
+    expect(matchesSearch(issue, 'palette')).toBe(true)
+  })
+
+  it('matches by description', () => {
+    const issue = makeIssue({ description: 'Implements cross-project search' })
+    expect(matchesSearch(issue, 'cross-project')).toBe(true)
+    expect(matchesSearch(issue, 'unrelated')).toBe(false)
+  })
+
+  it('matches by labels', () => {
+    const issue = makeIssue({ labels: ['frontend', 'ui'] })
+    expect(matchesSearch(issue, 'frontend')).toBe(true)
+    expect(matchesSearch(issue, 'ui')).toBe(true)
+    expect(matchesSearch(issue, 'backend')).toBe(false)
+  })
+
+  it('matches by workingNotes', () => {
+    const issue = makeIssue({ workingNotes: 'Need to investigate palette TTL' })
+    expect(matchesSearch(issue, 'ttl')).toBe(true)
+    expect(matchesSearch(issue, 'irrelevant')).toBe(false)
+  })
+
+  it('matches by acceptanceCriteria', () => {
+    const issue = makeIssue({ acceptanceCriteria: 'Cmd+K opens modal with results' })
+    expect(matchesSearch(issue, 'opens modal')).toBe(true)
+    expect(matchesSearch(issue, 'nope')).toBe(false)
+  })
+
+  it('matches by designNotes', () => {
+    const issue = makeIssue({ designNotes: 'Use Reka-UI Dialog for focus-trap' })
+    expect(matchesSearch(issue, 'reka-ui')).toBe(true)
+    expect(matchesSearch(issue, 'something else')).toBe(false)
+  })
+
+  it('matches by comments content', () => {
+    const issue = makeIssue({
+      comments: [
+        { id: 'c1', author: 'bot', content: 'LEARNED: ranking logic applied', createdAt: '' },
+        { id: 'c2', author: 'human', content: 'looks good', createdAt: '' },
+      ],
+    })
+    expect(matchesSearch(issue, 'ranking')).toBe(true)
+    expect(matchesSearch(issue, 'looks good')).toBe(true)
+    expect(matchesSearch(issue, 'unrelated')).toBe(false)
+  })
+
+  it('handles undefined optional fields gracefully', () => {
+    const issue = makeIssue({
+      id: 'no-match-id',
+      title: 'No match title',
+      description: undefined as unknown as string,
+      workingNotes: undefined,
+      acceptanceCriteria: undefined,
+      designNotes: undefined,
+      comments: [],
+    })
+    // Term that exists in none of the fields
+    expect(matchesSearch(issue, 'xyzzy')).toBe(false)
+  })
+
+  it('handles unicode in term and content', () => {
+    const issue = makeIssue({ title: 'Добавить палитру команд' })
+    expect(matchesSearch(issue, 'палитру')).toBe(true)
+    expect(matchesSearch(issue, 'palette')).toBe(false)
   })
 })

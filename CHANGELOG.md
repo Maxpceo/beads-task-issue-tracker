@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **Cmd+K cross-project command palette** (`beads-task-issue-tracker-nif.3`): Linear/VS Code-style search modal over all projects added to the sidebar. Cmd+K / Ctrl+K opens the palette; results are ranked by id-exact → last-segment id (e.g. `nif` matches `beads-task-issue-tracker-nif`) → id-contains → title-exact → title-contains → other fields. TTL cache 30s per open prevents redundant fan-out. Errors for individual projects are shown as a non-blocking badge. Focus-trap via Reka-UI Dialog; full keyboard navigation (↑↓ Enter Esc); cross-project select triggers project switch + issue open. Palette is positioned in the upper third of the screen with a 2-row result layout (id+title on first row, status+priority+project badges on second).
+- **8-field toolbar search** (`beads-task-issue-tracker-nif.3`): shared utility `matchesSearch` extended search from 4 fields (id, title, description, labels) to 8 (+ workingNotes, acceptanceCriteria, designNotes, comments[].content). Both toolbar search and command palette reuse the same utility.
+- **Debounce 180ms on toolbar search input** (`beads-task-issue-tracker-nif.3`): eliminates visual jitter when typing on large projects (1000+ issues × 8 fields). `watchDebounced` from `@vueuse/core` replaces the previous immediate watcher.
+
+### Fixed
+- **Command palette focus resets on query change** (`beads-task-issue-tracker-nif`): when typing in the palette search field, the focused result item now correctly resets to the first result instead of staying on a stale index.
+
+### Changed
+- **`bd_list` migrated to `bd export` on bd>=1.0** (`beads-task-issue-tracker-nif.2`): IPC command `bd_list` now uses version-gated path — `bd export` (JSONL) on bd>=1.0 or any br, `bd list --json` on bd<1.0. The export path returns all fields including `workingNotes`, `acceptanceCriteria`, `designNotes`, `comments` that were previously empty. JSONL parser (`parse_issues_jsonl_tolerant`) uses a whitelist (`_type` absent or `"issue"`) to filter out non-issue records (e.g. `_type: "memory"`). Server-side filters (`status/type/priority/assignee`) are applied on the Rust side via `apply_list_filters`. IPC contract `bd_list(options) -> Vec<Issue>` is unchanged.
+
 ### Changed
 - **Global search bypasses active filters** (`beads-task-issue-tracker-kqc`): when the toolbar search field is non-empty, active `status/type/priority/assignee/label` filters and exclusions are ignored — matching Jira/Linear semantics so closed or filtered-out issues stay reachable. Search covers 4 fields: `id`, `title`, `description`, `labels[]` (case-insensitive substring). Fields `workingNotes/acceptanceCriteria/designNotes/comments` are not included because `bd list --json` does not return them; extending the set requires backend work — tracked as follow-up spike `beads-task-issue-tracker-du6`. Empty search preserves previous filter behaviour.
 
