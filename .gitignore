@@ -3,9 +3,9 @@
 .output
 dist
 
-# Electron
+# Electron (legacy — project is now Tauri)
 dist-electron
-release
+/release
 
 # Node
 node_modules

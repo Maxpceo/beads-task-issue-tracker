@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Highlights
+- **Full bd 1.0.x compatibility** — the app now speaks bd's new review chain, custom statuses, and three new issue types (`spike`/`story`/`milestone`).
+- **Custom status colors in Settings** — pick any colour (solid or gradient) for every status; per-project, persisted locally.
+- **Cmd+K cross-project command palette** — Linear/VS Code-style search across every project in the sidebar, with keyboard navigation and cross-project issue open.
+- **No more phantom "Task deleted" toasts** when switching between projects — a long-standing annoyance on projects with different issue counts is gone.
+- **Runtime language switcher** — Auto / English / Русский in Settings, with full UI localization (dashboard, issues, filters, dialogs, notifications).
+
 ### Added
 - **Cmd+K cross-project command palette** (`beads-task-issue-tracker-nif.3`): Linear/VS Code-style search modal over all projects added to the sidebar. Cmd+K / Ctrl+K opens the palette; results are ranked by id-exact → last-segment id (e.g. `nif` matches `beads-task-issue-tracker-nif`) → id-contains → title-exact → title-contains → other fields. TTL cache 30s per open prevents redundant fan-out. Errors for individual projects are shown as a non-blocking badge. Focus-trap via Reka-UI Dialog; full keyboard navigation (↑↓ Enter Esc); cross-project select triggers project switch + issue open. Palette is positioned in the upper third of the screen with a 2-row result layout (id+title on first row, status+priority+project badges on second).
 - **8-field toolbar search** (`beads-task-issue-tracker-nif.3`): shared utility `matchesSearch` extended search from 4 fields (id, title, description, labels) to 8 (+ workingNotes, acceptanceCriteria, designNotes, comments[].content). Both toolbar search and command palette reuse the same utility.

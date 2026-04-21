@@ -215,19 +215,28 @@ def first_sentence(bullet: str) -> str:
 
 def make_highlights(
     categorized: list[tuple[str, list[str]]], count: int
-) -> list[str]:
-    """Pick the first N bullets from Added/Fixed (preferred) or anywhere else."""
+) -> tuple[list[str], bool]:
+    """
+    Pick highlights for the release.
+
+    If the CHANGELOG has a curated `### Highlights` section under the version
+    heading, use its bullets verbatim (as_curated=True). Otherwise fall back
+    to the first N bullets from Added/Fixed/Changed/Removed (as_curated=False).
+    """
+    for category, bullets in categorized:
+        if category.lower() == "highlights":
+            return [first_sentence(b) for b in bullets], True
+
     preferred_order = ["added", "fixed", "changed", "removed"]
     pool: list[str] = []
     for want in preferred_order:
         for category, bullets in categorized:
             if category.lower() == want:
                 pool.extend(first_sentence(b) for b in bullets)
-    # Fallback: anything else
     if not pool:
         for _, bullets in categorized:
             pool.extend(first_sentence(b) for b in bullets)
-    return pool[:count]
+    return pool[:count], False
 
 
 def render(
@@ -244,7 +253,10 @@ def render(
         out.append("")
     out.append("## What's New")
     out.append("")
+    # Skip a curated Highlights section so entries don't appear twice.
     for category, bullets in categorized:
+        if category.lower() == "highlights":
+            continue
         out.append(f"### {category}")
         out.append("")
         for b in bullets:
@@ -275,7 +287,18 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    highlights = None if args.no_highlights else make_highlights(filtered, args.highlights_count)
+    highlights: list[str] | None
+    if args.no_highlights:
+        highlights = None
+    else:
+        highlights, as_curated = make_highlights(filtered, args.highlights_count)
+        if not as_curated and highlights:
+            print(
+                "note: no curated `### Highlights` section found; "
+                "auto-picked first entries from Added/Fixed. "
+                "Consider adding an explicit `### Highlights` block to CHANGELOG.",
+                file=sys.stderr,
+            )
 
     print(render(args.version, filtered, highlights), end="")
     return 0
