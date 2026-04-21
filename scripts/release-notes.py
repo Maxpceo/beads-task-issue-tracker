@@ -24,6 +24,9 @@ import re
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # Entries mentioning any of these patterns (case-insensitive, on the bullet line)
 # are excluded as internal/dev-tooling noise. Extend as your taste evolves.
 EXCLUDE_PATTERNS = [
