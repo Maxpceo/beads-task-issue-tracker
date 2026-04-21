@@ -82,7 +82,7 @@ Merge-slot сериализует `git push` между параллельным
 
 ### Session Completion (Landing the Plane)
 
-Завершение сессии (close beads, quality gates, commit, push via merge-slot) — skill **`land`**. Quality gates: `pnpm test && npx vue-tsc --noEmit`. CHANGELOG.md обязателен под `[Unreleased]` для всех code-изменений. Hook `block-git-add-all.sh` запрещает `git add -A`/`git add .` — указывай файлы по именам.
+Завершение сессии (close beads, quality gates, commit, push via merge-slot) — skill **`land`**. Quality gates: `pnpm test && npx vue-tsc --noEmit`. CHANGELOG.md обязателен под `[Unreleased]` для всех code-изменений — **пиши записи на английском** (в отличие от bead issues, которые на русском: это open-source convention, и CHANGELOG.md / README.md / commit messages — единственные места в проекте, где контент строго English). Hook `block-git-add-all.sh` запрещает `git add -A`/`git add .` — указывай файлы по именам.
 
 ### Before Merge to main
 
@@ -97,6 +97,7 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 - **`reviewing-code`** — bead в `inreview` / «запусти ревью»: simplify → review → RAMS/WIG → locale-sync → acceptance → close.
 - **`land`** — «пора заканчивать», «я закончил»: close beads → commit → push via merge-slot.
 - **`merge-to-main`** — «мержим в main», «давай PR»: feature-ветка → PR → update docs → merge → checkout main.
+- **`release`** — «сделай релиз», «пора релизить»: pre-flight → curated `### Highlights` в CHANGELOG → preview release body → handoff на `./release.sh`.
 
 **Orchestrator execution style:** прогоняй все шаги skill'а подряд без промежуточных вопросов «запускать следующий шаг?». Один сводный отчёт по всем шагам — в самом конце. Прерывайся вопросом ТОЛЬКО при реальной точке принятия решения вне плана: code-reviewer `NOT APPROVED` (redispatch vs force-accept), acceptance не прошёл, обнаружена проблема требующая scope-решения. «Промежуточный статус» или «следующий шаг?» — не спрашиваются.
 

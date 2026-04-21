@@ -3,9 +3,9 @@
 .output
 dist
 
-# Electron
+# Electron (legacy — project is now Tauri)
 dist-electron
-release
+/release
 
 # Node
 node_modules
@@ -57,3 +57,4 @@ _bmad/
 # Claude Code local artifacts (personal, not shared)
 .claude/plans/
 .claude/scheduled_tasks.lock
+scripts/__pycache__/
