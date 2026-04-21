@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-04-21
+
 ### Highlights
 - **Full bd 1.0.x compatibility** — the app now speaks bd's new review chain, custom statuses, and three new issue types (`spike`/`story`/`milestone`).
 - **Custom status colors in Settings** — pick any colour (solid or gradient) for every status; per-project, persisted locally.
