@@ -16,7 +16,7 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 IS_SUBAGENT="false"
 
 # Method 1: CWD-based detection (reliable)
-# External layout: worktrees live under ~/Projects/worktrees/<project>/<branch>/
+# Worktrees live under ~/Projects/worktrees/<project>/<branch>/ (external layout).
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 if [[ -z "$CWD" ]]; then
   CWD=$(pwd 2>/dev/null || echo "")

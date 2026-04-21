@@ -35,7 +35,7 @@ fi
 # ============================================================
 WORKTREES_PARENT="$HOME/Projects/worktrees/beads-task-issue-tracker"
 if [[ -d "$WORKTREES_PARENT" ]]; then
-  for worktree in $(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print $2}' | grep "/Projects/worktrees/beads-task-issue-tracker/"); do
+  for worktree in $(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree .*\/Projects\/worktrees\/beads-task-issue-tracker\// {print $2}'); do
     BRANCH=$(basename "$worktree")
     BEAD_ID="${BRANCH#bd-}"
 

@@ -43,18 +43,20 @@ bd update <ID> --claim
 
 **Если пользователь запросил работу в worktree** (фразы «в worktree», «создай worktree», «изолированно», «в отдельной ветке/окружении»):
 
+Ветки и директории worktree именуются с префиксом `bd-<bead-id>`. Это соглашение используется в `session-start.sh` auto-cleanup: он ищет директории `bd-*` и снимает префикс через `${BRANCH#bd-}`, чтобы восстановить ID для `bd close`. Worktree без префикса не попадёт в авто-уведомление о смёрженной ветке.
+
 ```bash
 # 1. Родительская директория (идемпотентно)
 mkdir -p ~/Projects/worktrees/beads-task-issue-tracker
 
-# 2. Создать worktree + ветку
-bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/<bead-id> --branch <bead-id>
+# 2. Создать worktree + ветку (префикс bd- обязателен)
+bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id> --branch bd-<bead-id>
 
 # 3. Обязательный setup (.env symlink + pnpm install)
-./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/<bead-id>
+./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id>
 
 # 4. Дальше вся работа идёт из worktree
-cd ~/Projects/worktrees/beads-task-issue-tracker/<bead-id>
+cd ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id>
 ```
 
 Без `setup-worktree.sh` в worktree не будет `.env` и `node_modules` — supervisor упадёт на первом же `pnpm test`. Детали layout'а: `.claude/references/bd-worktrees.md`.

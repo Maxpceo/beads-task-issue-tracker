@@ -23,16 +23,18 @@ WORKTREE_DIR="${1:-}"
 
 if [[ -z "$WORKTREE_DIR" ]]; then
   echo "Использование: $0 <worktree_path>" >&2
-  echo "Пример: $0 ~/Projects/worktrees/beads-task-issue-tracker/feat-foo" >&2
+  echo "Пример: $0 ~/Projects/worktrees/beads-task-issue-tracker/bd-feat-foo" >&2
+  exit 1
+fi
+
+# External layout (~/Projects/worktrees/…) подразумевает абсолютный путь.
+if [[ "$WORKTREE_DIR" != /* ]]; then
+  echo "Ошибка: ожидается абсолютный путь (external worktree layout)." >&2
+  echo "Пример: $0 ~/Projects/worktrees/beads-task-issue-tracker/bd-feat-foo" >&2
   exit 1
 fi
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
-
-# Преобразуем относительный путь в абсолютный
-if [[ "$WORKTREE_DIR" != /* ]]; then
-  WORKTREE_DIR="$REPO_ROOT/$WORKTREE_DIR"
-fi
 
 if [[ ! -d "$WORKTREE_DIR" ]]; then
   echo "Ошибка: директория $WORKTREE_DIR не существует" >&2
@@ -54,8 +56,10 @@ else
   echo "⊘ .env в репо не найден, пропускаю"
 fi
 
-# 2. pnpm install
-if command -v pnpm >/dev/null 2>&1; then
+# 2. pnpm install (если в worktree есть package.json)
+if [[ ! -f "$WORKTREE_DIR/package.json" ]]; then
+  echo "⊘ package.json отсутствует в worktree, пропускаю pnpm install"
+elif command -v pnpm >/dev/null 2>&1; then
   echo ""
   echo "Running pnpm install в worktree..."
   (cd "$WORKTREE_DIR" && pnpm install)
