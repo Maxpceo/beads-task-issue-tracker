@@ -58,13 +58,14 @@ Skill **не** запускает `release.sh` сам — это делает п
   - Net-new фичи → minor (2.3.0 → 2.4.0)
   - Breaking changes → major (2.3.0 → 3.0.0)
 - **Шаг 5 (promote `[Unreleased]` → `[vX.Y.Z]`)**: Enter = yes.
-- **Шаг 7.5 (preview release notes)**: просмотри финальный body.
+- **Шаг 7.5 (preview release notes)**: частичный preview — только Highlights + What's New из `scripts/release-notes.py`. Footer (Requirements / Installation / macOS workaround) в этот preview **не** попадает — он дописывается в CI. Полный preview с footer-ом — в skill `release` (Блок 3).
 - **Шаг 9 (push тэга)**: default `N`. Набирай `y` только когда уверен — push тэга запускает GitHub Actions, создающие draft релиза.
 
 ### 1.4. Сборка в GitHub Actions
 После push тэга:
 - Workflow `Release` (см. `.github/workflows/release.yml`) собирает 6 артефактов (macOS ARM64/Intel `.dmg`, Linux `.deb`/`.AppImage`, Windows `.msi`/`.exe`).
-- Body генерируется из `scripts/release-notes.py` + `.github/release-footer.md`.
+- Для `v*` тэга: body = `scripts/release-notes.py` output + `---` separator + «See the full CHANGELOG» link + `.github/release-footer.md`.
+- Для `latest` тэга: body = hardcoded «automatically generated development build» preamble + `.github/release-footer.md` (без `release-notes.py` — на `latest` скрипт не вызывается).
 - Assets заливаются в **draft** релиз (`draft: true`).
 - Сборка занимает ~8–15 минут.
 
@@ -109,8 +110,8 @@ gh release edit v<VERSION> --draft=true
 ```bash
 # 1. Правим CHANGELOG.md (или готовим body руками во временный файл)
 python3 scripts/release-notes.py 2.3.0 > /tmp/new-body.md
-# 2. Дописываем footer вручную
-{ echo; echo "---"; echo; cat .github/release-footer.md; } >> /tmp/new-body.md
+# 2. Дописываем footer вручную (должно точно повторять склейку из release.yml)
+{ echo; echo "---"; echo; echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."; echo; cat .github/release-footer.md; } >> /tmp/new-body.md
 # 3. Подменяем body на релизе
 gh release edit v2.3.0 --notes-file /tmp/new-body.md
 ```
@@ -164,7 +165,12 @@ gh pr create --base main --fill
 
 ### 3.2. Release body содержит устаревший текст
 - Если **footer** устарел (Requirements и т.д.) → правь `.github/release-footer.md`, merge to main, затем для уже выпущенных релизов патчь body вручную (§2.1).
-- Если **Highlights** выбраны плохо → правь `CHANGELOG.md`, перегенерируй body: `python3 scripts/release-notes.py <version> > /tmp/body.md && cat .github/release-footer.md >> /tmp/body.md && gh release edit v<version> --notes-file /tmp/body.md`.
+- Если **Highlights** выбраны плохо → правь `CHANGELOG.md`, перегенерируй body по тому же шаблону, что в §2.1:
+  ```bash
+  python3 scripts/release-notes.py <version> > /tmp/body.md
+  { echo; echo "---"; echo; echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."; echo; cat .github/release-footer.md; } >> /tmp/body.md
+  gh release edit v<version> --notes-file /tmp/body.md
+  ```
 
 ### 3.3. Артефакт не скачивается (TLS timeout, 404)
 - `release-assets.githubusercontent.com` может быть недоступен с некоторых сетей (Azure CDN) — попробуй VPN или мобильный интернет.

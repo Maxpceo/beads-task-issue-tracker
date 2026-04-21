@@ -92,7 +92,7 @@ Release body = Highlights/What's New (из CHANGELOG, через `release-notes.
 Запусти полный preview в том же порядке, в каком workflow собирает body:
 
 ```bash
-{ python3 scripts/release-notes.py Unreleased; echo; echo "---"; echo; cat .github/release-footer.md; } 2>&1 | head -80
+{ python3 scripts/release-notes.py Unreleased; echo; echo "---"; echo; echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."; echo; cat .github/release-footer.md; } 2>&1 | head -80
 ```
 
 Проверки:

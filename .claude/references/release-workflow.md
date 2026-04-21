@@ -26,18 +26,13 @@
 
 **Authoring a good Highlights section:** 3–5 bullets, each bolded short title + one-line plain-English value for the user. Cover the most impactful changes regardless of their position in CHANGELOG. Feature compatibility with new upstream versions (e.g. bd 1.0.x), net-new user-facing features, and long-standing fixes are all strong candidates. Dev-only work never belongs here.
 
-`release.sh` previews the output before tagging. `.github/workflows/release.yml` runs the same script on CI and injects the output as the release `body_path` — GitHub Actions draft release gets a clean, user-focused body out of the box. Manual `gh release edit` is still available to tweak Highlights before publishing.
+`release.sh` previews the script output before tagging (note: local preview omits the footer). `.github/workflows/release.yml` runs the same script on CI for `v*` tags, appends `.github/release-footer.md`, and uploads via `body_path`. For the `latest` tag the script is skipped; CI uses a hardcoded preamble + the same footer. Manual `gh release edit --notes-file ...` is still available to tweak body before publishing.
 
 **Tuning the filter:** when a pattern leaks through or an entry is incorrectly dropped, edit `EXCLUDE_PATTERNS` / `DROP_SECTIONS` in `scripts/release-notes.py`.
 
-## Release notes must include
+## Release notes boilerplate (Requirements / Installation / macOS workaround)
 
-- bd compatibility: `> Works with **bd 0.49+** (tested on 0.63.3 and 1.0.x). Self-managing Dolt server on 0.57+.`
-- **Never upload DMG manually** — GitHub Actions handles artifacts.
-- macOS unsigned certificate notice:
-  ```
-  xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
-  ```
+These sections live in a single markdown file — **`.github/release-footer.md`** — which is `cat`'d into `release-notes-body.md` by CI for both `v*` and `latest` paths. Do **NOT** re-inline them into the body or the workflow yaml. To change the bd version requirement, installation table, or macOS unsigned-cert notice, edit `.github/release-footer.md` and merge to `main`; the next tag picks it up automatically. For already-published releases, patch the body via `gh release edit v<VERSION> --notes-file ...`. Never upload DMG manually — GitHub Actions handles artifacts.
 
 ## Commits
 

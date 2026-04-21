@@ -10,7 +10,7 @@ _Критические правила для AI агентов. Детали �
 - **Backend:** Tauri 2.9.5 (Rust)
 - **Тесты:** Vitest 4.0 (jsdom)
 - **PM:** pnpm 10.0
-- **Issue Tracking:** bd (beads) 0.49.x — встроенный Dolt, НЕ обновлять до 0.50+
+- **Issue Tracking:** bd (beads) 1.0.x (current stable). Rust backend авто-детектит версию и адаптируется; 0.57+ — self-managing Dolt server, 1.0 — review chain и новые типы (`spike`/`story`/`milestone`). Старые версии (≤ 0.56) не поддерживаются.
 
 ---
 
