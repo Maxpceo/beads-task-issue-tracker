@@ -13,35 +13,11 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty')
 [[ "$TOOL_NAME" == "Task" ]] && exit 0
 
 # Detect SUBAGENT context - subagents get full tool access
-IS_SUBAGENT="false"
-
-# Method 1: CWD-based detection (reliable)
-# Worktrees live under ~/Projects/worktrees/<project>/<branch>/ (external layout).
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
-if [[ -z "$CWD" ]]; then
-  CWD=$(pwd 2>/dev/null || echo "")
+# shellcheck source=./lib/subagent-detect.sh
+source "$CLAUDE_PROJECT_DIR/.claude/hooks/lib/subagent-detect.sh"
+if is_subagent "$INPUT"; then
+  exit 0
 fi
-if [[ "$CWD" == *"/Projects/worktrees/"* ]]; then
-  IS_SUBAGENT="true"
-fi
-
-# Method 2: Transcript-based detection (fallback)
-if [[ "$IS_SUBAGENT" == "false" ]]; then
-  TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
-  TOOL_USE_ID=$(echo "$INPUT" | jq -r '.tool_use_id // empty' 2>/dev/null)
-
-  if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -n "$TOOL_USE_ID" ]]; then
-    SESSION_DIR="${TRANSCRIPT_PATH%.jsonl}"
-    SUBAGENTS_DIR="$SESSION_DIR/subagents"
-
-    if [[ -d "$SUBAGENTS_DIR" ]]; then
-      MATCHING_SUBAGENT=$(grep -l "\"id\":\"$TOOL_USE_ID\"" "$SUBAGENTS_DIR"/agent-*.jsonl 2>/dev/null | head -1)
-      [[ -n "$MATCHING_SUBAGENT" ]] && IS_SUBAGENT="true"
-    fi
-  fi
-fi
-
-[[ "$IS_SUBAGENT" == "true" ]] && exit 0
 
 # Allow Plan mode — orchestrator can write to ~/.claude/plans/
 if [[ "$TOOL_NAME" == "Edit" ]] || [[ "$TOOL_NAME" == "Write" ]]; then

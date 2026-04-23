@@ -22,33 +22,12 @@ COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
 [[ -z "$COMMAND" ]] && exit 0
 
 # --- Detect subagent context -------------------------------------------------
-IS_SUBAGENT="false"
-SUBAGENT_FILE=""
-
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
-[[ -z "$CWD" ]] && CWD=$(pwd 2>/dev/null || echo "")
-if [[ "$CWD" == *"/Projects/worktrees/"* ]]; then
-  IS_SUBAGENT="true"
+# shellcheck source=./lib/subagent-detect.sh
+source "$CLAUDE_PROJECT_DIR/.claude/hooks/lib/subagent-detect.sh"
+if ! is_subagent "$INPUT"; then
+  # Orchestrator → nothing to enforce here
+  exit 0
 fi
-
-if [[ "$IS_SUBAGENT" == "false" ]]; then
-  TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
-  TOOL_USE_ID=$(echo "$INPUT" | jq -r '.tool_use_id // empty' 2>/dev/null)
-  if [[ -n "$TRANSCRIPT_PATH" ]] && [[ -n "$TOOL_USE_ID" ]]; then
-    SESSION_DIR="${TRANSCRIPT_PATH%.jsonl}"
-    SUBAGENTS_DIR="$SESSION_DIR/subagents"
-    if [[ -d "$SUBAGENTS_DIR" ]]; then
-      MATCHING=$(grep -l "\"id\":\"$TOOL_USE_ID\"" "$SUBAGENTS_DIR"/agent-*.jsonl 2>/dev/null | head -1)
-      if [[ -n "$MATCHING" ]]; then
-        IS_SUBAGENT="true"
-        SUBAGENT_FILE="$MATCHING"
-      fi
-    fi
-  fi
-fi
-
-# Orchestrator → nothing to enforce here
-[[ "$IS_SUBAGENT" == "false" ]] && exit 0
 
 # --- Determine subagent type (for code-reviewer exception) -------------------
 SUBAGENT_TYPE=""
