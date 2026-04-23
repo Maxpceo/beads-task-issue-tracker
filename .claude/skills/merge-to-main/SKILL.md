@@ -1,13 +1,11 @@
 ---
 name: merge-to-main
-description: "Full merge cycle: feature branch → auto-land (commit + push) → PR → update docs → merge → checkout main. Use PROACTIVELY when user says: make a PR, let's merge, merge to main, pull request, we're done with this branch, push to main, let's finish this feature, давай мержить, сделай PR, мержим в мастер, пора мержить, переходим в main, создай PR, влей в main, заканчиваем с этой веткой. Запускать `/land` перед этим skill'ом НЕ нужно — Step 0.5 сам подтягивает незакоммиченные файлы и пушит ветку. Поддерживает флаг пропуска документации: «без документации», «без доки», «no-docs», «skip-docs», «skip docs», «пропусти документацию». НЕ путай с `land`: `land` = только commit + push в feature-ветку внутри сессии; `merge-to-main` = полный цикл до main."
+description: "Full merge cycle: feature branch → commit + push → PR → update docs → merge → checkout main. Use PROACTIVELY when user says: make a PR, let's merge, merge to main, pull request, we're done with this branch, push to main, let's finish this feature, давай мержить, сделай PR, мержим в мастер, пора мержить, переходим в main, создай PR, влей в main, заканчиваем с этой веткой. Запускать `/land` перед этим skill'ом НЕ нужно — Step 1 сам коммитит незакоммиченные файлы и пушит ветку. Поддерживает флаг пропуска документации: «без документации», «без доки», «no-docs», «skip-docs», «skip docs», «пропусти документацию». НЕ путай с `land`: `land` = только commit + push в feature-ветку внутри сессии; `merge-to-main` = полный цикл до main."
 ---
 
-# Merge to Master — Full PR + Docs + Merge Cycle
+# Merge to Main — Full PR + Docs + Merge Cycle
 
 Automated workflow for merging a feature branch into main.
-
-**ВАЖНО:** Запускать `/land` перед этим skill'ом НЕ нужно. Step 0.5 сам обнаруживает dirty tree / ahead-of-remote и делегирует `land`, чтобы код был закоммичен и запушен до создания PR.
 
 ## Флаг: пропуск документации
 
@@ -44,21 +42,16 @@ Automated workflow for merging a feature branch into main.
    Ожидается `0` (нет новых `export`/`function`/`class`/Rust `fn`/`pub fn`/`#[tauri::command]`).
 4. Если (2) и (3) выполнены → один `Grep` изменённых ключевых символов в `docs/` + `README.md`:
    ```bash
-   # Пример: после того как собрал список новых symbol names из diff
    grep -rn "symbolA\|symbolB" docs/ README.md
    ```
-   Нет совпадений → **auto-skip Step 3**, в Step 7 отчёте отметить: «Документация: auto-skip (diff: только tests/config, docs/README.md не упоминает изменённых символов)».
+   Нет совпадений → **auto-skip Step 3**, в Step 7 отчёте отметить: «Документация: auto-skip».
 5. Если критерий (2) или (3) не выполнен, или Grep нашёл упоминания → dispatch `documentation-expert` как обычно.
-
-Это **не дублирует** явный флаг пользователя — это ветка для «пользователь не сказал, но diff явно тривиальный». Orchestrator делает только triage (`git diff` + `grep`), не генерирует docs; dispatch остаётся для нетривиальных изменений.
 
 ## Current state
 
 !`git status --short && echo "===" && git branch --show-current && echo "===" && git log --oneline main..HEAD 2>/dev/null | head -20`
 
-## Step 0: Pre-flight bead check (auto-land)
-
-Цель: убрать ручную двухфазность «сначала `/land`, потом merge». Skill сам обнаруживает незакрытые beads текущей фичи и предлагает закрыть через `AskUserQuestion`.
+## Step 0: Pre-flight bead check
 
 ```bash
 echo "=== in_progress ===" && bd list --status=in_progress --assignee="$(git config user.name)" 2>&1 | head -20
@@ -82,46 +75,62 @@ echo "=== inreview ===" && bd list --status=inreview --assignee="$(git config us
 
 Skip-триггер: если в сообщении пользователя есть фразы «skip bead check», «без проверки beads», «merge as-is» — пропустить Step 0 целиком.
 
-## Step 0.5: Auto-land (commit + push если нужно)
-
-Цель: не дать `gh pr create` упасть на «no commits between» или на dirty working tree. Skill сам подтягивает локальное состояние ветки до origin.
+## Step 1: Pre-flight — commit, push, quality gates
 
 ```bash
-git status --short
-git rev-list --count "@{u}..HEAD" 2>/dev/null || echo "no upstream"
+git status --short && echo "===" && git branch --show-current && echo "===" && git log --oneline main..HEAD
 ```
 
-Разветвление:
+**Если ветка — `main`:** СТОП, сообщи «Already on main».
 
-| Ситуация | Действие |
-|---|---|
-| Clean working tree И 0 коммитов ahead | Ничего не делаем, переходим к Step 1 |
-| Dirty working tree (есть изменения в отслеживаемых файлах) ИЛИ >0 коммитов ahead | Делегировать skill `land` — он сделает commit (если нужно) + `bd merge-slot acquire` + `git pull --rebase && git push`, освободит слот. После возврата `land` → Step 1. |
-| Upstream не настроен (ветка никогда не пушилась) | Делегировать `land` — он сам сделает `git push -u origin <branch>` |
-| Untracked файлы, НЕ относящиеся к фиче (например, случайные артефакты) | Показать список пользователю, спросить через `AskUserQuestion`: «Add to commit / Leave alone / Abort» |
+### 1a. Untracked файлы
 
-Skill `land` уже обрабатывает merge-slot contention, `git pull --rebase` race, и безусловный release слота при любой ошибке. Не дублируй эту логику — просто делегируй.
+Если есть untracked файлы, не относящиеся к фиче (случайные артефакты) — показать список пользователю, спросить через `AskUserQuestion`: «Add to commit / Leave alone / Abort».
 
-**Skip-триггер:** фразы «skip land», «не пуши», «без push» — переходим к Step 1, и если `gh pr create` потом упадёт — показываем ошибку пользователю, он сам решит.
+### 1b. Commit если нужно
 
-## Step 1: Pre-flight Checks
+Если есть незакоммиченные изменения в отслеживаемых файлах:
 
 ```bash
-git status --short
-git branch --show-current
-git log --oneline main..HEAD
+git add <изменённые файлы> && git commit -m "$(cat <<'EOF'
+<краткое описание изменений>
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+EOF
+)"
 ```
 
-Verify:
-- Current branch is NOT main (if on main → STOP, tell user "Already on main")
-- После Step 0.5: working tree clean и ветка в синхроне с origin (если нет — Step 0.5 не отработал, STOP и разобраться)
+Сгенерируй сообщение коммита на основе `git diff --cached` (Conventional Commits, English).
 
-Run quality gates:
+Затем проверь и закоммить `.beads/` отдельно (статус bead мог измениться в Step 0):
+
+```bash
+git add .beads/ && git diff --cached --quiet || git commit -m "sync beads"
+```
+
+### 1c. Quality gates
+
 ```bash
 pnpm test && npx vue-tsc --noEmit
 ```
 
-If tests fail → STOP, fix before merging.
+Если тесты упали → СТОП, исправь перед merge.
+
+### 1d. Push если нужно
+
+Если есть коммиты впереди origin или upstream не настроен:
+
+```bash
+if ! bd merge-slot acquire; then
+  bd show beads-task-issue-tracker-merge-slot
+  # СТОП — спросить пользователя (ждать / --wait / отменить)
+fi
+
+git pull --rebase && git push -u origin "$(git branch --show-current)" && echo "===PUSHED==="
+bd merge-slot release
+```
+
+На любой ошибке push — **обязательно** `bd merge-slot release` перед тем как сообщать пользователю.
 
 ## Step 2: Create Pull Request
 
@@ -140,7 +149,7 @@ EOF
 )"
 ```
 
-Show PR URL to user.
+Запомни номер PR из URL (`/pull/<N>`). Покажи URL пользователю.
 
 ## Step 3: Update Documentation
 
@@ -161,19 +170,15 @@ Commits: <output of git log main..HEAD --oneline>
 - README.md (если затронуты видимые пользователю фичи/команды/установка).
 - Любые релевантные файлы в `docs/` (если затронуты описанные там подсистемы).
 
-Следуй инструкциям в `.claude/agents/documentation-expert.md` при их наличии.
-
-После обновления — commit локально (push сделает orchestrator в Step 5).
+После обновления — commit локально (push сделает orchestrator).
 
 ## ОБЯЗАТЕЛЬНЫЙ финальный блок
-
-В КОНЦЕ ответа (даже при обрыве / таймауте — постарайся довести до этого блока):
 
 ### DOCS REPORT
 
 - Status: UPDATED | NOTHING_TO_UPDATE | PARTIAL | ERROR
 - Commit SHA: <sha> или —
-- Таблица изменений (обязательно, даже если один файл):
+- Таблица изменений:
 
 | Файл | Что изменилось |
 |---|---|
@@ -183,93 +188,73 @@ Commits: <output of git log main..HEAD --oneline>
 )
 ```
 
-### После возврата агента — orchestrator ВСЕГДА печатает factual-отчёт таблицей
-
-Не доверяй словам агента (он мог оборваться по timeout). Бери факты из git и покажи пользователю **Markdown-таблицу** (не list, не сырой `git show --stat`):
+### После возврата агента — orchestrator печатает factual-отчёт таблицей
 
 ```bash
 DOCS_SHA=$(git log -1 --format=%H)
-DOCS_SUBJ=$(git log -1 --format=%s)
 git show --name-only --format="" "$DOCS_SHA"
 ```
 
-Шаблон итогового отчёта пользователю:
+Шаблон:
 
 ```markdown
-## 📋 Документация обновлена
+## Документация обновлена
 
 **Commit:** `<SHORT_SHA>` — _<subject>_
 
 | Файл | Что изменилось |
 |---|---|
-| `path/to/file1.md` | краткое описание (1 строка) |
-| `path/to/file2.md` | … |
+| `path/to/file.md` | краткое описание (1 строка) |
 ```
 
-Правила заполнения колонки «Что изменилось»:
-1. Сначала — описания из `DOCS REPORT` агента, если он вернул таблицу.
-2. Если агент не вернул описания — сгенерируй сам по `git diff <sha>^..<sha> -- <file>` (1 короткая строка на файл, суть правки).
-3. НЕ выводи сырой `git show --stat` — пользователь явно просил таблицу, не список со строками `+/−`.
+Если `docs:`-коммита нет — вывести «Документация: без изменений» + `git status --short`.
 
-Если `docs:`-коммита нет (агент ничего не правил / оборвался до commit) — вывести короткую сводку «Документация: без изменений» + `git status --short` для диагностики.
+Не выводи сырой `git show --stat` — только таблицу.
 
 ## Step 4: Wait for CI
-
-After the docs-expert agent pushes its commit, CI runs again on the latest branch state. We must NOT merge until all checks pass — otherwise we merge broken code into main.
-
-Capture the PR number (from Step 2 `gh pr create` output — it returns a URL ending in `/pull/<N>`), then block on GitHub Actions:
 
 ```bash
 gh pr checks <PR_NUMBER> --watch --fail-fast
 ```
 
-Behavior:
-- `--watch` — blocks until all checks complete (can take several minutes — that's fine, just wait).
-- `--fail-fast` — exits immediately with non-zero as soon as any check fails.
-- Exit 0 → all required checks passed → proceed to Step 5.
-- Exit non-zero → a check failed or was cancelled. **STOP.** Do NOT merge. Report to the user:
-  - Which check failed (from the command output)
-  - The PR URL so they can inspect logs
-  - Do not retry blindly — the user must investigate and fix the failure on the branch. Typically: pull latest, reproduce the failure locally (`pnpm test` / `npx vue-tsc --noEmit` / `cargo check`), fix, commit, push, and re-run the skill from Step 4.
-
-**Important:** If the PR has no CI configured (`gh pr checks` reports "no checks reported"), treat that as a warning and ask the user whether to proceed. Do NOT silently skip.
+- Exit 0 → переходим к Step 5.
+- Exit non-zero → СТОП, не мёрджим. Показать пользователю какой check упал + PR URL.
+- Если CI не настроен (`no checks reported`) → спросить пользователя через `AskUserQuestion`, продолжать ли без CI.
 
 ## Step 5: Merge PR (через merge-slot)
 
-Захватить `bd merge-slot` ПЕРЕД `gh pr merge` — гарантирует, что merge + последующий `git pull origin main` (Step 6) атомарны относительно других параллельных сессий, которые тоже могут мёрджить свои PR. Слот удерживается ~10–30 секунд.
-
-**Важно: если `bd merge-slot acquire` упал (non-zero exit, сообщение `Slot held by X` или любая другая ошибка) — STOP, НЕ вызывай `gh pr merge`.** Merge-slot advisory — `gh pr merge` не знает про него и смёржит PR, игнорируя замок, что создаёт гонку с параллельной сессией (non-fast-forward, потерянный push, конфликт в pull). Если acquire failed — покажи пользователю кто держит слот (`bd show beads-task-issue-tracker-merge-slot`) и спроси: ждать (повторить acquire после release), встать в очередь (`bd merge-slot acquire --wait`), или отменить merge. Не форсируй без явного согласия.
+**Важно: если `bd merge-slot acquire` упал — СТОП, НЕ вызывай `gh pr merge`.** Показать кто держит слот и спросить пользователя.
 
 ```bash
 if ! bd merge-slot acquire; then
   bd show beads-task-issue-tracker-merge-slot
-  # STOP. Спросить пользователя, не запускать gh pr merge.
+  # СТОП. Спросить пользователя, не запускать gh pr merge.
 fi
 
 gh pr merge <PR_NUMBER> --merge --delete-branch
 ```
 
-**При любом исходе — release слота:** если `gh pr merge` упал (конфликты, permission denied, branch out-of-date, и т.д.) — ОБЯЗАТЕЛЬНО выполнить `bd merge-slot release` ДО того как репортить пользователю. Слот, который не освободили, заблокирует все остальные сессии до ручного release.
-
-```bash
-# на любой ошибке merge:
-bd merge-slot release
-# затем сообщить пользователю об ошибке и помочь разрешить
-```
+На любой ошибке merge — **обязательно** `bd merge-slot release` перед отчётом пользователю.
 
 ## Step 6: Switch to main + release слота
 
 ```bash
 git checkout main && git pull origin main
-
-# Освободить merge-slot — следующая параллельная сессия может мёрджить.
 bd merge-slot release
 ```
 
+**На любой ошибке в Step 6** (например, `git checkout main` упал) — **обязательно** `bd merge-slot release` перед отчётом пользователю. Слот был захвачен в Step 5 и должен быть освобождён в любом исходе.
+
 ## Step 7: Report
 
-Show user:
-- PR URL (link)
-- What documentation was updated
-- Confirmation: "On main branch, everything up to date"
-- Reminder: "To release a version, run ./release.sh"
+| Шаг | Результат |
+|-----|-----------|
+| Commit | `<sha>` или «не требовался» |
+| Push | OK / «не требовался» |
+| PR | [#N](url) |
+| Документация | обновлена / auto-skip / пропущена по запросу |
+| CI | PASS / SKIP (нет конфига) |
+| Merge | OK |
+| Branch | main, `<sha>` |
+
+Reminder: «To release a version, run ./release.sh»
