@@ -16,14 +16,12 @@ describe('churn stress', () => {
       }
       return Promise.resolve()
     })
-    const onProcessed = vi.fn()
 
-    const handler = createQueuedHandler(onChanged, () => false, onProcessed)
+    const handler = createQueuedHandler(onChanged, () => false)
 
     return {
       handler,
       onChanged,
-      onProcessed,
       resolveLatest: () => {
         const r = resolvers.shift()
         r?.()
@@ -79,8 +77,7 @@ describe('churn stress', () => {
     const onChanged = vi.fn(async () => {
       scheduler.requestPoll()
     })
-    const onProcessed = vi.fn()
-    const handler = createQueuedHandler(onChanged, () => false, onProcessed)
+    const handler = createQueuedHandler(onChanged, () => false)
 
     // Fire 200 triggers over ~20s. Use bursts of 10 rapid triggers
     // followed by enough time for debounce to fire, so onChanged actually
@@ -134,8 +131,7 @@ describe('churn stress', () => {
     const onChanged = vi.fn(async () => {
       scheduler.requestPoll()
     })
-    const onProcessed = vi.fn()
-    const handler = createQueuedHandler(onChanged, () => false, onProcessed)
+    const handler = createQueuedHandler(onChanged, () => false)
 
     // Burst: 50 rapid triggers in 100ms (every 2ms)
     for (let i = 0; i < 50; i++) {
@@ -182,9 +178,8 @@ describe('churn stress', () => {
     const onChanged = vi.fn(() => new Promise<void>((resolve) => {
       resolvers.push(resolve)
     }))
-    const onProcessed = vi.fn()
 
-    const handler = createQueuedHandler(onChanged, () => false, onProcessed)
+    const handler = createQueuedHandler(onChanged, () => false)
 
     // Initial trigger → debounce fires → first onChanged starts
     handler.trigger()

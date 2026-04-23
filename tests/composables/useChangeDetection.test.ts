@@ -22,18 +22,15 @@ describe('createQueuedHandler', () => {
     })
 
     const cooldownActive = opts.cooldown ?? false
-    const onProcessed = vi.fn()
 
     const handler = createQueuedHandler(
       onChanged,
       () => cooldownActive,
-      onProcessed,
     )
 
     return {
       handler,
       onChanged,
-      onProcessed,
       calls,
       resolveLatest: () => {
         const r = resolvers.shift()
@@ -108,9 +105,8 @@ describe('createQueuedHandler', () => {
     const onChanged = vi.fn(() => new Promise<void>((resolve) => {
       resolvers.push(resolve)
     }))
-    const onProcessed = vi.fn()
 
-    const handler = createQueuedHandler(onChanged, () => false, onProcessed)
+    const handler = createQueuedHandler(onChanged, () => false)
 
     handler.trigger()
     await vi.advanceTimersByTimeAsync(300)
@@ -139,24 +135,13 @@ describe('createQueuedHandler', () => {
     expect(onChanged).not.toHaveBeenCalled()
   })
 
-  it('calls onProcessed after each onChanged completes', async () => {
-    const { handler, onProcessed } = setup()
-
-    handler.trigger()
-    await vi.advanceTimersByTimeAsync(300)
-    expect(onProcessed).toHaveBeenCalledTimes(1)
-  })
-
   it('handles onChanged errors gracefully and still reruns', async () => {
-    let callCount = 0
     let resolvers: Array<(err?: Error) => void> = []
     const onChanged = vi.fn(() => new Promise<void>((resolve, reject) => {
-      callCount++
       resolvers.push((err) => err ? reject(err) : resolve())
     }))
-    const onProcessed = vi.fn()
 
-    const handler = createQueuedHandler(onChanged, () => false, onProcessed)
+    const handler = createQueuedHandler(onChanged, () => false)
 
     handler.trigger()
     await vi.advanceTimersByTimeAsync(300)
@@ -169,6 +154,5 @@ describe('createQueuedHandler', () => {
 
     // Should have started the rerun despite the error
     expect(onChanged).toHaveBeenCalledTimes(2)
-    expect(onProcessed).toHaveBeenCalledTimes(1) // first call still triggers onProcessed
   })
 })

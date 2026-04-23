@@ -101,11 +101,15 @@
   },
   "notifications": {
     "issue": {
+      "created": "Issue {id} created",
       "closed": "Issue {id} closed",
       "closeFailed": "Failed to close {id}",
       "reopened": "Issue {id} reopened",
       "reopenFailed": "Failed to reopen {id}",
       "deleted": "Issue {id} deleted",
+      "inreview": "Issue {id} sent for review",
+      "blocked": "Issue {id} blocked",
+      "inProgress": "Issue {id} in progress",
       "deleteFailed": "Failed to delete issue",
       "deleteFailedDesc": "Could not delete {id}",
       "deleteFailedGeneric": "Could not delete the issue",
