@@ -360,11 +360,19 @@ onMounted(async () => {
 
       // Sequential: bd commands can't run concurrently (Dolt SIGSEGV on parallel access)
       const perfFirstPollTrigger = performance.now()
-      fetchIssues().then(async () => {
-        await fetchStats(issues.value)
+      isLoading.value = true
+      try {
+        const readyData = await fetchPollData()
+        if (readyData) {
+          updateFromPollData(issues.value, readyData)
+        } else {
+          await fetchStats(issues.value)
+        }
         const perfFirstDataReady = performance.now()
         logFrontend('info', `[perf:app_boot] warmup=${perfWarmup.toFixed(0)}ms warmedFromCache=${warmedFromCache} mount→trigger=${(perfFirstPollTrigger - perfAppBootStart).toFixed(0)}ms trigger→data=${(perfFirstDataReady - perfFirstPollTrigger).toFixed(0)}ms total=${(perfFirstDataReady - perfAppBootStart).toFixed(0)}ms`).catch(() => {})
-      })
+      } finally {
+        isLoading.value = false
+      }
     }
   }
 

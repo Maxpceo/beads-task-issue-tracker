@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Performance
+- **Faster cold open: `onMounted` now uses batched `fetchPollData`** (`beads-task-issue-tracker-ydr`): replaced two sequential IPC calls (`fetchIssues` + `fetchStats`) with a single batched call (`fetchPollData` + `updateFromPollData`), mirroring `handlePathChange`. Saves ~200–400 ms on first app open with a Dolt project.
+
 ### Fixed
 - **Settings dialog content no longer overlaps probe toggle** (`fix/settings-probe-toggle-overlap`): added `pr-10` padding to the content panel so scrollable content doesn't slide under the fixed toggle in the nav rail.
 - **UpdateDialog changelog block hides horizontal scroll** (`fix/settings-probe-toggle-overlap`): added `overflow-x-hidden` to the changelog container so long lines don't produce an unexpected horizontal scrollbar in the update modal.
