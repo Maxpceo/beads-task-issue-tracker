@@ -8,7 +8,9 @@ interface UseChangeDetectionOptions {
 // ============================================================================
 // Shared constants (same for both backends)
 // ============================================================================
-const SELF_TRIGGER_COOLDOWN_MS = 3_000
+// 500ms gives enough headroom to suppress mtime-echo bounces without eating
+// a second external transition that arrives within a realistic user burst.
+const SELF_TRIGGER_COOLDOWN_MS = 500
 const DEBOUNCE_MS = 300
 const MAX_CONSECUTIVE_RERUNS = 5
 

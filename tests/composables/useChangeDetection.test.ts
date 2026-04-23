@@ -21,7 +21,7 @@ describe('createQueuedHandler', () => {
       return Promise.resolve()
     })
 
-    const cooldownActive = opts.cooldown ?? false
+    let cooldownActive = opts.cooldown ?? false
 
     const handler = createQueuedHandler(
       onChanged,
@@ -32,6 +32,7 @@ describe('createQueuedHandler', () => {
       handler,
       onChanged,
       calls,
+      setCooldown: (active: boolean) => { cooldownActive = active },
       resolveLatest: () => {
         const r = resolvers.shift()
         r?.()
@@ -97,6 +98,23 @@ describe('createQueuedHandler', () => {
     handler.trigger()
     await vi.advanceTimersByTimeAsync(300)
     expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it('delivers second external trigger after cooldown lifts', async () => {
+    const { handler, onChanged, setCooldown } = setup({ cooldown: true })
+
+    // First trigger arrives while cooldown is active — must be suppressed
+    handler.trigger()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChanged).toHaveBeenCalledTimes(0)
+
+    // Cooldown expires (e.g. 500ms self-trigger window elapsed)
+    setCooldown(false)
+
+    // Second external trigger arrives — must reach onChanged
+    handler.trigger()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
   it('bounds consecutive reruns', async () => {
