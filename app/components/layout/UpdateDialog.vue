@@ -143,7 +143,7 @@ const handleViewOnGitHub = () => {
               <!-- Changelog -->
               <div v-if="renderedChangelog" class="mt-4">
                 <div
-                  class="max-h-96 overflow-y-auto rounded border border-border p-3 text-sm markdown-base compact"
+                  class="max-h-96 overflow-y-auto overflow-x-hidden rounded border border-border p-3 text-sm markdown-base compact"
                   v-html="renderedChangelog"
                 />
               </div>
@@ -203,7 +203,7 @@ const handleViewOnGitHub = () => {
               {{ t('layout.update.latestVersionText', { version: updateInfo.currentVersion }) }}
             </p>
             <div v-if="renderedChangelog" class="mt-4">
-              <div class="max-h-96 overflow-y-auto rounded border border-border p-3 text-sm markdown-base compact"
+              <div class="max-h-96 overflow-y-auto overflow-x-hidden rounded border border-border p-3 text-sm markdown-base compact"
                 v-html="renderedChangelog"
               />
             </div>
