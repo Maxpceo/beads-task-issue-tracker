@@ -16,7 +16,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PORT=3133
+PORT=3133  # mirrors src-tauri/tauri.conf.json (devUrl + beforeDevCommand --port)
 DEV_BINARY="$REPO_ROOT/src-tauri/target/debug/beads-issue-tracker"
 
 # Step 1: освободить порт 3133, только если держит процесс из этого репо.
