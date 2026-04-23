@@ -359,12 +359,22 @@ onMounted(async () => {
       const perfWarmup = performance.now() - tWarmup
 
       // Sequential: bd commands can't run concurrently (Dolt SIGSEGV on parallel access)
+      // Use batched fetchPollData (1 IPC: bd list + bd ready) + updateFromPollData
+      // to mirror handlePathChange and avoid a redundant bdReady cold-start from fetchStats.
       const perfFirstPollTrigger = performance.now()
-      fetchIssues().then(async () => {
-        await fetchStats(issues.value)
-        const perfFirstDataReady = performance.now()
-        logFrontend('info', `[perf:app_boot] warmup=${perfWarmup.toFixed(0)}ms warmedFromCache=${warmedFromCache} mount→trigger=${(perfFirstPollTrigger - perfAppBootStart).toFixed(0)}ms trigger→data=${(perfFirstDataReady - perfFirstPollTrigger).toFixed(0)}ms total=${(perfFirstDataReady - perfAppBootStart).toFixed(0)}ms`).catch(() => {})
-      })
+      isLoading.value = true
+      try {
+        const readyData = await fetchPollData()
+        if (readyData) {
+          updateFromPollData(issues.value, readyData)
+        } else {
+          fetchStats(issues.value)
+        }
+      } finally {
+        isLoading.value = false
+      }
+      const perfFirstDataReady = performance.now()
+      logFrontend('info', `[perf:app_boot] warmup=${perfWarmup.toFixed(0)}ms warmedFromCache=${warmedFromCache} mount→trigger=${(perfFirstPollTrigger - perfAppBootStart).toFixed(0)}ms trigger→data=${(perfFirstDataReady - perfFirstPollTrigger).toFixed(0)}ms total=${(perfFirstDataReady - perfAppBootStart).toFixed(0)}ms`).catch(() => {})
     }
   }
 
