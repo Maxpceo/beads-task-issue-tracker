@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Settings dialog content no longer overlaps probe toggle** (`fix/settings-probe-toggle-overlap`): added `pr-10` padding to the content panel so scrollable content doesn't slide under the fixed toggle in the nav rail.
+- **UpdateDialog changelog block hides horizontal scroll** (`fix/settings-probe-toggle-overlap`): added `overflow-x-hidden` to the changelog container so long lines don't produce an unexpected horizontal scrollbar in the update modal.
+
 ### Internal
 - **Worktree layout migrated to external parent** (`beads-task-issue-tracker-x3w`): worktrees now live under `~/Projects/worktrees/beads-task-issue-tracker/<branch>/` instead of `<repo>/.worktrees/`. External layout keeps repo `git status` clean, lets worktrees be removed physically without touching the repo, and gives hooks reliable CWD-based orchestrator/supervisor detection. Six hooks updated to the new path pattern: `lib/subagent-detect.sh`, `enforce-branch-before-edit.sh`, `session-start.sh`, `block-supervisor-close-and-signing.sh`, `block-orchestrator-tools.sh`, `memory-capture.sh`.
 - **`scripts/setup-worktree.sh`** (`beads-task-issue-tracker-x3w`): new script that prepares a fresh worktree (`.env` symlink + `pnpm install` via pnpm global store). Cargo `target/` and Nuxt `.nuxt/` are intentionally not shared — symlinking `target/` breaks `cargo clean` (cargo#7510) and global `CARGO_TARGET_DIR` serializes parallel builds; `.nuxt/` is cheap to regenerate and shared access breaks concurrent `pnpm dev`.

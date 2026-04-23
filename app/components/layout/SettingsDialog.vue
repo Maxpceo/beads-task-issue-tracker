@@ -74,7 +74,7 @@ watch(open, (isOpen) => {
         </nav>
 
         <!-- Content panel -->
-        <div class="overflow-y-auto p-6">
+        <div class="overflow-y-auto p-6 pr-10">
           <SettingsAppearance v-if="activeSection === 'appearance'" />
           <SettingsCliClient v-else-if="activeSection === 'cli'" />
           <SettingsDisplay v-else-if="activeSection === 'display'" />
