@@ -18,7 +18,7 @@ import {
   sortIssues as sortIssuesPure,
   groupIssues as groupIssuesPure,
 } from '~/utils/issue-helpers'
-import { computeNotifyEvents } from '~/utils/notification-matrix'
+import { computeNotifyEvents, TOAST_KEY_TO_I18N } from '~/utils/notification-matrix'
 
 // Interface for hierarchical grouping of epics and their children
 export interface IssueGroup {
@@ -101,24 +101,13 @@ export function notifyStatusTransitions(
   const { success: notifySuccess } = useNotification()
   const events = computeNotifyEvents(oldIssues, newIssues)
 
-  const toastKeyMap: Record<string, string> = {
-    closed: 'notifications.issue.closed',
-    reopened: 'notifications.issue.reopened',
-    inreview: 'notifications.issue.inreview',
-    blocked: 'notifications.issue.blocked',
-    inProgress: 'notifications.issue.inProgress',
-  }
-
   for (const event of events) {
     if (event.kind === 'created') {
       notifySuccess(t('notifications.issue.created', { id: event.id }), event.title)
     } else if (event.kind === 'deleted') {
       notifySuccess(t('notifications.issue.deleted', { id: event.id }), event.title)
     } else if (event.kind === 'statusTransition' && event.toastKey !== null) {
-      const key = toastKeyMap[event.toastKey]
-      if (key) {
-        notifySuccess(t(key, { id: event.id }), event.title)
-      }
+      notifySuccess(t(TOAST_KEY_TO_I18N[event.toastKey], { id: event.id }), event.title)
     }
   }
 }

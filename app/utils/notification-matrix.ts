@@ -2,6 +2,14 @@ import type { Issue } from '~/types/issue'
 
 export type NotifyToastKey = 'closed' | 'reopened' | 'inreview' | 'blocked' | 'inProgress'
 
+export const TOAST_KEY_TO_I18N: Record<NotifyToastKey, string> = {
+  closed: 'notifications.issue.closed',
+  reopened: 'notifications.issue.reopened',
+  inreview: 'notifications.issue.inreview',
+  blocked: 'notifications.issue.blocked',
+  inProgress: 'notifications.issue.inProgress',
+}
+
 export type NotifyEvent =
   | { kind: 'created'; id: string; title: string }
   | { kind: 'deleted'; id: string; title: string }
