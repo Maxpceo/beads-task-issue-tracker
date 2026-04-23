@@ -21,7 +21,6 @@ const MAX_CONSECUTIVE_RERUNS = 5
 export function createQueuedHandler(
   onChanged: () => Promise<void>,
   getSelfWriteCooldownActive: () => boolean,
-  onProcessed: () => void,
 ) {
   const { recordWatcherTrigger, recordWatcherDebounce, recordWatcherRerun } = usePipelineDiagnostics()
 
@@ -56,7 +55,6 @@ export function createQueuedHandler(
         } catch {
           // Ignore — polling will catch up
         }
-        onProcessed()
         consecutiveReruns++
 
         if (!pendingRerun || consecutiveReruns >= MAX_CONSECUTIVE_RERUNS) break
@@ -109,7 +107,6 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
       if (!abandoned) await options.onChanged()
     },
     () => Date.now() - lastProcessedAt < SELF_TRIGGER_COOLDOWN_MS,
-    () => { lastProcessedAt = Date.now() },
   )
 
   const handleEvent = (payload: { path: string }) => {
@@ -176,7 +173,6 @@ function createSSEBackend(options: UseChangeDetectionOptions) {
   const queue = createQueuedHandler(
     options.onChanged,
     () => Date.now() - lastProcessedAt < SELF_TRIGGER_COOLDOWN_MS,
-    () => { lastProcessedAt = Date.now() },
   )
 
   const start = async (beadsPath: string) => {

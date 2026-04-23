@@ -101,11 +101,15 @@
   },
   "notifications": {
     "issue": {
+      "created": "Задача {id} создана",
       "closed": "Задача {id} закрыта",
       "closeFailed": "Не удалось закрыть {id}",
       "reopened": "Задача {id} открыта заново",
       "reopenFailed": "Не удалось открыть заново {id}",
       "deleted": "Задача {id} удалена",
+      "inreview": "Задача {id} отправлена на ревью",
+      "blocked": "Задача {id} заблокирована",
+      "inProgress": "Задача {id} взята в работу",
       "deleteFailed": "Не удалось удалить задачу",
       "deleteFailedDesc": "Не удалось удалить {id}",
       "deleteFailedGeneric": "Не удалось удалить задачу",

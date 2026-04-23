@@ -18,6 +18,7 @@ import {
   sortIssues as sortIssuesPure,
   groupIssues as groupIssuesPure,
 } from '~/utils/issue-helpers'
+import { computeNotifyEvents } from '~/utils/notification-matrix'
 
 // Interface for hierarchical grouping of epics and their children
 export interface IssueGroup {
@@ -98,23 +99,26 @@ export function notifyStatusTransitions(
   if (skipNotifications) return
 
   const { success: notifySuccess } = useNotification()
-  const oldStatusMap = new Map(oldIssues.map(i => [i.id, { status: i.status }]))
+  const events = computeNotifyEvents(oldIssues, newIssues)
 
-  for (const issue of newIssues) {
-    const old = oldStatusMap.get(issue.id)
-    if (old && old.status !== issue.status) {
-      if (issue.status === 'closed') {
-        notifySuccess(t('notifications.issue.closed', { id: issue.id }), issue.title)
-      } else if (old.status === 'closed') {
-        notifySuccess(t('notifications.issue.reopened', { id: issue.id }), issue.title)
-      }
-    }
+  const toastKeyMap: Record<string, string> = {
+    closed: 'notifications.issue.closed',
+    reopened: 'notifications.issue.reopened',
+    inreview: 'notifications.issue.inreview',
+    blocked: 'notifications.issue.blocked',
+    inProgress: 'notifications.issue.inProgress',
   }
 
-  const newIds = new Set(newIssues.map(i => i.id))
-  for (const old of oldIssues) {
-    if (!newIds.has(old.id)) {
-      notifySuccess(t('notifications.issue.deleted', { id: old.id }), old.title)
+  for (const event of events) {
+    if (event.kind === 'created') {
+      notifySuccess(t('notifications.issue.created', { id: event.id }), event.title)
+    } else if (event.kind === 'deleted') {
+      notifySuccess(t('notifications.issue.deleted', { id: event.id }), event.title)
+    } else if (event.kind === 'statusTransition' && event.toastKey !== null) {
+      const key = toastKeyMap[event.toastKey]
+      if (key) {
+        notifySuccess(t(key, { id: event.id }), event.title)
+      }
     }
   }
 }
