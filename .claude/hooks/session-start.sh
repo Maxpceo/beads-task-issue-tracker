@@ -41,8 +41,11 @@ if [[ -d "$WORKTREES_PARENT" ]]; then
     BRANCH=$(git -C "$worktree" branch --show-current 2>/dev/null)
     [[ -z "$BRANCH" ]] && continue
 
-    # Check if branch was merged to main
-    if git -C "$REPO_ROOT" branch --merged main 2>/dev/null | grep -qE "[[:space:]]${BRANCH}\$"; then
+    # Check if branch was merged to main. `--format='%(refname:short)'` strips the
+    # leading marker (" ", "* ", "+ "), so `grep -Fxq` does whole-line fixed-string
+    # match — works for any branch name including ones with regex metacharacters
+    # like `feat/foo.bar`.
+    if git -C "$REPO_ROOT" branch --merged main --format='%(refname:short)' 2>/dev/null | grep -Fxq "$BRANCH"; then
       echo "✓ $BRANCH was merged - consider cleaning up"
       echo "   Run: bd worktree remove \"$worktree\" && bd close <BEAD_ID>"
       echo ""

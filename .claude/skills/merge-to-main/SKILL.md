@@ -5,6 +5,8 @@ description: "Full merge cycle: feature branch → commit + push → PR → upda
 
 # Merge to Main — Full PR + Docs + Merge Cycle
 
+> **Execution style** — см. `CLAUDE.md § Workflow Execution Style` (без промежуточных вопросов включая переходы между skill'ами + табличный итоговый отчёт).
+
 Automated workflow for merging a feature branch into main.
 
 ## Флаг: пропуск документации

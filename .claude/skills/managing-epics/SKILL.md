@@ -5,6 +5,8 @@ description: "Создание и управление epic для cross-domain 
 
 # Managing Epics — cross-domain фичи
 
+> **Execution style** — см. `CLAUDE.md § Workflow Execution Style` (без промежуточных вопросов включая переходы между skill'ами + табличный итоговый отчёт).
+
 Epic нужен когда задача требует нескольких supervisor'ов (Tauri/Rust + Vue + tests), infra + code change, или > 50 строк с неопределённым контрактом между слоями.
 
 **Epic = организационная группа.** Git branch — один на всю фичу; child'ы работают на той же branch последовательно.

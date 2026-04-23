@@ -99,9 +99,21 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 - **`merge-to-main`** — «мержим в main», «давай PR»: feature-ветка → commit + push (Step 1) → PR → update docs → merge → checkout main. Запускать `/land` перед ним не нужно — skill сам коммитит dirty tree и пушит ветку в Step 1.
 - **`release`** — «сделай релиз», «пора релизить»: pre-flight → curated `### Highlights` в CHANGELOG → preview release body → handoff на `./release.sh`.
 
-**Orchestrator execution style:** прогоняй все шаги skill'а подряд без промежуточных вопросов «запускать следующий шаг?». Один сводный отчёт по всем шагам — в самом конце. Прерывайся вопросом ТОЛЬКО при реальной точке принятия решения вне плана: code-reviewer `NOT APPROVED` (redispatch vs force-accept), acceptance не прошёл, обнаружена проблема требующая scope-решения. «Промежуточный статус» или «следующий шаг?» — не спрашиваются.
+### Workflow Execution Style
 
-**Формат итогового отчёта workflow-skill'а** — markdown-таблица `| Шаг | Результат |` (две колонки). В правой колонке — краткий итог шага: exit codes, ID коммитов, PR-ссылки, verdict, PASSED/SKIP/N/A. После таблицы — короткая секция «Текущее состояние» (куда перешли + open follow-up beads). Без preamble, без эмодзи, без длинных параграфов.
+Правила применимы ко ВСЕМ workflow-skills выше — как к шагам **внутри** одного skill'а, так и к **переходам между skill'ами** (в частности: supervisor вернул `DONE` → сразу запускай `reviewing-code`; push успешен → сразу финальный отчёт, не «что дальше?»).
+
+**1. Без промежуточных вопросов.** Прогоняй все шаги подряд. Не спрашивай «запускать следующий шаг?», «продолжить?», «перейти к review?», «запускать ревью сейчас?». Промежуточный статус не выводи — ход работы виден по tool calls. Прерывайся вопросом ТОЛЬКО на реальной точке решения вне плана:
+- code-reviewer вернул `NOT APPROVED` → redispatch supervisor или force-accept?
+- acceptance-проверка провалилась → что делать дальше?
+- проблема вне scope'а → расширять scope или отложить в follow-up bead?
+- destructive / hard-to-reverse действие (`push --force`, `reset --hard`, `bd close` чужого бида, `git worktree remove` с uncommitted), не согласованное заранее.
+
+Переходы, которые **НЕ** требуют вопроса: simplify→code-review, supervisor DONE→reviewing-code, code-review APPROVED→acceptance, acceptance→close, close→land, land→merge-to-main, merge-to-main→checkout main.
+
+**2. Формат итогового отчёта workflow-skill'а** — markdown-таблица `| Шаг | Результат |` (две колонки) + короткая секция «Текущее состояние» после неё. В правой колонке — краткий итог: exit codes (`373/373 passed`), commit IDs, PR-ссылки, verdict (APPROVED/NOT APPROVED), статусы (PASSED/SKIP/N/A). Без preamble («Отлично! Готово!»), без эмодзи, без длинных параграфов.
+
+**3. Фильтруй длинный вывод инструментов.** `pnpm test`, `npx vue-tsc --noEmit`, `git push` с pre-push-хуками, `cargo check` могут вывалить сотни-тысячи строк — они целиком попадают в контекст и жгут токены. Заворачивай в `2>&1 | tail -N` или `grep -E '(passed|failed|error|ok|✓|✗)'`. В контексте нужен статус + дельта, не полный лог.
 
 ### Testing
 - **Run before committing**: `pnpm test` (Vitest unit tests).

@@ -30,27 +30,33 @@ if [ -z "$CLOSE_ID" ]; then
 fi
 
 # === CHECK 1: PR merge validation ===
-# Only applies if a dedicated bd-{ID} branch exists on remote (legacy worktree workflow)
-BRANCH="bd-${CLOSE_ID}"
-
+# Finds a remote branch whose name contains the bead ID in Conventional namespace
+# (fix/bd-<id>, feat/bd-<id>, chore/bd-<id>, ...) OR legacy bare `bd-<id>`. If such a
+# branch exists on origin, a merged PR is required. Otherwise — no branch == fast path
+# or work done on a shared feature branch — skip the PR check.
 HAS_REMOTE=$(git remote get-url origin 2>/dev/null || echo "")
 if [ -n "$HAS_REMOTE" ]; then
-  REMOTE_BRANCH=$(git ls-remote --heads origin "$BRANCH" 2>/dev/null || echo "")
+  # Pattern matches: `bd-<id>` at end, or `<type>/bd-<id>` at end, or `<id>` at end.
+  # ID is on a word boundary — `-` or end-of-string — so `bd-rst` doesn't match `bd-rst-hm5`.
+  REMOTE_BRANCH=$(git ls-remote --heads origin 2>/dev/null \
+    | awk '{print $2}' \
+    | sed 's|^refs/heads/||' \
+    | grep -E "(^|/)(bd-)?${CLOSE_ID}(-|$)" \
+    | head -1)
 
   if [ -n "$REMOTE_BRANCH" ]; then
-    # Legacy workflow: dedicated branch exists on remote — check for merged PR
     if command -v gh >/dev/null 2>&1; then
-      MERGED_PR=$(gh pr list --head "$BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")
+      MERGED_PR=$(gh pr list --head "$REMOTE_BRANCH" --state merged --json number --jq '.[0].number' 2>/dev/null || echo "")
 
       if [ -z "$MERGED_PR" ]; then
         cat << EOF
-{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cannot close bead '$CLOSE_ID' — branch '$BRANCH' has no merged PR. Create and merge a PR first, or use 'bd close $CLOSE_ID --force' to override."}}
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Cannot close bead '$CLOSE_ID' — branch '$REMOTE_BRANCH' has no merged PR. Create and merge a PR first, or use 'bd close $CLOSE_ID --force' to override."}}
 EOF
         exit 0
       fi
     fi
   fi
-  # No dedicated bd-{ID} branch = new workflow (work done on feature branch) — skip PR check
+  # No branch matches CLOSE_ID on remote = fast-path or shared feature branch — skip PR check.
 fi
 
 # === CHECK 2: Epic children validation ===

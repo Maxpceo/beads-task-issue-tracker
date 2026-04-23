@@ -5,6 +5,8 @@ description: "Подготовка к dispatch supervisor'а — claim bead, с�
 
 # Pre-Dispatch — Подготовка к dispatch supervisor'а
 
+> **Execution style** — см. `CLAUDE.md § Workflow Execution Style` (без промежуточных вопросов включая переходы между skill'ами + табличный итоговый отчёт).
+
 Подготовь всё необходимое для dispatch supervisor'а.
 
 ## Определить bead
