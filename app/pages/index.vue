@@ -847,8 +847,7 @@ const navigationBackTarget = computed(() => {
 })
 
 
-// Search handler - search is prioritary over filters (always starts empty)
-const searchValue = ref('')
+const searchValue = ref(filters.value.search || '')
 
 // Debounced search: 180ms for bd (client-side), 300ms kept for br (server-side)
 watchDebounced(searchValue, async (value) => {

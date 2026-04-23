@@ -24,13 +24,17 @@ Full logging rules (frontend + backend + log-file paths): `.claude/rules/logging
 
 ## Dev Server
 
-Always kill zombies before starting:
+`pnpm tauri:dev` runs `scripts/predev.sh` first — automatic pre-flight that:
+
+1. Frees port 3133 if held by a stale Nuxt process from this repo (cwd check via `lsof`). Without this, a zombie Nuxt makes the new one fall back to 3000 while the Tauri webview still loads 3133 → blank window.
+2. Kills zombie dev-binary copies, scoped to the full path `$REPO_ROOT/src-tauri/target/debug/beads-issue-tracker`. The installed `/Applications/Beads Task-Issue Tracker.app` is **not** affected — both binaries share the same executable name (`beads-issue-tracker` from the Cargo crate), so a bare `pkill -f "beads-issue-tracker"` would close it.
+3. Refuses to act if port 3133 is held by a foreign process — exits with a clear message instead of guessing.
+
+If you ever need to kill the dev binary by hand, scope the match to the full path:
 
 ```bash
-pkill -f "$(pwd)/src-tauri/target/debug/beads-issue-tracker" 2>/dev/null && pnpm tauri:dev
+pkill -f "$(pwd)/src-tauri/target/debug/beads-issue-tracker"
 ```
-
-**Note:** scope the `pkill` match to the dev binary path. A bare `pkill -f "beads-issue-tracker"` also kills the installed `/Applications/Beads Task-Issue Tracker.app` because both binaries share the same executable name (`beads-issue-tracker` from the Cargo crate).
 
 ## AI-Driven UI Testing (Tauri MCP)
 
