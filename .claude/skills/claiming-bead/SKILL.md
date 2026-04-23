@@ -5,6 +5,8 @@ description: "Claim-first на триггер-фразы пользовател�
 
 # Claiming Bead — claim-first workflow
 
+> **Execution style** — см. `CLAUDE.md § Workflow Execution Style` (без промежуточных вопросов включая переходы между skill'ами + табличный итоговый отчёт).
+
 Триггер-фразы: «возьми <ID>», «начни выполнять <ID>», «делай <ID>», «автономно <ID>», «займись <ID>», «работай над <ID>», «claim <ID>», «берём <ID>».
 
 Цель: исключить ситуацию, когда orchestrator тратит контекст на investigate ДО claim'а, а потом обнаруживает что bead уже взят другой сессией или закрыт. Claim — первое не-readonly действие, сразу фиксирует намерение.
@@ -43,20 +45,21 @@ bd update <ID> --claim
 
 **Если пользователь запросил работу в worktree** (фразы «в worktree», «создай worktree», «изолированно», «в отдельной ветке/окружении»):
 
-Ветки и директории worktree именуются с префиксом `bd-<bead-id>`. Это соглашение используется в `session-start.sh` auto-cleanup: он ищет директории `bd-*` и снимает префикс через `${BRANCH#bd-}`, чтобы восстановить ID для `bd close`. Worktree без префикса не попадёт в авто-уведомление о смёрженной ветке.
+**Именование ветки.** Выбирает orchestrator по типу задачи в Conventional-namespace: `fix/…` (bug), `feat/…` (feature), `docs/…` (doc-only), `chore/…` (infra/config), `refactor/…`, `perf/…`, `test/…`. Включай bead ID в имя для навигации — например `fix/bd-<bead-id>`, `feat/bd-<bead-id>`, `refactor/bd-<bead-id>`. Конкретный slug — на усмотрение orchestrator'а. `session-start.sh` auto-cleanup читает имя ветки через `git branch --show-current` внутри worktree — префикс `bd-` больше не обязателен.
 
 ```bash
 # 1. Родительская директория (идемпотентно)
 mkdir -p ~/Projects/worktrees/beads-task-issue-tracker
 
-# 2. Создать worktree + ветку (префикс bd- обязателен)
-bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id> --branch bd-<bead-id>
+# 2. Создать worktree + ветку (подставь <type> и <bead-id>)
+WT_NAME="<type>/bd-<bead-id>"   # пример: fix/bd-6nm, feat/bd-u9v
+bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME" --branch "$WT_NAME"
 
 # 3. Обязательный setup (.env symlink + pnpm install)
-./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id>
+./scripts/setup-worktree.sh ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME"
 
 # 4. Дальше вся работа идёт из worktree
-cd ~/Projects/worktrees/beads-task-issue-tracker/bd-<bead-id>
+cd ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME"
 ```
 
 Без `setup-worktree.sh` в worktree не будет `.env` и `node_modules` — supervisor упадёт на первом же `pnpm test`. Детали layout'а: `.claude/references/bd-worktrees.md`.

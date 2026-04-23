@@ -30,19 +30,24 @@ if [[ -n "$REPO_ROOT" ]]; then
 fi
 
 # ============================================================
-# Auto-cleanup: Detect merged PRs and cleanup worktrees
-# External layout: ~/Projects/worktrees/beads-task-issue-tracker/<branch>/
+# Auto-cleanup: Detect merged worktrees (branch-name agnostic)
+# External layout: ~/Projects/worktrees/beads-task-issue-tracker/<any-path>/
+# Branch name is read from the worktree itself via `git branch --show-current`,
+# so any naming convention works (bd-<id>, fix/bd-<id>, fix/foo-bar, ...).
 # ============================================================
 WORKTREES_PARENT="$HOME/Projects/worktrees/beads-task-issue-tracker"
 if [[ -d "$WORKTREES_PARENT" ]]; then
   for worktree in $(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null | awk '/^worktree .*\/Projects\/worktrees\/beads-task-issue-tracker\// {print $2}'); do
-    BRANCH=$(basename "$worktree")
-    BEAD_ID="${BRANCH#bd-}"
+    BRANCH=$(git -C "$worktree" branch --show-current 2>/dev/null)
+    [[ -z "$BRANCH" ]] && continue
 
-    # Check if branch was merged to main
-    if git -C "$REPO_ROOT" branch --merged main 2>/dev/null | grep -q "$BRANCH"; then
+    # Check if branch was merged to main. `--format='%(refname:short)'` strips the
+    # leading marker (" ", "* ", "+ "), so `grep -Fxq` does whole-line fixed-string
+    # match — works for any branch name including ones with regex metacharacters
+    # like `feat/foo.bar`.
+    if git -C "$REPO_ROOT" branch --merged main --format='%(refname:short)' 2>/dev/null | grep -Fxq "$BRANCH"; then
       echo "✓ $BRANCH was merged - consider cleaning up"
-      echo "   Run: bd worktree remove \"$BRANCH\" && bd close \"$BEAD_ID\""
+      echo "   Run: bd worktree remove \"$worktree\" && bd close <BEAD_ID>"
       echo ""
     fi
   done

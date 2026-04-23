@@ -5,6 +5,8 @@ description: "Подготовка нового релиза — pre-flight chec
 
 # Release Preparation — Подготовка релиза
 
+> **Execution style** — см. `CLAUDE.md § Workflow Execution Style` (без промежуточных вопросов включая переходы между skill'ами + табличный итоговый отчёт).
+
 Цель этого skill'а: довести проект до состояния, готового к `./release.sh`, за счёт курации пользовательских Highlights и предпросмотра release body. Сам `release.sh` запускает пользователь в своём терминале.
 
 ## Разведение с соседними skills
