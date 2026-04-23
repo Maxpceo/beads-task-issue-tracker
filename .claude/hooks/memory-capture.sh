@@ -46,11 +46,11 @@ done
 SLUG=$(echo "$CONTENT" | head -c 60 | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//;s/-$//')
 KEY="${TYPE}-${SLUG}"
 
-# Detect source agent from CWD or transcript context
+# Detect source agent from subagent context
+# shellcheck source=./lib/subagent-detect.sh
+source "$CLAUDE_PROJECT_DIR/.claude/hooks/lib/subagent-detect.sh"
 SOURCE="orchestrator"
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty')
-if echo "$CWD" | grep -q '/Projects/worktrees/'; then
-  # Inside an external worktree = supervisor is running
+if is_subagent "$INPUT"; then
   SOURCE="supervisor"
 fi
 
