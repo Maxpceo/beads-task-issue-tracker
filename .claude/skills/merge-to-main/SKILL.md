@@ -60,7 +60,7 @@ echo "=== inreview ===" && bd list --status=inreview --assignee="$(git config us
 
 Логика:
 
-1. Извлечь bead-ID текущей фичи из `git log main..HEAD` + branch name (regex: `beads-task-issue-tracker-[a-z0-9]{4}`).
+1. Извлечь bead-ID текущей фичи из `git log main..HEAD` + branch name (regex: `beads-task-issue-tracker-[a-z0-9]{3}`).
 2. Разделить списки `in_progress`/`inreview` на **feature-related** (ID из шага 1) и **background** (ID не связанные с текущей веткой).
 3. Разветвление:
 
