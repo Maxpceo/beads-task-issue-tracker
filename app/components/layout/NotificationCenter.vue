@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { BellIcon, CheckCheckIcon, TrashIcon, ExternalLinkIcon } from 'lucide-vue-next'
-import { useTimeAgo } from '@vueuse/core'
+import { formatTimeAgo, useNow } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import {
   DropdownMenu,
@@ -23,6 +23,9 @@ const { issues, selectIssue, fetchIssue } = useIssues()
 const { warning: notifyWarning } = useNotification()
 
 const isOpen = ref(false)
+
+// One shared clock for all items — useTimeAgo per-item would leak timers on every render.
+const now = useNow({ interval: 30_000 })
 
 // When dropdown opens, mark all read
 watch(isOpen, (open) => {
@@ -62,7 +65,7 @@ async function handleItemClick(issueId: string | undefined) {
 }
 
 function formatTime(timestamp: number): string {
-  return useTimeAgo(new Date(timestamp)).value
+  return formatTimeAgo(new Date(timestamp), {}, now.value.getTime())
 }
 </script>
 

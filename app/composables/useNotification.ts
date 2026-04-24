@@ -32,7 +32,6 @@ export function useNotification() {
     }
     notifications.value.push(n)
 
-    // Push to notification center history
     const { addToHistory } = useNotificationCenter()
     addToHistory(n)
 

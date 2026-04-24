@@ -19,7 +19,8 @@ function clearAll() {
 }
 
 function markAllRead() {
-  history.value = history.value.map(n => ({ ...n, read: true }))
+  if (unreadCount.value === 0) return
+  history.value = history.value.map(n => n.read ? n : { ...n, read: true })
 }
 
 export function useNotificationCenter() {
