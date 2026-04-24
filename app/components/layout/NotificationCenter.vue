@@ -80,7 +80,7 @@ function formatTime(timestamp: number): string {
             class="relative h-8 w-8"
             :aria-label="tooltipText"
           >
-            <BellIcon class="w-4 h-4" />
+            <BellIcon class="w-4 h-4" aria-hidden="true" />
             <span
               v-if="unreadCount > 0"
               class="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold leading-4 text-center tabular-nums pointer-events-none"
@@ -97,6 +97,7 @@ function formatTime(timestamp: number): string {
       class="w-96 p-0"
       align="end"
       :side-offset="8"
+      :aria-label="t('notifications.center.title')"
     >
       <!-- Sticky header -->
       <div class="flex items-center justify-between px-3 py-2 border-b border-border sticky top-0 bg-popover z-10">
@@ -111,7 +112,7 @@ function formatTime(timestamp: number): string {
             :title="t('notifications.center.markAllRead')"
             @click.stop="markAllRead"
           >
-            <CheckCheckIcon class="w-3.5 h-3.5" />
+            <CheckCheckIcon class="w-3.5 h-3.5" aria-hidden="true" />
           </Button>
           <Button
             v-if="history.length > 0"
@@ -122,7 +123,7 @@ function formatTime(timestamp: number): string {
             :title="t('notifications.center.clearAll')"
             @click.stop="clearAll"
           >
-            <TrashIcon class="w-3.5 h-3.5" />
+            <TrashIcon class="w-3.5 h-3.5" aria-hidden="true" />
           </Button>
         </div>
       </div>
@@ -134,7 +135,7 @@ function formatTime(timestamp: number): string {
           v-if="history.length === 0"
           class="flex flex-col items-center justify-center py-10 text-center"
         >
-          <BellIcon class="w-8 h-8 text-muted-foreground/40 mb-2" />
+          <BellIcon class="w-8 h-8 text-muted-foreground/40 mb-2" aria-hidden="true" />
           <p class="text-sm text-muted-foreground text-pretty">{{ t('notifications.center.empty') }}</p>
         </div>
 
@@ -146,7 +147,7 @@ function formatTime(timestamp: number): string {
           >
             <DropdownMenuSeparator v-if="index > 0" class="my-0" />
             <button
-              class="w-full text-left px-3 py-2.5 transition-colors hover:bg-accent/50 focus:outline-none focus:bg-accent/50"
+              class="w-full text-left px-3 py-2.5 transition-colors hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
               :class="{ 'bg-accent/30': !item.read }"
               :disabled="!item.issueId"
               @click="handleItemClick(item.issueId)"
@@ -157,6 +158,7 @@ function formatTime(timestamp: number): string {
                   :is="getNotificationIcon(item.type as NotificationType)"
                   class="w-4 h-4 shrink-0 mt-0.5"
                   :class="typeStyles[item.type as NotificationType].icon"
+                  aria-hidden="true"
                 />
 
                 <!-- Content -->
@@ -169,12 +171,13 @@ function formatTime(timestamp: number): string {
                     {{ item.description }}
                   </p>
                   <div class="flex items-center gap-1 mt-1">
-                    <span class="text-[10px] text-muted-foreground/70 tabular-nums">
+                    <span class="text-[10px] text-muted-foreground tabular-nums">
                       {{ formatTime(item.timestamp) }}
                     </span>
                     <ExternalLinkIcon
                       v-if="item.issueId"
                       class="w-2.5 h-2.5 text-muted-foreground/50"
+                      aria-hidden="true"
                     />
                   </div>
                 </div>
