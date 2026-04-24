@@ -26,6 +26,7 @@ const { notifications, dismiss } = useNotification()
             :is="getNotificationIcon(notification.type)"
             class="w-5 h-5 shrink-0 mt-0.5"
             :class="typeStyles[notification.type].icon"
+            aria-hidden="true"
           />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium text-foreground">{{ notification.message }}</p>
@@ -34,11 +35,11 @@ const { notifications, dismiss } = useNotification()
             </p>
           </div>
           <button
-            class="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+            class="shrink-0 p-1 rounded-sm text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
             :aria-label="t('notifications.toast.dismiss')"
             @click="dismiss(notification.id)"
           >
-            <XIcon class="w-4 h-4" />
+            <XIcon class="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
       </TransitionGroup>
