@@ -2802,7 +2802,7 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         });
 
     let beads_dir = std::path::Path::new(&working_dir).join(".beads");
-    let current_mtime = get_beads_mtime(&beads_dir);
+    let (current_mtime, mtime_gate) = get_beads_mtime_with_source(&beads_dir);
 
     // ---------------------------------------------------------------------------
     // POLL_MEMO check — return cached result if mtime unchanged and TTL valid
@@ -2817,8 +2817,8 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
             let ttl_ok = age_secs < POLL_MEMO_TTL_SECS;
 
             log_debug!(
-                "[perf:poll_memo] hit={} mtime_equal={} age_secs={} ttl_ok={}",
-                mtime_equal && ttl_ok, mtime_equal, age_secs, ttl_ok
+                "[perf:poll_memo] hit={} mtime_equal={} age_secs={} ttl_ok={} gate={}",
+                mtime_equal && ttl_ok, mtime_equal, age_secs, ttl_ok, mtime_gate
             );
 
             if mtime_equal && ttl_ok {
@@ -3061,11 +3061,40 @@ async fn bd_poll_data_cached(cwd: String) -> Result<Option<PollData>, String> {
     }))
 }
 
+/// Internal helper that returns the mtime AND a static tag indicating which gate
+/// produced the result: `"last_touched"` (fast-path) or `"fallback"` (legacy walk).
+/// Callers that need the source tag use this directly; `get_beads_mtime` is a thin
+/// wrapper that discards the tag.
+fn get_beads_mtime_with_source(beads_dir: &std::path::Path) -> (Option<std::time::SystemTime>, &'static str) {
+    // Fast-path: `.beads/last-touched` is written by bd ONLY on user-driven issue
+    // mutations (create/update/close/delete). It is NOT touched by Dolt sql-server
+    // activity, auto-flush, or WAL writes — making it an ideal invalidation signal
+    // for POLL_MEMO on Dolt projects. Verified 2026-04-24 on invest_fund_sharks
+    // (1040 issues): last-touched mtime was stable for >1h while issues.jsonl was
+    // updated every few seconds by auto-flush.
+    // Fallback below handles: older bd versions, SQLite projects without last-touched,
+    // non-bd test fixtures.
+    let last_touched = beads_dir.join("last-touched");
+    if let Ok(meta) = fs::metadata(&last_touched) {
+        if let Ok(m) = meta.modified() {
+            return (Some(m), "last_touched");
+        }
+    }
+
+    // Fallback: legacy mtime walk across .beads/ dir and Dolt/SQLite DB files.
+    (get_beads_mtime_fallback(beads_dir), "fallback")
+}
+
 /// Get the latest mtime across all beads database files.
 /// - Dolt backend (bd >= 0.50.0): checks .beads/ dir, .beads/.dolt/ (legacy) or
 ///   .beads/dolt/<name>/.dolt/ (bd 0.52+ nested layout), and manifest files
 /// - SQLite backend: checks beads.db, beads.db-wal, and optionally issues.jsonl
 fn get_beads_mtime(beads_dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    get_beads_mtime_with_source(beads_dir).0
+}
+
+/// Legacy mtime walk — used as fallback when `.beads/last-touched` is absent.
+fn get_beads_mtime_fallback(beads_dir: &std::path::Path) -> Option<std::time::SystemTime> {
     if project_uses_dolt(beads_dir) {
         // Dolt backend: check directory mtimes and manifest files
         let mut times: Vec<std::time::SystemTime> = Vec::new();
@@ -6220,5 +6249,75 @@ mod tests {
     fn test_resolve_status_category_unknown_defaults_to_active() {
         let custom: HashMap<String, String> = HashMap::new();
         assert_eq!(resolve_status_category("totally_unknown_xyz", &custom), "active");
+    }
+
+    // -------------------------------------------------------------------------
+    // get_beads_mtime / get_beads_mtime_with_source
+    // -------------------------------------------------------------------------
+
+    /// When `.beads/last-touched` exists, get_beads_mtime returns its mtime
+    /// and ignores changes to other files in .beads/.
+    #[test]
+    fn test_get_beads_mtime_last_touched_is_primary() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // Create last-touched
+        let last_touched = beads_dir.join("last-touched");
+        std::fs::write(&last_touched, b"project-id-xyz").unwrap();
+        let expected_mtime = fs::metadata(&last_touched).unwrap().modified().unwrap();
+
+        // Verify mtime matches last-touched
+        let result = get_beads_mtime(&beads_dir);
+        assert!(result.is_some(), "Expected Some mtime from last-touched");
+        assert_eq!(result.unwrap(), expected_mtime, "mtime should match last-touched stat");
+
+        // Create another file — should NOT change the returned mtime
+        let other = beads_dir.join("issues.jsonl");
+        std::fs::write(&other, b"some data").unwrap();
+        let result2 = get_beads_mtime(&beads_dir);
+        assert_eq!(result2.unwrap(), expected_mtime, "mtime should still match last-touched, not issues.jsonl");
+    }
+
+    /// source tag is "last_touched" when the file exists, "fallback" when absent.
+    #[test]
+    fn test_get_beads_mtime_with_source_tag() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // Without last-touched: source = "fallback"
+        let (_, src) = get_beads_mtime_with_source(&beads_dir);
+        assert_eq!(src, "fallback");
+
+        // With last-touched: source = "last_touched"
+        std::fs::write(beads_dir.join("last-touched"), b"proj").unwrap();
+        let (_, src2) = get_beads_mtime_with_source(&beads_dir);
+        assert_eq!(src2, "last_touched");
+    }
+
+    /// Without last-touched, fallback returns Some when beads.db exists (SQLite project).
+    #[test]
+    fn test_get_beads_mtime_fallback_sqlite_returns_some() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // No last-touched, but beads.db exists — fallback should find it
+        std::fs::write(beads_dir.join("beads.db"), b"SQLite format 3").unwrap();
+
+        let result = get_beads_mtime(&beads_dir);
+        assert!(result.is_some(), "Expected Some from fallback when beads.db exists");
+    }
+
+    /// When .beads/ dir does not exist at all, returns None.
+    #[test]
+    fn test_get_beads_mtime_missing_dir_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads"); // does NOT exist
+
+        let result = get_beads_mtime(&beads_dir);
+        assert!(result.is_none(), "Expected None when .beads/ does not exist");
     }
 }

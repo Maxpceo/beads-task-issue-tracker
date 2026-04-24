@@ -33,6 +33,9 @@ dotenvy = "0.15"
 # not, so the plugin is not linked in release. See CLAUDE.md → "AI-Driven UI Testing".
 tauri-plugin-mcp = { git = "https://github.com/P3GLEG/tauri-plugin-mcp", optional = true }
 
+[dev-dependencies]
+tempfile = "3"
+
 [features]
 default = []
 dev-mcp = ["dep:tauri-plugin-mcp"]
