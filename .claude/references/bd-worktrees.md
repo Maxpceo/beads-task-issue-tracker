@@ -61,7 +61,7 @@ git branch -D <name>                    # удалить ветку, если у
 ## Команды bd worktree
 
 ```bash
-bd worktree create <path> --branch <branch>  # создать external worktree
+bd worktree create <path> --branch <branch>  # <path> = абсолютный external путь (см. пример в разделе «Создание»)
 bd worktree list                             # список активных
 bd worktree info                             # инфо о текущем (если внутри worktree)
 bd worktree remove <name>                    # удалить (safety checks)

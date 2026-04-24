@@ -23,7 +23,7 @@ Completion reports (both orchestrator and supervisor) must not use hedging langu
 Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md` → Iron Law section.
 
 ### Issues
-- Полный справочник команд bd (создание, запросы, формулы, lifecycle, worktrees): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
+- Полный справочник команд bd (синтаксис CLI): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**. Worktree policy и external layout: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
 - **Язык**: title, description, notes, design, acceptance — **на русском**. Английскими остаются только технические идентификаторы (имена файлов/функций, label'ы, типы, статусы, команды). Это персональный трекер Максима — он читатель, не команда/CI.
 
 ### Enrich bead with context

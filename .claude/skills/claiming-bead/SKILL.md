@@ -62,6 +62,12 @@ bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME" --br
 cd ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME"
 ```
 
+**ЗАПРЕЩЕНО:** `bd worktree create <name> --branch <branch>` без абсолютного
+пути. bd резолвит относительный путь от cwd (= корень репо) → worktree
+внутри репо (ломает external layout, конфликты IDE, коммиты из «чужой»
+директории). Hook `block-worktree-in-repo.sh` блокирует. То же для
+`git worktree add <name>`.
+
 Без `setup-worktree.sh` в worktree не будет `.env` и `node_modules` — supervisor упадёт на первом же `pnpm test`. Детали layout'а: `.claude/references/bd-worktrees.md`.
 
 Первый `cargo check` / `pnpm tauri:dev` в новой worktree скомпилирует Rust с нуля (минуты) — это ожидаемо. Каждая worktree имеет свой `src-tauri/target/` (shared target ломает Cargo lock и cargo clean).
