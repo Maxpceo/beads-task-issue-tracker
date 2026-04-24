@@ -1185,7 +1185,7 @@ fn get_cli_client_info() -> Option<(CliClient, u32, u32, u32)> {
         .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
     {
-        log_info!("[perf:bd_version_probe] first_call_ms={}", probe_ms);
+        log::info!("[perf:bd_version_probe] first_call_ms={}", probe_ms);
     }
 
     if !output.status.success() {
