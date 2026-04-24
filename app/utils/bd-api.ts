@@ -921,3 +921,16 @@ export async function downloadAndInstallUpdate(downloadUrl: string): Promise<str
   }
   throw new Error('Download is only available in the desktop app')
 }
+
+// ============================================================================
+// Project Profile
+// ============================================================================
+
+/**
+ * Returns true when the project at `cwd` uses a Dolt backend.
+ * Falls back to false on any error (non-Tauri, invoke failure).
+ */
+export async function projectUsesDolt(cwd: string): Promise<boolean> {
+  if (!isTauri()) return false
+  return invoke<boolean>('get_project_uses_dolt', { cwd }).catch(() => false)
+}

@@ -14,13 +14,30 @@ import { useWindowFocus, useIdle } from '@vueuse/core'
  * When a `checkFn` is provided, it runs on a fast 1s interval (active state only).
  * When `checkFn` returns true, `pollFn` is called immediately — no waiting for the
  * next poll cycle. This decouples cheap mtime detection from expensive data fetching.
+ *
+ * Optionally accepts a `profile` ref that selects a profile-based interval table,
+ * allowing Dolt-large projects to use longer intervals and reduce CPU load.
  */
 
-const INTERVAL_ACTIVE = 5_000        // 5 seconds — full poll fallback
-const INTERVAL_WATCHER_SAFETY = 30_000 // 30 seconds — safety net when watcher is active
-const INTERVAL_CHECK = 1_000         // 1 second — fast mtime check (active only)
-const INTERVAL_BLURRED = 30_000      // 30 seconds
-const INTERVAL_IDLE = 60_000         // 60 seconds
+export type PollingProfile = 'default' | 'dolt-medium' | 'dolt-large'
+
+/**
+ * Profile-based interval table (ms).
+ * INTERVAL_CHECK (fast 1s mtime check) is NOT profile-dependent — it remains cheap.
+ *
+ * | Profile      | Active | Watcher-safety | Blurred | Idle   |
+ * |-------------|-------:|---------------:|--------:|-------:|
+ * | default      |  5 000 |         30 000 |  30 000 | 60 000 |
+ * | dolt-medium  | 10 000 |         45 000 |  60 000 |120 000 |
+ * | dolt-large   | 15 000 |         60 000 |  90 000 |180 000 |
+ */
+export const INTERVAL_TABLE: Record<PollingProfile, { active: number; watcherSafety: number; blurred: number; idle: number }> = {
+  'default':     { active:  5_000, watcherSafety: 30_000, blurred: 30_000, idle:  60_000 },
+  'dolt-medium': { active: 10_000, watcherSafety: 45_000, blurred: 60_000, idle: 120_000 },
+  'dolt-large':  { active: 15_000, watcherSafety: 60_000, blurred: 90_000, idle: 180_000 },
+}
+
+const INTERVAL_CHECK = 1_000         // 1 second — fast mtime check (active only, never profile-gated)
 const IDLE_TIMEOUT = 120_000         // 2 minutes
 
 interface AdaptivePollingOptions {
@@ -30,6 +47,11 @@ interface AdaptivePollingOptions {
   checkInterval?: number
   /** When true, disables 1s mtime check loop and uses 30s safety-net interval instead. */
   watcherActive?: Ref<boolean>
+  /**
+   * Project profile that selects the interval row from INTERVAL_TABLE.
+   * Defaults to 'default' if not provided (backward-compatible).
+   */
+  profile?: Ref<PollingProfile>
 }
 
 export function useAdaptivePolling(pollFn: () => Promise<void>, options?: AdaptivePollingOptions) {
@@ -48,14 +70,15 @@ export function useAdaptivePolling(pollFn: () => Promise<void>, options?: Adapti
 
   const currentInterval = computed(() => {
     if (typeof document !== 'undefined' && document.hidden) return 0 // paused
-    if (idle.value) return INTERVAL_IDLE
-    if (!isFocused.value) return INTERVAL_BLURRED
+    const row = INTERVAL_TABLE[options?.profile?.value ?? 'default']
+    if (idle.value) return row.idle
+    if (!isFocused.value) return row.blurred
     // When watcher is active, use longer safety-net interval (watcher handles detection)
-    if (options?.watcherActive?.value) return INTERVAL_WATCHER_SAFETY
-    return INTERVAL_ACTIVE
+    if (options?.watcherActive?.value) return row.watcherSafety
+    return row.active
   })
 
-  const isActive = () => currentInterval.value === INTERVAL_ACTIVE
+  const isActive = () => currentInterval.value === (INTERVAL_TABLE[options?.profile?.value ?? 'default'].active)
 
   const runPoll = async () => {
     if (polling) return
@@ -157,6 +180,15 @@ export function useAdaptivePolling(pollFn: () => Promise<void>, options?: Adapti
       clearCheckTimer()
       scheduleNext()
     }
+  })
+
+  // Watch profile/interval transitions: reschedule timer immediately when profile flips
+  // (e.g., project crosses 200-issue threshold from small → medium). Without this, the
+  // active timer would keep running with the old interval until it next fires.
+  watch(currentInterval, () => {
+    if (!running) return
+    if (typeof document !== 'undefined' && document.hidden) return
+    scheduleNext()
   })
 
   // Watch idle transitions: reschedule when idle state changes

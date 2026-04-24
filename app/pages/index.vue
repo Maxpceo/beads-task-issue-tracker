@@ -2,6 +2,7 @@
 import type { Issue, IssueStatus, UpdateIssuePayload } from '~/types/issue'
 import { isIssueBlocked } from '~/utils/issue-helpers'
 import { logFrontend } from '~/utils/bd-api'
+import { useProjectProfile } from '~/composables/useProjectProfile'
 import { watchDebounced } from '@vueuse/core'
 import CommandPalette from '~/components/CommandPalette.vue'
 
@@ -280,6 +281,9 @@ const checkMtimeChanged = async (): Promise<boolean> => {
   return changed
 }
 
+// Project profile: selects polling interval table row based on Dolt-fact × project size
+const { profile: pollingProfile } = useProjectProfile(beadsPath, issues)
+
 // Adaptive polling with fast mtime detection (degrades gracefully if watcher unavailable)
 // Polls go through the scheduler's backpressure gate
 const { start: startPolling, stop: stopPolling } = useAdaptivePolling(
@@ -287,6 +291,7 @@ const { start: startPolling, stop: stopPolling } = useAdaptivePolling(
   {
     checkFn: checkMtimeChanged,
     watcherActive: changeDetectionActive,
+    profile: pollingProfile,
   },
 )
 
