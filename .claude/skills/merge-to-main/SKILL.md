@@ -258,5 +258,28 @@ bd merge-slot release
 | CI | PASS / SKIP (нет конфига) |
 | Merge | OK |
 | Branch | main, `<sha>` |
+| Follow-up beads | `<count>` / — |
+
+**Follow-up beads** — сюда идут bead'ы, созданные через `bd create` в течение этой сессии (pre-existing findings из RAMS/WIG/detective review, edge-cases, проблемы вне scope). Ведёшь ментальный учёт по ходу сессии: каждый раз, когда сам вызвал `bd create` или supervisor вернул новый ID, запомни.
+
+Если таких не было — прочерк в ячейке, секции ниже не печатай.
+
+Если были — **обязательно** после основной таблицы добавь:
+
+```markdown
+## Bead'ы, созданные в этой сессии
+
+| Bead | Статус | Что |
+|------|--------|-----|
+| `beads-task-issue-tracker-<id>` | open / closed | краткая суть, 1 строка |
+```
+
+Включай и уже закрытые в этой же сессии (например, ты вынес follow-up в `bd-xxx`, а потом сразу взял и закрыл его — он всё равно идёт в таблицу со статусом `closed`).
+
+Если сомневаешься, не упустил ли что-то — fallback-проверка:
+
+```bash
+bd list --status=open,closed --json | jq -r --arg ts "<session-start-ISO>" '.[] | select(.created >= $ts) | "\(.id)\t\(.status)\t\(.title)"'
+```
 
 Reminder: «To release a version, run ./release.sh»
