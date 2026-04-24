@@ -162,4 +162,17 @@ json_valid_on_deny \
     "deny output is valid JSON when path contains double quote" \
     'bd worktree create /tmp/bad"inject --branch foo'
 
+# --- A6 regression: shell-quoted paths must not bypass validation ---
+assert_deny \
+    "single-quoted non-external path — deny (A6 regression)" \
+    "bd worktree create '/tmp/bad\"inject' --branch qux"
+
+assert_deny \
+    "double-quoted non-external path — deny" \
+    'bd worktree create "/tmp/another" --branch xx'
+
+assert_allow \
+    "double-quoted external path with \$HOME — allow (unquote works for legit paths)" \
+    'bd worktree create "$HOME/Projects/worktrees/beads-task-issue-tracker/q" --branch q'
+
 test_summary
