@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { Issue } from '~/types/issue'
+import type { StatusMeta } from '~/composables/useStatuses'
 import { computeStatsFromIssues } from '~/utils/issue-helpers'
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
@@ -159,5 +160,63 @@ describe('computeStatsFromIssues', () => {
   it('initializes ready to 0', () => {
     const stats = computeStatsFromIssues([makeIssue()])
     expect(stats.ready).toBe(0)
+  })
+})
+
+function makeStatus(overrides: Partial<StatusMeta> = {}): StatusMeta {
+  return {
+    name: 'on_hold',
+    label: 'On Hold',
+    category: 'frozen',
+    isBuiltIn: false,
+    ...overrides,
+  }
+}
+
+describe('computeStatsFromIssues with statuses param', () => {
+  it('counts custom frozen status as deferred', () => {
+    const issues = [makeIssue({ id: '1', status: 'on_hold' })]
+    const statuses = [makeStatus({ name: 'on_hold', label: 'On Hold', category: 'frozen', isBuiltIn: false })]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.deferred).toBe(1)
+  })
+
+  it('excludes pinned from deferred even if category is frozen', () => {
+    const issues = [makeIssue({ id: '1', status: 'pinned' })]
+    const statuses = [makeStatus({ name: 'pinned', label: 'PINNED', category: 'frozen', isBuiltIn: true })]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.deferred).toBe(0)
+  })
+
+  it('counts mix: deferred + custom frozen, excludes pinned', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'deferred' }),
+      makeIssue({ id: '2', status: 'on_hold' }),
+      makeIssue({ id: '3', status: 'pinned' }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'deferred', label: 'Deferred', category: 'frozen', isBuiltIn: true }),
+      makeStatus({ name: 'on_hold', label: 'On Hold', category: 'frozen', isBuiltIn: false }),
+      makeStatus({ name: 'pinned', label: 'Pinned', category: 'frozen', isBuiltIn: true }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.deferred).toBe(2)
+  })
+
+  it('silently drops stale status name (not in statuses map) — deferred stays 0', () => {
+    const issues = [makeIssue({ id: '1', status: 'archived' })]
+    const statuses: StatusMeta[] = []
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.deferred).toBe(0)
+  })
+
+  it('no statuses param: literal fallback still counts deferred correctly (regression)', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'deferred' }),
+      makeIssue({ id: '2', status: 'open' }),
+    ]
+    const stats = computeStatsFromIssues(issues)
+    expect(stats.deferred).toBe(1)
+    expect(stats.open).toBe(1)
   })
 })

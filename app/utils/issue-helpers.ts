@@ -3,6 +3,7 @@
  * Extracted from useIssues composable for testability.
  */
 import type { Issue, DashboardStats, IssueType, IssuePriority, ChildIssue } from '~/types/issue'
+import type { StatusMeta } from '~/composables/useStatuses'
 import type { IssueGroup } from '~/composables/useIssues'
 
 /**
@@ -491,8 +492,15 @@ export function groupIssues(
 /**
  * Compute dashboard stats from an issues array.
  * "open" counts only true open issues to match the Open KPI filter.
+ *
+ * @param statuses — optional list of StatusMeta from useStatuses(). When provided,
+ * "deferred" counts issues whose status has category='frozen' (excluding 'pinned').
+ * When absent, falls back to literal `status === 'deferred'` for backward compatibility.
+ *
+ * Note: if an issue's status name is not found in the statuses map (stale/renamed status),
+ * it is silently dropped from the deferred count — consistent with isIssueWorkflow behaviour.
  */
-export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
+export function computeStatsFromIssues(issues: Issue[], statuses?: StatusMeta[]): DashboardStats {
   const stats: DashboardStats = {
     total: issues.length,
     open: 0,
@@ -508,6 +516,7 @@ export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
   }
 
   const REVIEW_STATUSES = new Set(['inreview', 'simplified', 'reviewed', 'accepted'])
+  const metaByName = statuses ? new Map(statuses.map(s => [s.name, s])) : null
 
   for (const issue of issues) {
     if (isIssueWorkflow(issue)) {
@@ -529,9 +538,17 @@ export function computeStatsFromIssues(issues: Issue[]): DashboardStats {
         case 'closed':
           stats.closed++
           break
-        case 'deferred':
-          stats.deferred++
+        default: {
+          // Deferred: use category lookup when statuses map is available, else literal fallback
+          if (metaByName) {
+            if (metaByName.get(issue.status)?.category === 'frozen' && issue.status !== 'pinned') {
+              stats.deferred++
+            }
+          } else if (issue.status === 'deferred') {
+            stats.deferred++
+          }
           break
+        }
       }
     }
 

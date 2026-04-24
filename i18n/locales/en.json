@@ -376,8 +376,10 @@
         "inReview": "Review chain: inreview, simplified, reviewed, accepted",
         "blocked": "Blocked by dependencies or explicit blocked status",
         "deferred": "Postponed, frozen for later",
-        "all": "All issues including closed"
-      }
+        "all": "All issues including closed",
+        "done": "Closed issues — completed work"
+      },
+      "done": "Done"
     },
     "sections": {
       "charts": "Charts",
