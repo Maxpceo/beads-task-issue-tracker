@@ -69,7 +69,7 @@ export function useUpdateChecker() {
 
     try {
       const info = updateInfo.value
-      if (info?.platform === 'macos' && info.downloadUrl) {
+      if (info?.downloadUrl) {
         logFrontend('info', `[update] Downloading update from: ${info.downloadUrl}`)
         const savedPath = await downloadAndInstallUpdate(info.downloadUrl)
         logFrontend('info', `[update] Download complete: ${savedPath}`)
