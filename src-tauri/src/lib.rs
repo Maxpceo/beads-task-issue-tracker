@@ -5596,6 +5596,19 @@ async fn patch_external_data(url: String, body: String) -> Result<String, String
 }
 
 // ============================================================================
+// Project Profile Helpers
+// ============================================================================
+
+/// Exposes the internal `project_uses_dolt` check to the frontend.
+/// Returns true when the project at `cwd` uses a Dolt backend.
+/// Errors are surfaced as Err(String) so the TS caller can .catch(() => false).
+#[tauri::command]
+fn get_project_uses_dolt(cwd: String) -> Result<bool, String> {
+    let beads_dir = std::path::Path::new(&cwd).join(".beads");
+    Ok(project_uses_dolt(&beads_dir))
+}
+
+// ============================================================================
 // Probe Launcher
 // ============================================================================
 
@@ -5798,6 +5811,7 @@ pub fn run() {
             delete_external_data,
             patch_external_data,
             launch_probe,
+            get_project_uses_dolt,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
