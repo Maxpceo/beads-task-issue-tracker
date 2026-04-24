@@ -131,4 +131,22 @@ assert_allow \
     "cat command — fast path allow" \
     "cat /etc/hosts"
 
+# --- JSON escape: deny output must be valid JSON even if path has " or \ ---
+json_valid_on_deny() {
+    local description="$1" cmd="$2"
+    local input
+    input=$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$(printf '%s' "$cmd" | jq -Rs .)")
+    local output
+    output=$(printf '%s' "$input" | "$HOOK" 2>/dev/null)
+    if printf '%s' "$output" | jq -e . >/dev/null 2>&1; then
+        pass "$description"
+    else
+        fail "$description" "invalid JSON output: $output"
+    fi
+}
+
+json_valid_on_deny \
+    "deny output is valid JSON when path contains double quote" \
+    'bd worktree create /tmp/bad"inject --branch foo'
+
 test_summary

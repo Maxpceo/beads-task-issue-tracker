@@ -80,7 +80,8 @@ while IFS= read -r segment; do
         continue
     fi
 
-    printf '{"decision":"block","reason":"Worktree должен быть в `~/Projects/worktrees/beads-task-issue-tracker/<name>` — путь `%s` не подходит. См. `.claude/references/bd-worktrees.md`."}\n' "$path_arg"
+    reason=$(printf 'Worktree должен быть в `~/Projects/worktrees/beads-task-issue-tracker/<name>` — путь `%s` не подходит. См. `.claude/references/bd-worktrees.md`.' "$path_arg" | jq -Rsc .)
+    printf '{"decision":"block","reason":%s}\n' "$reason"
     exit 2
 done < <(printf '%s\n' "$stripped" | tr ';&|' '\n')
 
