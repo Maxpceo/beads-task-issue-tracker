@@ -25,7 +25,9 @@ fi
 # shellcheck source=lib/shell-tokens.sh
 source "$HOOKS_LIB/shell-tokens.sh"
 
-if ! command_contains_token "$CMD" "(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)"; then
+WT_KEYWORD='(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)'
+
+if ! command_contains_token "$CMD" "$WT_KEYWORD"; then
     echo '{"decision":"approve"}'
     exit 0
 fi
@@ -35,11 +37,11 @@ EXPECTED_BASE="${HOME}/Projects/worktrees/beads-task-issue-tracker"
 extract_worktree_path() {
     local subcmd="$1"
     local keyword
-    keyword=$(printf '%s' "$subcmd" | grep -oE '(^|[[:space:]])(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)([[:space:]]|$)' | head -1)
+    keyword=$(printf '%s' "$subcmd" | grep -oE "(^|[[:space:]])${WT_KEYWORD}([[:space:]]|$)" | head -1)
     [[ -z "$keyword" ]] && return 1
 
     local after_kw
-    after_kw=$(printf '%s' "$subcmd" | sed -E "s/.*(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)[[:space:]]*//")
+    after_kw=$(printf '%s' "$subcmd" | sed -E "s/.*${WT_KEYWORD}[[:space:]]*//")
 
     local token path_arg="" skip_next=0
     local save_ifs="$IFS"
@@ -75,7 +77,7 @@ while IFS= read -r segment; do
     # keyword-check on a stripped copy of the segment (guards against
     # echo "bd worktree create foo" false-positives).  The keyword must
     # appear as an actual shell token, not inside a quoted string.
-    if ! command_contains_token "$segment" "(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)"; then
+    if ! command_contains_token "$segment" "$WT_KEYWORD"; then
         continue
     fi
 
