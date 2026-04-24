@@ -1,13 +1,20 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { XIcon } from 'lucide-vue-next'
 import { typeStyles, getNotificationIcon } from '~/utils/notification-styles'
 
+const { t } = useI18n()
 const { notifications, dismiss } = useNotification()
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+    <div
+      class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       <TransitionGroup name="notification">
         <div
           v-for="notification in notifications"
@@ -28,6 +35,7 @@ const { notifications, dismiss } = useNotification()
           </div>
           <button
             class="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+            :aria-label="t('notifications.toast.dismiss')"
             @click="dismiss(notification.id)"
           >
             <XIcon class="w-4 h-4" />
@@ -41,7 +49,7 @@ const { notifications, dismiss } = useNotification()
 <style scoped>
 .notification-enter-active,
 .notification-leave-active {
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .notification-enter-from {
