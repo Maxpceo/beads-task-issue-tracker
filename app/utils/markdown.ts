@@ -1,3 +1,4 @@
+// acceptance test bd-77t
 /**
  * Markdown rendering utility with security sanitization
  */
