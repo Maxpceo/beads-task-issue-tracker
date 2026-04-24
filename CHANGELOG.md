@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Update dialog changelog now has visible heading hierarchy and wraps long identifiers** (`beads-task-issue-tracker-m8q`): added darker headline colors for light theme, bumped h1/h2/h3 sizes in `.markdown-base.compact` (h1 `text-xl font-bold`, h2 `text-lg`, h3 `text-base`), and added `overflow-wrap: anywhere` to paragraphs, list items, and table cells so long identifiers no longer overflow the dialog width.
+
 ## [2.4.0] - 2026-04-25
 
 ### Highlights

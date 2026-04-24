@@ -725,6 +725,12 @@ body {
   @apply list-decimal;
 }
 
+.markdown-base p,
+.markdown-base li,
+.markdown-base td {
+  overflow-wrap: anywhere;
+}
+
 .markdown-base code {
   @apply bg-muted px-1 py-0.5 rounded font-mono;
   font-size: 0.9em;
@@ -783,28 +789,44 @@ body {
 }
 
 .markdown-base.compact h1 {
-  @apply text-lg;
+  @apply text-xl font-bold;
+  color: #5a8ec4;
+}
+
+.dark .markdown-base.compact h1 {
   color: #93b4e0;
 }
 
 .markdown-base.compact h2 {
-  @apply text-base;
+  @apply text-lg font-semibold mt-3;
+  color: #4a7da3;
+}
+
+.dark .markdown-base.compact h2 {
   color: #7da8c9;
 }
 
 .markdown-base.compact h3 {
-  @apply text-sm;
+  @apply text-base font-semibold mt-2;
+  color: #4a8e7a;
+}
+
+.dark .markdown-base.compact h3 {
   color: #7db89e;
 }
 
 .markdown-base.compact h4 {
-  @apply text-sm;
+  @apply text-sm font-semibold;
+  color: #6e5d8a;
+}
+
+.dark .markdown-base.compact h4 {
   color: #a599c4;
 }
 
 .markdown-base.compact h5,
 .markdown-base.compact h6 {
-  @apply text-sm;
+  @apply text-sm font-semibold;
 }
 
 .markdown-base.compact hr {
