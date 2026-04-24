@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Performance
+- **Eliminate cold `bd ready` spawn in `bd_poll_data`** (`beads-task-issue-tracker-ho6`): on bd ≥ 0.55 with `--all` flag support, the separate `bd ready` subprocess (~700ms) is replaced by an in-process `compute_ready_from()` pure function. An in-process POLL_MEMO layer (keyed by filesystem mtime, TTL 60s) returns cached results with 0 bd spawns when nothing has changed — idle Dolt-project polls drop to <10ms. Non-Dolt and older bd/br projects retain the original 2–3 spawn path without regression.
 - **Faster cold open: `onMounted` now uses batched `fetchPollData`** (`beads-task-issue-tracker-ydr`): replaced two sequential IPC calls (`fetchIssues` + `fetchStats`) with a single batched call (`fetchPollData` + `updateFromPollData`), mirroring `handlePathChange`. Saves ~200–400 ms on first app open with a Dolt project.
 
 ### Fixed

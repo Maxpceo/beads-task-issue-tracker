@@ -22,6 +22,62 @@ const SYNC_COOLDOWN_SECS: u64 = 10;
 static LAST_KNOWN_MTIME: LazyLock<Mutex<HashMap<String, std::time::SystemTime>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+// ---------------------------------------------------------------------------
+// In-process poll memo — skip bd spawn when mtime hasn't changed
+// ---------------------------------------------------------------------------
+
+/// Cached poll result; valid until mtime changes or TTL expires.
+struct PollCacheEntry {
+    /// Filesystem mtime snapshot at capture time.
+    mtime: std::time::SystemTime,
+    /// Raw open issues at capture time.
+    raw_open: Vec<BdRawIssue>,
+    /// Raw closed issues at capture time.
+    raw_closed: Vec<BdRawIssue>,
+    /// Raw ready issues at capture time (computed, not spawned).
+    raw_ready: Vec<BdRawIssue>,
+    /// Wall-clock instant of capture (for TTL hard-cap).
+    captured_at: std::time::Instant,
+}
+
+/// Per-project in-process memo: cwd → PollCacheEntry.
+/// Avoids bd spawn when filesystem mtime hasn't changed since last poll.
+static POLL_MEMO: LazyLock<Mutex<HashMap<String, PollCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Hard TTL for POLL_MEMO entries — even if mtime appears unchanged, force refresh
+/// after this many seconds (safety net for low-resolution FS clocks).
+const POLL_MEMO_TTL_SECS: u64 = 60;
+
+/// Per-project poll invocation counter for verbose sanity-check throttling.
+static POLL_MEMO_POLL_COUNT: LazyLock<Mutex<HashMap<String, u64>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+// ---------------------------------------------------------------------------
+// Built-in status categories — mirrors BUILTIN_FALLBACK in useStatuses.ts
+// ---------------------------------------------------------------------------
+//
+// Each tuple: (status_name, category)
+// category values: "active" | "wip" | "frozen" | "done"
+//
+// "tombstone" is not a real bd status but appears in JSONL migrations; treat
+// it as "done" so it never counts as a blocking open issue.
+const BUILTIN_STATUS_CATEGORIES: &[(&str, &str)] = &[
+    ("open",        "active"),
+    ("in_progress", "wip"),
+    ("blocked",     "wip"),
+    ("closed",      "done"),
+    ("deferred",    "frozen"),
+    ("pinned",      "frozen"),
+    ("hooked",      "wip"),
+    ("tombstone",   "done"),
+    // bd 1.x review-chain custom statuses (wip — still open)
+    ("inreview",    "wip"),
+    ("simplified",  "wip"),
+    ("reviewed",    "wip"),
+    ("accepted",    "wip"),
+];
+
 // Tracks projects for which we've already logged a Dolt cold-start timing.
 // Used by [`bd_poll_data`] to emit `[perf:dolt_coldstart]` only on the first
 // bd_poll_data call per Dolt-backed project per process lifetime.
@@ -2664,8 +2720,98 @@ fn write_poll_cache(project_hash: &str, cache: &PollCacheFile) {
     }
 }
 
-/// Batched poll: sync once, then fetch all issues + ready in 2 commands (was 3).
-/// Replaces 3 separate IPC calls (bd_list + bd_list(closed) + bd_ready) with one.
+// ---------------------------------------------------------------------------
+// compute_ready_from — pure readiness filter (no bd spawn)
+// ---------------------------------------------------------------------------
+
+/// Resolve the category of a status name using a dynamic status map with
+/// fallback to `BUILTIN_STATUS_CATEGORIES`.  Returns "active" for unknowns
+/// (conservative: unknown statuses behave as open/ready-eligible unless we
+/// know otherwise).
+fn resolve_status_category<'a>(
+    status: &str,
+    custom_statuses: &'a HashMap<String, String>,
+) -> &'a str {
+    // Dynamic map first (project-specific custom statuses)
+    if let Some(cat) = custom_statuses.get(status) {
+        return cat.as_str();
+    }
+    // Built-in fallback table
+    for (name, category) in BUILTIN_STATUS_CATEGORIES {
+        if *name == status {
+            return category;
+        }
+    }
+    // Unknown status: treat as "active" (open/ready-eligible) to be conservative.
+    // If wrong, user will see extra "ready" issues rather than missing ones.
+    "active"
+}
+
+/// Pure function: compute ready-set from already-fetched open issues.
+///
+/// Ready = status.category == "active" AND all blockers are closed/done.
+///
+/// A blocker is a dependency where `dependency_type` is `"blocks"` and the
+/// **depended-on** issue's status is NOT in a "done" category.  Because
+/// `bd_poll_data` does a single `list --all`, all issues (including blockers)
+/// are present in either `open_issues` (the slice passed in) or `closed_issues`.
+///
+/// `custom_statuses`: map of status_name → category for project-specific statuses.
+///   Pass an empty map to use only the built-in table.
+fn compute_ready_from(
+    open: &[BdRawIssue],
+    closed: &[BdRawIssue],
+    custom_statuses: &HashMap<String, String>,
+) -> Vec<BdRawIssue> {
+    // Build a status lookup: issue_id → status, covering all known issues.
+    // We only need this for blocker resolution.
+    let mut status_by_id: HashMap<&str, &str> = HashMap::with_capacity(open.len() + closed.len());
+    for issue in open.iter().chain(closed.iter()) {
+        status_by_id.insert(issue.id.as_str(), issue.status.as_str());
+    }
+
+    open.iter()
+        .filter(|issue| {
+            // Criterion 1: status must be in category "active"
+            let category = resolve_status_category(&issue.status, custom_statuses);
+            if category != "active" {
+                return false;
+            }
+
+            // Criterion 2: no open (non-done) blockers
+            let blockers = issue.dependencies.as_deref().unwrap_or(&[]);
+            for dep in blockers {
+                // Only "blocks" dependency type matters (this issue is blocked BY dep)
+                let dep_type = dep.dependency_type.as_deref().unwrap_or("");
+                if dep_type != "blocks" {
+                    continue;
+                }
+                // Find the blocker's current status
+                let blocker_id = dep.depends_on_id.as_deref()
+                    .or(dep.issue_id.as_deref())
+                    .unwrap_or("");
+                if blocker_id.is_empty() {
+                    continue;
+                }
+                let blocker_status = status_by_id.get(blocker_id).copied().unwrap_or("closed");
+                let blocker_category = resolve_status_category(blocker_status, custom_statuses);
+                if blocker_category != "done" {
+                    // Blocker is still open — issue is not ready
+                    return false;
+                }
+            }
+
+            true
+        })
+        .cloned()
+        .collect()
+}
+
+/// Batched poll: sync once, then fetch all issues in 1 spawn (Dolt + bd >= 0.55)
+/// or 2 spawns (fallback). Ready-set computed in-process via `compute_ready_from`.
+///
+/// POLL_MEMO: if mtime hasn't changed since the last poll AND the entry hasn't
+/// expired (TTL 60s), returns the cached result with 0 bd spawns.
 #[tauri::command]
 async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     log_info!("[bd_poll_data] Batched poll starting");
@@ -2673,54 +2819,7 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     let cwd_ref = cwd.as_deref();
     let t_total = std::time::Instant::now();
 
-    // Single sync for the entire poll cycle
-    let t_sync = std::time::Instant::now();
-    sync_bd_database(cwd_ref);
-    let sync_ms = t_sync.elapsed().as_millis();
-
-    // Fetch issues: single --all call for bd >= 0.55, fallback to 2 calls for older versions.
-    // [perf] Measure subprocess spawn time separately from JSON parsing so we can tell
-    // whether the bottleneck is bd CLI startup (cold Dolt, process spawn) or parse cost.
-    let mut spawn_ms: u128 = 0;
-    let mut parse_ms: u128 = 0;
-
-    let (raw_open, raw_closed) = if supports_list_all_flag() {
-        let t_spawn = std::time::Instant::now();
-        let all_output = execute_bd("list", &["--all".to_string(), "--limit=0".to_string()], cwd_ref)?;
-        spawn_ms += t_spawn.elapsed().as_millis();
-
-        let t_parse = std::time::Instant::now();
-        let raw_all = parse_issues_tolerant(&all_output, "bd_poll_data_all")?;
-        let (open, closed): (Vec<_>, Vec<_>) = raw_all.into_iter()
-            .partition(|issue: &BdRawIssue| issue.status != "closed");
-        parse_ms += t_parse.elapsed().as_millis();
-        (open, closed)
-    } else {
-        let t_spawn = std::time::Instant::now();
-        let open_output = execute_bd("list", &["--limit=0".to_string()], cwd_ref)?;
-        let closed_output = execute_bd("list", &["--status=closed".to_string(), "--limit=0".to_string()], cwd_ref)?;
-        spawn_ms += t_spawn.elapsed().as_millis();
-
-        let t_parse = std::time::Instant::now();
-        let open = parse_issues_tolerant(&open_output, "bd_poll_data_open")?;
-        let closed = parse_issues_tolerant(&closed_output, "bd_poll_data_closed")?;
-        parse_ms += t_parse.elapsed().as_millis();
-        (open, closed)
-    };
-
-    let t_spawn_ready = std::time::Instant::now();
-    let ready_output = execute_bd("ready", &[], cwd_ref)?;
-    spawn_ms += t_spawn_ready.elapsed().as_millis();
-
-    let t_parse_ready = std::time::Instant::now();
-    let raw_ready = parse_issues_tolerant(&ready_output, "bd_poll_data_ready")?;
-    parse_ms += t_parse_ready.elapsed().as_millis();
-
-    log_info!("[bd_poll_data] Batched poll done: {} open, {} closed, {} ready",
-        raw_open.len(), raw_closed.len(), raw_ready.len());
-
-    // Resolve working directory once — used for both mtime bookkeeping below and
-    // the poll-cache snapshot further down.
+    // Resolve working directory once — needed for memo key and mtime checks.
     let working_dir = cwd_ref
         .map(String::from)
         .or_else(|| env::var("BEADS_PATH").ok())
@@ -2730,19 +2829,187 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
                 .unwrap_or_else(|_| ".".to_string())
         });
 
-    // Update mtime AFTER our commands ran, so the next bd_check_changed
-    // only detects EXTERNAL changes (not our own poll's side effects).
+    let beads_dir = std::path::Path::new(&working_dir).join(".beads");
+    let current_mtime = get_beads_mtime(&beads_dir);
+
+    // ---------------------------------------------------------------------------
+    // POLL_MEMO check — return cached result if mtime unchanged and TTL valid
+    // ---------------------------------------------------------------------------
     {
-        let beads_dir = std::path::Path::new(&working_dir).join(".beads");
-        if let Some(mtime) = get_beads_mtime(&beads_dir) {
-            let mut map = LAST_KNOWN_MTIME.lock().unwrap();
-            map.insert(working_dir.clone(), mtime);
+        let memo = POLL_MEMO.lock().unwrap();
+        if let Some(entry) = memo.get(&working_dir) {
+            let mtime_equal = current_mtime
+                .map(|m| m == entry.mtime)
+                .unwrap_or(false);
+            let age_secs = entry.captured_at.elapsed().as_secs();
+            let ttl_ok = age_secs < POLL_MEMO_TTL_SECS;
+
+            log_debug!(
+                "[perf:poll_memo] hit={} mtime_equal={} age_secs={} ttl_ok={}",
+                mtime_equal && ttl_ok, mtime_equal, age_secs, ttl_ok
+            );
+
+            if mtime_equal && ttl_ok {
+                // Cache hit — serve from memory, zero bd spawns
+                let raw_open  = entry.raw_open.clone();
+                let raw_closed = entry.raw_closed.clone();
+                let raw_ready  = entry.raw_ready.clone();
+                drop(memo); // release lock before transform
+
+                let issues_count = raw_open.len() + raw_closed.len() + raw_ready.len();
+                let t_transform = std::time::Instant::now();
+                let result = PollData {
+                    open_issues:   raw_open.into_iter().map(transform_issue).collect(),
+                    closed_issues: raw_closed.into_iter().map(transform_issue).collect(),
+                    ready_issues:  raw_ready.into_iter().map(transform_issue).collect(),
+                };
+                let transform_ms = t_transform.elapsed().as_millis();
+                let total_ms = t_total.elapsed().as_millis();
+
+                log_debug!(
+                    "[perf:bd_poll_data] memo_hit=true transform={}ms total={}ms issues={}",
+                    transform_ms, total_ms, issues_count
+                );
+                log_info!(
+                    "[bd_poll_data] memo hit — {} open, {} closed, {} ready in {}ms",
+                    result.open_issues.len(), result.closed_issues.len(),
+                    result.ready_issues.len(), total_ms
+                );
+                return Ok(result);
+            }
+        }
+        // Drop memo lock before doing expensive bd spawns
+    }
+
+    // ---------------------------------------------------------------------------
+    // Cache miss — fetch from bd CLI
+    // ---------------------------------------------------------------------------
+
+    // Single sync for the entire poll cycle
+    let t_sync = std::time::Instant::now();
+    sync_bd_database(cwd_ref);
+    let sync_ms = t_sync.elapsed().as_millis();
+
+    // [perf] Measure subprocess spawn time separately from JSON parsing.
+    let mut spawn_ms: u128 = 0;
+    let mut parse_ms: u128 = 0;
+
+    let (raw_open, raw_closed, raw_ready) = if supports_list_all_flag() {
+        // --- Single-spawn path (bd >= 0.55, Dolt or JSONL) ---
+        // Eliminates the old `bd ready` spawn entirely; readiness computed in-process.
+        let t_spawn = std::time::Instant::now();
+        let all_output = execute_bd("list", &["--all".to_string(), "--limit=0".to_string()], cwd_ref)?;
+        spawn_ms += t_spawn.elapsed().as_millis();
+
+        let t_parse = std::time::Instant::now();
+        let raw_all = parse_issues_tolerant(&all_output, "bd_poll_data_all")?;
+        // Partition: "closed" AND "tombstone" go to closed bucket; everything else is open.
+        let (open, closed): (Vec<_>, Vec<_>) = raw_all.into_iter()
+            .partition(|issue: &BdRawIssue| {
+                issue.status != "closed" && issue.status != "tombstone"
+            });
+        parse_ms += t_parse.elapsed().as_millis();
+
+        // Compute ready in-process — zero additional spawns
+        let t_ready = std::time::Instant::now();
+        let ready = compute_ready_from(&open, &closed, &HashMap::new());
+        let ready_ms = t_ready.elapsed().as_millis();
+        log_debug!(
+            "[perf:ready_computed] n={} computed_ms={}",
+            ready.len(), ready_ms
+        );
+
+        (open, closed, ready)
+    } else {
+        // --- Fallback path (old bd / br / no --all flag) ---
+        // Two spawns for list (open + closed), one for ready.
+        let t_spawn = std::time::Instant::now();
+        let open_output   = execute_bd("list", &["--limit=0".to_string()], cwd_ref)?;
+        let closed_output = execute_bd("list", &["--status=closed".to_string(), "--limit=0".to_string()], cwd_ref)?;
+        let ready_output  = execute_bd("ready", &[], cwd_ref)?;
+        spawn_ms += t_spawn.elapsed().as_millis();
+
+        let t_parse = std::time::Instant::now();
+        let open  = parse_issues_tolerant(&open_output,   "bd_poll_data_open")?;
+        let closed = parse_issues_tolerant(&closed_output, "bd_poll_data_closed")?;
+        let ready  = parse_issues_tolerant(&ready_output,  "bd_poll_data_ready")?;
+        parse_ms += t_parse.elapsed().as_millis();
+
+        (open, closed, ready)
+    };
+
+    log_info!("[bd_poll_data] Batched poll done: {} open, {} closed, {} ready",
+        raw_open.len(), raw_closed.len(), raw_ready.len());
+
+    // ---------------------------------------------------------------------------
+    // Update LAST_KNOWN_MTIME and POLL_MEMO
+    // ---------------------------------------------------------------------------
+
+    // Capture fresh mtime AFTER our commands ran — ignore mtime changes caused
+    // by our own poll (sync side-effects).
+    let post_mtime = get_beads_mtime(&beads_dir);
+    if let Some(mtime) = post_mtime {
+        let mut map = LAST_KNOWN_MTIME.lock().unwrap();
+        map.insert(working_dir.clone(), mtime);
+
+        // Store in POLL_MEMO for next poll cycle
+        let mut memo = POLL_MEMO.lock().unwrap();
+        memo.insert(working_dir.clone(), PollCacheEntry {
+            mtime,
+            raw_open: raw_open.clone(),
+            raw_closed: raw_closed.clone(),
+            raw_ready: raw_ready.clone(),
+            captured_at: std::time::Instant::now(),
+        });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Verbose sanity check: periodically compare compute_ready_from vs bd ready
+    // ---------------------------------------------------------------------------
+    // Only runs when VERBOSE_LOGGING is active AND we used the single-spawn path.
+    // Rate-limited to every 10 polls per project to avoid performance impact.
+    if VERBOSE_LOGGING.load(Ordering::Relaxed) && supports_list_all_flag() {
+        let poll_num = {
+            let mut counts = POLL_MEMO_POLL_COUNT.lock().unwrap();
+            let n = counts.entry(working_dir.clone()).or_insert(0);
+            *n += 1;
+            *n
+        };
+        if poll_num % 10 == 0 {
+            let open_clone = raw_open.clone();
+            let closed_clone = raw_closed.clone();
+            let cwd_clone = working_dir.clone();
+            std::thread::spawn(move || {
+                if let Ok(bd_ready_output) = execute_bd("ready", &[], Some(&cwd_clone)) {
+                    if let Ok(bd_ready) = parse_issues_tolerant(&bd_ready_output, "sanity_check_ready") {
+                        let computed = compute_ready_from(&open_clone, &closed_clone, &HashMap::new());
+                        let computed_ids: std::collections::HashSet<&str> =
+                            computed.iter().map(|i| i.id.as_str()).collect();
+                        let bd_ids: std::collections::HashSet<&str> =
+                            bd_ready.iter().map(|i| i.id.as_str()).collect();
+                        if computed_ids != bd_ids {
+                            let extra_computed: Vec<&str> = computed_ids.difference(&bd_ids).copied().collect();
+                            let missing_computed: Vec<&str> = bd_ids.difference(&computed_ids).copied().collect();
+                            log_warn!(
+                                "[perf:ready_sanity] MISMATCH poll={} \
+                                 extra_in_computed={:?} missing_from_computed={:?}",
+                                poll_num, extra_computed, missing_computed
+                            );
+                        } else {
+                            log_debug!(
+                                "[perf:ready_sanity] OK poll={} n={}",
+                                poll_num, computed_ids.len()
+                            );
+                        }
+                    }
+                }
+            });
         }
     }
 
-    // Fire-and-forget: persist raw snapshot for stale-while-revalidate warm-up on
-    // project switch. Clone raw vecs (cheap relative to bd IPC) and write on a
-    // blocking thread so the poll path is never blocked by disk I/O.
+    // ---------------------------------------------------------------------------
+    // Fire-and-forget: persist raw snapshot for stale-while-revalidate warm-up
+    // ---------------------------------------------------------------------------
     {
         let project_hash = hash_path_djb2(&working_dir);
         let snapshot = PollCacheFile {
@@ -2755,26 +3022,25 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         });
     }
 
-    // [perf] Transform phase: BdRawIssue → Issue via `transform_issue` on every vec.
+    // ---------------------------------------------------------------------------
+    // Transform phase: BdRawIssue → Issue
+    // ---------------------------------------------------------------------------
     let issues_count = raw_open.len() + raw_closed.len() + raw_ready.len();
     let t_transform = std::time::Instant::now();
     let result = PollData {
-        open_issues: raw_open.into_iter().map(transform_issue).collect(),
+        open_issues:   raw_open.into_iter().map(transform_issue).collect(),
         closed_issues: raw_closed.into_iter().map(transform_issue).collect(),
-        ready_issues: raw_ready.into_iter().map(transform_issue).collect(),
+        ready_issues:  raw_ready.into_iter().map(transform_issue).collect(),
     };
     let transform_ms = t_transform.elapsed().as_millis();
     let total_ms = t_total.elapsed().as_millis();
 
     log_debug!(
-        "[perf:bd_poll_data] sync={}ms spawn={}ms parse={}ms transform={}ms total={}ms issues={}",
+        "[perf:bd_poll_data] memo_hit=false sync={}ms spawn={}ms parse={}ms transform={}ms total={}ms issues={}",
         sync_ms, spawn_ms, parse_ms, transform_ms, total_ms, issues_count
     );
 
     // [perf] Dolt cold-start: log once per project per process lifetime.
-    // The very first bd_poll_data call on a Dolt-backed project pays for
-    // `dolt sql-server` startup — which dominates switch latency on large projects.
-    //
     // Canonicalize `working_dir` first: when cwd_ref is None and BEADS_PATH is unset, it
     // can fall back to "." (Tauri-process cwd), which makes `project_uses_dolt(./.beads)`
     // check the wrong directory and the coldstart set key collide across projects.
@@ -2782,8 +3048,8 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         let working_dir_canon = std::fs::canonicalize(&working_dir)
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| working_dir.clone());
-        let beads_dir = std::path::Path::new(&working_dir_canon).join(".beads");
-        if project_uses_dolt(&beads_dir) {
+        let beads_dir_canon = std::path::Path::new(&working_dir_canon).join(".beads");
+        if project_uses_dolt(&beads_dir_canon) {
             let mut logged = DOLT_COLDSTART_LOGGED.lock().unwrap();
             if !logged.contains(&working_dir_canon) {
                 logged.insert(working_dir_canon.clone());
@@ -5767,5 +6033,205 @@ mod tests {
 
         let result = apply_list_filters(issues, &options);
         assert_eq!(result.len(), 2);
+    }
+
+    // =========================================================================
+    // compute_ready_from
+    // =========================================================================
+
+    /// Helper: make a BdRawIssue with explicit status, optional dependencies.
+    fn make_issue_with_deps(
+        id: &str,
+        status: &str,
+        dependencies: Option<Vec<BdRawDependency>>,
+    ) -> BdRawIssue {
+        BdRawIssue {
+            id: id.to_string(),
+            title: format!("Issue {id}"),
+            description: None,
+            status: status.to_string(),
+            priority: 3,
+            issue_type: "task".to_string(),
+            owner: None,
+            assignee: None,
+            labels: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+            closed_at: None,
+            started_at: None,
+            close_reason: None,
+            blocked_by: None,
+            blocks: None,
+            comments: None,
+            external_ref: None,
+            estimate: None,
+            design: None,
+            acceptance_criteria: None,
+            notes: None,
+            parent: None,
+            dependents: None,
+            dependencies,
+            dependency_count: None,
+            dependent_count: None,
+            metadata: None,
+            spec_id: None,
+            comment_count: None,
+        }
+    }
+
+    /// Helper: make a BdRawDependency of type "blocks" pointing to depends_on_id.
+    fn make_blocks_dep(depends_on_id: &str) -> BdRawDependency {
+        BdRawDependency {
+            id: None,
+            issue_id: None,
+            depends_on_id: Some(depends_on_id.to_string()),
+            dependency_type: Some("blocks".to_string()),
+            created_at: None,
+            created_by: None,
+        }
+    }
+
+    #[test]
+    fn test_compute_ready_no_deps() {
+        // Issue with no dependencies and status "open" (active) → ready
+        let open = vec![make_issue_with_deps("a", "open", None)];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "a");
+    }
+
+    #[test]
+    fn test_compute_ready_wip_status_not_ready() {
+        // Issue with status "in_progress" (wip) → NOT ready
+        let open = vec![make_issue_with_deps("b", "in_progress", None)];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        assert!(result.is_empty(), "wip status should not be ready");
+    }
+
+    #[test]
+    fn test_compute_ready_with_closed_blocker() {
+        // Issue blocked by a CLOSED issue → still ready (blocker is done)
+        let blocker = make_issue_with_deps("blocker-1", "closed", None);
+        let open = vec![
+            make_issue_with_deps("a", "open", Some(vec![make_blocks_dep("blocker-1")])),
+        ];
+        let closed = vec![blocker];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        assert_eq!(result.len(), 1, "closed blocker should not prevent readiness");
+        assert_eq!(result[0].id, "a");
+    }
+
+    #[test]
+    fn test_compute_ready_with_open_blocker() {
+        // Issue blocked by an OPEN issue → NOT ready
+        let open = vec![
+            make_issue_with_deps("a", "open", Some(vec![make_blocks_dep("blocker-1")])),
+            make_issue_with_deps("blocker-1", "open", None),
+        ];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        // "a" is blocked; "blocker-1" has no deps so it IS ready
+        assert_eq!(result.len(), 1, "issue with open blocker should not be ready");
+        assert_eq!(result[0].id, "blocker-1");
+    }
+
+    #[test]
+    fn test_compute_ready_tombstone_blocker_is_done() {
+        // Tombstone is treated as "done" → blocker is resolved
+        let tombstone = make_issue_with_deps("t-1", "tombstone", None);
+        let open = vec![
+            make_issue_with_deps("a", "open", Some(vec![make_blocks_dep("t-1")])),
+        ];
+        let closed = vec![tombstone];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        assert_eq!(result.len(), 1, "tombstone blocker should be treated as done");
+        assert_eq!(result[0].id, "a");
+    }
+
+    #[test]
+    fn test_compute_ready_custom_status_active() {
+        // Custom status in "active" category → ready (no blockers)
+        let mut custom = HashMap::new();
+        custom.insert("awaiting".to_string(), "active".to_string());
+
+        let open = vec![make_issue_with_deps("a", "awaiting", None)];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &custom);
+        assert_eq!(result.len(), 1, "custom active status should be ready");
+    }
+
+    #[test]
+    fn test_compute_ready_custom_status_wip_not_ready() {
+        // Custom status in "wip" category → NOT ready
+        let mut custom = HashMap::new();
+        custom.insert("inreview".to_string(), "wip".to_string());
+
+        let open = vec![make_issue_with_deps("a", "inreview", None)];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &custom);
+        assert!(result.is_empty(), "custom wip status should not be ready");
+    }
+
+    #[test]
+    fn test_compute_ready_non_blocks_dep_ignored() {
+        // Dependency of type "related" (not "blocks") → should NOT prevent readiness
+        let dep = BdRawDependency {
+            id: None,
+            issue_id: None,
+            depends_on_id: Some("other-1".to_string()),
+            dependency_type: Some("related".to_string()),
+            created_at: None,
+            created_by: None,
+        };
+        let open = vec![
+            make_issue_with_deps("a", "open", Some(vec![dep])),
+            make_issue_with_deps("other-1", "open", None),
+        ];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        // Both issues are open + active and neither is "blocks"-blocked → both ready
+        assert_eq!(result.len(), 2, "non-blocks dependency should not block readiness");
+    }
+
+    #[test]
+    fn test_compute_ready_unknown_blocker_treated_as_closed() {
+        // Blocker ID not found in either open or closed → assumed closed → issue is ready
+        let open = vec![
+            make_issue_with_deps("a", "open", Some(vec![make_blocks_dep("ghost-id")])),
+        ];
+        let closed: Vec<BdRawIssue> = vec![];
+        let result = compute_ready_from(&open, &closed, &HashMap::new());
+        assert_eq!(result.len(), 1, "unknown blocker id should default to closed/done");
+        assert_eq!(result[0].id, "a");
+    }
+
+    #[test]
+    fn test_resolve_status_category_builtin() {
+        let custom: HashMap<String, String> = HashMap::new();
+        assert_eq!(resolve_status_category("open",        &custom), "active");
+        assert_eq!(resolve_status_category("in_progress", &custom), "wip");
+        assert_eq!(resolve_status_category("blocked",     &custom), "wip");
+        assert_eq!(resolve_status_category("closed",      &custom), "done");
+        assert_eq!(resolve_status_category("deferred",    &custom), "frozen");
+        assert_eq!(resolve_status_category("pinned",      &custom), "frozen");
+        assert_eq!(resolve_status_category("hooked",      &custom), "wip");
+        assert_eq!(resolve_status_category("tombstone",   &custom), "done");
+    }
+
+    #[test]
+    fn test_resolve_status_category_custom_overrides_builtin() {
+        let mut custom = HashMap::new();
+        // Intentionally override "open" to "frozen" (unusual but valid)
+        custom.insert("open".to_string(), "frozen".to_string());
+        assert_eq!(resolve_status_category("open", &custom), "frozen");
+    }
+
+    #[test]
+    fn test_resolve_status_category_unknown_defaults_to_active() {
+        let custom: HashMap<String, String> = HashMap::new();
+        assert_eq!(resolve_status_category("totally_unknown_xyz", &custom), "active");
     }
 }
