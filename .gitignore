@@ -46,7 +46,6 @@ coverage
 
 # MCP server config (local)
 .serena/
-# bd worktree
 slot-hide/
 .worktrees/
 
