@@ -221,7 +221,7 @@ watch(() => props.isOpen, async (isOpen) => {
     // Disable backend logging to save resources when panel is closed
     await setLoggingEnabled(false)
   }
-}, { immediate: true })
+})
 
 watch(debugTab, (tab) => {
   if (tab === 'pipeline') {
