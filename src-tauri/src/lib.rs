@@ -3062,22 +3062,23 @@ async fn bd_poll_data_cached(cwd: String) -> Result<Option<PollData>, String> {
 }
 
 /// Internal helper that returns the mtime AND a static tag indicating which gate
-/// produced the result: `"last_touched"` (fast-path) or `"fallback"` (legacy walk).
+/// produced the result: `"interactions"` (fast-path) or `"fallback"` (legacy walk).
 /// Callers that need the source tag use this directly; `get_beads_mtime` is a thin
 /// wrapper that discards the tag.
 fn get_beads_mtime_with_source(beads_dir: &std::path::Path) -> (Option<std::time::SystemTime>, &'static str) {
-    // Fast-path: `.beads/last-touched` is written by bd ONLY on user-driven issue
-    // mutations (create/update/close/delete). It is NOT touched by Dolt sql-server
-    // activity, auto-flush, or WAL writes — making it an ideal invalidation signal
-    // for POLL_MEMO on Dolt projects. Verified 2026-04-24 on invest_fund_sharks
-    // (1040 issues): last-touched mtime was stable for >1h while issues.jsonl was
-    // updated every few seconds by auto-flush.
-    // Fallback below handles: older bd versions, SQLite projects without last-touched,
-    // non-bd test fixtures.
-    let last_touched = beads_dir.join("last-touched");
-    if let Ok(meta) = fs::metadata(&last_touched) {
+    // Fast-path: `.beads/interactions.jsonl` is bd's append-only audit log of
+    // field-change mutations (status/priority/label/create/close). It is NOT
+    // touched by reads (`bd list`, `bd show`) and NOT touched by Dolt sql-server
+    // idle activity. Verified 2026-04-24 on invest_fund_sharks (1040 issues):
+    // stable for 20s idle; bumped on `bd create`/`bd close`/`bd update --priority`;
+    // unchanged on `bd list`/`bd show`. Known gap: `bd update --notes` does not
+    // log to interactions.jsonl (notes/description text edits are 60s-TTL-bounded).
+    // Fallback below handles: older bd versions (pre-interactions-log), non-Dolt
+    // projects, test fixtures.
+    let interactions = beads_dir.join("interactions.jsonl");
+    if let Ok(meta) = fs::metadata(&interactions) {
         if let Ok(m) = meta.modified() {
-            return (Some(m), "last_touched");
+            return (Some(m), "interactions");
         }
     }
 
@@ -3085,10 +3086,11 @@ fn get_beads_mtime_with_source(beads_dir: &std::path::Path) -> (Option<std::time
     (get_beads_mtime_fallback(beads_dir), "fallback")
 }
 
-/// Get the latest mtime across all beads database files.
-/// - Dolt backend (bd >= 0.50.0): checks .beads/ dir, .beads/.dolt/ (legacy) or
-///   .beads/dolt/<name>/.dolt/ (bd 0.52+ nested layout), and manifest files
-/// - SQLite backend: checks beads.db, beads.db-wal, and optionally issues.jsonl
+/// Get the latest mtime used as the POLL_MEMO invalidation signal.
+/// Fast-path: `.beads/interactions.jsonl` (bd's append-only field-change audit log) —
+/// stable on reads, bumped on mutations (create/close/update --priority/label).
+/// Fallback: legacy mtime walk when interactions.jsonl is absent (older bd, SQLite,
+/// non-Dolt projects, test fixtures).
 fn get_beads_mtime(beads_dir: &std::path::Path) -> Option<std::time::SystemTime> {
     get_beads_mtime_with_source(beads_dir).0
 }
@@ -6255,46 +6257,46 @@ mod tests {
     // get_beads_mtime / get_beads_mtime_with_source
     // -------------------------------------------------------------------------
 
-    /// When `.beads/last-touched` exists, get_beads_mtime returns its mtime
+    /// When `.beads/interactions.jsonl` exists, get_beads_mtime returns its mtime
     /// and ignores changes to other files in .beads/.
     #[test]
-    fn test_get_beads_mtime_last_touched_is_primary() {
+    fn test_get_beads_mtime_interactions_is_primary() {
         let tmp = tempfile::TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
 
-        // Create last-touched
-        let last_touched = beads_dir.join("last-touched");
-        std::fs::write(&last_touched, b"project-id-xyz").unwrap();
-        let expected_mtime = fs::metadata(&last_touched).unwrap().modified().unwrap();
+        // Create interactions.jsonl
+        let interactions = beads_dir.join("interactions.jsonl");
+        std::fs::write(&interactions, b"{\"op\":\"create\",\"id\":\"abc\"}").unwrap();
+        let expected_mtime = fs::metadata(&interactions).unwrap().modified().unwrap();
 
-        // Verify mtime matches last-touched
+        // Verify mtime matches interactions.jsonl
         let result = get_beads_mtime(&beads_dir);
-        assert!(result.is_some(), "Expected Some mtime from last-touched");
-        assert_eq!(result.unwrap(), expected_mtime, "mtime should match last-touched stat");
+        assert!(result.is_some(), "Expected Some mtime from interactions.jsonl");
+        assert_eq!(result.unwrap(), expected_mtime, "mtime should match interactions.jsonl stat");
 
         // Create another file — should NOT change the returned mtime
         let other = beads_dir.join("issues.jsonl");
         std::fs::write(&other, b"some data").unwrap();
         let result2 = get_beads_mtime(&beads_dir);
-        assert_eq!(result2.unwrap(), expected_mtime, "mtime should still match last-touched, not issues.jsonl");
+        assert_eq!(result2.unwrap(), expected_mtime, "mtime should still match interactions.jsonl, not issues.jsonl");
     }
 
-    /// source tag is "last_touched" when the file exists, "fallback" when absent.
+    /// source tag is "interactions" when the file exists, "fallback" when absent.
     #[test]
     fn test_get_beads_mtime_with_source_tag() {
         let tmp = tempfile::TempDir::new().unwrap();
         let beads_dir = tmp.path().join(".beads");
         std::fs::create_dir_all(&beads_dir).unwrap();
 
-        // Without last-touched: source = "fallback"
+        // Without interactions.jsonl: source = "fallback"
         let (_, src) = get_beads_mtime_with_source(&beads_dir);
         assert_eq!(src, "fallback");
 
-        // With last-touched: source = "last_touched"
-        std::fs::write(beads_dir.join("last-touched"), b"proj").unwrap();
+        // With interactions.jsonl: source = "interactions"
+        std::fs::write(beads_dir.join("interactions.jsonl"), b"{\"op\":\"create\"}").unwrap();
         let (_, src2) = get_beads_mtime_with_source(&beads_dir);
-        assert_eq!(src2, "last_touched");
+        assert_eq!(src2, "interactions");
     }
 
     /// Without last-touched, fallback returns Some when beads.db exists (SQLite project).
