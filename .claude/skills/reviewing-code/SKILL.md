@@ -18,7 +18,7 @@ inreview → simplified → reviewed → accepted → closed
 ```bash
 bd show {BEAD_ID} --json | jq -r '.[0].status'
 ```
-Если не `inreview` — выход (pre-dispatch / claiming-bead должны быть запущены сначала). Хуки `validate-review-chain.sh` + `validate-completion.sh` сторожат валидность переходов на bd-уровне; порядок simplify → review → accept — orchestrator-дисциплина (ответственность skill'а), не enforced хуками.
+Если не `inreview` — выход (claim делает `claiming-bead`, dispatch — `pre-dispatch`; запусти их сначала). Хуки `validate-review-chain.sh` + `validate-completion.sh` сторожат валидность переходов на bd-уровне; порядок simplify → review → accept — orchestrator-дисциплина (ответственность skill'а), не enforced хуками.
 
 ## Step 1: Simplify (ОБЯЗАТЕЛЬНО перед review)
 
