@@ -51,16 +51,13 @@ async function handleItemClick(issueId: string | undefined) {
 
   isOpen.value = false
 
-  // Find issue in current list
   const found = issues.value.find(i => i.id === issueId)
   if (found) {
     selectIssue(found)
-    // Fetch full details
     await fetchIssue(issueId)
     return
   }
 
-  // Not found in current list
   notifyWarning(t('notifications.center.openIssueFailed'), issueId)
 }
 
@@ -70,8 +67,8 @@ function formatTime(timestamp: number): string {
 </script>
 
 <template>
-  <DropdownMenu v-model:open="isOpen">
-    <Tooltip>
+  <Tooltip>
+    <DropdownMenu v-model:open="isOpen" :modal="false">
       <TooltipTrigger as-child>
         <DropdownMenuTrigger as-child>
           <Button
@@ -91,9 +88,8 @@ function formatTime(timestamp: number): string {
         </DropdownMenuTrigger>
       </TooltipTrigger>
       <TooltipContent>{{ tooltipText }}</TooltipContent>
-    </Tooltip>
 
-    <DropdownMenuContent
+      <DropdownMenuContent
       class="w-96 p-0"
       align="end"
       :side-offset="8"
@@ -147,7 +143,7 @@ function formatTime(timestamp: number): string {
           >
             <DropdownMenuSeparator v-if="index > 0" class="my-0" />
             <button
-              class="w-full text-left px-3 py-2.5 transition-colors hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              class="w-full text-left px-3 py-2.5 transition-colors hover:bg-accent/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:cursor-default"
               :class="{ 'bg-accent/30': !item.read }"
               :disabled="!item.issueId"
               @click="handleItemClick(item.issueId)"
@@ -193,6 +189,7 @@ function formatTime(timestamp: number): string {
           </div>
         </template>
       </div>
-    </DropdownMenuContent>
-  </DropdownMenu>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </Tooltip>
 </template>
