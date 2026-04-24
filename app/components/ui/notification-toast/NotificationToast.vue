@@ -1,13 +1,20 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import { XIcon } from 'lucide-vue-next'
 import { typeStyles, getNotificationIcon } from '~/utils/notification-styles'
 
+const { t } = useI18n()
 const { notifications, dismiss } = useNotification()
 </script>
 
 <template>
   <Teleport to="body">
-    <div class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none">
+    <div
+      class="fixed top-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none"
+      role="status"
+      aria-live="polite"
+      aria-atomic="false"
+    >
       <TransitionGroup name="notification">
         <div
           v-for="notification in notifications"
@@ -19,6 +26,7 @@ const { notifications, dismiss } = useNotification()
             :is="getNotificationIcon(notification.type)"
             class="w-5 h-5 shrink-0 mt-0.5"
             :class="typeStyles[notification.type].icon"
+            aria-hidden="true"
           />
           <div class="flex-1 min-w-0">
             <p class="text-sm font-medium text-foreground">{{ notification.message }}</p>
@@ -27,10 +35,11 @@ const { notifications, dismiss } = useNotification()
             </p>
           </div>
           <button
-            class="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+            class="shrink-0 p-1 rounded-sm text-muted-foreground hover:text-foreground transition-colors outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+            :aria-label="t('notifications.toast.dismiss')"
             @click="dismiss(notification.id)"
           >
-            <XIcon class="w-4 h-4" />
+            <XIcon class="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
       </TransitionGroup>
@@ -41,7 +50,7 @@ const { notifications, dismiss } = useNotification()
 <style scoped>
 .notification-enter-active,
 .notification-leave-active {
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
 
 .notification-enter-from {
@@ -52,5 +61,16 @@ const { notifications, dismiss } = useNotification()
 .notification-leave-to {
   opacity: 0;
   transform: translateX(100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-enter-active,
+  .notification-leave-active {
+    transition: opacity 0.15s ease !important;
+  }
+  .notification-enter-from,
+  .notification-leave-to {
+    transform: none;
+  }
 }
 </style>

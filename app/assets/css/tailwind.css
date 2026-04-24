@@ -937,3 +937,19 @@ mark.search-highlight-current {
 .issue-highlight-new {
   animation: issue-highlight-flash 3s ease-out forwards;
 }
+
+/* Honor system-level reduced-motion preference (WCAG 2.3.3, WIG).
+   Keyframe/transition durations collapse to near-zero so motion-triggered
+   vestibular discomfort is avoided while JS-hooked transitionend/animationend
+   still fire. Components that need a custom reduced-motion variant (e.g.
+   toast fade) override within their own scoped @media block. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
