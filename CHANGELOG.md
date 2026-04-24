@@ -27,6 +27,7 @@
 - **Faster cold open: `onMounted` now uses batched `fetchPollData`** (`beads-task-issue-tracker-ydr`): replaced two sequential IPC calls (`fetchIssues` + `fetchStats`) with a single batched call (`fetchPollData` + `updateFromPollData`), mirroring `handlePathChange`. Saves ~200–400 ms on first app open with a Dolt project.
 
 ### Changed
+- **Direct download + auto-launch on Windows and Linux** (`beads-task-issue-tracker-dc2`): `download_and_install_update` now launches the downloaded installer on Windows (`.msi`/`.exe` via `cmd /C start`, UAC prompt expected) and makes the AppImage executable then spawns it on Linux. Previously only macOS received direct download; Windows and Linux fell back to opening the releases page. The composable (`useUpdateChecker`) now triggers direct download for any platform that provides a `downloadUrl`, removing the earlier macOS-only gate.
 - **Tooltip hover delay restored to 700ms default (was instant)** (`beads-task-issue-tracker-3d4`): removed explicit `delayDuration: 0` override from `TooltipProvider.vue`; inherits reka-ui/radix default of 700ms delay with 300ms skip-delay window. Matches macOS HIG / Linear / GitHub behavior — tooltip no longer pops up before the cursor has settled.
 
 ### Fixed

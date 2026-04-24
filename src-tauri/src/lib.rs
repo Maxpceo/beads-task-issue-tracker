@@ -4239,6 +4239,42 @@ async fn download_and_install_update(download_url: String) -> Result<String, Str
         }
     }
 
+    // On Windows, launch the MSI installer (UAC prompt is expected)
+    #[cfg(target_os = "windows")]
+    {
+        if filename.ends_with(".msi") || filename.ends_with(".exe") {
+            log::info!("[download_update] Launching installer: {}", dest_str);
+            new_command("cmd")
+                .args(["/C", "start", "", &dest_str])
+                .spawn()
+                .map_err(|e| {
+                    log::error!("[download_update] Failed to launch installer: {}", e);
+                    format!("Failed to launch installer: {}", e)
+                })?;
+        }
+    }
+
+    // On Linux, chmod +x the AppImage and launch it
+    #[cfg(target_os = "linux")]
+    {
+        if filename.ends_with(".AppImage") {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&dest_path)
+                .map_err(|e| format!("Failed to read AppImage permissions: {}", e))?
+                .permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&dest_path, perms)
+                .map_err(|e| format!("Failed to chmod AppImage: {}", e))?;
+            log::info!("[download_update] Launching AppImage: {}", dest_str);
+            Command::new(&dest_path)
+                .spawn()
+                .map_err(|e| {
+                    log::error!("[download_update] Failed to launch AppImage: {}", e);
+                    format!("Failed to launch AppImage: {}", e)
+                })?;
+        }
+    }
+
     Ok(dest_str)
 }
 
