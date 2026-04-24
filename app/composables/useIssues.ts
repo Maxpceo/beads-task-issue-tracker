@@ -103,11 +103,11 @@ export function notifyStatusTransitions(
 
   for (const event of events) {
     if (event.kind === 'created') {
-      notifySuccess(t('notifications.issue.created', { id: event.id }), event.title)
+      notifySuccess(t('notifications.issue.created', { id: event.id }), event.title, { issueId: event.id })
     } else if (event.kind === 'deleted') {
-      notifySuccess(t('notifications.issue.deleted', { id: event.id }), event.title)
+      notifySuccess(t('notifications.issue.deleted', { id: event.id }), event.title, { issueId: event.id })
     } else if (event.kind === 'statusTransition' && event.toastKey !== null) {
-      notifySuccess(t(TOAST_KEY_TO_I18N[event.toastKey], { id: event.id }), event.title)
+      notifySuccess(t(TOAST_KEY_TO_I18N[event.toastKey], { id: event.id }), event.title, { issueId: event.id })
     }
   }
 }

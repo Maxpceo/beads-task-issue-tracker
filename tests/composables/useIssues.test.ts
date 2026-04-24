@@ -161,6 +161,7 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
     expect(notifySuccessMock).toHaveBeenCalledWith(
       expect.stringContaining('notifications.issue.closed'),
       'Issue a-1',
+      expect.objectContaining({ issueId: 'a-1' }),
     )
   })
 

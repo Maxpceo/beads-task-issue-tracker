@@ -776,14 +776,15 @@ const handleSaveIssue = async (payload: UpdateIssuePayload) => {
         selectIssue(result)
         // Fetch full issue details to get all fields
         await fetchIssue(result.id)
-        notifySuccess(t('page.notifications.issueCreated'))
+        notifySuccess(t('page.notifications.issueCreated'), undefined, { issueId: result.id })
       }
       defaultParent.value = undefined
     } else if (selectedIssue.value) {
-      await updateIssue(selectedIssue.value.id, payload)
+      const savedId = selectedIssue.value.id
+      await updateIssue(savedId, payload)
       // Fetch full issue details to get comments and all fields
-      await fetchIssue(selectedIssue.value.id)
-      notifySuccess(t('page.notifications.issueSaved'))
+      await fetchIssue(savedId)
+      notifySuccess(t('page.notifications.issueSaved'), undefined, { issueId: savedId })
     }
     isEditMode.value = false
     isCreatingNew.value = false
