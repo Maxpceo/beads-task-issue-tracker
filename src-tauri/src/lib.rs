@@ -28,16 +28,13 @@ static LAST_KNOWN_MTIME: LazyLock<Mutex<HashMap<String, std::time::SystemTime>>>
 
 /// Cached poll result; valid until mtime changes or TTL expires.
 struct PollCacheEntry {
-    /// Filesystem mtime snapshot at capture time.
     mtime: std::time::SystemTime,
-    /// Raw open issues at capture time.
     raw_open: Vec<BdRawIssue>,
-    /// Raw closed issues at capture time.
     raw_closed: Vec<BdRawIssue>,
-    /// Raw ready issues at capture time (computed, not spawned).
     raw_ready: Vec<BdRawIssue>,
-    /// Wall-clock instant of capture (for TTL hard-cap).
     captured_at: std::time::Instant,
+    /// Poll invocation counter for verbose sanity-check throttling (every Nth poll).
+    sanity_poll_count: u64,
 }
 
 /// Per-project in-process memo: cwd → PollCacheEntry.
@@ -49,34 +46,8 @@ static POLL_MEMO: LazyLock<Mutex<HashMap<String, PollCacheEntry>>> =
 /// after this many seconds (safety net for low-resolution FS clocks).
 const POLL_MEMO_TTL_SECS: u64 = 60;
 
-/// Per-project poll invocation counter for verbose sanity-check throttling.
-static POLL_MEMO_POLL_COUNT: LazyLock<Mutex<HashMap<String, u64>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-// ---------------------------------------------------------------------------
-// Built-in status categories — mirrors BUILTIN_FALLBACK in useStatuses.ts
-// ---------------------------------------------------------------------------
-//
-// Each tuple: (status_name, category)
-// category values: "active" | "wip" | "frozen" | "done"
-//
-// "tombstone" is not a real bd status but appears in JSONL migrations; treat
-// it as "done" so it never counts as a blocking open issue.
-const BUILTIN_STATUS_CATEGORIES: &[(&str, &str)] = &[
-    ("open",        "active"),
-    ("in_progress", "wip"),
-    ("blocked",     "wip"),
-    ("closed",      "done"),
-    ("deferred",    "frozen"),
-    ("pinned",      "frozen"),
-    ("hooked",      "wip"),
-    ("tombstone",   "done"),
-    // bd 1.x review-chain custom statuses (wip — still open)
-    ("inreview",    "wip"),
-    ("simplified",  "wip"),
-    ("reviewed",    "wip"),
-    ("accepted",    "wip"),
-];
+/// Shared empty status map — avoids `HashMap::new()` allocation per poll.
+static EMPTY_STATUS_MAP: LazyLock<HashMap<String, String>> = LazyLock::new(HashMap::new);
 
 // Tracks projects for which we've already logged a Dolt cold-start timing.
 // Used by [`bd_poll_data`] to emit `[perf:dolt_coldstart]` only on the first
@@ -2724,27 +2695,28 @@ fn write_poll_cache(project_hash: &str, cache: &PollCacheFile) {
 // compute_ready_from — pure readiness filter (no bd spawn)
 // ---------------------------------------------------------------------------
 
-/// Resolve the category of a status name using a dynamic status map with
-/// fallback to `BUILTIN_STATUS_CATEGORIES`.  Returns "active" for unknowns
-/// (conservative: unknown statuses behave as open/ready-eligible unless we
-/// know otherwise).
+/// Resolve the category of a status name. Project-specific overrides win over
+/// the built-in table; unknowns default to "active" (conservative — user sees
+/// an extra ready issue rather than a missing one).
+///
+/// Built-in table mirrors `BUILTIN_FALLBACK` in `app/composables/useStatuses.ts`;
+/// "tombstone" is not a real bd status but appears in JSONL migrations, treated
+/// as "done" so it never blocks a ready issue.
 fn resolve_status_category<'a>(
     status: &str,
     custom_statuses: &'a HashMap<String, String>,
 ) -> &'a str {
-    // Dynamic map first (project-specific custom statuses)
     if let Some(cat) = custom_statuses.get(status) {
         return cat.as_str();
     }
-    // Built-in fallback table
-    for (name, category) in BUILTIN_STATUS_CATEGORIES {
-        if *name == status {
-            return category;
-        }
+    match status {
+        "open"                                                     => "active",
+        "in_progress" | "blocked" | "hooked"
+            | "inreview"  | "simplified" | "reviewed" | "accepted" => "wip",
+        "deferred" | "pinned"                                      => "frozen",
+        "closed"   | "tombstone"                                   => "done",
+        _                                                          => "active",
     }
-    // Unknown status: treat as "active" (open/ready-eligible) to be conservative.
-    // If wrong, user will see extra "ready" issues rather than missing ones.
-    "active"
 }
 
 /// Pure function: compute ready-set from already-fetched open issues.
@@ -2912,7 +2884,7 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
 
         // Compute ready in-process — zero additional spawns
         let t_ready = std::time::Instant::now();
-        let ready = compute_ready_from(&open, &closed, &HashMap::new());
+        let ready = compute_ready_from(&open, &closed, &EMPTY_STATUS_MAP);
         let ready_ms = t_ready.elapsed().as_millis();
         log_debug!(
             "[perf:ready_computed] n={} computed_ms={}",
@@ -2952,37 +2924,38 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         let mut map = LAST_KNOWN_MTIME.lock().unwrap();
         map.insert(working_dir.clone(), mtime);
 
-        // Store in POLL_MEMO for next poll cycle
+        // Store in POLL_MEMO for next poll cycle, preserving the sanity counter
+        // across cache misses so verbose throttling stays stable.
         let mut memo = POLL_MEMO.lock().unwrap();
+        let prev_sanity_count = memo.get(&working_dir).map(|e| e.sanity_poll_count).unwrap_or(0);
         memo.insert(working_dir.clone(), PollCacheEntry {
             mtime,
             raw_open: raw_open.clone(),
             raw_closed: raw_closed.clone(),
             raw_ready: raw_ready.clone(),
             captured_at: std::time::Instant::now(),
+            sanity_poll_count: prev_sanity_count,
         });
     }
 
     // ---------------------------------------------------------------------------
-    // Verbose sanity check: periodically compare compute_ready_from vs bd ready
-    // ---------------------------------------------------------------------------
-    // Only runs when VERBOSE_LOGGING is active AND we used the single-spawn path.
-    // Rate-limited to every 10 polls per project to avoid performance impact.
+    // Verbose sanity check: periodically compare compute_ready_from vs bd ready.
+    // Gated by VERBOSE_LOGGING + supports_list_all_flag, rate-limited every 10 polls.
     if VERBOSE_LOGGING.load(Ordering::Relaxed) && supports_list_all_flag() {
         let poll_num = {
-            let mut counts = POLL_MEMO_POLL_COUNT.lock().unwrap();
-            let n = counts.entry(working_dir.clone()).or_insert(0);
-            *n += 1;
-            *n
+            let mut memo = POLL_MEMO.lock().unwrap();
+            memo.get_mut(&working_dir)
+                .map(|e| { e.sanity_poll_count += 1; e.sanity_poll_count })
+                .unwrap_or(0)
         };
-        if poll_num % 10 == 0 {
+        if poll_num > 0 && poll_num % 10 == 0 {
             let open_clone = raw_open.clone();
             let closed_clone = raw_closed.clone();
             let cwd_clone = working_dir.clone();
             std::thread::spawn(move || {
                 if let Ok(bd_ready_output) = execute_bd("ready", &[], Some(&cwd_clone)) {
                     if let Ok(bd_ready) = parse_issues_tolerant(&bd_ready_output, "sanity_check_ready") {
-                        let computed = compute_ready_from(&open_clone, &closed_clone, &HashMap::new());
+                        let computed = compute_ready_from(&open_clone, &closed_clone, &EMPTY_STATUS_MAP);
                         let computed_ids: std::collections::HashSet<&str> =
                             computed.iter().map(|i| i.id.as_str()).collect();
                         let bd_ids: std::collections::HashSet<&str> =
