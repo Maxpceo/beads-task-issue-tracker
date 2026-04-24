@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### New Features
+- **Notification Center** (`beads-task-issue-tracker-51z`): macOS-style notification history panel accessible via a bell icon in the header. Persists the last 100 toast notifications per project (localStorage, project-scoped key). Panel opens as a dropdown; clicking any entry opens the related issue. Unread count badge on the bell icon; panel auto-marks all notifications as read on open. Clear All button wipes the history. Powered by `useNotificationCenter` composable + `NotificationCenter.vue` component.
+
 ### Performance
 - **Adaptive polling interval table for Dolt projects** (`beads-task-issue-tracker-v1p`): `useAdaptivePolling` now accepts a `profile` option (`'default' | 'dolt-medium' | 'dolt-large'`) backed by an `INTERVAL_TABLE`. A new `useProjectProfile` composable detects the Dolt backend via a new Tauri command `get_project_uses_dolt` and classifies project size by issue count (<200 small, 200–999 medium, ≥1000 large). Dolt-large projects use 15s/60s/90s/180s intervals instead of 5s/30s/30s/60s, reducing idle CPU load ≥50% on large Dolt projects. Non-Dolt and small projects are unaffected (default profile). Fast 1s mtime check loop is profile-independent.
 - **Eliminate cold `bd ready` spawn in `bd_poll_data`** (`beads-task-issue-tracker-ho6`): on bd ≥ 0.55 with `--all` flag support, the separate `bd ready` subprocess (~700ms) is replaced by an in-process `compute_ready_from()` pure function. An in-process POLL_MEMO layer (keyed by filesystem mtime, TTL 60s) returns cached results with 0 bd spawns when nothing has changed — idle Dolt-project polls drop to <10ms. Non-Dolt and older bd/br projects retain the original 2–3 spawn path without regression.

@@ -75,6 +75,7 @@
 |------|---------|---------|
 | `useColumnConfig.ts` | `useColumnConfig()` | Issue table column visibility (per-project) |
 | `useNotification.ts` | `useNotification()` | Toast notifications — auto-dismiss after 3s |
+| `useNotificationCenter.ts` | `useNotificationCenter()` | Notification history — persists last 100 toasts to project-scoped localStorage (`beads:proj:{hash}:notifications`), tracks unread count, exposes `markAllRead()` and `clearAll()` |
 | `useTheme.ts` | `useTheme()` | Dark/light mode toggle |
 | `useCollapsible.ts` | `useCollapsible()` | Panel collapse state (dashboard, project sections) |
 | `useZoom.ts` | `useZoom()` | Content zoom 75-150% |
@@ -122,7 +123,8 @@
 #### Layout (`layout/`)
 | Component | Purpose |
 |-----------|---------|
-| `AppHeader.vue` | Top bar: title, zoom controls, theme toggle, Tauri drag region |
+| `AppHeader.vue` | Top bar: title, zoom controls, theme toggle, notification bell, Tauri drag region |
+| `NotificationCenter.vue` | Notification history panel — bell icon with unread badge, dropdown with last 100 notifications (project-scoped), click-to-open issue, Clear All button, auto-marks-read on open |
 | `UpdateIndicator.vue` | Sync/watcher status badges |
 | `UpdateDialog.vue` | Available updates UI |
 | `SettingsDialog.vue` | Sidebar-layout settings dialog (`sm:max-w-3xl`, `grid-cols-[180px_1fr]`): left sidebar nav (lucide icons + labels + `aria-current`) + right content panel. Active section stored in `useLocalStorage('beads:settingsTab')`. Section content delegated to `settings/` sub-components |
@@ -201,6 +203,7 @@
 | `open-url.ts` | `openUrl()`, `openImageFile()`, `readImageFile()`, `readTextFile()`, `writeTextFile()` | URL/file opening + image loading as base64 |
 | `path.ts` | `splitPath()`, `getPathSeparator()`, `getFolderName()`, `getParentPath()` | Cross-platform path utilities |
 | `hash.ts` | `hashPath()` | DJB2 hash for per-project storage namespacing |
+| `notification-styles.ts` | `getNotificationIcon()`, `getNotificationColor()` | Pure helpers — maps notification event types to Lucide icon names and Tailwind color classes for the Notification Center panel |
 | `lib/utils.ts` | `cn()` | TailwindCSS class merging (clsx + twMerge) |
 
 ### Types (`app/types/issue.ts`)
@@ -469,7 +472,8 @@ Git Sync (built-in backend):
 | `tests/utils/hash.test.ts` | 6 | `hashPath` |
 | `tests/composables/useExclusionFilters.test.ts` | 7 | Fresh install migration, v1→v2 flag upgrade, user-choice respected, no-duplication, project switch via `setPath`, switch-back after user cleared `gt:slot`, `activeCount`/`hasActiveExclusions` reactive state. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test to re-execute the module-level watch |
 | `tests/composables/useFilters.test.ts` | 5 | Fresh install workflow default, reload survival of cleared state, A→B→A round-trip, search/labels/assignee persistence, `hasActiveFilters` reactivity. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test |
+| `tests/composables/useNotificationCenter.test.ts` | 132 | Notification persistence, project-scope isolation, unread count, `markAllRead`, `clearAll`, 100-item cap, `setPath` project switch |
 
-**Total: 294 tests** (19 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
+**Total: 426 tests** (20 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
 
 **Rust tests**: Tracker modules contain `#[cfg(test)]` blocks — run via `cargo test` in `src-tauri/`.

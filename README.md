@@ -70,6 +70,9 @@ The app uses a **native file watcher** on the `.beads` directory. When an AI age
 - **Float active tasks to top**: When enabled (default ON), tasks in the `wip` status category (`in_progress`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` status) always float above other tasks regardless of the sort column. Toggle in Settings → Display Options
 - **Zoom Controls**: Adjust UI scale from 75% to 150% (Alt+Click to reset)
 
+### Notifications
+- **Notification Center**: Bell icon in the header opens a macOS-style notification history panel. The last 100 toast notifications are persisted per project (localStorage). Click any entry to open the related issue; an unread count badge appears on the bell icon when there are unseen notifications. Auto-marks all as read on open. Clear All button wipes the history
+
 ### Settings & Tools
 - **English + Russian UI**: The interface is fully localized in English and Russian. The language is auto-detected from your system (`navigator.language`); you can override it at any time via Settings → Language (Auto / English / Русский). The choice is persisted to `localStorage['beads:locale']` and takes effect immediately without a restart
 - **Dual CLI support**: Auto-detects [`br`](https://github.com/Dicklesworthstone/beads_rust) (Rust, recommended) and [`bd`](https://github.com/steveyegge/beads) (Go) — switch between them via Settings (`Cmd/Ctrl+,`), feature profiles adapt automatically
