@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-04-25
+
 ### Highlights
 - **Quiet idle on large Dolt projects** — the app no longer spawns `bd` every poll cycle when nothing has changed. On a 1040-issue project this cuts idle CPU cost roughly 6x (~80 s/hour → ~14 s/hour), keeps the laptop fan quiet, and saves battery. The first poll after focusing the window is now instant (cache hit) instead of waiting 1.7–2.4 s for a cold `bd` spawn. Mutations from the terminal (`bd create`/`bd close`/`bd update`) still invalidate the cache immediately — no UI staleness.
 - **Notification Center** — macOS-style notification history with a bell icon in the header. Persists the last 100 toasts per project, unread badge, click-to-open the related issue, Clear All to wipe.
