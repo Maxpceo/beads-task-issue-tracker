@@ -2802,7 +2802,7 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
         });
 
     let beads_dir = std::path::Path::new(&working_dir).join(".beads");
-    let current_mtime = get_beads_mtime(&beads_dir);
+    let (current_mtime, mtime_gate) = get_beads_mtime_with_source(&beads_dir);
 
     // ---------------------------------------------------------------------------
     // POLL_MEMO check — return cached result if mtime unchanged and TTL valid
@@ -2817,8 +2817,8 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
             let ttl_ok = age_secs < POLL_MEMO_TTL_SECS;
 
             log_debug!(
-                "[perf:poll_memo] hit={} mtime_equal={} age_secs={} ttl_ok={}",
-                mtime_equal && ttl_ok, mtime_equal, age_secs, ttl_ok
+                "[perf:poll_memo] hit={} mtime_equal={} age_secs={} ttl_ok={} gate={}",
+                mtime_equal && ttl_ok, mtime_equal, age_secs, ttl_ok, mtime_gate
             );
 
             if mtime_equal && ttl_ok {
@@ -3061,11 +3061,43 @@ async fn bd_poll_data_cached(cwd: String) -> Result<Option<PollData>, String> {
     }))
 }
 
-/// Get the latest mtime across all beads database files.
-/// - Dolt backend (bd >= 0.50.0): checks .beads/ dir, .beads/.dolt/ (legacy) or
-///   .beads/dolt/<name>/.dolt/ (bd 0.52+ nested layout), and manifest files
-/// - SQLite backend: checks beads.db, beads.db-wal, and optionally issues.jsonl
+/// Internal helper that returns the mtime AND a static tag indicating which gate
+/// produced the result: `"issues_jsonl"` (fast-path) or `"fallback"` (legacy walk).
+/// Callers that need the source tag use this directly; `get_beads_mtime` is a thin
+/// wrapper that discards the tag.
+fn get_beads_mtime_with_source(beads_dir: &std::path::Path) -> (Option<std::time::SystemTime>, &'static str) {
+    // Fast-path: `.beads/issues.jsonl` is bd's JSONL export of all issues, written
+    // by auto-flush (5s debounce) after ANY mutation (`bd create`/`bd close`/
+    // `bd update`). Stable during idle and bd read ops (`bd list`, `bd show`).
+    // Verified 2026-04-24 on invest_fund_sharks (1040 issues):
+    // - idle 30s: stable
+    // - `bd list` / `bd show`: stable
+    // - `bd create` (regular, not --ephemeral): bumped
+    // - `bd close` / `bd update --priority`: bumped
+    // Fallback below handles: bd < 0.57 (no auto-flush), projects where JSONL
+    // is disabled, test fixtures.
+    let issues_jsonl = beads_dir.join("issues.jsonl");
+    if let Ok(meta) = fs::metadata(&issues_jsonl) {
+        if let Ok(m) = meta.modified() {
+            return (Some(m), "issues_jsonl");
+        }
+    }
+
+    // Fallback: legacy mtime walk across .beads/ dir and Dolt/SQLite DB files.
+    (get_beads_mtime_fallback(beads_dir), "fallback")
+}
+
+/// Get the latest mtime used as the POLL_MEMO invalidation signal.
+/// Fast-path: `.beads/issues.jsonl` (bd's JSONL export, written by auto-flush after
+/// any mutation) — stable on reads, bumped on all mutations (create/close/update).
+/// Fallback: legacy mtime walk when issues.jsonl is absent (bd < 0.57, SQLite,
+/// non-Dolt projects, test fixtures).
 fn get_beads_mtime(beads_dir: &std::path::Path) -> Option<std::time::SystemTime> {
+    get_beads_mtime_with_source(beads_dir).0
+}
+
+/// Legacy mtime walk — used as fallback when `.beads/issues.jsonl` is absent.
+fn get_beads_mtime_fallback(beads_dir: &std::path::Path) -> Option<std::time::SystemTime> {
     if project_uses_dolt(beads_dir) {
         // Dolt backend: check directory mtimes and manifest files
         let mut times: Vec<std::time::SystemTime> = Vec::new();
@@ -6220,5 +6252,75 @@ mod tests {
     fn test_resolve_status_category_unknown_defaults_to_active() {
         let custom: HashMap<String, String> = HashMap::new();
         assert_eq!(resolve_status_category("totally_unknown_xyz", &custom), "active");
+    }
+
+    // -------------------------------------------------------------------------
+    // get_beads_mtime / get_beads_mtime_with_source
+    // -------------------------------------------------------------------------
+
+    /// When `.beads/issues.jsonl` exists, get_beads_mtime returns its mtime
+    /// and ignores changes to other files in .beads/.
+    #[test]
+    fn test_get_beads_mtime_issues_jsonl_is_primary() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // Create issues.jsonl
+        let issues_jsonl = beads_dir.join("issues.jsonl");
+        std::fs::write(&issues_jsonl, b"{\"id\":\"abc\",\"title\":\"probe\"}").unwrap();
+        let expected_mtime = fs::metadata(&issues_jsonl).unwrap().modified().unwrap();
+
+        // Verify mtime matches issues.jsonl
+        let result = get_beads_mtime(&beads_dir);
+        assert!(result.is_some(), "Expected Some mtime from issues.jsonl");
+        assert_eq!(result.unwrap(), expected_mtime, "mtime should match issues.jsonl stat");
+
+        // Create another file — should NOT change the returned mtime (issues.jsonl stays primary)
+        let other = beads_dir.join("manifest.json");
+        std::fs::write(&other, b"{\"version\":1}").unwrap();
+        let result2 = get_beads_mtime(&beads_dir);
+        assert_eq!(result2.unwrap(), expected_mtime, "mtime should still match issues.jsonl, not manifest.json");
+    }
+
+    /// source tag is "issues_jsonl" when the file exists, "fallback" when absent.
+    #[test]
+    fn test_get_beads_mtime_with_source_tag() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // Without issues.jsonl: source = "fallback"
+        let (_, src) = get_beads_mtime_with_source(&beads_dir);
+        assert_eq!(src, "fallback");
+
+        // With issues.jsonl: source = "issues_jsonl"
+        std::fs::write(beads_dir.join("issues.jsonl"), b"{\"id\":\"abc\"}").unwrap();
+        let (_, src2) = get_beads_mtime_with_source(&beads_dir);
+        assert_eq!(src2, "issues_jsonl");
+    }
+
+    /// Without issues.jsonl, fallback returns Some when beads.db exists (SQLite project).
+    #[test]
+    fn test_get_beads_mtime_fallback_sqlite_returns_some() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads");
+        std::fs::create_dir_all(&beads_dir).unwrap();
+
+        // No issues.jsonl, but beads.db exists — fallback should find it
+        std::fs::write(beads_dir.join("beads.db"), b"SQLite format 3").unwrap();
+
+        let result = get_beads_mtime(&beads_dir);
+        assert!(result.is_some(), "Expected Some from fallback when beads.db exists");
+    }
+
+    /// When .beads/ dir does not exist at all, returns None.
+    #[test]
+    fn test_get_beads_mtime_missing_dir_returns_none() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let beads_dir = tmp.path().join(".beads"); // does NOT exist
+
+        let result = get_beads_mtime(&beads_dir);
+        assert!(result.is_none(), "Expected None when .beads/ does not exist");
     }
 }
