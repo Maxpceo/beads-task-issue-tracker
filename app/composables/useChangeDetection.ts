@@ -71,6 +71,7 @@ export function createQueuedHandler(
   function trigger() {
     if (getSelfWriteCooldownActive()) {
       recordWatcherTrigger(false)
+      logFrontend('debug', '[watcher] Self-trigger cooldown suppressed watcher event').catch(() => {})
       return
     }
     recordWatcherTrigger(true)

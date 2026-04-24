@@ -3,6 +3,7 @@ import type { Issue, IssueStatus, UpdateIssuePayload } from '~/types/issue'
 import { isIssueBlocked } from '~/utils/issue-helpers'
 import { logFrontend } from '~/utils/bd-api'
 import { useProjectProfile } from '~/composables/useProjectProfile'
+import { setLocalWriteNotifier } from '~/composables/useIssues'
 import { watchDebounced } from '@vueuse/core'
 import CommandPalette from '~/components/CommandPalette.vue'
 
@@ -249,9 +250,6 @@ const pollForChanges = async () => {
     // Snapshot mtime AFTER all operations (including epic bd_show calls in fetchPollData)
     // so the next check ignores changes caused by our own poll cycle
     await bdCheckChanged(path)
-
-    // Tell change detection backend to ignore self-triggered events
-    notifySelfWrite()
   } catch {
     hadError = true
   } finally {
@@ -268,6 +266,9 @@ const { active: changeDetectionActive, startListening, stopListening, notifySelf
     requestPoll()
   },
 })
+
+// Arm cooldown only on actual local writes — not after every poll cycle
+setLocalWriteNotifier(notifySelfWrite)
 
 // Fast change detection (cheap mtime stat, ~0ms) — runs every 1s when active
 const checkMtimeChanged = async (): Promise<boolean> => {
@@ -386,6 +387,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  setLocalWriteNotifier(null)
   if (import.meta.client) {
     window.removeEventListener('resize', checkViewport)
     stopListening()

@@ -173,4 +173,37 @@ describe('createQueuedHandler', () => {
     // Should have started the rerun despite the error
     expect(onChanged).toHaveBeenCalledTimes(2)
   })
+
+  it('two external triggers within 200ms — both delivered (no spurious cooldown arm)', async () => {
+    // Regression for bd-sh7: cooldown must NOT be armed by external triggers/polls.
+    // Without a local write arming the cooldown, the second trigger must go through.
+    const { handler, onChanged } = setup({ cooldown: false })
+
+    // First external trigger
+    handler.trigger()
+    await vi.advanceTimersByTimeAsync(300) // debounce fires
+    expect(onChanged).toHaveBeenCalledTimes(1)
+
+    // 200ms later — second external trigger (inside old 500ms unconditional window).
+    // Cooldown is NOT armed, so this must reach onChanged.
+    await vi.advanceTimersByTimeAsync(200)
+    handler.trigger()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChanged).toHaveBeenCalledTimes(2)
+  })
+
+  it('cooldown armed via local-write notifier → watcher echo within 400ms → dropped', async () => {
+    // When a local write arms the cooldown, a watcher echo arriving within
+    // the cooldown window must be suppressed (original purpose of the cooldown).
+    const { handler, onChanged, setCooldown } = setup({ cooldown: false })
+
+    // Simulate local write arming the cooldown
+    setCooldown(true)
+
+    // Watcher echo arrives 400ms later — within the 500ms cooldown window
+    await vi.advanceTimersByTimeAsync(400)
+    handler.trigger()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChanged).not.toHaveBeenCalled()
+  })
 })
