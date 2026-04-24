@@ -9,6 +9,8 @@
 - **Notification Center** (`beads-task-issue-tracker-51z`): macOS-style notification history panel accessible via a bell icon in the header. Persists the last 100 toast notifications per project (localStorage, project-scoped key). Panel opens as a dropdown; clicking any entry opens the related issue. Unread count badge on the bell icon; panel auto-marks all notifications as read on open. Clear All button wipes the history. Powered by `useNotificationCenter` composable + `NotificationCenter.vue` component.
 
 ### Added
+- **Done KPI card** (`beads-task-issue-tracker-q54`): new KPI card showing closed issue count. Positioned before All. Clicking filters the table to `status=closed`; clicking again (or switching KPI) deactivates. Uses `--color-status-closed` token.
+- **Deferred KPI supports custom frozen statuses** (`beads-task-issue-tracker-q62`): `computeStatsFromIssues` now accepts an optional `statuses: StatusMeta[]` param. When provided, counts all issues whose status has `category='frozen'` (excluding `pinned`) — not just the built-in `deferred` literal. `useDashboard` passes `useStatuses().statuses.value` to both call-sites.
 - Hook `block-worktree-in-repo.sh` — PreToolUse:Bash guard that blocks `bd worktree create` and `git worktree add` unless the target path is inside `~/Projects/worktrees/beads-task-issue-tracker/`. Prevents worktrees from being created inside the repo root.
 
 ### Documentation
