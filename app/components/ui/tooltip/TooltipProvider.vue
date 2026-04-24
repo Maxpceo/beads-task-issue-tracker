@@ -2,9 +2,9 @@
 import type { TooltipProviderProps } from "reka-ui"
 import { TooltipProvider } from "reka-ui"
 
-const props = withDefaults(defineProps<TooltipProviderProps>(), {
-  delayDuration: 0,
-})
+// Inherit reka-ui defaults: delayDuration=700ms, skipDelayDuration=300ms
+// (matches macOS HIG / Linear / GitHub). Per-tooltip override via prop.
+const props = defineProps<TooltipProviderProps>()
 </script>
 
 <template>
