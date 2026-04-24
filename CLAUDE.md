@@ -23,7 +23,7 @@ Completion reports (both orchestrator and supervisor) must not use hedging langu
 Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md` → Iron Law section.
 
 ### Issues
-- Полный справочник команд bd (создание, запросы, формулы, lifecycle, worktrees): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**.
+- Полный справочник команд bd (синтаксис CLI): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**. Worktree policy и external layout: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
 - **Язык**: title, description, notes, design, acceptance — **на русском**. Английскими остаются только технические идентификаторы (имена файлов/функций, label'ы, типы, статусы, команды). Это персональный трекер Максима — он читатель, не команда/CI.
 
 ### Enrich bead with context
@@ -92,7 +92,7 @@ Merge-slot сериализует `git push` между параллельным
 
 Auto-trigger по триггер-фразам, процедуры в `.claude/skills/`:
 - **`claiming-bead`** — «возьми <ID>», «делай <ID>», «автономно <ID>»: claim + auto Plan Mode.
-- **`pre-dispatch`** — после approved плана: собирает BRANCH/START_COMMIT, формирует supervisor prompt.
+- **`pre-dispatch`** — после approved плана: собирает BRANCH/START_COMMIT, выбирает supervisor'а и **немедленно вызывает** `Task(...)` inline без промежуточного вопроса.
 - **`managing-epics`** — «создай эпик», «cross-domain задача»: design doc → children → sequential dispatch.
 - **`reviewing-code`** — bead в `inreview` / «запусти ревью»: simplify → review → RAMS/WIG → locale-sync → acceptance → close.
 - **`land`** — «пора заканчивать», «я закончил»: close beads → commit → push via merge-slot.
@@ -109,7 +109,7 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 - проблема вне scope'а → расширять scope или отложить в follow-up bead?
 - destructive / hard-to-reverse действие (`push --force`, `reset --hard`, `bd close` чужого бида, `git worktree remove` с uncommitted), не согласованное заранее.
 
-Переходы, которые **НЕ** требуют вопроса: simplify→code-review, supervisor DONE→reviewing-code, code-review APPROVED→acceptance, acceptance→close, close→land, land→merge-to-main, merge-to-main→checkout main.
+Переходы, которые **НЕ** требуют вопроса: approved plan → Task dispatch, simplify→code-review, supervisor DONE→reviewing-code, code-review APPROVED→acceptance, acceptance→close, close→land, land→merge-to-main, merge-to-main→checkout main.
 
 **2. Формат итогового отчёта workflow-skill'а** — markdown-таблица `| Шаг | Результат |` (две колонки) + короткая секция «Текущее состояние» после неё. В правой колонке — краткий итог: exit codes (`373/373 passed`), commit IDs, PR-ссылки, verdict (APPROVED/NOT APPROVED), статусы (PASSED/SKIP/N/A). Без preamble («Отлично! Готово!»), без эмодзи, без длинных параграфов.
 

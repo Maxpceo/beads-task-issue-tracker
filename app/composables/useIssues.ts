@@ -29,6 +29,14 @@ export interface IssueGroup {
   inProgressChild?: { id: string; title: string; priority: string }
 }
 
+// Notifier for local write operations — armed by index.vue via setLocalWriteNotifier()
+// so the change-detection backend suppresses the mtime-echo of our own writes.
+let localWriteNotifier: (() => void) | null = null
+
+export function setLocalWriteNotifier(fn: (() => void) | null) {
+  localWriteNotifier = fn
+}
+
 // Shared state across all components (singleton pattern)
 const issues = ref<Issue[]>([])
 const selectedIssue = ref<Issue | null>(null)
@@ -514,6 +522,7 @@ export function useIssues() {
 
     try {
       const data = await bdCreate(payload, getPath())
+      localWriteNotifier?.()
       if (data?.id) markAsNewlyAdded(data.id)
       await fetchIssues()
       return data
@@ -532,6 +541,7 @@ export function useIssues() {
 
     try {
       const data = await bdUpdate(id, payload, getPath())
+      localWriteNotifier?.()
 
       // Update local list directly with API response (no need to refetch)
       if (data) {
@@ -566,6 +576,7 @@ export function useIssues() {
         .map(i => i.id)
 
       const result = await bdClose(id, getPath())
+      localWriteNotifier?.()
       await fetchIssues()
       if (selectedIssue.value?.id === id) {
         await fetchIssue(id)
@@ -611,6 +622,7 @@ export function useIssues() {
 
     try {
       await bdDelete(id, getPath())
+      localWriteNotifier?.()
 
       // Remove from local list
       const index = issues.value.findIndex(i => i.id === id)
@@ -649,6 +661,7 @@ export function useIssues() {
 
     try {
       await bdAddComment(id, content, getPath())
+      localWriteNotifier?.()
 
       // Refetch the issue to get updated comments
       if (selectedIssue.value?.id === id) {
@@ -673,6 +686,7 @@ export function useIssues() {
 
     try {
       await bdAddDependency(issueId, blockerId, getPath())
+      localWriteNotifier?.()
 
       // Refetch the issue to get updated dependencies
       if (selectedIssue.value?.id === issueId) {
@@ -697,6 +711,7 @@ export function useIssues() {
 
     try {
       await bdRemoveDependency(issueId, blockerId, getPath())
+      localWriteNotifier?.()
 
       // Refetch the issue to get updated dependencies
       if (selectedIssue.value?.id === issueId) {
@@ -721,6 +736,7 @@ export function useIssues() {
 
     try {
       await bdAddRelation(issueId, targetId, relationType, getPath())
+      localWriteNotifier?.()
 
       // Refetch the issue to get updated relations
       if (selectedIssue.value?.id === issueId) {
@@ -745,6 +761,7 @@ export function useIssues() {
 
     try {
       await bdRemoveRelation(sourceId, targetId, getPath())
+      localWriteNotifier?.()
 
       // Refetch the selected issue to get updated relations
       // (sourceId may be the selected issue or the target, depending on direction)
@@ -790,6 +807,7 @@ export function useIssues() {
     error.value = null
     try {
       await bdLabelAdd(id, label, getPath())
+      localWriteNotifier?.()
       // Refresh the issue to reflect the change
       await fetchIssue(id)
       return true
@@ -807,6 +825,7 @@ export function useIssues() {
     error.value = null
     try {
       await bdLabelRemove(id, label, getPath())
+      localWriteNotifier?.()
       // Refresh the issue to reflect the change
       await fetchIssue(id)
       return true

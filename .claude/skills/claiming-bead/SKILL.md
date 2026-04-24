@@ -1,6 +1,6 @@
 ---
 name: claiming-bead
-description: "Claim-first на триггер-фразы пользователя с авто-входом в Plan Mode. Используй этот скилл ПРОАКТИВНО когда пользователь говорит: «возьми <ID>», «начни выполнять <ID>», «делай <ID>», «автономно <ID>», «займись <ID>», «работай над <ID>», «claim <ID>», «берём <ID>» (где <ID> — bead ID вида beads-task-issue-tracker-xxxx). Обязывает orchestrator: (1) bd update --claim ПЕРВЫМ не-readonly действием, (2) auto EnterPlanMode для Supervisor Path, (3) если orchestrator уже в Plan Mode на момент триггера — попросить пользователя выйти из Plan Mode (claim недоступен)."
+description: "Claim-first на триггер-фразы пользователя с авто-входом в Plan Mode. Используй этот скилл ПРОАКТИВНО когда пользователь говорит: «возьми <ID>», «начни выполнять <ID>», «делай <ID>», «автономно <ID>», «займись <ID>», «работай над <ID>», «claim <ID>», «берём <ID>», «возьми bead в работу», «начни bead», «claim задачу», «запусти задачу» (с ID или без). Если <ID> не указан — сначала `bd ready` + AskUserQuestion («какой bead взять?»), затем стандартный claim + EnterPlanMode. Обязывает orchestrator: (1) bd update --claim ПЕРВЫМ не-readonly действием, (2) auto EnterPlanMode для Supervisor Path, (3) если orchestrator уже в Plan Mode на момент триггера — попросить пользователя выйти из Plan Mode (claim недоступен)."
 ---
 
 # Claiming Bead — claim-first workflow
@@ -62,6 +62,12 @@ bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME" --br
 cd ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME"
 ```
 
+**ЗАПРЕЩЕНО:** `bd worktree create <name> --branch <branch>` без абсолютного
+пути. bd резолвит относительный путь от cwd (= корень репо) → worktree
+внутри репо (ломает external layout, конфликты IDE, коммиты из «чужой»
+директории). Hook `block-worktree-in-repo.sh` блокирует. То же для
+`git worktree add <name>`.
+
 Без `setup-worktree.sh` в worktree не будет `.env` и `node_modules` — supervisor упадёт на первом же `pnpm test`. Детали layout'а: `.claude/references/bd-worktrees.md`.
 
 Первый `cargo check` / `pnpm tauri:dev` в новой worktree скомпилирует Rust с нуля (минуты) — это ожидаемо. Каждая worktree имеет свой `src-tauri/target/` (shared target ломает Cargo lock и cargo clean).
@@ -91,12 +97,12 @@ Supervisor Path (default):
 4. ExitPlanMode с approved planом
 5. Сохранить PLAN-comment в bead (шаблон: `.claude/references/workflow-templates.md` §2)
 6. Если bead создан до claim'а и не enriched — дополнить enrichment через `bd comments add` (опционально, рекомендуется)
-7. Делегировать skill `pre-dispatch` для сбора BRANCH / START_COMMIT и запуска supervisor'а
+7. Запустить skill `pre-dispatch` — он сделает read-only проверку (bead уже `in_progress`, assignee = me), соберёт BRANCH/START_COMMIT, выберет supervisor'а и **немедленно вызовет** `Task(...)` inline. Не делай текстовую паузу между `ExitPlanMode` и pre-dispatch.
 
 ## Разведение с другими skills
 
 - **`claiming-bead`** = первое действие ПОСЛЕ триггер-фразы пользователя: claim + вход в Plan Mode.
-- **`pre-dispatch`** = ПОСЛЕ утверждённого плана: собирает метаданные (BRANCH, START_COMMIT), генерирует шаблон промпта для `Task(subagent_type=...)`.
+- **`pre-dispatch`** = ПОСЛЕ утверждённого плана: собирает метаданные (BRANCH, START_COMMIT), выбирает supervisor'а и **немедленно вызывает** `Task(subagent_type=...)` inline без промежуточного вопроса.
 - **`reviewing-code`** = ПОСЛЕ `inreview`: simplify → code review → acceptance → close.
 - **`land`** = ПОСЛЕ close: push на remote.
 

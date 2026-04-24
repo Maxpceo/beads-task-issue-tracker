@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Issue } from '~/types/issue'
+import { bdCreate } from '~/utils/bd-api'
 
 // Мокируем все composable-зависимости useIssues до импорта
 const notifySuccessMock = vi.fn()
@@ -97,7 +98,7 @@ vi.mock('~/composables/useExclusionFilters', () => ({
 }))
 
 // Импортируем после мокирования
-const { notifyStatusTransitions } = await import('~/composables/useIssues')
+const { notifyStatusTransitions, setLocalWriteNotifier, useIssues } = await import('~/composables/useIssues')
 
 // Вспомогательная функция для создания Issue-заглушки
 function makeIssue(id: string, status = 'open'): Issue {
@@ -181,5 +182,46 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
     notifyStatusTransitions(oldIssues, newIssues, t)
 
     expect(notifySuccessMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Nuxt auto-imports required by useIssues() — not available in vitest without polyfill
+// Define them as globalThis stubs so useIssues() can call them
+;(globalThis as Record<string, unknown>).useFilters ??= () => ({ filters: { value: {} }, workflowStatuses: { value: [] }, allStatuses: { value: [] }, toggleStatus: vi.fn(), toggleType: vi.fn(), togglePriority: vi.fn(), toggleAssignee: vi.fn(), clearFilters: vi.fn(), setStatusFilter: vi.fn(), setAllFilters: vi.fn(), setSearch: vi.fn(), toggleLabelFilter: vi.fn(), exclusions: { value: {} } })
+;(globalThis as Record<string, unknown>).useBeadsPath ??= () => ({ beadsPath: { value: '/test/project' }, hasStoredPath: { value: true } })
+;(globalThis as Record<string, unknown>).useRepairDatabase ??= () => ({ checkError: vi.fn().mockReturnValue(false), needsRepair: { value: false } })
+;(globalThis as Record<string, unknown>).useMigrateToDolt ??= () => ({ checkError: vi.fn().mockReturnValue(false), needsMigration: { value: false } })
+;(globalThis as Record<string, unknown>).useExclusionFilters ??= () => ({ exclusions: { value: {} } })
+;(globalThis as Record<string, unknown>).usePinnedIssues ??= () => ({ pinnedIssueIds: { value: new Set() } })
+;(globalThis as Record<string, unknown>).useStatuses ??= () => ({ getMeta: vi.fn().mockReturnValue(null), workflowStatuses: { value: [] }, allStatuses: { value: [] } })
+
+describe('setLocalWriteNotifier — localWriteNotifier integration', () => {
+  beforeEach(() => {
+    vi.mocked(bdCreate).mockReset()
+    setLocalWriteNotifier(null)
+  })
+
+  it('createIssue calls registered localWriteNotifier on success', async () => {
+    vi.mocked(bdCreate).mockResolvedValue({ id: 'test-1', title: 'Test', status: 'open' } as never)
+
+    const notifier = vi.fn()
+    setLocalWriteNotifier(notifier)
+
+    const { createIssue } = useIssues()
+    await createIssue({ title: 'Test', type: 'task', priority: 'p2' } as Parameters<typeof createIssue>[0])
+
+    expect(notifier).toHaveBeenCalledTimes(1)
+  })
+
+  it('createIssue does NOT call notifier on failure', async () => {
+    vi.mocked(bdCreate).mockRejectedValue(new Error('bd create failed'))
+
+    const notifier = vi.fn()
+    setLocalWriteNotifier(notifier)
+
+    const { createIssue } = useIssues()
+    await createIssue({ title: 'Test', type: 'task', priority: 'p2' } as Parameters<typeof createIssue>[0])
+
+    expect(notifier).not.toHaveBeenCalled()
   })
 })
