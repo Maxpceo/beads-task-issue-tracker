@@ -25,7 +25,9 @@ fi
 # shellcheck source=lib/shell-tokens.sh
 source "$HOOKS_LIB/shell-tokens.sh"
 
-if ! command_contains_token "$CMD" "(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)"; then
+WT_KEYWORD='(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)'
+
+if ! command_contains_token "$CMD" "$WT_KEYWORD"; then
     echo '{"decision":"approve"}'
     exit 0
 fi
@@ -35,11 +37,11 @@ EXPECTED_BASE="${HOME}/Projects/worktrees/beads-task-issue-tracker"
 extract_worktree_path() {
     local subcmd="$1"
     local keyword
-    keyword=$(printf '%s' "$subcmd" | grep -oE '(^|[[:space:]])(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)([[:space:]]|$)' | head -1)
+    keyword=$(printf '%s' "$subcmd" | grep -oE "(^|[[:space:]])${WT_KEYWORD}([[:space:]]|$)" | head -1)
     [[ -z "$keyword" ]] && return 1
 
     local after_kw
-    after_kw=$(printf '%s' "$subcmd" | sed -E "s/.*(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)[[:space:]]*//")
+    after_kw=$(printf '%s' "$subcmd" | sed -E "s/.*${WT_KEYWORD}[[:space:]]*//")
 
     local token path_arg="" skip_next=0
     local save_ifs="$IFS"
@@ -57,15 +59,29 @@ extract_worktree_path() {
     done
 
     [[ -z "$path_arg" ]] && return 1
+
+    # Strip enclosing quotes (single OR double) so that "~/...x" and '~/...x'
+    # are resolved correctly by the caller's ~ / $HOME expansion and EXPECTED_BASE check.
+    [[ "$path_arg" == \'*\' ]] && path_arg="${path_arg#\'}" && path_arg="${path_arg%\'}"
+    [[ "$path_arg" == \"*\" ]] && path_arg="${path_arg#\"}" && path_arg="${path_arg%\"}"
+
     printf '%s' "$path_arg"
 }
 
-stripped=$(printf '%s' "$CMD" | tr '\n' ' ' | sed -E -e "s/'[^']*'//g" -e 's/"[^"]*"//g')
+raw=$(printf '%s' "$CMD" | tr '\n' ' ')
 
 while IFS= read -r segment; do
     segment="${segment#"${segment%%[![:space:]]*}"}"
     [[ -z "$segment" ]] && continue
 
+    # keyword-check on a stripped copy of the segment (guards against
+    # echo "bd worktree create foo" false-positives).  The keyword must
+    # appear as an actual shell token, not inside a quoted string.
+    if ! command_contains_token "$segment" "$WT_KEYWORD"; then
+        continue
+    fi
+
+    # extract on the ORIGINAL segment so shell-quoted paths are NOT erased
     path_arg=$(extract_worktree_path "$segment") || continue
 
     # Expand leading ~ and $HOME
@@ -85,6 +101,6 @@ while IFS= read -r segment; do
     reason=$(printf 'Worktree должен быть в `~/Projects/worktrees/beads-task-issue-tracker/<name>` — путь `%s` не подходит. См. `.claude/references/bd-worktrees.md`.' "$path_arg" | jq -Rsc .)
     printf '{"decision":"block","reason":%s}\n' "$reason"
     exit 2
-done < <(printf '%s\n' "$stripped" | tr ';&|' '\n')
+done < <(printf '%s\n' "$raw" | tr ';&|' '\n')
 
 echo '{"decision":"approve"}'
