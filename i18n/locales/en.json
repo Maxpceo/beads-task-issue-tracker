@@ -134,6 +134,14 @@
       "addFailed": "Failed to add relation",
       "removed": "Relation removed",
       "removeFailed": "Failed to remove relation"
+    },
+    "center": {
+      "title": "Notifications",
+      "empty": "No notifications yet",
+      "clearAll": "Clear all",
+      "openIssueFailed": "Issue not found",
+      "tooltip": "Notifications",
+      "tooltipUnread": "Notifications ({count} unread)"
     }
   },
   "menu": {

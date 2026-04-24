@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### New Features
+- **Notification Center** (`beads-task-issue-tracker-51z`): macOS-style notification history panel accessible via a bell icon in the header. Persists the last 100 toast notifications per project (localStorage, project-scoped key). Panel opens as a dropdown; clicking any entry opens the related issue. Unread count badge on the bell icon; panel auto-marks all notifications as read on open. Clear All button wipes the history. Powered by `useNotificationCenter` composable + `NotificationCenter.vue` component.
+
 ### Added
 - Hook `block-worktree-in-repo.sh` — PreToolUse:Bash guard that blocks `bd worktree create` and `git worktree add` unless the target path is inside `~/Projects/worktrees/beads-task-issue-tracker/`. Prevents worktrees from being created inside the repo root.
 

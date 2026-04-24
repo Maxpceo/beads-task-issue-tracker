@@ -5,6 +5,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '~/components/ui/tooltip'
+import NotificationCenter from '~/components/layout/NotificationCenter.vue'
 
 const props = defineProps<{
   projectName?: string
@@ -185,6 +186,9 @@ const handleZoomIn = (event: MouseEvent) => {
         </TooltipTrigger>
         <TooltipContent>{{ t('common.refresh') }}</TooltipContent>
       </Tooltip>
+
+      <!-- Notification Center -->
+      <NotificationCenter />
 
       <!-- Theme toggle (cycles through themes) -->
       <Tooltip>

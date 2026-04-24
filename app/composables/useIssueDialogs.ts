@@ -156,9 +156,9 @@ export function useIssueDialogs() {
         }
       }
       // Longer duration when showing unblocked issues so user has time to read
-      notifySuccess(t('notifications.issue.closed', { id: issueId }), closeDesc, hasSuggestions ? 6000 : undefined)
+      notifySuccess(t('notifications.issue.closed', { id: issueId }), closeDesc, { issueId, durationMs: hasSuggestions ? 6000 : undefined })
     } catch {
-      notifyError(t('notifications.issue.closeFailed', { id: issueId }), issueTitle)
+      notifyError(t('notifications.issue.closeFailed', { id: issueId }), issueTitle, { issueId })
     } finally {
       isClosing.value = false
       isCloseDialogOpen.value = false
@@ -173,9 +173,9 @@ export function useIssueDialogs() {
     try {
       await updateIssue(issueId, { status: 'open' })
       await fetchStats(issues.value)
-      notifySuccess(t('notifications.issue.reopened', { id: issueId }), issueTitle)
+      notifySuccess(t('notifications.issue.reopened', { id: issueId }), issueTitle, { issueId })
     } catch {
-      notifyError(t('notifications.issue.reopenFailed', { id: issueId }), issueTitle)
+      notifyError(t('notifications.issue.reopenFailed', { id: issueId }), issueTitle, { issueId })
     }
   }
 
@@ -309,7 +309,7 @@ export function useIssueDialogs() {
         } else {
           isEditMode.value = false
           isCreatingNew.value = false
-          notifySuccess(t('notifications.issue.deleted', { id: issueId }), issueTitle)
+          notifySuccess(t('notifications.issue.deleted', { id: issueId }), issueTitle, { issueId })
         }
       }
       await fetchIssues()
@@ -343,7 +343,7 @@ export function useIssueDialogs() {
       if (!epicSuccess) {
         notifyError(t('notifications.issue.deleteFailed'), issueError.value || t('notifications.issue.deleteFailedDesc', { id: epicId }))
       } else {
-        notifySuccess(t('notifications.epic.deleted', { id: epicId }), epicTitle)
+        notifySuccess(t('notifications.epic.deleted', { id: epicId }), epicTitle, { issueId: epicId })
       }
 
       if (epicSuccess && selectedIssue.value?.id === epicToDelete.value.id) {
