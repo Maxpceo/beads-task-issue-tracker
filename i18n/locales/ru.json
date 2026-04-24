@@ -505,29 +505,29 @@
       "noLabels": "Метки не найдены"
     },
     "priorityLabels": {
-      "p0": "P0 — Критический",
-      "p1": "P1 — Высокий",
-      "p2": "P2 — Средний",
-      "p3": "P3 — Низкий",
-      "p4": "P4 — Минимальный"
+      "p0": "P0 - Critical",
+      "p1": "P1 - High",
+      "p2": "P2 - Medium",
+      "p3": "P3 - Low",
+      "p4": "P4 - Minimal"
     },
     "typeLabels": {
-      "bug": "Баг",
-      "task": "Задача",
-      "feature": "Фича",
-      "epic": "Эпик",
-      "chore": "Рутина",
+      "bug": "Bug",
+      "task": "Task",
+      "feature": "Feature",
+      "epic": "Epic",
+      "chore": "Chore",
       "spike": "Spike",
       "story": "Story",
       "milestone": "Milestone"
     },
     "statusLabels": {
-      "open": "Открытая",
-      "in_progress": "В работе",
-      "blocked": "Заблокирована",
-      "closed": "Закрытая",
-      "deferred": "Отложена",
-      "pinned": "Закреплена",
+      "open": "Open",
+      "in_progress": "In Progress",
+      "blocked": "Blocked",
+      "closed": "Closed",
+      "deferred": "Deferred",
+      "pinned": "Pinned",
       "hooked": "Hooked"
     },
     "table": {
