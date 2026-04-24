@@ -176,14 +176,14 @@ function makeStatus(overrides: Partial<StatusMeta> = {}): StatusMeta {
 describe('computeStatsFromIssues with statuses param', () => {
   it('counts custom frozen status as deferred', () => {
     const issues = [makeIssue({ id: '1', status: 'on_hold' })]
-    const statuses = [makeStatus({ name: 'on_hold', label: 'On Hold', category: 'frozen', isBuiltIn: false })]
+    const statuses = [makeStatus({ name: 'on_hold' })]
     const stats = computeStatsFromIssues(issues, statuses)
     expect(stats.deferred).toBe(1)
   })
 
   it('excludes pinned from deferred even if category is frozen', () => {
     const issues = [makeIssue({ id: '1', status: 'pinned' })]
-    const statuses = [makeStatus({ name: 'pinned', label: 'PINNED', category: 'frozen', isBuiltIn: true })]
+    const statuses = [makeStatus({ name: 'pinned', label: 'Pinned', isBuiltIn: true })]
     const stats = computeStatsFromIssues(issues, statuses)
     expect(stats.deferred).toBe(0)
   })
@@ -195,9 +195,9 @@ describe('computeStatsFromIssues with statuses param', () => {
       makeIssue({ id: '3', status: 'pinned' }),
     ]
     const statuses = [
-      makeStatus({ name: 'deferred', label: 'Deferred', category: 'frozen', isBuiltIn: true }),
-      makeStatus({ name: 'on_hold', label: 'On Hold', category: 'frozen', isBuiltIn: false }),
-      makeStatus({ name: 'pinned', label: 'Pinned', category: 'frozen', isBuiltIn: true }),
+      makeStatus({ name: 'deferred', label: 'Deferred', isBuiltIn: true }),
+      makeStatus({ name: 'on_hold' }),
+      makeStatus({ name: 'pinned', label: 'Pinned', isBuiltIn: true }),
     ]
     const stats = computeStatsFromIssues(issues, statuses)
     expect(stats.deferred).toBe(2)
