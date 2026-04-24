@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { BellIcon, CheckCheckIcon, TrashIcon, ExternalLinkIcon } from 'lucide-vue-next'
+import { BellIcon, TrashIcon, ExternalLinkIcon } from 'lucide-vue-next'
 import { formatTimeAgo, useNow } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import {
@@ -19,6 +19,7 @@ import type { NotificationType } from '~/types/issue'
 
 const { t } = useI18n()
 const { history, unreadCount, clearAll, markAllRead } = useNotificationCenter()
+// markAllRead is auto-triggered by the watch(isOpen) below; no manual button needed.
 const { issues, selectIssue, fetchIssue } = useIssues()
 const { warning: notifyWarning } = useNotification()
 
@@ -98,30 +99,17 @@ function formatTime(timestamp: number): string {
       <!-- Sticky header -->
       <div class="flex items-center justify-between px-3 py-2 border-b border-border sticky top-0 bg-popover z-10">
         <span class="text-sm font-semibold text-foreground">{{ t('notifications.center.title') }}</span>
-        <div class="flex items-center gap-1">
-          <Button
-            v-if="history.length > 0"
-            variant="ghost"
-            size="icon"
-            class="h-7 w-7"
-            :aria-label="t('notifications.center.markAllRead')"
-            :title="t('notifications.center.markAllRead')"
-            @click.stop="markAllRead"
-          >
-            <CheckCheckIcon class="w-3.5 h-3.5" aria-hidden="true" />
-          </Button>
-          <Button
-            v-if="history.length > 0"
-            variant="ghost"
-            size="icon"
-            class="h-7 w-7"
-            :aria-label="t('notifications.center.clearAll')"
-            :title="t('notifications.center.clearAll')"
-            @click.stop="clearAll"
-          >
-            <TrashIcon class="w-3.5 h-3.5" aria-hidden="true" />
-          </Button>
-        </div>
+        <Button
+          v-if="history.length > 0"
+          variant="ghost"
+          size="icon"
+          class="h-7 w-7"
+          :aria-label="t('notifications.center.clearAll')"
+          :title="t('notifications.center.clearAll')"
+          @click.stop="clearAll"
+        >
+          <TrashIcon class="w-3.5 h-3.5" aria-hidden="true" />
+        </Button>
       </div>
 
       <!-- Notification list -->

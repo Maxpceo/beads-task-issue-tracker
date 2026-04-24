@@ -139,7 +139,6 @@
       "title": "Notifications",
       "empty": "No notifications yet",
       "clearAll": "Clear all",
-      "markAllRead": "Mark all as read",
       "openIssueFailed": "Issue not found",
       "tooltip": "Notifications",
       "tooltipUnread": "Notifications ({count} unread)"
