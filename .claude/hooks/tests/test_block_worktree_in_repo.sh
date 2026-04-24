@@ -113,4 +113,22 @@ assert_allow \
     "echo string containing bd worktree create — allow (not a real invocation)" \
     'echo "bd worktree create foo"'
 
+# --- Path traversal (`..`) — должен DENY даже если префикс совпадает ---
+assert_deny \
+    "path traversal via .. inside external prefix — deny" \
+    "bd worktree create ~/Projects/worktrees/beads-task-issue-tracker/../../evil --branch evil"
+
+assert_deny \
+    "path traversal .. standalone — deny" \
+    "bd worktree create ../escape --branch escape"
+
+# --- Non-worktree Bash command — fast path approval ---
+assert_allow \
+    "ls command — fast path allow" \
+    "ls -la"
+
+assert_allow \
+    "cat command — fast path allow" \
+    "cat /etc/hosts"
+
 test_summary
