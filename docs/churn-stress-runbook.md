@@ -24,7 +24,7 @@ Filesystem events
 | `WATCHER_DEBOUNCE_INTERVAL_MS` | 1000ms | `src-tauri/src/lib.rs` | Rust-side debounce of filesystem events |
 | `WATCHER_MIN_EMIT_INTERVAL_MS` | 2000ms | `src-tauri/src/lib.rs` | Min time between emitting events to frontend (env-overridable) |
 | `DEBOUNCE_MS` | 300ms | `app/composables/useChangeDetection.ts` | Frontend event debounce |
-| `SELF_TRIGGER_COOLDOWN_MS` | 3000ms | `app/composables/useChangeDetection.ts` | Ignore self-writes for this long |
+| `SELF_TRIGGER_COOLDOWN_MS` | 500ms | `app/composables/useChangeDetection.ts` | Ignore self-writes for this long |
 | `MAX_CONSECUTIVE_RERUNS` | 5 | `app/composables/useChangeDetection.ts` | Max sequential reruns per handler activation |
 | `DEFAULT_MIN_INTERVAL_MS` | 2000ms | `app/composables/usePollScheduler.ts` | Backpressure gate min interval |
 | `INTERVAL_ACTIVE` | 5000ms | `app/composables/useAdaptivePolling.ts` | Poll interval when active (no watcher) |
@@ -103,7 +103,7 @@ To revert all tuning to defaults, remove any environment variable overrides and 
 WATCHER_DEBOUNCE_INTERVAL_MS = 1000
 WATCHER_MIN_EMIT_INTERVAL_MS = 2000
 DEBOUNCE_MS = 300
-SELF_TRIGGER_COOLDOWN_MS = 3000
+SELF_TRIGGER_COOLDOWN_MS = 500
 MAX_CONSECUTIVE_RERUNS = 5
 DEFAULT_MIN_INTERVAL_MS = 2000
 ```
