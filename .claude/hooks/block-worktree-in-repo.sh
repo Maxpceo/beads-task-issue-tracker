@@ -41,17 +41,19 @@ extract_worktree_path() {
     local after_kw
     after_kw=$(printf '%s' "$subcmd" | sed -E "s/.*(bd[[:space:]]+worktree[[:space:]]+create|git[[:space:]]+worktree[[:space:]]+add)[[:space:]]*//")
 
-    local token path_arg=""
+    local token path_arg="" skip_next=0
     local save_ifs="$IFS"
     IFS=' '$'\t'
     # shellcheck disable=SC2086
     set -- $after_kw
     IFS="$save_ifs"
     for token in "$@"; do
-        if [[ "$token" != -* ]]; then
-            path_arg="$token"
-            break
-        fi
+        if (( skip_next )); then skip_next=0; continue; fi
+        case "$token" in
+            --branch|-b|-B|--lock|--reason) skip_next=1; continue ;;
+            -*) continue ;;
+            *) path_arg="$token"; break ;;
+        esac
     done
 
     [[ -z "$path_arg" ]] && return 1

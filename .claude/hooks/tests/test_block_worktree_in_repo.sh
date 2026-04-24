@@ -65,6 +65,19 @@ assert_deny \
     "bd worktree create flag before path — deny" \
     "bd worktree create --branch bd-aef bd-aef"
 
+# --- Flag with value before path: parser must skip flag value ---
+assert_allow \
+    "bd worktree create --branch <X> <external-path> — allow (flag value не путается с path)" \
+    "bd worktree create --branch foo ~/Projects/worktrees/beads-task-issue-tracker/bar"
+
+assert_deny \
+    "bd worktree create --branch <X> <relative-path> — deny (path всё ещё некорректен)" \
+    "bd worktree create --branch foo bar"
+
+assert_allow \
+    "git worktree add -b <X> <external-path> — allow" \
+    "git worktree add -b foo ~/Projects/worktrees/beads-task-issue-tracker/bar"
+
 # --- Should ALLOW (correct external path) ---
 assert_allow \
     "bd worktree create with ~ path — allow" \
