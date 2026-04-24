@@ -937,7 +937,7 @@ const handleRemoveLabelFilter = (label: string) => {
 }
 
 // KPI filter handlers
-type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow'
+type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow' | 'done'
 
 /** Set-equality: порядок элементов не важен */
 const isStatusSetEqual = (selected: IssueStatus[], expected: IssueStatus[]) => {
@@ -951,6 +951,7 @@ const REVIEW_STATUSES_KPI = ['inreview', 'simplified', 'reviewed', 'accepted'] a
 const activeKpiFilter = computed<KpiFilter | null>(() => {
   const sel = filters.value.status
   if (sel.length === 0 || isStatusSetEqual(sel, workflowStatuses.value)) return 'workflow'
+  if (sel.length === 1 && sel[0] === 'closed') return 'done'
   if (isStatusSetEqual(sel, allStatuses.value)) return 'total'
   if (sel.length === 1 && sel[0] === 'open') return 'open'
   if (sel.length === 1 && sel[0] === 'in_progress') return 'in_progress'
@@ -975,6 +976,8 @@ const handleKpiClick = (kpi: KpiFilter) => {
     setStatusFilter(['deferred'])
   } else if (kpi === 'in_review') {
     setStatusFilter([...REVIEW_STATUSES_KPI])
+  } else if (kpi === 'done') {
+    setStatusFilter(['closed'])
   }
 }
 
@@ -1070,6 +1073,7 @@ watch(
                   <KpiCard :title="t('dashboard.kpi.inReview')" :value="stats.inReview" color="var(--color-status-inreview)" :active="activeKpiFilter === 'in_review'" :tooltip="t('dashboard.kpi.tooltip.inReview')" @click="handleKpiClick('in_review')" />
                   <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" :tooltip="t('dashboard.kpi.tooltip.blocked')" @click="handleKpiClick('blocked')" />
                   <KpiCard :title="t('dashboard.kpi.deferred')" :value="stats.deferred" color="var(--color-status-deferred)" :active="activeKpiFilter === 'deferred'" :tooltip="t('dashboard.kpi.tooltip.deferred')" @click="handleKpiClick('deferred')" />
+                  <KpiCard :title="t('dashboard.kpi.done')" :value="stats.closed" color="var(--color-status-closed)" :active="activeKpiFilter === 'done'" :tooltip="t('dashboard.kpi.tooltip.done')" @click="handleKpiClick('done')" />
                   <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" :tooltip="t('dashboard.kpi.tooltip.all')" @click="handleKpiClick('total')" />
                 </div>
               </TooltipProvider>

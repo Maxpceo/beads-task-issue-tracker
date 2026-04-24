@@ -1,6 +1,7 @@
 import type { Issue, DashboardStats } from '~/types/issue'
 import { bdReady } from '~/utils/bd-api'
 import { computeStatsFromIssues } from '~/utils/issue-helpers'
+import { useStatuses } from '~/composables/useStatuses'
 
 export function useDashboard() {
   const stats = ref<DashboardStats | null>(null)
@@ -10,6 +11,7 @@ export function useDashboard() {
 
   const { beadsPath } = useBeadsPath()
   const { exclusions } = useExclusionFilters()
+  const { statuses } = useStatuses()
 
   // Filter out issues with system-excluded labels before computing stats.
   // Only label-based exclusions apply — status/priority/type/assignee filters
@@ -38,7 +40,7 @@ export function useDashboard() {
       const currentReady = stats.value?.ready ?? 0
 
       // Compute stats from issues (even if empty array)
-      stats.value = computeStatsFromIssues(excludeSystemLabels(issues ?? []))
+      stats.value = computeStatsFromIssues(excludeSystemLabels(issues ?? []), statuses.value)
 
       // Restore ready count while waiting for bdReady
       stats.value.ready = currentReady
@@ -63,7 +65,7 @@ export function useDashboard() {
    * Used by the batched polling system to avoid separate bdReady call.
    */
   const updateFromPollData = (issues: Issue[], readyData: Issue[]) => {
-    stats.value = computeStatsFromIssues(excludeSystemLabels(issues))
+    stats.value = computeStatsFromIssues(excludeSystemLabels(issues), statuses.value)
     readyIssues.value = readyData || []
     stats.value.ready = readyIssues.value.length
   }

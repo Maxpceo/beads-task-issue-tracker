@@ -15,7 +15,7 @@ import {
   TooltipTrigger,
 } from '~/components/ui/tooltip'
 
-type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow'
+type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow' | 'done'
 
 const props = withDefaults(defineProps<{
   stats: DashboardStats | null
@@ -64,6 +64,7 @@ const isReadyCollapsed = useProjectStorage('readyCollapsed', true)
         <KpiCard :title="t('dashboard.kpi.inReview')" :value="stats.inReview" color="var(--color-status-inreview)" :active="activeKpiFilter === 'in_review'" :tooltip="t('dashboard.kpi.tooltip.inReview')" @click="emit('kpi-click', 'in_review')" />
         <KpiCard :title="t('dashboard.kpi.blocked')" :value="stats.blocked" color="var(--color-status-blocked)" :active="activeKpiFilter === 'blocked'" :tooltip="t('dashboard.kpi.tooltip.blocked')" @click="emit('kpi-click', 'blocked')" />
         <KpiCard :title="t('dashboard.kpi.deferred')" :value="stats.deferred" color="var(--color-status-deferred)" :active="activeKpiFilter === 'deferred'" :tooltip="t('dashboard.kpi.tooltip.deferred')" @click="emit('kpi-click', 'deferred')" />
+        <KpiCard :title="t('dashboard.kpi.done')" :value="stats.closed" color="var(--color-status-closed)" :active="activeKpiFilter === 'done'" :tooltip="t('dashboard.kpi.tooltip.done')" @click="emit('kpi-click', 'done')" />
         <KpiCard :title="t('dashboard.kpi.all')" :value="stats.total" :active="activeKpiFilter === 'total'" :tooltip="t('dashboard.kpi.tooltip.all')" @click="emit('kpi-click', 'total')" />
       </div>
     </TooltipProvider>
