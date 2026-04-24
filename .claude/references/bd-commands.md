@@ -71,7 +71,9 @@ bd batch -f operations.txt                        # Атомарные опер�
 
 ```bash
 bd set-state {ID} dim=value --reason "why"        # Оперативное состояние
-bd worktree create name --branch branch           # Worktree для параллельной работы
+bd worktree create <path> --branch <branch>   # Worktree для параллельной работы
+# Policy: <path> — ВСЕГДА абсолютный external (`~/Projects/worktrees/beads-task-issue-tracker/<name>`);
+# короткая форма `<name>` блокируется hook'ом `block-worktree-in-repo.sh`. См. bd-worktrees.md.
 bd merge-slot acquire / release                   # Сериализация push (см. L1 CLAUDE.md)
 ```
 

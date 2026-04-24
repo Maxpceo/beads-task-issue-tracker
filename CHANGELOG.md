@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Hook `block-worktree-in-repo.sh` — PreToolUse:Bash guard that blocks `bd worktree create` and `git worktree add` unless the target path is inside `~/Projects/worktrees/beads-task-issue-tracker/`. Prevents worktrees from being created inside the repo root.
+
 ### Documentation
 - **Documented Rust file-watcher coalescing logic** (`beads-task-issue-tracker-uko`): debounce window (1000 ms), min-emit interval (2000 ms, env-override, floor 250 ms), starvation guard, `beads.log` counter legend (`events`/`relevant`/`emitted`/`suppressed`), and interaction with TS-side `SELF_TRIGGER_COOLDOWN_MS` — all in a new `## File Watcher Coalescing` section in `src-tauri/CLAUDE.md`.
 
