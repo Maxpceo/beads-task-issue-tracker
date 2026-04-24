@@ -36,6 +36,60 @@ If you ever need to kill the dev binary by hand, scope the match to the full pat
 pkill -f "$(pwd)/src-tauri/target/debug/beads-issue-tracker"
 ```
 
+## File Watcher Coalescing
+
+The Rust backend coalesces high-frequency filesystem events into infrequent `beads-changed` IPC events before they reach the frontend. Two layers of rate-limiting are applied.
+
+### Constants (lib.rs:213–221)
+
+| Constant / env var | Default | Description |
+|--------------------|---------|-------------|
+| `WATCHER_DEBOUNCE_INTERVAL_MS` | 1000 ms | `notify_debouncer_mini` accumulates raw OS fs-events for this window before delivering a batch. |
+| `WATCHER_MIN_EMIT_INTERVAL_MS_DEFAULT` | 2000 ms | Minimum gap between consecutive `beads-changed` emits. Override via `WATCHER_MIN_EMIT_INTERVAL_MS` env var (floor: 250 ms). |
+
+Net effect: a burst of CLI writes spread over <2 s typically produces **one** `beads-changed` event to the frontend.
+
+### Decision logic (lib.rs:5327–5403)
+
+Each debounced batch is processed as follows:
+
+1. **Filter**: `should_process_watcher_event()` (lib.rs:228–246) accepts only `DebouncedEventKind::Any | AnyContinuous` inside `.beads/`. Excluded: `.dolt/stats/`, `.dolt/tmp/`, `.dolt/.tmp/`, and files ending in `.lock`, `.tmp`, `.swp`, `~`.
+2. **Skip if 0 relevant events** in the batch — no emit, no state update.
+3. **Emit immediately** if `elapsed_since_last_emit >= min_interval` (or no prior emit this session).
+4. **Suppress + schedule flush** otherwise: `pending=true`, `suppressed_batches += 1`, spawn `schedule_pending_watcher_emit()` once (guarded by `flush_scheduled` flag).
+
+### Starvation guard — `schedule_pending_watcher_emit` (lib.rs:259–317)
+
+A background thread polls every 50 ms. When `min_interval` has elapsed and `pending` is still set, it fires `beads-changed` and logs `Delayed coalesced emit`. This guarantees an emit after any finite burst, regardless of how many batches were suppressed.
+
+### Emit semantics
+
+`beads-changed` carries only `{ path: project_path }` (lib.rs:249–257). The frontend (`useChangeDetection.ts`) responds by **re-fetching the entire project** from the JSONL source. Intermediate states during a burst are never delivered — the frontend always sees the final consistent state. There is no "middle-state loss" risk.
+
+### beads.log counter legend
+
+All three log lines share the same counter set. Counters are **per-session totals** (reset on each `start_watching` call):
+
+| Counter | Meaning |
+|---------|---------|
+| `events` | Total OS fs-events in the current debounced batch |
+| `relevant` | Events that passed `should_process_watcher_event()` |
+| `emitted` | Cumulative successful `beads-changed` emits this session |
+| `suppressed` | Cumulative batches held back (min-interval not elapsed) |
+
+Log line examples:
+- `Emitted coalesced update` — immediate emit path
+- `Suppressed watcher batch` — min-interval not elapsed; flush scheduled
+- `Delayed coalesced emit` — starvation-guard fired after cooldown
+
+### Singleton + session ID (lib.rs:172–187)
+
+`WatcherState` is a single Tauri-managed mutex. `watch_session_id` increments on every `start_watching` call; stale flush-threads from prior sessions self-terminate when they see a mismatched `session_id`. Only one project path can be watched at a time — starting a new watch stops the previous one.
+
+### Interaction with TS-side cooldown
+
+Frontend `SELF_TRIGGER_COOLDOWN_MS` (500 ms, `useChangeDetection.ts`) guards against mtime-echo from the app's own `bdCheckChanged()` polls. These two layers are independent: Rust coalesces bursts before the event reaches TS; the TS cooldown suppresses self-triggered re-polls. An external CLI write landing within the 500 ms TS cooldown window after a Rust flush will be dropped — this residual risk is tracked in `beads-task-issue-tracker-sh7`.
+
 ## AI-Driven UI Testing (Tauri MCP)
 
 Chrome DevTools / Playwright **do not work with Tauri's WKWebView on macOS** — Apple does not implement CDP. To let Claude Code drive the running app (DOM, screenshots, clicks, JS exec, native mac mouse/keyboard), the project ships [`tauri-plugin-mcp`](https://github.com/P3GLEG/tauri-plugin-mcp) gated behind the `dev-mcp` Cargo feature (see `src-tauri/Cargo.toml` `[features]` and `#[cfg(feature = "dev-mcp")]` in `src-tauri/src/lib.rs` `setup()`). `pnpm tauri:dev` passes `--features dev-mcp`; `tauri build` does not, so release binaries omit the plugin.
