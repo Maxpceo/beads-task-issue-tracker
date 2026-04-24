@@ -182,6 +182,15 @@ export function useAdaptivePolling(pollFn: () => Promise<void>, options?: Adapti
     }
   })
 
+  // Watch profile/interval transitions: reschedule timer immediately when profile flips
+  // (e.g., project crosses 200-issue threshold from small → medium). Without this, the
+  // active timer would keep running with the old interval until it next fires.
+  watch(currentInterval, () => {
+    if (!running) return
+    if (typeof document !== 'undefined' && document.hidden) return
+    scheduleNext()
+  })
+
   // Watch idle transitions: reschedule when idle state changes
   watch(idle, (isIdle, wasIdlePrev) => {
     if (!running) return

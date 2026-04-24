@@ -1,9 +1,12 @@
 import type { Ref, ComputedRef } from 'vue'
 import { ref, computed, watch } from 'vue'
 import { projectUsesDolt, logFrontend } from '~/utils/bd-api'
-import type { PollingProfile } from '~/composables/useAdaptivePolling'
+import { INTERVAL_TABLE, type PollingProfile } from '~/composables/useAdaptivePolling'
 
 export type ProjectSize = 'small' | 'medium' | 'large'
+
+const SMALL_PROJECT_MAX = 200
+const MEDIUM_PROJECT_MAX = 1000
 
 /**
  * Pure profile selection: (isDolt × size) → PollingProfile.
@@ -30,12 +33,13 @@ export function selectProfile(isDolt: boolean, size: ProjectSize): PollingProfil
  * - large:  ≥ 1000
  */
 export function classifySize(issueCount: number): ProjectSize {
-  if (issueCount < 200) return 'small'
-  if (issueCount < 1000) return 'medium'
+  if (issueCount < SMALL_PROJECT_MAX) return 'small'
+  if (issueCount < MEDIUM_PROJECT_MAX) return 'medium'
   return 'large'
 }
 
-// Module-scope cache: cwd → isDolt, so we don't re-invoke on every reactive refresh.
+// Module-scope cache: cwd → isDolt.
+// Never invalidated: a project's backend doesn't change post-init. Cache lives for the app session.
 const doltCache = new Map<string, boolean>()
 
 /**
@@ -65,8 +69,9 @@ export function useProjectProfile(
       isDolt.value = false
       return
     }
-    if (doltCache.has(path)) {
-      isDolt.value = doltCache.get(path)!
+    const cached = doltCache.get(path)
+    if (cached !== undefined) {
+      isDolt.value = cached
       return
     }
     const result = await projectUsesDolt(path)
@@ -81,10 +86,11 @@ export function useProjectProfile(
 
   const profile = computed<PollingProfile>(() => selectProfile(isDolt.value, size.value))
 
-  // Log profile changes (side effect belongs in watch, not in computed)
+  // Log profile changes. Interval read from INTERVAL_TABLE to prevent drift if the table is tuned later.
   watch(profile, (p) => {
-    logFrontend('info', `[poll] profile=${p} isDolt=${isDolt.value} size=${size.value} issueCount=${issues.value.length} interval=${p === 'dolt-large' ? 15000 : p === 'dolt-medium' ? 10000 : 5000}`).catch(() => {})
-  }, { immediate: true })
+    const activeInterval = INTERVAL_TABLE[p].active
+    logFrontend('info', `[poll] profile=${p} isDolt=${isDolt.value} size=${size.value} issueCount=${issues.value.length} interval=${activeInterval}`).catch(() => {})
+  })
 
   return { profile, isDolt, size }
 }
