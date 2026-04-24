@@ -62,4 +62,15 @@ const { notifications, dismiss } = useNotification()
   opacity: 0;
   transform: translateX(100%);
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .notification-enter-active,
+  .notification-leave-active {
+    transition: opacity 0.15s ease !important;
+  }
+  .notification-enter-from,
+  .notification-leave-to {
+    transform: none;
+  }
+}
 </style>
