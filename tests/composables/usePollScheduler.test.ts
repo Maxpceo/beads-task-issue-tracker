@@ -148,4 +148,41 @@ describe('usePollScheduler', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(pollFn).toHaveBeenCalledTimes(1) // разблокировано
   })
+
+  it('requestImmediatePoll does NOT launch second poll when already inflight', async () => {
+    const { pollFn, scheduler, resolveOnePoll } = setup({ minInterval: 100, pollMs: 50 })
+
+    scheduler.requestImmediatePoll()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pollFn).toHaveBeenCalledTimes(1)
+
+    // Second immediate while inflight — should be skipped
+    scheduler.requestImmediatePoll()
+    expect(pollFn).toHaveBeenCalledTimes(1)
+
+    resolveOnePoll()
+    await vi.advanceTimersByTimeAsync(0)
+  })
+
+  it('requestImmediatePoll cancels pending deferred timer', async () => {
+    const { pollFn, scheduler } = setup({ minInterval: 100 })
+
+    // First poll to arm lastPollEnd
+    scheduler.requestPoll()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pollFn).toHaveBeenCalledTimes(1)
+
+    // Deferred poll scheduled (too soon)
+    scheduler.requestPoll()
+    expect(scheduler.stats.deferred).toBe(1)
+
+    // Immediate poll — should cancel the deferred and run now
+    scheduler.requestImmediatePoll()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(pollFn).toHaveBeenCalledTimes(2)
+
+    // Wait out what would have been the deferred window — no extra poll
+    await vi.advanceTimersByTimeAsync(200)
+    expect(pollFn).toHaveBeenCalledTimes(2)
+  })
 })

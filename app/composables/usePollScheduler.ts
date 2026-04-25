@@ -9,6 +9,7 @@
  * - `stats` — lightweight instrumentation (skipped, deferred, executed counts).
  */
 
+import { logFrontend } from '~/utils/bd-api'
 import { usePipelineDiagnostics } from './usePipelineDiagnostics'
 
 const DEFAULT_MIN_INTERVAL_MS = 2_000
@@ -78,12 +79,14 @@ export function usePollScheduler(
     if (inflight) {
       stats.skipped++
       recordPollDecision('skipped')
+      logFrontend('debug', '[scheduler] inflight-skip').catch(() => {})
       return
     }
 
     const elapsed = Date.now() - lastPollEnd
     if (elapsed >= minInterval) {
       clearDeferred()
+      logFrontend('debug', '[scheduler] immediate-run').catch(() => {})
       runPoll()
       return
     }
@@ -92,12 +95,14 @@ export function usePollScheduler(
     if (deferredTimer) {
       stats.skipped++
       recordPollDecision('skipped')
+      logFrontend('debug', '[scheduler] inflight-skip (deferred already pending)').catch(() => {})
       return
     }
 
     stats.deferred++
     recordPollDecision('deferred')
     const remaining = minInterval - elapsed
+    logFrontend('debug', `[scheduler] deferred(${remaining}ms)`).catch(() => {})
     deferredTimer = setTimeout(() => {
       deferredTimer = null
       runPoll()

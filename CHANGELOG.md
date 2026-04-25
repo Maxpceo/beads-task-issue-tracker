@@ -10,6 +10,7 @@
 - Skip duplicate `bd list` IPC on project switch — `isProjectSwitching` counter pauses the filters-rehydrate watch during `handlePathChange`, halving fetch traffic on switch.
 
 ### Fixed
+- **Sync: external bd CLI updates (e.g. `bd update --claim` from Claude Code) now refresh the UI within ~2s instead of requiring a manual refresh.** Root cause was a post-command mtime snapshot in `bd_poll_data` that absorbed external writes that arrived during the `bd list` spawn into the cache key, masking them as "already seen". Fixed by using the entry-time mtime instead. Watcher events now use `requestImmediatePoll` to bypass the 2s scheduler backpressure window; self-write cooldown still gates first so the sh7 regression is preserved. (`beads-task-issue-tracker-ek33`)
 - **Update dialog changelog now has visible heading hierarchy and wraps long identifiers** (`beads-task-issue-tracker-m8q`): added darker headline colors for light theme, bumped h1/h2/h3 sizes in `.markdown-base.compact` (h1 `text-xl font-bold`, h2 `text-lg`, h3 `text-base`), and added `overflow-wrap: anywhere` to paragraphs, list items, and table cells so long identifiers no longer overflow the dialog width.
 
 ## [2.4.0] - 2026-04-25

@@ -2804,6 +2804,8 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     let beads_dir = std::path::Path::new(&working_dir).join(".beads");
     let (current_mtime, mtime_gate) = get_beads_mtime_with_source(&beads_dir);
 
+    log_debug!("[poll-data] entry mtime={:?} gate={} cwd={}", current_mtime, mtime_gate, working_dir);
+
     // ---------------------------------------------------------------------------
     // POLL_MEMO check — return cached result if mtime unchanged and TTL valid
     // ---------------------------------------------------------------------------
@@ -2917,10 +2919,13 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
     // Update LAST_KNOWN_MTIME and POLL_MEMO
     // ---------------------------------------------------------------------------
 
-    // Capture fresh mtime AFTER our commands ran — ignore mtime changes caused
-    // by our own poll (sync side-effects).
-    let post_mtime = get_beads_mtime(&beads_dir);
-    if let Some(mtime) = post_mtime {
+    // Use entry-time mtime: the data we just read corresponds to the filesystem
+    // state as of function entry. Any subsequent change (bd auto-flush, external
+    // CLI write) will advance the mtime beyond this value, so the next call to
+    // bd_check_changed or bd_poll_data will see mtime_equal=false → cache miss →
+    // fresh fetch. Capturing post-command mtime would absorb external writes that
+    // happened during our spawn into our cache key, masking them as "already seen".
+    if let Some(mtime) = current_mtime {
         let mut map = LAST_KNOWN_MTIME.lock().unwrap();
         map.insert(working_dir.clone(), mtime);
 
@@ -2937,6 +2942,11 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
             sanity_poll_count: prev_sanity_count,
         });
     }
+
+    log_debug!(
+        "[poll-data] entry mtime={:?} stored to LAST_KNOWN_MTIME and POLL_MEMO",
+        current_mtime
+    );
 
     // ---------------------------------------------------------------------------
     // Verbose sanity check: periodically compare compute_ready_from vs bd ready.
@@ -3189,28 +3199,29 @@ async fn bd_check_changed(cwd: Option<String>) -> Result<bool, String> {
     let mut map = LAST_KNOWN_MTIME.lock().unwrap();
     let previous = map.get(&working_dir).copied();
 
-    match (current_mtime, previous) {
+    let result = match (current_mtime, previous) {
         (Some(current), Some(prev)) => {
             if current != prev {
-                log_info!("[bd_check_changed] mtime changed — data may have been modified");
-                map.insert(working_dir, current);
-                Ok(true)
+                map.insert(working_dir.clone(), current);
+                true
             } else {
-                log_debug!("[bd_check_changed] mtime unchanged — no changes");
-                Ok(false)
+                false
             }
         }
         (Some(current), None) => {
             // First check — store mtime, report changed so initial load happens
-            map.insert(working_dir, current);
-            Ok(true)
+            map.insert(working_dir.clone(), current);
+            true
         }
         (None, _) => {
             // No database file found
             log_warn!("[bd_check_changed] No beads database found in {}", working_dir);
-            Ok(true) // Report changed to let caller handle missing db
+            true // Report changed to let caller handle missing db
         }
-    }
+    };
+
+    log_debug!("[mtime] cwd={} prev={:?} curr={:?} changed={}", working_dir, previous, current_mtime, result);
+    Ok(result)
 }
 
 /// Reset the cached mtime for a specific project (or all projects).
@@ -5367,6 +5378,8 @@ fn start_watching(
         watcher_state.debouncer = None;
         watcher_state.watched_path = None;
     }
+
+    log_info!("[watcher] start path={} session={}", path, watch_session_id);
 
     let beads_dir = PathBuf::from(&path).join(".beads");
     if !beads_dir.exists() {

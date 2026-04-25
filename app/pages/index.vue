@@ -222,6 +222,7 @@ const pollForChanges = async () => {
   const pollT0 = performance.now()
   let hadError = false
   recordPollStart()
+  logFrontend('debug', `[poll] start, skipMtime=${skipMtimeCheck}`).catch(() => {})
 
   try {
     isSyncing.value = true
@@ -232,6 +233,7 @@ const pollForChanges = async () => {
     if (!skipMtimeCheck) {
       const changed = await bdCheckChanged(path)
       recordMtimeCheck(changed)
+      logFrontend('debug', `[poll] mtime changed=${changed}`).catch(() => {})
       if (!changed) {
         // Nothing changed on disk — skip entire poll cycle
         return
@@ -245,6 +247,7 @@ const pollForChanges = async () => {
     // Update dashboard from pre-fetched data (no extra API call)
     if (readyData) {
       updateFromPollData(issues.value, readyData)
+      logFrontend('debug', `[poll] applied, issuesCount=${issues.value.length}`).catch(() => {})
     }
 
     // Snapshot mtime AFTER all operations (including epic bd_show calls in fetchPollData)
@@ -263,7 +266,10 @@ const { requestPoll, requestImmediatePoll, cancel: cancelScheduledPoll, stop: st
 
 const { active: changeDetectionActive, startListening, stopListening, notifySelfWrite } = useChangeDetection({
   onChanged: async () => {
-    requestPoll()
+    // Use requestImmediatePoll to bypass the 2s scheduler backpressure window.
+    // Self-write cooldown in createQueuedHandler.trigger() still gates first,
+    // so the sh7 regression (watcher echo after local write) is preserved.
+    requestImmediatePoll()
   },
 })
 

@@ -206,4 +206,25 @@ describe('createQueuedHandler', () => {
     await vi.advanceTimersByTimeAsync(300)
     expect(onChanged).not.toHaveBeenCalled()
   })
+
+  it('external trigger 2s after local write is NOT swallowed (sh7/ek33 regression)', async () => {
+    // Regression: an external `bd update --claim` arriving 2s after a local write
+    // must reach onChanged even though the cooldown window is 500ms.
+    // The cooldown is armed by local write (setCooldown(true)) and expires after 500ms.
+    // The external trigger at 2000ms must NOT be suppressed.
+    const { handler, onChanged, setCooldown } = setup({ cooldown: false })
+
+    // Simulate local write: arm cooldown
+    setCooldown(true)
+
+    // After cooldown expires (500ms), disarm it
+    await vi.advanceTimersByTimeAsync(500)
+    setCooldown(false)
+
+    // External CLI write triggers watcher at 2000ms — cooldown long expired
+    await vi.advanceTimersByTimeAsync(1500)
+    handler.trigger()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChanged).toHaveBeenCalledTimes(1)
+  })
 })
