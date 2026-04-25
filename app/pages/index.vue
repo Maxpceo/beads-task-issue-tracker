@@ -511,146 +511,153 @@ const handlePathChange = async () => {
   // Increment generation — any in-flight handlePathChange with an older generation will bail out
   const thisGeneration = ++pathChangeGeneration
 
-  const perfStart = performance.now()
-  let perfWarmup = 0
-  let perfClearState = 0
-  let perfPreflight = 0
-  let perfFetchIssues = 0
-  let perfFetchStats = 0
-
-  // Show loading indicator immediately
-  isLoading.value = true
-
-  // Capture the old path before it changes (setPath was already called in PathSelector)
-  const oldPath = previousBeadsPath
-  previousBeadsPath = beadsPath.value
-
-  // Unregister old project from probe (fire-and-forget)
-  if (oldPath) probeUnregisterProject(oldPath)
-
-  selectIssue(null)
-  isEditMode.value = false
-  isCreatingNew.value = false
-
-  // Order matters: stop sources before any await, otherwise a deferred poll scheduled earlier
-  // fires mid-switch and diffs old-project issues against an empty (cleared) array, producing
-  // a burst of "issue deleted" toasts.
-  stopScheduler()
-  stopPolling()
-  await stopListening()
-
-  // Bail out if another handlePathChange was triggered while we awaited stopListening
-  if (thisGeneration !== pathChangeGeneration) {
-    return
-  }
-
-  // Stale-while-revalidate: try to prefill UI from the on-disk PollData snapshot.
-  // If we have a warm snapshot, skip the clearIssues/clearStats wipe so the user
-  // sees the last-known state instantly while fresh data loads in parallel below.
-  // If no cache, fall back to the original "wipe, then load" behavior.
-  let warmedFromCache = false
-  const tWarmup = performance.now()
+  // Поднимаем флаг до любого await, чтобы watch на filters не запускал fetchIssues
+  // пока мы переключаем проект. finally гарантирует декремент даже при early-return.
+  beginProjectSwitch()
   try {
-    const snapshot = await warmUpFromCache(beadsPath.value)
-    // Re-check generation AFTER the await but BEFORE mutating reactive state.
-    // Without this guard, a slow warm-up for project B could resolve after the
-    // user has already switched to project C and leak B's data into C's UI.
+    const perfStart = performance.now()
+    let perfWarmup = 0
+    let perfClearState = 0
+    let perfPreflight = 0
+    let perfFetchIssues = 0
+    let perfFetchStats = 0
+
+    // Show loading indicator immediately
+    isLoading.value = true
+
+    // Capture the old path before it changes (setPath was already called in PathSelector)
+    const oldPath = previousBeadsPath
+    previousBeadsPath = beadsPath.value
+
+    // Unregister old project from probe (fire-and-forget)
+    if (oldPath) probeUnregisterProject(oldPath)
+
+    selectIssue(null)
+    isEditMode.value = false
+    isCreatingNew.value = false
+
+    // Order matters: stop sources before any await, otherwise a deferred poll scheduled earlier
+    // fires mid-switch and diffs old-project issues against an empty (cleared) array, producing
+    // a burst of "issue deleted" toasts.
+    stopScheduler()
+    stopPolling()
+    await stopListening()
+
+    // Bail out if another handlePathChange was triggered while we awaited stopListening
     if (thisGeneration !== pathChangeGeneration) {
       return
     }
-    if (snapshot) {
-      const cachedReady = applyWarmUpSnapshot(snapshot)
-      updateFromPollData(issues.value, cachedReady)
-      warmedFromCache = true
-      isLoading.value = false
+
+    // Stale-while-revalidate: try to prefill UI from the on-disk PollData snapshot.
+    // If we have a warm snapshot, skip the clearIssues/clearStats wipe so the user
+    // sees the last-known state instantly while fresh data loads in parallel below.
+    // If no cache, fall back to the original "wipe, then load" behavior.
+    let warmedFromCache = false
+    const tWarmup = performance.now()
+    try {
+      const snapshot = await warmUpFromCache(beadsPath.value)
+      // Re-check generation AFTER the await but BEFORE mutating reactive state.
+      // Without this guard, a slow warm-up for project B could resolve after the
+      // user has already switched to project C and leak B's data into C's UI.
+      if (thisGeneration !== pathChangeGeneration) {
+        return
+      }
+      if (snapshot) {
+        const cachedReady = applyWarmUpSnapshot(snapshot)
+        updateFromPollData(issues.value, cachedReady)
+        warmedFromCache = true
+        isLoading.value = false
+      }
+    } catch (e) {
+      logFrontend('error', '[handlePathChange] warmUpFromCache failed: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
+      if (thisGeneration !== pathChangeGeneration) {
+        return
+      }
     }
-  } catch (e) {
-    logFrontend('error', '[handlePathChange] warmUpFromCache failed: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
-    if (thisGeneration !== pathChangeGeneration) {
-      return
-    }
-  }
-  perfWarmup = performance.now() - tWarmup
+    perfWarmup = performance.now() - tWarmup
 
-  if (!warmedFromCache) {
-    const tClear = performance.now()
-    clearIssues()  // Reset issue list so new-issue detection doesn't flash all rows
-    clearStats()   // Reset stats so previous project's ready work doesn't persist
-    perfClearState = performance.now() - tClear
-  }
-
-  try {
-    const tPreflight = performance.now()
-    // Pre-flight checks in parallel: cleanup stale locks + migration check + mtime reset
-const [, , migrationNeeded] = await Promise.all([
-      bdCleanupStaleLocks(beadsPath.value),
-      bdResetMtime(),
-      checkMigrationNeeded(),
-    ])
-    perfPreflight = performance.now() - tPreflight
-
-    if (thisGeneration !== pathChangeGeneration) {
-return
+    if (!warmedFromCache) {
+      const tClear = performance.now()
+      clearIssues()  // Reset issue list so new-issue detection doesn't flash all rows
+      clearStats()   // Reset stats so previous project's ready work doesn't persist
+      perfClearState = performance.now() - tClear
     }
 
-if (!migrationNeeded) {
-      // Register new project with probe before fetching (probe needs to know the project)
-      await ensureProbeRegistration(beadsPath.value)
+    try {
+      const tPreflight = performance.now()
+      // Pre-flight checks in parallel: cleanup stale locks + migration check + mtime reset
+      const [, , migrationNeeded] = await Promise.all([
+        bdCleanupStaleLocks(beadsPath.value),
+        bdResetMtime(),
+        checkMigrationNeeded(),
+      ])
+      perfPreflight = performance.now() - tPreflight
 
       if (thisGeneration !== pathChangeGeneration) {
-return
+        return
       }
 
-      // Check attachment refs migration (may have been auto-migrated before sync)
-      const migrationResult2 = await checkRefsMigration()
-      if (migrationResult2 === 'just_migrated') {
-        notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
-      } else if (migrationResult2) {
-        await migrateRefs()
-        notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
-      }
+      if (!migrationNeeded) {
+        // Register new project with probe before fetching (probe needs to know the project)
+        await ensureProbeRegistration(beadsPath.value)
 
-      // IMPORTANT: bd commands must run sequentially — concurrent Dolt embedded access
-      // causes SIGSEGV crashes (nil pointer dereference in dolthub/driver).
-      // Use batched fetchPollData (1 IPC: bd list + bd ready) + updateFromPollData
-      // to avoid a redundant bd ready cold-start from fetchStats.
-      // skipNotifications: cross-project diff would otherwise fire "deleted" toasts for every issue in the old project.
-      const tFetchIssues = performance.now()
-      const readyData = await fetchPollData({ skipNotifications: true })
-      perfFetchIssues = performance.now() - tFetchIssues
+        if (thisGeneration !== pathChangeGeneration) {
+          return
+        }
 
-      const tFetchStats = performance.now()
-      if (readyData) {
-        updateFromPollData(issues.value, readyData)
-      } else {
-        // Poll failed — fall back to stats computation without ready data
-        fetchStats(issues.value)
+        // Check attachment refs migration (may have been auto-migrated before sync)
+        const migrationResult2 = await checkRefsMigration()
+        if (migrationResult2 === 'just_migrated') {
+          notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
+        } else if (migrationResult2) {
+          await migrateRefs()
+          notifySuccess(t('page.notifications.attachmentsMigrated'), t('page.notifications.attachmentsMigratedDesc'))
+        }
+
+        // IMPORTANT: bd commands must run sequentially — concurrent Dolt embedded access
+        // causes SIGSEGV crashes (nil pointer dereference in dolthub/driver).
+        // Use batched fetchPollData (1 IPC: bd list + bd ready) + updateFromPollData
+        // to avoid a redundant bd ready cold-start from fetchStats.
+        // skipNotifications: cross-project diff would otherwise fire "deleted" toasts for every issue in the old project.
+        const tFetchIssues = performance.now()
+        const readyData = await fetchPollData({ skipNotifications: true })
+        perfFetchIssues = performance.now() - tFetchIssues
+
+        const tFetchStats = performance.now()
+        if (readyData) {
+          updateFromPollData(issues.value, readyData)
+        } else {
+          // Poll failed — fall back to stats computation without ready data
+          fetchStats(issues.value)
+        }
+        perfFetchStats = performance.now() - tFetchStats
       }
-      perfFetchStats = performance.now() - tFetchStats
+    } catch (e) {
+      // Don't let pre-flight errors block the app — log and continue
+      logFrontend('error', '[handlePathChange] Error during project switch: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
+    } finally {
+      // fetchPollData (unlike fetchIssues) doesn't manage isLoading — clear it here
+      // so the "Loading..." indicator disappears after the switch completes.
+      isLoading.value = false
     }
-  } catch (e) {
-    // Don't let pre-flight errors block the app — log and continue
-    logFrontend('error', '[handlePathChange] Error during project switch: ' + (e instanceof Error ? e.message : String(e))).catch(() => {})
+
+    const perfTotal = performance.now() - perfStart
+    logFrontend('info', `[perf:handlePathChange] warmup=${perfWarmup.toFixed(0)}ms clearState=${perfClearState.toFixed(0)}ms pre-flight=${perfPreflight.toFixed(0)}ms fetchIssues=${perfFetchIssues.toFixed(0)}ms fetchStats=${perfFetchStats.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms warmedFromCache=${warmedFromCache}`).catch(() => {})
+
+    if (thisGeneration !== pathChangeGeneration) {
+      return
+    }
+
+    // Resume scheduler BEFORE startListening so the first watcher event after switch isn't dropped.
+    resumeScheduler()
+    if (beadsPath.value) {
+      await startListening(beadsPath.value)
+      notifySelfWrite()  // Arm cooldown so backend ignores bd's recent .beads/ writes
+    }
+    startPolling()
   } finally {
-    // fetchPollData (unlike fetchIssues) doesn't manage isLoading — clear it here
-    // so the "Loading..." indicator disappears after the switch completes.
-    isLoading.value = false
+    await endProjectSwitch()
   }
-
-  const perfTotal = performance.now() - perfStart
-  logFrontend('info', `[perf:handlePathChange] warmup=${perfWarmup.toFixed(0)}ms clearState=${perfClearState.toFixed(0)}ms pre-flight=${perfPreflight.toFixed(0)}ms fetchIssues=${perfFetchIssues.toFixed(0)}ms fetchStats=${perfFetchStats.toFixed(0)}ms total=${perfTotal.toFixed(0)}ms warmedFromCache=${warmedFromCache}`).catch(() => {})
-
-  if (thisGeneration !== pathChangeGeneration) {
-return
-  }
-
-  // Resume scheduler BEFORE startListening so the first watcher event after switch isn't dropped.
-  resumeScheduler()
-  if (beadsPath.value) {
-    await startListening(beadsPath.value)
-    notifySelfWrite()  // Arm cooldown so backend ignores bd's recent .beads/ writes
-  }
-  startPolling()
 }
 
 const handleReset = () => {
@@ -986,6 +993,9 @@ const handleKpiClick = (kpi: KpiFilter) => {
 watch(
   () => JSON.stringify([filters.value.status, filters.value.type, filters.value.priority]),
   () => {
+    // Пропускаем fetchIssues во время смены проекта — фильтры перезагружаются из
+    // useProjectStorage и триггерят этот watch, но данные уже загружены через fetchPollData.
+    if (isProjectSwitching.value) return
     // Don't refetch if search is active (search ignores filters)
     if (!filters.value.search?.trim()) {
       // skipNotifications: filters are per-project (persisted) and re-materialize on project switch,
