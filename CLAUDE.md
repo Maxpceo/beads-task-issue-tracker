@@ -22,6 +22,20 @@ Completion reports (both orchestrator and supervisor) must not use hedging langu
 
 Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/SKILL.md` → Iron Law section.
 
+### Proactive best-practice suggestions
+
+Когда работаешь над фичей или фиксом и замечаешь рядом возможность улучшения, соответствующую best practice — **предложи** её отдельным сообщением до завершения задачи. Не реализуй без подтверждения, scope не раздувай.
+
+Что считается best practice (примеры, не исчерпывающий список):
+- **Фильтры/поиск**: debounce на input, persist в URL/localStorage, «Clear all», empty state, сохранение при смене проекта, keyboard navigation.
+- **UI**: `aria-label` + tooltip для icon-only кнопок, confirm-диалог для destructive действий, loading/skeleton для длинных операций, empty state когда данных нет, focus management в формах и диалогах, валидация форм.
+- **Код**: extract pure logic в `app/utils/` + тесты, устранение дублирования, типобезопасность вместо `any`, мемоизация горячих computed, разбиение раздутых компонентов.
+- **A11y / i18n**: контраст, role/aria, `$t(...)` вместо хардкода строк.
+
+Формат предложения: «Заметил: <что>. Почему: <best practice / конкретное влияние>. Делать сейчас / отдельным bead / пропустить?»
+
+Молчать, если это вкусовщина (стиль, нейминг без ясного выигрыша) или вне scope текущей задачи без видимого влияния. Не превращать каждый ответ в поток мелких замечаний — фильтр «best practice + видимое влияние».
+
 ### Issues
 - Полный справочник команд bd (синтаксис CLI): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**. Worktree policy и external layout: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
 - **Язык**: title, description, notes, design, acceptance — **на русском**. Английскими остаются только технические идентификаторы (имена файлов/функций, label'ы, типы, статусы, команды). Это персональный трекер Максима — он читатель, не команда/CI.
