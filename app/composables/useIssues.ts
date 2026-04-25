@@ -20,19 +20,14 @@ import {
 } from '~/utils/issue-helpers'
 import { computeNotifyEvents, TOAST_KEY_TO_I18N } from '~/utils/notification-matrix'
 
-/** Опции для fetchIssues — полный набор флагов для полного запроса списка задач. */
 export interface FetchOptions {
-  /** Игнорировать текущие фильтры и загрузить все задачи. */
   ignoreFilters?: boolean
-  /** Не показывать индикатор загрузки (silent refresh). */
   silent?: boolean
-  /** Подавить уведомления о переходах статусов (например, при смене проекта). */
+  /** Подавить уведомления о переходах статусов (true при project switch — глушит «удалено» toast'ы от cross-project diff). */
   skipNotifications?: boolean
 }
 
-/** Опции для fetchPollData — только suppressions, без filter-override. */
 export interface PollOptions {
-  /** Подавить уведомления о переходах статусов. */
   skipNotifications?: boolean
 }
 
@@ -76,7 +71,7 @@ export async function endProjectSwitch() {
   // nextTick даёт watch'ам на filters отработать с поднятым флагом до декремента,
   // защищая от async rehydrate из useProjectStorage после finally.
   await nextTick()
-  projectSwitchingDepth.value--
+  projectSwitchingDepth.value = Math.max(0, projectSwitchingDepth.value - 1)
 }
 
 const markAsNewlyAdded = (id: string) => {
