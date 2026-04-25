@@ -129,7 +129,7 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
     const oldIssues = [makeIssue('a-1'), makeIssue('a-2'), makeIssue('a-3')]
     const newIssues: Issue[] = [] // все «удалены»
 
-    notifyStatusTransitions(oldIssues, newIssues, t, /* skipNotifications= */ true)
+    notifyStatusTransitions(oldIssues, newIssues, t, { skipNotifications: true })
 
     expect(notifySuccessMock).not.toHaveBeenCalled()
   })
@@ -138,7 +138,7 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
     const oldIssues = [makeIssue('a-1', 'open')]
     const newIssues = [makeIssue('a-1', 'closed')]
 
-    notifyStatusTransitions(oldIssues, newIssues, t, /* skipNotifications= */ true)
+    notifyStatusTransitions(oldIssues, newIssues, t, { skipNotifications: true })
 
     expect(notifySuccessMock).not.toHaveBeenCalled()
   })
@@ -147,7 +147,7 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
     const oldIssues = [makeIssue('a-1'), makeIssue('a-2')]
     const newIssues: Issue[] = [] // оба «удалены»
 
-    notifyStatusTransitions(oldIssues, newIssues, t, /* skipNotifications= */ false)
+    notifyStatusTransitions(oldIssues, newIssues, t, { skipNotifications: false })
 
     expect(notifySuccessMock).toHaveBeenCalledTimes(2)
   })
@@ -156,7 +156,7 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
     const oldIssues = [makeIssue('a-1', 'open')]
     const newIssues = [makeIssue('a-1', 'closed')]
 
-    notifyStatusTransitions(oldIssues, newIssues, t, /* skipNotifications= */ false)
+    notifyStatusTransitions(oldIssues, newIssues, t, { skipNotifications: false })
 
     expect(notifySuccessMock).toHaveBeenCalledTimes(1)
     expect(notifySuccessMock).toHaveBeenCalledWith(
@@ -169,7 +169,7 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
   it('без изменений — notify не вызывается', () => {
     const issues = [makeIssue('a-1', 'open'), makeIssue('a-2', 'in_progress')]
 
-    notifyStatusTransitions(issues, [...issues], t, false)
+    notifyStatusTransitions(issues, [...issues], t, { skipNotifications: false })
 
     expect(notifySuccessMock).not.toHaveBeenCalled()
   })
