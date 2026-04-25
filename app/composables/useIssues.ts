@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Issue, CreateIssuePayload, UpdateIssuePayload } from '~/types/issue'
 import { useNotification } from '~/composables/useNotification'
@@ -19,6 +19,22 @@ import {
   groupIssues as groupIssuesPure,
 } from '~/utils/issue-helpers'
 import { computeNotifyEvents, TOAST_KEY_TO_I18N } from '~/utils/notification-matrix'
+
+/** Опции для fetchIssues — полный набор флагов для полного запроса списка задач. */
+export interface FetchOptions {
+  /** Игнорировать текущие фильтры и загрузить все задачи. */
+  ignoreFilters?: boolean
+  /** Не показывать индикатор загрузки (silent refresh). */
+  silent?: boolean
+  /** Подавить уведомления о переходах статусов (например, при смене проекта). */
+  skipNotifications?: boolean
+}
+
+/** Опции для fetchPollData — только suppressions, без filter-override. */
+export interface PollOptions {
+  /** Подавить уведомления о переходах статусов. */
+  skipNotifications?: boolean
+}
 
 // Interface for hierarchical grouping of epics and their children
 export interface IssueGroup {
@@ -50,6 +66,18 @@ const lastKnownUpdated = ref<string | null>(null)
 
 // Track newly added issue IDs for flash animation
 const newlyAddedIds = ref<Set<string>>(new Set())
+
+// Counter флаг для подавления дублирующего fetchIssues во время смены проекта.
+// Используется как счётчик (а не boolean) для защиты от race на rapid switch A→B→C.
+const projectSwitchingDepth = ref(0)
+export const isProjectSwitching = computed(() => projectSwitchingDepth.value > 0)
+export function beginProjectSwitch() { projectSwitchingDepth.value++ }
+export async function endProjectSwitch() {
+  // nextTick даёт watch'ам на filters отработать с поднятым флагом до декремента,
+  // защищая от async rehydrate из useProjectStorage после finally.
+  await nextTick()
+  projectSwitchingDepth.value--
+}
 
 const markAsNewlyAdded = (id: string) => {
   newlyAddedIds.value = new Set(newlyAddedIds.value).add(id)
@@ -102,8 +130,9 @@ export function notifyStatusTransitions(
   oldIssues: Issue[],
   newIssues: Issue[],
   t: (key: string, params?: Record<string, unknown>) => string,
-  skipNotifications = false,
+  options?: { skipNotifications?: boolean },
 ) {
+  const { skipNotifications = false } = options ?? {}
   if (skipNotifications) return
 
   const { success: notifySuccess } = useNotification()
@@ -146,7 +175,8 @@ export function useIssues() {
   // Helper to get the current path (for IPC or web)
   const getPath = () => beadsPath.value && beadsPath.value !== '.' ? beadsPath.value : undefined
 
-  const fetchIssues = async (ignoreFilters = false, silent = false, options?: { skipNotifications?: boolean }) => {
+  const fetchIssues = async (options?: FetchOptions) => {
+    const { ignoreFilters = false, silent = false, skipNotifications = false } = options ?? {}
     if (!silent) {
       isLoading.value = true
     }
@@ -184,7 +214,7 @@ export function useIssues() {
               markAsNewlyAdded(issue.id)
             }
 
-            notifyStatusTransitions(issues.value, newIssues, t, options?.skipNotifications)
+            notifyStatusTransitions(issues.value, newIssues, t, { skipNotifications })
           }
         }
         issues.value = newIssues
@@ -233,7 +263,7 @@ export function useIssues() {
    * @param options.skipNotifications — передаётся true при project switch чтобы заглушить
    *   «задача удалена» toast'ы, вызванные diff'ом между проектами.
    */
-  const fetchPollData = async (options?: { skipNotifications?: boolean }): Promise<Issue[] | null> => {
+  const fetchPollData = async (options?: PollOptions): Promise<Issue[] | null> => {
     error.value = null
     const perfStart = performance.now()
     let perfIpc = 0
@@ -296,7 +326,7 @@ export function useIssues() {
             for (const id of [...addedIds, ...modifiedIds]) {
               markAsNewlyAdded(id)
             }
-            notifyStatusTransitions(issues.value, newIssues, t, options?.skipNotifications)
+            notifyStatusTransitions(issues.value, newIssues, t, { skipNotifications: options?.skipNotifications })
           }
         }
         issues.value = newIssues

@@ -3,7 +3,7 @@ import type { Issue, IssueStatus, UpdateIssuePayload } from '~/types/issue'
 import { isIssueBlocked } from '~/utils/issue-helpers'
 import { logFrontend } from '~/utils/bd-api'
 import { useProjectProfile } from '~/composables/useProjectProfile'
-import { setLocalWriteNotifier } from '~/composables/useIssues'
+import { setLocalWriteNotifier, isProjectSwitching, beginProjectSwitch, endProjectSwitch } from '~/composables/useIssues'
 import { watchDebounced } from '@vueuse/core'
 import CommandPalette from '~/components/CommandPalette.vue'
 
@@ -872,7 +872,7 @@ watchDebounced(searchValue, async (value) => {
   } else {
     // bd: client-side filtering with debounce 180ms to avoid jitter on large projects
     setSearch(value)
-    await fetchIssues(!!term)
+    await fetchIssues({ ignoreFilters: !!term })
   }
 }, { debounce: 180 })
 
@@ -991,7 +991,7 @@ watch(
       // skipNotifications: filters are per-project (persisted) and re-materialize on project switch,
       // firing this watch with a full diff between projects. A filter change never implies an issue
       // was deleted, so notifications here are never meaningful.
-      fetchIssues(false, false, { skipNotifications: true })
+      fetchIssues({ skipNotifications: true })
     }
   }
 )
