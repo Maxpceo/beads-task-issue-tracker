@@ -56,6 +56,7 @@ _bmad/
 # Claude Code local artifacts (personal, not shared)
 .claude/plans/
 .claude/scheduled_tasks.lock
+.claude/worktrees/
 scripts/__pycache__/
 
 # Crystal tool artifacts
