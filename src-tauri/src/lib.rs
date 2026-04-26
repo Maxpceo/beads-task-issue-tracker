@@ -2661,25 +2661,63 @@ fn poll_cache_path(project_hash: &str) -> Option<PathBuf> {
     Some(poll_cache_dir()?.join(format!("poll-{}.json", project_hash)))
 }
 
+/// Split timing data collected by `read_poll_cache_timed` for perf instrumentation.
+#[derive(Default, Clone, Copy)]
+struct ReadCacheTimings {
+    metadata_ms: u128,
+    read_ms: u128,
+    parse_ms: u128,
+    bytes: usize,
+    age_secs: u64,
+}
+
 /// Read raw poll snapshot from disk for the given project hash.
-/// Returns `None` if the file is missing, unreadable, older than TTL, or malformed.
-fn read_poll_cache(project_hash: &str) -> Option<PollCacheFile> {
-    let path = poll_cache_path(project_hash)?;
-    let meta = fs::metadata(&path).ok()?;
-    let modified = meta.modified().ok()?;
-    let age = std::time::SystemTime::now().duration_since(modified).ok()?;
+/// Returns `(None, timings)` on any early exit; timings fields up to the failure point are populated.
+fn read_poll_cache_timed(project_hash: &str) -> (Option<PollCacheFile>, ReadCacheTimings) {
+    let mut timings = ReadCacheTimings::default();
+
+    let Some(path) = poll_cache_path(project_hash) else {
+        return (None, timings);
+    };
+
+    let t0 = std::time::Instant::now();
+    let meta = match fs::metadata(&path) {
+        Ok(m) => m,
+        Err(_) => return (None, timings),
+    };
+    timings.metadata_ms = t0.elapsed().as_millis();
+
+    let modified = match meta.modified() {
+        Ok(m) => m,
+        Err(_) => return (None, timings),
+    };
+    let age = std::time::SystemTime::now().duration_since(modified).unwrap_or_default();
+    timings.age_secs = age.as_secs();
+
     if age.as_secs() > POLL_CACHE_TTL_SECS {
         log_debug!("[poll_cache] Skipping stale cache {:?} (age {}s)", path, age.as_secs());
-        return None;
+        return (None, timings);
     }
-    let bytes = fs::read(&path).ok()?;
-    match serde_json::from_slice::<PollCacheFile>(&bytes) {
+
+    let t1 = std::time::Instant::now();
+    let bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return (None, timings),
+    };
+    timings.read_ms = t1.elapsed().as_millis();
+    timings.bytes = bytes.len();
+
+    let t2 = std::time::Instant::now();
+    let result = match serde_json::from_slice::<PollCacheFile>(&bytes) {
         Ok(cache) => Some(cache),
         Err(e) => {
             log_warn!("[poll_cache] Failed to parse {:?}: {}", path, e);
             None
         }
-    }
+    };
+    timings.parse_ms = t2.elapsed().as_millis();
+
+    (result, timings)
 }
 
 /// Write raw poll snapshot to disk for the given project hash. Errors are logged and swallowed
@@ -3060,8 +3098,24 @@ async fn bd_poll_data(cwd: Option<String>) -> Result<PollData, String> {
 /// while `bd_poll_data` runs in parallel to produce fresh data.
 #[tauri::command]
 async fn bd_poll_data_cached(cwd: String) -> Result<Option<PollData>, String> {
+    let t_start = std::time::Instant::now();
     let project_hash = hash_path_djb2(&cwd);
-    let Some(cache) = read_poll_cache(&project_hash) else {
+    let (cache, timings) = read_poll_cache_timed(&project_hash);
+    let total_ms = t_start.elapsed().as_millis();
+
+    log_info!(
+        "[perf:bd_poll_data_cached] hash={} total={}ms metadata={}ms read={}ms parse={}ms bytes={} age={}s hit={}",
+        project_hash,
+        total_ms,
+        timings.metadata_ms,
+        timings.read_ms,
+        timings.parse_ms,
+        timings.bytes,
+        timings.age_secs,
+        if cache.is_some() { "true" } else { "false" }
+    );
+
+    let Some(cache) = cache else {
         return Ok(None);
     };
     log_debug!(

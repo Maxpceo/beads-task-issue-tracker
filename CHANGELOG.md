@@ -12,6 +12,7 @@
 
 ### Performance
 - Skip duplicate `bd list` IPC on project switch — `isProjectSwitching` counter pauses the filters-rehydrate watch during `handlePathChange`, halving fetch traffic on switch.
+- Backend perf log `[perf:bd_poll_data_cached]` with split read timings (metadata/read/parse) to diagnose warm-up IPC outliers (`beads-task-issue-tracker-0x6`).
 
 ### Accessibility
 - **Migration dialogs (Repair / Dolt / Attachment Refs)** (`beads-task-issue-tracker-2d5`): decorative SVGs (warning, info, spinners) marked `aria-hidden="true"`; error `<p>` blocks now carry `role="alert"` so screen readers announce them on appearance; repair progress `<p>` uses `aria-live="polite"`. `text-amber-500` on warning `DialogTitle` swapped for `text-amber-600 dark:text-amber-500` to meet WCAG AA contrast (4.5:1) in light theme.
