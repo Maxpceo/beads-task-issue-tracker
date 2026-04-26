@@ -283,3 +283,64 @@ bd list --status=open,closed --json | jq -r --arg ts "<session-start-ISO>" '.[] 
 ```
 
 Reminder: «To release a version, run ./release.sh»
+
+## Step 8: Финальный вердикт «можно ли закрывать сессию»
+
+**Цель:** одна строка в самом конце ответа, по которой пользователь без вчитывания в таблицу решает — закрывать ли сессию. Эта строка ВСЕГДА последняя в ответе после Step 7 (после Reminder про `./release.sh`).
+
+### Чек-лист (orchestrator выполняет проверки **сам** через Bash, не делегирует)
+
+```bash
+echo "=== branch ==="; git branch --show-current
+echo "=== dirty ==="; git status --short
+echo "=== ahead/behind ==="; git rev-list --left-right --count origin/main...HEAD
+echo "=== local feature branches ==="; git branch --list 'fix/*' 'feat/*' 'chore/*' 'refactor/*' 'docs/*'
+echo "=== worktrees ==="; git worktree list
+echo "=== beads ==="; bd list --status=in_progress,inreview --assignee="$(git config user.name)" 2>&1 | head -10
+echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | grep -E "Status|holder"
+```
+
+### Условия чистоты (все должны выполниться):
+
+1. Текущая ветка — `main`.
+2. Working tree чистый (`git status --short` пуст).
+3. `main` не отстаёт от `origin/main` (`ahead/behind` = `0	0`).
+4. Нет локальных feature-веток (`fix/*`, `feat/*`, `chore/*`, `refactor/*`, `docs/*`) — только `main`.
+5. Нет лишних worktree'ев кроме основного репо.
+6. Нет beads в `in_progress` / `inreview` на текущего юзера.
+7. Merge-slot не держим (`Status: open` или holder ≠ текущий юзер).
+
+### Финальная строка (печатать буквально, одна из двух):
+
+**Если всё чисто:**
+
+```markdown
+---
+
+✅ **Сессию можно закрывать** — main чистый, ничего не висит.
+```
+
+**Если что-то не чисто** — перечислить в одну строку **только** причины, которые не выполнены, без пустых:
+
+```markdown
+---
+
+⚠️ **Сессию НЕ закрывать**: <причина1>; <причина2>; ...
+```
+
+Примеры причин (формулировать конкретно — с ID/именами/количеством):
+- `остался worktree fix/bd-xxx`
+- `локальные ветки: feat/bd-yyy, chore/zzz`
+- `bead beads-task-issue-tracker-aaa в in_progress`
+- `working tree dirty (3 файла)`
+- `main отстаёт от origin (behind 2)`
+- `держим merge-slot (надо bd merge-slot release)`
+- `не на main (текущая: fix/bd-bbb)`
+
+### Правила формата:
+
+- Финальная строка — **последняя** в ответе. После неё — ничего (даже пустой строки).
+- Перед строкой — горизонтальный разделитель `---` для визуального якоря.
+- Эмодзи `✅` / `⚠️` обязательны — глаз цепляется быстрее.
+- Если хоть одно условие не выполнено — это ⚠️, не ✅. Не «частично чисто».
+- Не дублируй причины из основной таблицы Step 7. Только то, что мешает закрыть сессию **сейчас**.
