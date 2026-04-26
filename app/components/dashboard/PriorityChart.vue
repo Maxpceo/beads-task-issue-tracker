@@ -43,7 +43,16 @@ const neonBarStyle = (rgb: string, value: number) => {
         class="flex items-center gap-2"
       >
         <span class="w-8 text-xs" :style="isNeon ? { color: priority.color } : {}" :class="!isNeon ? 'text-muted-foreground' : ''">{{ priority.label }}</span>
-        <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
+        <div
+          class="flex-1 h-2 rounded overflow-hidden"
+          :class="isNeon ? 'bg-white/5' : 'bg-secondary'"
+          role="progressbar"
+          :aria-valuenow="Math.round(getPercent(byPriority[priority.key]))"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-label="t(`issues.priorityLabels.${priority.key}`)"
+          :aria-valuetext="t('dashboard.charts.barCountText', { value: byPriority[priority.key], total })"
+        >
           <div
             class="h-full w-full origin-left transition-[transform,background-color,box-shadow]"
             :style="{

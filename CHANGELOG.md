@@ -15,6 +15,7 @@
 - Skip duplicate `bd list` IPC on project switch — `isProjectSwitching` counter pauses the filters-rehydrate watch during `handlePathChange`, halving fetch traffic on switch.
 
 ### Accessibility
+- **Progress bars now expose ARIA semantics to screen readers** (`beads-task-issue-tracker-ec0b`): added `role="progressbar"` + `aria-valuenow/min/max` + `aria-label` + `aria-valuetext` to all 4 progress bar track elements in `StatusChart.vue` (open/closed bars), `PriorityChart.vue` (per-priority bar in v-for), and `IssueTable.vue` (collapsed epic progress row). Labels reuse existing i18n keys (`dashboard.charts.open/closed`, `issues.priorityLabels.*`); new key `issues.table.epicProgressAria` describes epic child task count. Fixes WCAG 4.1.2 (Name, Role, Value) and 1.3.1 (Info and Relationships).
 - **Migration dialogs (Repair / Dolt / Attachment Refs)** (`beads-task-issue-tracker-2d5`): decorative SVGs (warning, info, spinners) marked `aria-hidden="true"`; error `<p>` blocks now carry `role="alert"` so screen readers announce them on appearance; repair progress `<p>` uses `aria-live="polite"`. `text-amber-500` on warning `DialogTitle` swapped for `text-amber-600 dark:text-amber-500` to meet WCAG AA contrast (4.5:1) in light theme.
 
 ### Fixed

@@ -599,7 +599,14 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                 <!-- Progress bar + percentage spanning ID + Type columns -->
                 <TableCell :colspan="Math.min(2, visibleColumns.length)" class="!py-1 !px-3">
                   <div class="flex items-center gap-2">
-                    <div class="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div
+                      class="flex-1 h-1.5 bg-muted rounded-full overflow-hidden"
+                      role="progressbar"
+                      :aria-valuenow="Math.round(group.closedChildCount / group.childCount * 100)"
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                      :aria-label="t('issues.table.epicProgressAria', { closed: group.closedChildCount, total: group.childCount })"
+                    >
                       <div
                         class="h-full w-full origin-left transition-transform bg-[var(--color-status-in-progress)]"
                         :style="{ transform: `scaleX(${group.closedChildCount / group.childCount})` }"
