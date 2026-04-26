@@ -34,8 +34,8 @@ const neonBarStyle = (rgb: string, percent: number) => {
         <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-open)]' : 'text-muted-foreground'">{{ t('dashboard.charts.open') }}</span>
         <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
           <div
-            class="h-full bg-status-open transition-[width] rounded"
-            :style="{ width: `${openPercent}%`, ...neonBarStyle('0, 212, 255', openPercent) }"
+            class="h-full w-full bg-status-open origin-left transition-transform"
+            :style="{ transform: `scaleX(${openPercent / 100})`, ...neonBarStyle('0, 212, 255', openPercent) }"
           />
         </div>
         <span class="w-8 text-xs text-right" :class="isNeon ? 'text-[var(--color-status-open)]' : ''">{{ open }}</span>
@@ -45,8 +45,8 @@ const neonBarStyle = (rgb: string, percent: number) => {
         <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-closed)]' : 'text-muted-foreground'">{{ t('dashboard.charts.closed') }}</span>
         <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
           <div
-            class="h-full bg-status-closed transition-[width] rounded"
-            :style="{ width: `${closedPercent}%`, ...neonBarStyle('136, 146, 160', closedPercent) }"
+            class="h-full w-full bg-status-closed origin-left transition-transform"
+            :style="{ transform: `scaleX(${closedPercent / 100})`, ...neonBarStyle('136, 146, 160', closedPercent) }"
           />
         </div>
         <span class="w-8 text-xs text-right" :class="isNeon ? 'text-[var(--color-status-closed)]' : ''">{{ closed }}</span>

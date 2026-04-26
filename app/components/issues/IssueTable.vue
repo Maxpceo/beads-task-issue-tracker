@@ -601,8 +601,8 @@ const { focusedId, setFocused, handleKeydown, isFocused } = useKeyboardNavigatio
                   <div class="flex items-center gap-2">
                     <div class="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                       <div
-                        class="h-full rounded-full transition-[width] bg-[var(--color-status-in-progress)]"
-                        :style="{ width: Math.round(group.closedChildCount / group.childCount * 100) + '%' }"
+                        class="h-full w-full origin-left transition-transform bg-[var(--color-status-in-progress)]"
+                        :style="{ transform: `scaleX(${group.closedChildCount / group.childCount})` }"
                       />
                     </div>
                     <span class="text-[10px] text-muted-foreground font-medium shrink-0">{{ Math.round(group.closedChildCount / group.childCount * 100) }}%</span>

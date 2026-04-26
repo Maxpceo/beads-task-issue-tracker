@@ -11,6 +11,7 @@
 - DebugPanel now uses the authoritative `projectUsesDolt()` helper instead of probing `.beads/.dolt` directly, fixing Dolt detection for nested/embedded layouts.
 
 ### Performance
+- **Progress bars now animate via `transform: scaleX()` instead of `width`** (`beads-task-issue-tracker-ps1c`): all 4 progress bar elements in `StatusChart.vue` (×2), `PriorityChart.vue`, and `IssueTable.vue` replaced `width: X%` + `transition-[width]` with `w-full` + `transform: scaleX(value)` + `origin-left` + `transition-transform`. Transform is compositor-friendly — animates on the GPU without triggering layout recalculation. `rounded` removed from inner elements (parent `overflow-hidden` clips correctly; `border-radius` would otherwise scale with `scaleX`).
 - Skip duplicate `bd list` IPC on project switch — `isProjectSwitching` counter pauses the filters-rehydrate watch during `handlePathChange`, halving fetch traffic on switch.
 
 ### Accessibility
