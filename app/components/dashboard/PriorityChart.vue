@@ -45,9 +45,9 @@ const neonBarStyle = (rgb: string, value: number) => {
         <span class="w-8 text-xs" :style="isNeon ? { color: priority.color } : {}" :class="!isNeon ? 'text-muted-foreground' : ''">{{ priority.label }}</span>
         <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
           <div
-            class="h-full transition-[width,background-color,box-shadow] rounded"
+            class="h-full w-full origin-left transition-[transform,background-color,box-shadow]"
             :style="{
-              width: `${getPercent(byPriority[priority.key])}%`,
+              transform: `scaleX(${getPercent(byPriority[priority.key]) / 100})`,
               backgroundColor: priority.color,
               ...neonBarStyle(priority.rgb, byPriority[priority.key]),
             }"
