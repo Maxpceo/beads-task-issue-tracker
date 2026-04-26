@@ -181,7 +181,7 @@ const isCurrentProject = computed(() => isProject(currentPath.value))
             <Badge v-if="hasBeads" class="bg-green-600 text-white shrink-0">
               {{ t('dashboard.folderPicker.beadsProject') }}
             </Badge>
-            <Badge v-if="usesDolt" variant="outline" class="text-[#29E3C1] border-[#29E3C1]/50 shrink-0 px-2 py-1">
+            <Badge v-if="usesDolt" variant="outline" class="text-dolt border-dolt/50 shrink-0 px-2 py-1">
               <svg style="width: 2rem; height: 0.65rem;" viewBox="0 0 163 56" fill="none">
                 <path d="M28.87 7.0459V45.8632C28.8654 46.7997 28.498 47.6965 27.8476 48.3591C27.1971 49.0217 26.316 49.3964 25.3957 49.402H10.4953C9.5713 49.402 8.68489 49.0298 8.0299 48.3666C7.3749 47.7035 7.00462 46.8034 7 45.8632V24.7722C7.00462 23.832 7.3749 22.9319 8.0299 22.2688C8.68489 21.6056 9.5713 21.2334 10.4953 21.2334H22.2115" stroke="currentColor" stroke-width="12.6599" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M156.3 49.4019H145.283" stroke="currentColor" stroke-width="12.6599" stroke-linecap="round" stroke-linejoin="round"/>
@@ -239,7 +239,7 @@ const isCurrentProject = computed(() => isProject(currentPath.value))
                 <Badge v-if="entry.hasBeads" variant="outline" class="text-green-500 border-green-500/50 text-xs">
                   {{ t('dashboard.folderPicker.beadsLabel') }}
                 </Badge>
-                <Badge v-if="entry.usesDolt" variant="outline" class="text-[#29E3C1] border-[#29E3C1]/50 text-xs px-1.5 py-0.5">
+                <Badge v-if="entry.usesDolt" variant="outline" class="text-dolt border-dolt/50 text-xs px-1.5 py-0.5">
                   <svg style="width: 1.75rem; height: 0.55rem;" viewBox="0 0 163 56" fill="none">
                     <path d="M28.87 7.0459V45.8632C28.8654 46.7997 28.498 47.6965 27.8476 48.3591C27.1971 49.0217 26.316 49.3964 25.3957 49.402H10.4953C9.5713 49.402 8.68489 49.0298 8.0299 48.3666C7.3749 47.7035 7.00462 46.8034 7 45.8632V24.7722C7.00462 23.832 7.3749 22.9319 8.0299 22.2688C8.68489 21.6056 9.5713 21.2334 10.4953 21.2334H22.2115" stroke="currentColor" stroke-width="12.6599" stroke-linecap="round" stroke-linejoin="round"/>
                     <path d="M156.3 49.4019H145.283" stroke="currentColor" stroke-width="12.6599" stroke-linecap="round" stroke-linejoin="round"/>
