@@ -71,9 +71,11 @@ export function createQueuedHandler(
   function trigger() {
     if (getSelfWriteCooldownActive()) {
       recordWatcherTrigger(false)
+      logFrontend('debug', `[watcher] suppressed by cooldown`).catch(() => {})
       return
     }
     recordWatcherTrigger(true)
+    logFrontend('debug', '[watcher] triggered, scheduling poll').catch(() => {})
     if (inflight) {
       pendingRerun = true
       return
@@ -113,6 +115,7 @@ function createWatcherBackend(options: UseChangeDetectionOptions) {
 
   const handleEvent = (payload: { path: string }) => {
     if (currentPath && payload.path !== currentPath) return
+    logFrontend('debug', `[watcher] event from Tauri path=${payload.path}`).catch(() => {})
     queue.trigger()
   }
 

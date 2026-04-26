@@ -424,7 +424,8 @@ Backend routing (bd_poll_data, bd_check_changed, etc.):
 
 Change Detection (useChangeDetection — native file watcher):
   .beads/ or .tracker/ change → notify crate → Tauri event → watcher backend
-    → pollForChanges() → bdPollData() → refresh all data
+    → pollForChanges({ skipMtimeCheck: true }) → POLL_MEMO invalidated → bdPollData() → refresh all data
+  (skipMtimeCheck bypasses LAST_KNOWN_MTIME gate; handles .dolt/* writes that precede issues.jsonl auto-flush)
 
 Polling: useAdaptivePolling → bdCheckChanged() (mtime) → if changed → bdPollData()
   → useIssues + useDashboard update

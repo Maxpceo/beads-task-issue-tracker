@@ -88,7 +88,9 @@ Log line examples:
 
 ### Interaction with TS-side cooldown
 
-Frontend `SELF_TRIGGER_COOLDOWN_MS` (500 ms, `useChangeDetection.ts`) guards against mtime-echo from the app's own `bdCheckChanged()` polls. These two layers are independent: Rust coalesces bursts before the event reaches TS; the TS cooldown suppresses self-triggered re-polls. An external CLI write landing within the 500 ms TS cooldown window after a Rust flush will be dropped — this residual risk is tracked in `beads-task-issue-tracker-sh7`.
+Frontend `SELF_TRIGGER_COOLDOWN_MS` (500 ms, `useChangeDetection.ts`) guards against mtime-echo from the app's own `bdCheckChanged()` polls. These two layers are independent: Rust coalesces bursts before the event reaches TS; the TS cooldown suppresses self-triggered re-polls.
+
+When `useChangeDetection` handles a `beads-changed` watcher event it calls `pollForChanges({ skipMtimeCheck: true })`. This bypasses the `LAST_KNOWN_MTIME` gate in `bd_poll_data` and removes the cached `POLL_MEMO` entry for the project before spawning `bd list`. The fix ensures that Dolt's 5-second auto-flush window (which writes to `.dolt/*` before updating `issues.jsonl`) no longer causes watcher-triggered polls to see stale mtime data and silently skip the fetch. Additionally, `bd_poll_data` now snapshots the file mtime **before** spawning `bd list` (entry-time mtime), so external writes that land during the subprocess window are not masked as "already seen" in subsequent polls. Self-write mtime-echo suppression via `SELF_TRIGGER_COOLDOWN_MS` remains intact — it applies only after local CRUD operations, not after every poll cycle.
 
 ## AI-Driven UI Testing (Tauri MCP)
 
