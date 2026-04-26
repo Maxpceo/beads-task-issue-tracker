@@ -23,9 +23,20 @@ export default defineNuxtPlugin(() => {
       .join(' ')
   }
 
+  // Cosmetic Vue 3.5.27 / Tauri dev cold-start race: AsyncComponentWrapper gets
+  // HTTP 500 from Vite while Tauri custom IPC protocol switches to postMessage
+  // fallback, NuxtErrorPage renders, and Vue's renderSlot hits null
+  // currentRenderingInstance. App self-recovers; only log-shum. Not reproducible
+  // in production builds. Drop from file log, keep in DevTools console.
+  // TODO: revisit when Vue/Nuxt/Tauri are upgraded — see bd beads-task-issue-tracker-d3o.
+  const isVueColdStartRenderRace = (msg: string): boolean =>
+    msg.includes("currentRenderingInstance.ce") && msg.includes("renderSlot")
+
   console.error = (...args: unknown[]) => {
     originalError.apply(console, args)
-    logFrontend('error', serialize(args)).catch(() => {
+    const msg = serialize(args)
+    if (isVueColdStartRenderRace(msg)) return
+    logFrontend('error', msg).catch(() => {
       // Avoid infinite loop - silently ignore
     })
   }
