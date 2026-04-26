@@ -394,10 +394,11 @@
       "manual": "Ручной порядок (кликни для «по дате закрепления»)"
     },
     "charts": {
-      "statusTitle": "Распределение по статусу",
-      "priorityTitle": "Распределение по приоритету",
+      "barCountText": "{value} из {total}",
+      "closed": "Закрытые",
       "open": "Открытые",
-      "closed": "Закрытые"
+      "priorityTitle": "Распределение по приоритету",
+      "statusTitle": "Распределение по статусу"
     },
     "lists": {
       "noPinned": "Нет закреплённых задач",
@@ -533,8 +534,9 @@
       "hooked": "Hooked"
     },
     "table": {
-      "empty": "Задачи не найдены",
       "childSummary": "{closed} закрыто / {total} подзадача | {closed} закрыто / {total} подзадачи | {closed} закрыто / {total} подзадач",
+      "empty": "Задачи не найдены",
+      "epicProgressAria": "{closed} из {total} подзадач завершено",
       "loadMore": "Загрузить ещё (осталось {remaining})"
     }
   },

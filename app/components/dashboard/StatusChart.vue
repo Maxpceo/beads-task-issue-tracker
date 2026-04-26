@@ -32,7 +32,16 @@ const neonBarStyle = (rgb: string, percent: number) => {
     <div class="space-y-2">
       <div class="flex items-center gap-2">
         <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-open)]' : 'text-muted-foreground'">{{ t('dashboard.charts.open') }}</span>
-        <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
+        <div
+          class="flex-1 h-2 rounded overflow-hidden"
+          :class="isNeon ? 'bg-white/5' : 'bg-secondary'"
+          role="progressbar"
+          :aria-valuenow="Math.round(openPercent)"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-label="t('dashboard.charts.open')"
+          :aria-valuetext="t('dashboard.charts.barCountText', { value: open, total })"
+        >
           <div
             class="h-full w-full bg-status-open origin-left transition-transform"
             :style="{ transform: `scaleX(${openPercent / 100})`, ...neonBarStyle('0, 212, 255', openPercent) }"
@@ -43,7 +52,16 @@ const neonBarStyle = (rgb: string, percent: number) => {
 
       <div class="flex items-center gap-2">
         <span class="w-16 text-xs" :class="isNeon ? 'text-[var(--color-status-closed)]' : 'text-muted-foreground'">{{ t('dashboard.charts.closed') }}</span>
-        <div class="flex-1 h-2 rounded overflow-hidden" :class="isNeon ? 'bg-white/5' : 'bg-secondary'">
+        <div
+          class="flex-1 h-2 rounded overflow-hidden"
+          :class="isNeon ? 'bg-white/5' : 'bg-secondary'"
+          role="progressbar"
+          :aria-valuenow="Math.round(closedPercent)"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          :aria-label="t('dashboard.charts.closed')"
+          :aria-valuetext="t('dashboard.charts.barCountText', { value: closed, total })"
+        >
           <div
             class="h-full w-full bg-status-closed origin-left transition-transform"
             :style="{ transform: `scaleX(${closedPercent / 100})`, ...neonBarStyle('136, 146, 160', closedPercent) }"

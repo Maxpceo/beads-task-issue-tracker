@@ -394,10 +394,11 @@
       "manual": "Manual order (click for pin date)"
     },
     "charts": {
-      "statusTitle": "Status Distribution",
-      "priorityTitle": "Priority Distribution",
+      "barCountText": "{value} of {total}",
+      "closed": "Closed",
       "open": "Open",
-      "closed": "Closed"
+      "priorityTitle": "Priority Distribution",
+      "statusTitle": "Status Distribution"
     },
     "lists": {
       "noPinned": "No pinned issues",
@@ -533,8 +534,9 @@
       "hooked": "Hooked"
     },
     "table": {
-      "empty": "No tasks / issues found",
       "childSummary": "{closed} closed / {total} child | {closed} closed / {total} children",
+      "empty": "No tasks / issues found",
+      "epicProgressAria": "{closed} of {total} child tasks completed",
       "loadMore": "Load more ({remaining} remaining)"
     }
   },
