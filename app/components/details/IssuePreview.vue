@@ -378,7 +378,7 @@ const formatEstimate = (minutes: number) => {
           type="button"
           variant="outline"
           size="sm"
-          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition-all"
+          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition"
           @click="attachFile"
         >
           <ImageIcon class="w-3 h-3 mr-1" />
@@ -416,7 +416,7 @@ const formatEstimate = (minutes: number) => {
               <button
                 v-if="!readonly"
                 type="button"
-                class="opacity-0 group-hover/md:opacity-100 text-destructive hover:text-destructive/80 transition-all shrink-0"
+                class="opacity-0 group-hover/md:opacity-100 text-destructive hover:text-destructive/80 transition-opacity shrink-0"
                 @click="emit('detach-image', md.filename)"
               >
                 <X class="w-3.5 h-3.5" />
@@ -511,7 +511,7 @@ const formatEstimate = (minutes: number) => {
           type="button"
           variant="outline"
           size="sm"
-          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition-all"
+          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition"
           @click="emit('create-child', issue.id)"
         >
           <Plus class="w-3 h-3 mr-1" />
@@ -643,7 +643,7 @@ const formatEstimate = (minutes: number) => {
           type="button"
           variant="outline"
           size="sm"
-          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition-all"
+          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition"
           @click="emit('open-add-blocker', issue.id)"
         >
           <Plus class="w-3 h-3 mr-1" />
@@ -729,7 +729,7 @@ const formatEstimate = (minutes: number) => {
           type="button"
           variant="outline"
           size="sm"
-          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition-all"
+          class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition"
           @click="emit('open-add-relation', issue.id)"
         >
           <Plus class="w-3 h-3 mr-1" />

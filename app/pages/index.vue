@@ -1036,7 +1036,7 @@ watch(
       <aside
         v-show="!(isEditMode || isCreatingNew)"
         class="border-r border-border bg-card flex flex-col relative"
-        :class="{ 'transition-all duration-300': !isResizing }"
+        :class="{ 'transition-[width,opacity] duration-300': !isResizing }"
         :style="isLeftSidebarOpen ? { width: `${leftSidebarWidth}px` } : { width: '48px' }"
       >
         <!-- Resize handle -->
@@ -1195,7 +1195,7 @@ watch(
         v-if="selectedIssue || isEditMode || isCreatingNew"
         class="bg-card flex flex-col relative overflow-hidden"
         :class="[
-          { 'transition-all duration-300': !isResizing && !(isEditMode || isCreatingNew) },
+          { 'transition-[width,opacity] duration-300': !isResizing && !(isEditMode || isCreatingNew) },
           { 'border-l border-border': !(isEditMode || isCreatingNew) },
           { 'w-full lg:w-1/2 lg:min-w-2xl mx-auto my-4 border border-border rounded-lg': isEditMode || isCreatingNew }
         ]"
