@@ -938,7 +938,7 @@ mark.search-highlight-current {
 /* Search bar slide transition */
 .search-slide-enter-active,
 .search-slide-leave-active {
-  transition: all 0.15s ease-out;
+  transition: opacity 0.15s ease-out, max-height 0.15s ease-out, margin-bottom 0.15s ease-out, padding-top 0.15s ease-out, padding-bottom 0.15s ease-out;
   overflow: hidden;
 }
 .search-slide-enter-from,
