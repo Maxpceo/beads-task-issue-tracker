@@ -288,26 +288,45 @@ Reminder: «To release a version, run ./release.sh»
 
 **Цель:** одна строка в самом конце ответа, по которой пользователь без вчитывания в таблицу решает — закрывать ли сессию. Эта строка ВСЕГДА последняя в ответе после Step 7 (после Reminder про `./release.sh`).
 
-### Чек-лист (orchestrator выполняет проверки **сам** через Bash, не делегирует)
+### Принцип: scope = ТОЛЬКО артефакты текущей сессии
+
+Вердикт оценивает **что сделала эта сессия** — не абсолютную чистоту репо. Чужие feature-ветки, worktree'и из параллельных сессий, чужие bead'ы в `in_progress` — **игнорируются**. Юзер часто работает в 6-7 параллельных сессиях, и блокировать ✅ из-за чужой `feat/bd-zzz` бессмысленно.
+
+### Что считается «артефактом текущей сессии»
+
+Orchestrator ведёт ментальный учёт с самого начала сессии (как для follow-up beads в Step 7):
+
+- **Bead'ы**, которые orchestrator брал через `bd update --claim` ИЛИ создавал через `bd create` в этой сессии.
+- **Ветки**, которые orchestrator создавал через `bd worktree create --branch ...` ИЛИ `git checkout -b ...` в этой сессии.
+- **Worktree'и**, которые orchestrator создавал через `bd worktree create` в этой сессии.
+- **Изменения файлов** этой сессии (по списку коммитов сессии).
+
+Если сомневаешься, был ли артефакт создан этой сессией — fallback-проверка по reflog / истории команд / списку коммитов с момента старта сессии.
+
+### Чек-лист — проверка ТОЛЬКО артефактов сессии
 
 ```bash
-echo "=== branch ==="; git branch --show-current
+echo "=== current branch ==="; git branch --show-current
 echo "=== dirty ==="; git status --short
-echo "=== ahead/behind ==="; git rev-list --left-right --count origin/main...HEAD
-echo "=== local feature branches ==="; git branch --list 'fix/*' 'feat/*' 'chore/*' 'refactor/*' 'docs/*'
-echo "=== worktrees ==="; git worktree list
-echo "=== beads ==="; bd list --status=in_progress,inreview --assignee="$(git config user.name)" 2>&1 | head -10
 echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | grep -E "Status|holder"
+# Для каждого session-bead:
+# bd show <SESSION_BEAD_ID>  → должен быть closed
+# Для каждой session-branch:
+# git branch --list <SESSION_BRANCH>  → должна отсутствовать (удалена после merge)
+# Для каждого session-worktree:
+# git worktree list | grep <SESSION_WORKTREE>  → должно быть пусто
+# Каждый session-commit:
+# git merge-base --is-ancestor <SESSION_COMMIT> origin/main  → exit 0
 ```
 
-### Условия чистоты (все должны выполниться):
+### Условия ✅ (все должны выполниться):
 
-1. Текущая ветка — `main`.
+1. Текущая ветка — `main` (`git branch --show-current` = `main`).
 2. Working tree чистый (`git status --short` пуст).
-3. `main` не отстаёт от `origin/main` (`ahead/behind` = `0	0`).
-4. Нет локальных feature-веток (`fix/*`, `feat/*`, `chore/*`, `refactor/*`, `docs/*`) — только `main`.
-5. Нет лишних worktree'ев кроме основного репо.
-6. Нет beads в `in_progress` / `inreview` на текущего юзера.
+3. **Все session-bead'ы** в статусе `closed`.
+4. **Все session-branches** удалены локально (после merge через Step 5–6).
+5. **Все session-worktree'и** удалены через `bd worktree remove`.
+6. **Все session-commits** доступны из `origin/main` (попали в main через смёрженный PR).
 7. Merge-slot не держим (`Status: open` или holder ≠ текущий юзер).
 
 ### Финальная строка (печатать буквально, одна из двух):
@@ -317,10 +336,10 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 ```markdown
 ---
 
-✅ **Сессию можно закрывать** — main чистый, ничего не висит.
+✅ **Сессию можно закрывать** — работа этой сессии в main, артефакты убраны.
 ```
 
-**Если что-то не чисто** — перечислить в одну строку **только** причины, которые не выполнены, без пустых:
+**Если что-то не чисто** — перечислить только session-scoped причины:
 
 ```markdown
 ---
@@ -328,19 +347,28 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 ⚠️ **Сессию НЕ закрывать**: <причина1>; <причина2>; ...
 ```
 
-Примеры причин (формулировать конкретно — с ID/именами/количеством):
-- `остался worktree fix/bd-xxx`
-- `локальные ветки: feat/bd-yyy, chore/zzz`
-- `bead beads-task-issue-tracker-aaa в in_progress`
+Примеры причин (только про артефакты ЭТОЙ сессии):
+- `worktree сессии fix/bd-xxx не удалён`
+- `ветка сессии fix/bd-xxx не удалена локально`
+- `bead сессии beads-task-issue-tracker-aaa в in_progress (не closed)`
 - `working tree dirty (3 файла)`
-- `main отстаёт от origin (behind 2)`
+- `commit сессии <sha> не в origin/main (PR не смёржен)`
 - `держим merge-slot (надо bd merge-slot release)`
 - `не на main (текущая: fix/bd-bbb)`
+
+### Чего НЕ должно быть в причинах ⚠️:
+
+- Чужие feature-ветки из параллельных сессий.
+- Чужие worktree'и (особенно `.claude/worktrees/agent-*` — служебные).
+- Чужие bead'ы `in_progress`/`inreview` — это работа других сессий.
+- Абсолютная чистота репо.
+
+Если сессия не трогала никаких артефактов (был чистый запрос на чтение / документацию без bead'а), скип Step 8: вердикт всегда ✅ при условии `git status` чисто и ветка = main.
 
 ### Правила формата:
 
 - Финальная строка — **последняя** в ответе. После неё — ничего (даже пустой строки).
 - Перед строкой — горизонтальный разделитель `---` для визуального якоря.
 - Эмодзи `✅` / `⚠️` обязательны — глаз цепляется быстрее.
-- Если хоть одно условие не выполнено — это ⚠️, не ✅. Не «частично чисто».
+- Если хоть одно session-условие не выполнено — это ⚠️, не ✅. Не «частично чисто».
 - Не дублируй причины из основной таблицы Step 7. Только то, что мешает закрыть сессию **сейчас**.
