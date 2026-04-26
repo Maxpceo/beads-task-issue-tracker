@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- **"Only active" toolbar toggle** (`beads-task-issue-tracker-yd0`): single-click pill-button in `IssuesToolbar` that narrows the status filter to WIP statuses (`in_progress`, `blocked`, `hooked` + custom review-chain statuses with `category='wip'`: `inreview`/`simplified`/`reviewed`/`accepted`). Toggling it off restores the workflow default (everything except `closed`). Backed by new `computeWipStatuses` helper and `wipStatuses`/`isOnlyActive`/`toggleOnlyActive` exports on `useFilters`. Persists via existing `useProjectStorage` (filters carry across reload). Replaces the 5-click "open Status dropdown → uncheck open/closed/deferred" flow.
+- **"Only active" toolbar toggle** (`beads-task-issue-tracker-yd0`): single-click pill-button in `IssuesToolbar` that narrows the status filter to WIP statuses (`in_progress`, `blocked`, `hooked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` statuses). Toggling it off restores the workflow default. Persists across reload. Replaces the multi-step "open Status dropdown → uncheck statuses" flow.
 
 ### Changed
 - Refactor `useIssues` composable: unified `fetchIssues`/`fetchPollData`/`notifyStatusTransitions` signatures to options-object form for clearer call-sites.
