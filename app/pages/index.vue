@@ -1563,8 +1563,8 @@ watch(
     <Dialog :open="needsRepair" @update:open="(open) => !open && dismissRepair()">
       <DialogContent class="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle class="flex items-center gap-2 text-amber-500">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <DialogTitle class="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
             {{ t('page.dialogs.repair.title') }}
@@ -1582,18 +1582,18 @@ watch(
               <li>{{ t('page.dialogs.repair.step2') }}</li>
               <li>{{ t('page.dialogs.repair.step3') }}</li>
             </ul>
-            <p v-if="repairProgress" class="text-sm text-muted-foreground">
+            <p v-if="repairProgress" class="text-sm text-muted-foreground" aria-live="polite">
               {{ t('page.dialogs.repair.progress', { current: repairProgress.current, total: repairProgress.total }) }}
               <span class="font-mono text-xs">{{ repairProgress.currentPath.split('/').pop() }}</span>
             </p>
-            <p v-if="repairError" class="text-destructive text-sm">
+            <p v-if="repairError" class="text-destructive text-sm" role="alert">
               {{ t('page.dialogs.repair.error', { message: repairError }) }}
             </p>
           </DialogDescription>
         </DialogHeader>
         <div class="flex justify-between mt-4">
           <Button v-if="projects.length > 1" variant="secondary" :disabled="isRepairing" @click="handleRepairAll">
-            <svg v-if="isRepairing && repairProgress" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg v-if="isRepairing && repairProgress" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -1604,7 +1604,7 @@ watch(
               {{ t('common.later') }}
             </Button>
             <Button :disabled="isRepairing" @click="handleRepair">
-              <svg v-if="isRepairing && !repairProgress" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg v-if="isRepairing && !repairProgress" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
@@ -1619,8 +1619,8 @@ watch(
     <Dialog :open="needsMigration" @update:open="(open) => !open && dismissMigration()">
       <DialogContent class="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle class="flex items-center gap-2 text-amber-500">
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <DialogTitle class="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
             {{ t('page.dialogs.migration.title') }}
@@ -1642,7 +1642,7 @@ watch(
               </i18n-t>
               <li>{{ t('page.dialogs.migration.step3') }}</li>
             </ul>
-            <p v-if="migrateError" class="text-destructive text-sm">
+            <p v-if="migrateError" class="text-destructive text-sm" role="alert">
               {{ t('page.dialogs.migration.error', { message: migrateError }) }}
             </p>
           </DialogDescription>
@@ -1652,7 +1652,7 @@ watch(
             {{ t('common.later') }}
           </Button>
           <Button :disabled="isMigrating" class="bg-[#29E3C1] hover:bg-[#22c9aa] text-black" @click="handleMigrateToDolt">
-            <svg v-if="isMigrating" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg v-if="isMigrating" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -1667,7 +1667,7 @@ watch(
       <DialogContent class="sm:max-w-[480px]">
         <DialogHeader>
           <DialogTitle class="flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
             </svg>
             {{ t('page.dialogs.attachmentRefs.title') }}
@@ -1680,7 +1680,7 @@ watch(
             <p class="bg-muted p-2 rounded text-xs font-mono">
               {{ t('page.dialogs.attachmentRefs.counter', { count: refsRefCount }, refsRefCount) }}
             </p>
-            <p v-if="refsMigrateError" class="text-destructive text-sm">
+            <p v-if="refsMigrateError" class="text-destructive text-sm" role="alert">
               {{ t('page.dialogs.attachmentRefs.error', { message: refsMigrateError }) }}
             </p>
           </DialogDescription>
@@ -1690,7 +1690,7 @@ watch(
             {{ t('common.later') }}
           </Button>
           <Button :disabled="isRefsMigrating" class="bg-[#29E3C1] hover:bg-[#22c9aa] text-black" @click="handleMigrateRefs">
-            <svg v-if="isRefsMigrating" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg v-if="isRefsMigrating" class="animate-spin -ml-1 mr-2 h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
