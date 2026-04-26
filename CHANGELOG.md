@@ -6,6 +6,7 @@
 - **"Only active" toolbar toggle** (`beads-task-issue-tracker-yd0`): single-click pill-button in `IssuesToolbar` that narrows the status filter to WIP statuses (`in_progress`, `blocked`, `hooked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` statuses). Toggling it off restores the workflow default. Persists across reload. Replaces the multi-step "open Status dropdown → uncheck statuses" flow.
 
 ### Changed
+- **Dolt brand color → theme token** (`beads-task-issue-tracker-92fr`): introduced `--color-dolt` and `--color-dolt-hover` in `@theme inline` (`tailwind.css`). Replaced 5 hardcoded `#29E3C1`/`#22c9aa` literals across `DebugPanel.vue`, `FolderPicker.vue` (2 badges) and `index.vue` (2 migration buttons) with Tailwind utilities `text-dolt` / `bg-dolt` / `border-dolt` / `hover:bg-dolt-hover`. Single source of truth — change the brand colour in one place going forward.
 - Refactor `useIssues` composable: unified `fetchIssues`/`fetchPollData`/`notifyStatusTransitions` signatures to options-object form for clearer call-sites.
 - DebugPanel now uses the authoritative `projectUsesDolt()` helper instead of probing `.beads/.dolt` directly, fixing Dolt detection for nested/embedded layouts.
 
