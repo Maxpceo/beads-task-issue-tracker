@@ -3112,7 +3112,7 @@ async fn bd_poll_data_cached(cwd: String) -> Result<Option<PollData>, String> {
         timings.parse_ms,
         timings.bytes,
         timings.age_secs,
-        if cache.is_some() { "true" } else { "false" }
+        cache.is_some()
     );
 
     let Some(cache) = cache else {
