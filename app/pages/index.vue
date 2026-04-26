@@ -266,9 +266,12 @@ const { requestPoll, requestImmediatePoll, cancel: cancelScheduledPoll, stop: st
 
 const { active: changeDetectionActive, startListening, stopListening, notifySelfWrite } = useChangeDetection({
   onChanged: async () => {
-    // Use requestImmediatePoll to bypass the 2s scheduler backpressure window.
-    // Self-write cooldown in createQueuedHandler.trigger() still gates first,
-    // so the sh7 regression (watcher echo after local write) is preserved.
+    // Watcher fires on `.dolt/*` writes that precede the 5s auto-flush of
+    // `issues.jsonl`. `bd_check_changed` reads only jsonl mtime and would
+    // return false at this moment, causing pollForChanges to abort. Skip
+    // the redundant gate — the watcher event itself authoritatively says
+    // "data changed". sh7 cooldown still gates this callback first.
+    skipMtimeCheck = true
     requestImmediatePoll()
   },
 })

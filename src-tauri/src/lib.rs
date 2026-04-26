@@ -246,6 +246,13 @@ fn should_process_watcher_event(event: &notify_debouncer_mini::DebouncedEvent) -
 }
 
 fn emit_beads_changed(app_handle: &tauri::AppHandle, project_path: &str) {
+    // Invalidate POLL_MEMO before emitting so the frontend's follow-up poll
+    // bypasses the memo cache. Watcher fires on `.dolt/*` writes that precede
+    // the 5s auto-flush of `issues.jsonl`; without invalidation, the memo
+    // (keyed by jsonl mtime) returns stale data because mtime hasn't moved yet.
+    if let Ok(mut memo) = POLL_MEMO.lock() {
+        memo.remove(project_path);
+    }
     if let Err(err) = app_handle.emit(
         "beads-changed",
         BeadsChangedPayload {
