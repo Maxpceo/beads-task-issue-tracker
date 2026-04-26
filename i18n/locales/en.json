@@ -481,7 +481,9 @@
       "search": "Search issues...",
       "new": "New",
       "delete": "Delete",
-      "selectedCount": "{count} issue selected | {count} issues selected"
+      "selectedCount": "{count} issue selected | {count} issues selected",
+      "onlyActive": "Only active",
+      "onlyActiveTooltip": "Show only WIP issues (in_progress + review chain)"
     },
     "filters": {
       "filtersLabel": "Filters:",

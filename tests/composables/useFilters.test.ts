@@ -167,4 +167,39 @@ describe('useFilters (integration)', () => {
     expect(workflowStatuses.value).toContain('inreview')
     expect(workflowStatuses.value).not.toContain('closed')
   })
+
+  it('toggleOnlyActive: переключает на WIP-статусы и обратно на workflow', async () => {
+    const { useFilters } = await importFresh()
+    const { filters, isOnlyActive, toggleOnlyActive, wipStatuses } = useFilters()
+
+    // Default: workflow, не only-active
+    expect(isOnlyActive.value).toBe(false)
+    expect(filters.value.status).toEqual(WORKFLOW_STATUSES)
+
+    // Включаем «Only active» → status = WIP
+    toggleOnlyActive()
+    await flushPromises()
+    const expectedWip = MOCK_STATUSES.filter(s => s.category === 'wip').map(s => s.name)
+    expect(filters.value.status).toEqual(expectedWip)
+    expect(filters.value.status).toEqual(wipStatuses.value)
+    expect(isOnlyActive.value).toBe(true)
+    expect(filters.value.status).not.toContain('open')
+    expect(filters.value.status).not.toContain('deferred')
+    expect(filters.value.status).not.toContain('closed')
+
+    // Выключаем → возврат к workflow default
+    toggleOnlyActive()
+    await flushPromises()
+    expect(filters.value.status).toEqual(WORKFLOW_STATUSES)
+    expect(isOnlyActive.value).toBe(false)
+  })
+
+  it('isOnlyActive: false когда status-set отличается от wipStatuses', async () => {
+    const { useFilters } = await importFresh()
+    const { filters, isOnlyActive } = useFilters()
+
+    filters.value.status = ['in_progress']
+    await flushPromises()
+    expect(isOnlyActive.value).toBe(false)
+  })
 })

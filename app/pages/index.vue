@@ -54,7 +54,7 @@ const { t } = useI18n()
 
 // Composables
 const { closePalette } = useCommandPalette()
-const { filters, workflowStatuses, allStatuses, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
+const { filters, workflowStatuses, allStatuses, isOnlyActive, toggleOnlyActive, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
 const { columns, toggleColumn, setColumns, resetColumns } = useColumnConfig()
 const { beadsPath, hasStoredPath } = useBeadsPath()
 const { success: notifySuccess, error: notifyError, warning: notifyWarning } = useNotification()
@@ -1164,6 +1164,7 @@ watch(
             :sort-direction="sortDirection"
             :newly-added-ids="newlyAddedIds"
             :pinned-ids="pinnedIssueIds"
+            :is-only-active="isOnlyActive"
             @add="handleAddIssue"
             @delete="handleDeleteIssue"
             @toggle-multi-select="toggleMultiSelect"
@@ -1174,6 +1175,7 @@ watch(
             @toggle-priority="togglePriority"
             @toggle-label="toggleLabelFilter"
             @toggle-assignee="toggleAssignee"
+            @toggle-only-active="toggleOnlyActive"
             @remove-label="handleRemoveLabelFilter"
             @clear-filters="clearFilters"
             @select="handleSelectIssue"

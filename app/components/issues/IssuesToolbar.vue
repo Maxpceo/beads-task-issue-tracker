@@ -32,6 +32,7 @@ defineProps<{
   multiSelectMode?: boolean
   selectedCount?: number
   columns: ColumnConfig[]
+  isOnlyActive?: boolean
 }>()
 
 defineEmits<{
@@ -43,6 +44,7 @@ defineEmits<{
   togglePriority: [priority: IssuePriority]
   toggleLabel: [label: string]
   toggleAssignee: [assignee: string]
+  toggleOnlyActive: []
   'update:columns': [columns: ColumnConfig[]]
   resetColumns: []
 }>()
@@ -119,6 +121,25 @@ const handleFilterClick = (filter: FilterType) => {
           class="pl-10 h-8 text-xs"
         />
       </div>
+
+      <!-- "Only active" toggle (WIP shortcut) -->
+      <Tooltip>
+        <TooltipTrigger as-child>
+          <Button
+            :variant="isOnlyActive ? 'default' : 'outline'"
+            size="sm"
+            class="h-8 text-xs shrink-0"
+            :aria-pressed="isOnlyActive ? 'true' : 'false'"
+            @click="$emit('toggleOnlyActive')"
+          >
+            <svg class="w-3.5 h-3.5 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            {{ t('issues.toolbar.onlyActive') }}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{{ t('issues.toolbar.onlyActiveTooltip') }}</TooltipContent>
+      </Tooltip>
 
       <!-- Filter dropdowns (order matches table columns) -->
       <div ref="filterButtonsRef" class="flex items-center gap-2">
