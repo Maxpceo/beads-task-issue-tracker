@@ -78,6 +78,18 @@ assert_allow \
     "git worktree add -b <X> <external-path> — allow" \
     "git worktree add -b foo ~/Projects/worktrees/beads-task-issue-tracker/bar"
 
+assert_allow \
+    "git worktree add --lock <external-path> — allow (--lock boolean, не съедает path)" \
+    "git worktree add --lock ~/Projects/worktrees/beads-task-issue-tracker/foo"
+
+assert_allow \
+    "git worktree add --orphan <X> <external-path> — allow (флаг с аргументом)" \
+    "git worktree add --orphan mybranch ~/Projects/worktrees/beads-task-issue-tracker/foo"
+
+assert_deny \
+    "git worktree add --orphan <X> <relative-path> — deny (regression на relative)" \
+    "git worktree add --orphan mybranch relative-path"
+
 # --- Should ALLOW (correct external path) ---
 assert_allow \
     "bd worktree create with ~ path — allow" \

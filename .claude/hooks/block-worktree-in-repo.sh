@@ -52,7 +52,7 @@ extract_worktree_path() {
     for token in "$@"; do
         if (( skip_next )); then skip_next=0; continue; fi
         case "$token" in
-            --branch|-b|-B|--lock|--reason) skip_next=1; continue ;;
+            --branch|-b|-B|--orphan|--reason) skip_next=1; continue ;;
             -*) continue ;;
             *) path_arg="$token"; break ;;
         esac
