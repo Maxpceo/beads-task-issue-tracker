@@ -25,6 +25,7 @@ defineProps<{
   sortDirection: 'asc' | 'desc'
   newlyAddedIds: Set<string>
   pinnedIds?: string[]
+  isOnlyActive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +39,7 @@ const emit = defineEmits<{
   'toggle-priority': [priority: IssuePriority]
   'toggle-label': [label: string]
   'toggle-assignee': [assignee: string]
+  'toggle-only-active': []
   'remove-label': [label: string]
   'clear-filters': []
   select: [issue: Issue]
@@ -68,6 +70,7 @@ const handleSort = (field: string | null, direction: 'asc' | 'desc') => {
       :multi-select-mode="multiSelectMode"
       :selected-count="selectedCount"
       :columns="columns"
+      :is-only-active="isOnlyActive"
       @add="emit('add')"
       @delete="emit('delete')"
       @toggle-multi-select="emit('toggle-multi-select')"
@@ -78,6 +81,7 @@ const handleSort = (field: string | null, direction: 'asc' | 'desc') => {
       @toggle-priority="emit('toggle-priority', $event)"
       @toggle-label="emit('toggle-label', $event)"
       @toggle-assignee="emit('toggle-assignee', $event)"
+      @toggle-only-active="emit('toggle-only-active')"
     />
 
     <FilterChips

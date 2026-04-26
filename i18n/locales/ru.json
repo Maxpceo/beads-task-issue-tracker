@@ -481,7 +481,9 @@
       "search": "Поиск по задачам...",
       "new": "Новая",
       "delete": "Удалить",
-      "selectedCount": "Выбрана {count} задача | Выбрано {count} задачи | Выбрано {count} задач"
+      "selectedCount": "Выбрана {count} задача | Выбрано {count} задачи | Выбрано {count} задач",
+      "onlyActive": "Только активные",
+      "onlyActiveTooltip": "Показать только WIP-задачи (in_progress + цепочка ревью)"
     },
     "filters": {
       "filtersLabel": "Фильтры:",

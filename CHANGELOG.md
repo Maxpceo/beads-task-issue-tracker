@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **"Only active" toolbar toggle** (`beads-task-issue-tracker-yd0`): single-click pill-button in `IssuesToolbar` that narrows the status filter to WIP statuses (`in_progress`, `blocked`, `hooked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` statuses). Toggling it off restores the workflow default. Persists across reload. Replaces the multi-step "open Status dropdown → uncheck statuses" flow.
+
 ### Changed
 - Refactor `useIssues` composable: unified `fetchIssues`/`fetchPollData`/`notifyStatusTransitions` signatures to options-object form for clearer call-sites.
 - DebugPanel now uses the authoritative `projectUsesDolt()` helper instead of probing `.beads/.dolt` directly, fixing Dolt detection for nested/embedded layouts.

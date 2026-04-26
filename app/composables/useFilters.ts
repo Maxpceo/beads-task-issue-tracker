@@ -2,7 +2,7 @@ import { computed, watch } from 'vue'
 import type { FilterState, IssueStatus, IssueType, IssuePriority } from '~/types/issue'
 import { useProjectStorage } from '~/composables/useProjectStorage'
 import { useStatuses } from '~/composables/useStatuses'
-import { computeWorkflowStatuses } from '~/utils/workflow-statuses'
+import { computeWorkflowStatuses, computeWipStatuses } from '~/utils/workflow-statuses'
 
 /** Проверяет равенство двух массивов статусов как множеств (порядок не важен) */
 function isStatusSetEqual(a: IssueStatus[], b: IssueStatus[]): boolean {
@@ -16,6 +16,8 @@ export function useFilters() {
 
   // Derived computed — workflow = active+wip+frozen (всё кроме done)
   const workflowStatuses = computed(() => computeWorkflowStatuses(statuses.value))
+  // Derived computed — WIP = только category='wip' (in_progress + review chain)
+  const wipStatuses = computed(() => computeWipStatuses(statuses.value))
   // Derived computed — все известные статусы
   const allStatuses = computed(() => [...new Set(statuses.value.map(s => s.name as IssueStatus))])
 
@@ -39,6 +41,12 @@ export function useFilters() {
   watch(allStatuses, (newAll, oldAll) => {
     if (!oldAll || !isStatusSetEqual(filters.value.status, oldAll)) return
     filters.value.status = [...newAll]
+  })
+
+  // Watch wipStatuses — если filter был «Only active», переносим на новый список
+  watch(wipStatuses, (newW, oldW) => {
+    if (!oldW || !isStatusSetEqual(filters.value.status, oldW)) return
+    filters.value.status = [...newW]
   })
 
   const toggleStatus = (status: IssueStatus) => {
@@ -115,6 +123,14 @@ export function useFilters() {
     filters.value.labels = []
   }
 
+  const isOnlyActive = computed(() => isStatusSetEqual(filters.value.status, wipStatuses.value))
+
+  const toggleOnlyActive = () => {
+    filters.value.status = isOnlyActive.value
+      ? [...workflowStatuses.value]
+      : [...wipStatuses.value]
+  }
+
   const hasActiveFilters = computed(() => {
     return (
       filters.value.status.length > 0 ||
@@ -129,7 +145,10 @@ export function useFilters() {
   return {
     filters,
     workflowStatuses,
+    wipStatuses,
     allStatuses,
+    isOnlyActive,
+    toggleOnlyActive,
     toggleStatus,
     toggleType,
     togglePriority,
