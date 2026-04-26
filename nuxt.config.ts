@@ -42,6 +42,7 @@ export default defineNuxtConfig({
       { code: 'en', language: 'en-US', file: 'en.json' },
       { code: 'ru', language: 'ru-RU', file: 'ru.json' },
     ],
+    vueI18n: './i18n.config.ts',
   },
 
   shadcn: {
