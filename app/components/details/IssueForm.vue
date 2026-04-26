@@ -348,7 +348,7 @@ const attachFile = async () => {
               type="button"
               variant="outline"
               size="sm"
-              class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition-all"
+              class="h-5 px-1.5 text-[10px] hover:bg-sky-500/20 hover:border-sky-500 hover:text-sky-400 active:scale-95 active:bg-sky-500/30 transition"
               @click="attachFile"
             >
               <ImageIcon class="w-3 h-3 mr-1" />

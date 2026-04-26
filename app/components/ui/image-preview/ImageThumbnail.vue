@@ -73,7 +73,7 @@ const handleImageError = () => {
     <button
       v-if="showRemove"
       type="button"
-      class="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/80 active:scale-90 transition-all flex items-center justify-center shadow-md"
+      class="absolute -top-2 -right-2 z-10 w-6 h-6 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/80 active:scale-90 transition flex items-center justify-center shadow-md"
       @click="handleRemove"
     >
       <X class="w-4 h-4" />
