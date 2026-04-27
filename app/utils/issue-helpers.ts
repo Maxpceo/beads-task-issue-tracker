@@ -339,6 +339,42 @@ export function matchesSearch(issue: Issue, term: string): boolean {
 }
 
 /**
+ * Build a map of epic id → direct children from a list of issues.
+ * Used for leaf-up filtering: an epic passes status/search filters if itself
+ * matches OR at least one direct child matches.
+ */
+function buildChildrenByEpic(issues: Issue[]): Map<string, Issue[]> {
+  const map = new Map<string, Issue[]>()
+  const epicIds = new Set(issues.filter(i => i.type === 'epic').map(i => i.id))
+  for (const issue of issues) {
+    if (issue.type === 'epic') continue
+    const parentId = getParentIdFromIssue(issue)
+    if (parentId && epicIds.has(parentId)) {
+      let arr = map.get(parentId)
+      if (!arr) { arr = []; map.set(parentId, arr) }
+      arr.push(issue)
+    }
+  }
+  return map
+}
+
+/**
+ * Apply a predicate with leaf-up semantics: an issue passes if it matches the
+ * predicate, or if it is an epic with at least one direct child that matches.
+ */
+function passesLeafUp(
+  issue: Issue,
+  predicate: (i: Issue) => boolean,
+  childrenByEpic: Map<string, Issue[]>,
+): boolean {
+  if (predicate(issue)) return true
+  if (issue.type === 'epic') {
+    return (childrenByEpic.get(issue.id) || []).some(predicate)
+  }
+  return false
+}
+
+/**
  * Filter issues based on inclusion filters, exclusion filters, and search.
  */
 export function filterIssues(
@@ -351,7 +387,9 @@ export function filterIssues(
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
-    return issues.filter(issue => matchesSearch(issue, search))
+    const matches = (i: Issue) => matchesSearch(i, search)
+    const childrenByEpic = buildChildrenByEpic(issues)
+    return issues.filter(issue => passesLeafUp(issue, matches, childrenByEpic))
   }
 
   let result = issues
@@ -359,12 +397,13 @@ export function filterIssues(
   // Status filter (default: WORKFLOW view)
   if (filters.status.length > 0) {
     const includeBlocked = filters.status.includes('blocked')
-    result = result.filter((issue) => {
+    const passesStatus = (issue: Issue): boolean => {
       if (includeBlocked && isIssueBlocked(issue)) return true
-      // Exclude dependency-blocked issues when 'blocked' is not in the filter
       if (!includeBlocked && isIssueBlocked(issue)) return false
       return filters.status.includes(issue.status)
-    })
+    }
+    const childrenByEpic = buildChildrenByEpic(result)
+    result = result.filter(issue => passesLeafUp(issue, passesStatus, childrenByEpic))
   } else {
     result = result.filter((issue) => isIssueWorkflow(issue))
   }
@@ -420,6 +459,20 @@ export function filterIssues(
 
 /**
  * Group issues into epic/children hierarchy.
+ *
+ * Epic grouping is preserved even when the epic itself is filtered out
+ * (e.g. clicking a KPI card narrows statuses), as long as at least one child
+ * of the epic is visible in paginatedIssues. The orphaned epic wrapper is
+ * inserted at the position of its first visible child in the sort order.
+ *
+ * Known limitation — direct parent only: only the immediate parent epic is
+ * restored. If there is a two-level hierarchy (epic-A → epic-B → task) and
+ * only the task passes the filter, epic-B wrapper appears but epic-A remains
+ * hidden. Multi-level restoration is out of scope.
+ *
+ * Known limitation — pagination: if the epic is absent from paginatedIssues
+ * AND all its children are beyond the current page window, no wrapper appears.
+ * This matches the existing paginatedIssues = slice(0, page*size) contract.
  */
 export function groupIssues(
   paginatedIssues: Issue[],
@@ -428,15 +481,28 @@ export function groupIssues(
   const groups: IssueGroup[] = []
   const processedIds = new Set<string>()
 
-  // Pass 1: Identify epic IDs
+  // Pass 1: Identify epic IDs + build epicById map for orphan restoration
   const allEpicIds = new Set<string>()
+  const epicById = new Map<string, Issue>()
   for (const issue of allIssues) {
-    if (issue.type === 'epic') allEpicIds.add(issue.id)
+    if (issue.type === 'epic') {
+      allEpicIds.add(issue.id)
+      epicById.set(issue.id, issue)
+    }
   }
 
+  // Single pass over paginatedIssues: build paginatedEpicIds (epic directly visible)
+  // and visibleEpicIds = paginatedEpicIds ∪ {parents of visible children}.
+  const paginatedEpicIds = new Set<string>()
   const visibleEpicIds = new Set<string>()
   for (const issue of paginatedIssues) {
-    if (issue.type === 'epic') visibleEpicIds.add(issue.id)
+    if (issue.type === 'epic') {
+      paginatedEpicIds.add(issue.id)
+      visibleEpicIds.add(issue.id)
+    } else {
+      const parentId = getParentIdFromIssue(issue)
+      if (parentId && allEpicIds.has(parentId)) visibleEpicIds.add(parentId)
+    }
   }
 
   // Pass 2: Build children maps
@@ -460,29 +526,50 @@ export function groupIssues(
     }
   }
 
+  const buildEpicGroup = (epic: Issue): IssueGroup => {
+    const filteredChildren = (filteredEpicChildrenMap.get(epic.id) || []).sort(compareChildIssues)
+    const allChildren = (allEpicChildrenMap.get(epic.id) || []).sort(compareChildIssues)
+    const inProgressChild = allChildren.find(c => c.status === 'in_progress')
+    return {
+      epic,
+      children: filteredChildren,
+      childCount: allChildren.length,
+      closedChildCount: allChildren.filter(c => c.status === 'closed').length,
+      inProgressChild: inProgressChild ? { id: inProgressChild.id, title: inProgressChild.title, priority: inProgressChild.priority } : undefined,
+    }
+  }
+
   // Single pass: create groups in sort order (epics stay where the sort places them)
   for (const issue of paginatedIssues) {
     if (processedIds.has(issue.id)) continue
 
     if (issue.type === 'epic') {
-      const filteredChildren = (filteredEpicChildrenMap.get(issue.id) || []).sort(compareChildIssues)
-      const allChildren = (allEpicChildrenMap.get(issue.id) || []).sort(compareChildIssues)
-      const closedCount = allChildren.filter(c => c.status === 'closed').length
-      const inProgressChild = allChildren.find(c => c.status === 'in_progress')
-
-      groups.push({
-        epic: issue,
-        children: filteredChildren,
-        childCount: allChildren.length,
-        closedChildCount: closedCount,
-        inProgressChild: inProgressChild ? { id: inProgressChild.id, title: inProgressChild.title, priority: inProgressChild.priority } : undefined,
-      })
+      const group = buildEpicGroup(issue)
+      groups.push(group)
       processedIds.add(issue.id)
-      filteredChildren.forEach(c => processedIds.add(c.id))
+      group.children.forEach(c => processedIds.add(c.id))
     } else {
-      // Skip children of visible epics (they'll be absorbed into the epic group)
       const parentId = getParentIdFromIssue(issue)
-      if (parentId && visibleEpicIds.has(parentId)) continue
+
+      if (parentId && visibleEpicIds.has(parentId)) {
+        if (paginatedEpicIds.has(parentId)) continue
+        if (processedIds.has(parentId)) continue
+
+        // Orphan epic: epic itself was filtered out but a child is visible.
+        const epic = epicById.get(parentId)
+        if (!epic) {
+          // Defensive: allIssues out of sync, epic object missing. Render as standalone.
+          groups.push({ epic: null, children: [issue], childCount: 0, closedChildCount: 0 })
+          processedIds.add(issue.id)
+          continue
+        }
+
+        const group = buildEpicGroup(epic)
+        groups.push(group)
+        processedIds.add(parentId)
+        group.children.forEach(c => processedIds.add(c.id))
+        continue
+      }
 
       groups.push({
         epic: null,

@@ -563,6 +563,72 @@ describe('filterIssues', () => {
     const result = filterIssues(issues, { ...noFilters, search: 'nonexistent' }, noExclusions)
     expect(result).toEqual([])
   })
+
+  // ---------------------------------------------------------------------------
+  // Leaf-up filtering for epics (status + search)
+  // ---------------------------------------------------------------------------
+
+  it('leaf-up status: epic in open included when filter=in_progress and child is in_progress', () => {
+    const epic = makeIssue({ id: 'epic-1', type: 'epic', status: 'open' })
+    const childA = makeIssue({ id: 'epic-1.1', type: 'task', status: 'in_progress', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const childB = makeIssue({ id: 'epic-1.2', type: 'task', status: 'closed', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-1', type: 'task', status: 'closed' })
+    const result = filterIssues([epic, childA, childB, standalone], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-1', 'epic-1.1'])
+  })
+
+  it('leaf-up status: epic hidden when neither itself nor children pass filter', () => {
+    const epic = makeIssue({ id: 'epic-2', type: 'epic', status: 'open' })
+    const child = makeIssue({ id: 'epic-2.1', type: 'task', status: 'closed', parent: { id: 'epic-2', title: 'E', status: 'open', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-2', type: 'task', status: 'in_progress' })
+    const result = filterIssues([epic, child, standalone], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['standalone-2'])
+  })
+
+  it('leaf-up status: epic itself passes filter, behavior unchanged', () => {
+    const epic = makeIssue({ id: 'epic-3', type: 'epic', status: 'in_progress' })
+    const child = makeIssue({ id: 'epic-3.1', type: 'task', status: 'closed', parent: { id: 'epic-3', title: 'E', status: 'in_progress', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-3', type: 'task', status: 'in_progress' })
+    const result = filterIssues([epic, child, standalone], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-3', 'standalone-3'])
+  })
+
+  it('leaf-up status: blocked epic with in_progress child pulled in via child when filter=in_progress', () => {
+    const epic = makeIssue({ id: 'epic-4', type: 'epic', status: 'open', blockedBy: ['other-1'] })
+    const child = makeIssue({ id: 'epic-4.1', type: 'task', status: 'in_progress', parent: { id: 'epic-4', title: 'E', status: 'open', priority: 'p2' } })
+    // filter=in_progress (no blocked) → epic is blocked so excluded directly; child passes → epic pulled in via leaf-up
+    const result = filterIssues([epic, child], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-4', 'epic-4.1'])
+  })
+
+  it('leaf-up search: epic shown when only child matches search text', () => {
+    const epic = makeIssue({ id: 'epic-5', type: 'epic', title: 'alpha' })
+    const child = makeIssue({ id: 'epic-5.1', type: 'task', title: 'beta foo bar', parent: { id: 'epic-5', title: 'alpha', status: 'open', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-5', type: 'task', title: 'gamma' })
+    const result = filterIssues([epic, child, standalone], { ...noFilters, search: 'foo' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-5', 'epic-5.1'])
+  })
+
+  it('leaf-up search: epic shown when itself matches, child not automatically included', () => {
+    const epic = makeIssue({ id: 'epic-6', type: 'epic', title: 'foo bar' })
+    const child = makeIssue({ id: 'epic-6.1', type: 'task', title: 'alpha', parent: { id: 'epic-6', title: 'foo bar', status: 'open', priority: 'p2' } })
+    const result = filterIssues([epic, child], { ...noFilters, search: 'foo' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-6'])
+  })
+
+  it('type filter is NOT leaf-up: epic excluded when filter type=task', () => {
+    const epic = makeIssue({ id: 'epic-7', type: 'epic', status: 'open' })
+    const child = makeIssue({ id: 'epic-7.1', type: 'task', status: 'open', parent: { id: 'epic-7', title: 'E', status: 'open', priority: 'p2' } })
+    const result = filterIssues([epic, child], { ...noFilters, type: ['task'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-7.1'])
+  })
+
+  it('exclusions are NOT leaf-up: excluded epic stays excluded', () => {
+    const epic = makeIssue({ id: 'epic-8', type: 'epic', status: 'open' })
+    const child = makeIssue({ id: 'epic-8.1', type: 'task', status: 'open', parent: { id: 'epic-8', title: 'E', status: 'open', priority: 'p2' } })
+    const result = filterIssues([epic, child], noFilters, { ...noExclusions, type: ['epic'] })
+    expect(result.map(i => i.id)).toEqual(['epic-8.1'])
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -625,6 +691,100 @@ describe('groupIssues', () => {
 
     const result = groupIssues(all, all)
     expect(result[0]!.children.map(c => c.id)).toEqual(['e.1', 'e.2', 'e.3'])
+  })
+
+  // --- Orphan epic wrapper tests ---
+
+  it('shows epic wrapper when epic itself is filtered out but children are visible', () => {
+    const epic = makeIssue({ id: 'epic-1', type: 'epic', status: 'open' })
+    const child1 = makeIssue({ id: 'epic-1.1', status: 'in_progress', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const child2 = makeIssue({ id: 'epic-1.2', status: 'closed', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const allIssues = [epic, child1, child2]
+    // Simulate "In Progress" KPI filter: only child1 passes
+    const paginated = [child1]
+
+    const result = groupIssues(paginated, allIssues)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.epic!.id).toBe('epic-1')
+    expect(result[0]!.children).toHaveLength(1)
+    expect(result[0]!.children[0]!.id).toBe('epic-1.1')
+    expect(result[0]!.childCount).toBe(2)
+    expect(result[0]!.closedChildCount).toBe(1)
+  })
+
+  it('places orphaned epic wrapper at position of first visible child', () => {
+    const epic = makeIssue({ id: 'epic-1', type: 'epic', status: 'open' })
+    const standaloneA = makeIssue({ id: 'standalone-a', type: 'task' })
+    const child = makeIssue({ id: 'epic-1.1', status: 'in_progress', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const standaloneB = makeIssue({ id: 'standalone-b', type: 'task' })
+    const allIssues = [standaloneA, epic, child, standaloneB]
+    // Epic absent from paginated; child is in the middle
+    const paginated = [standaloneA, child, standaloneB]
+
+    const result = groupIssues(paginated, allIssues)
+    expect(result).toHaveLength(3)
+    expect(result[0]!.epic).toBeNull()
+    expect(result[0]!.children[0]!.id).toBe('standalone-a')
+    expect(result[1]!.epic!.id).toBe('epic-1')
+    expect(result[2]!.epic).toBeNull()
+    expect(result[2]!.children[0]!.id).toBe('standalone-b')
+  })
+
+  it('does not duplicate epic wrapper when multiple children are visible', () => {
+    const epic = makeIssue({ id: 'epic-1', type: 'epic', status: 'open' })
+    const child1 = makeIssue({ id: 'epic-1.1', status: 'in_progress', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const child2 = makeIssue({ id: 'epic-1.2', status: 'in_progress', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const allIssues = [epic, child1, child2]
+    const paginated = [child1, child2]
+
+    const result = groupIssues(paginated, allIssues)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.epic!.id).toBe('epic-1')
+    expect(result[0]!.children).toHaveLength(2)
+  })
+
+  it('falls back to standalone when child references missing epic in allIssues', () => {
+    // Epic with id 'epic-missing' is NOT in allIssues
+    const child = makeIssue({ id: 'orphan-child', status: 'in_progress', parent: { id: 'epic-missing', title: 'E', status: 'open', priority: 'p2' } })
+    const allIssues = [child] // no epic object
+
+    const result = groupIssues([child], allIssues)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.epic).toBeNull()
+    expect(result[0]!.children[0]!.id).toBe('orphan-child')
+  })
+
+  it('treats child of non-epic parent as standalone', () => {
+    const parentTask = makeIssue({ id: 'parent-task', type: 'task', status: 'open' })
+    const child = makeIssue({ id: 'child-task', type: 'task', status: 'in_progress', parent: { id: 'parent-task', title: 'P', status: 'open', priority: 'p2' } })
+    const allIssues = [parentTask, child]
+    const paginated = [child]
+
+    const result = groupIssues(paginated, allIssues)
+    expect(result).toHaveLength(1)
+    expect(result[0]!.epic).toBeNull()
+    expect(result[0]!.children[0]!.id).toBe('child-task')
+  })
+
+  it('groups two orphaned epics with interleaved children correctly', () => {
+    const epicA = makeIssue({ id: 'epic-a', type: 'epic', status: 'open' })
+    const epicB = makeIssue({ id: 'epic-b', type: 'epic', status: 'open' })
+    const a1 = makeIssue({ id: 'epic-a.1', status: 'in_progress', parent: { id: 'epic-a', title: 'A', status: 'open', priority: 'p2' } })
+    const a2 = makeIssue({ id: 'epic-a.2', status: 'in_progress', parent: { id: 'epic-a', title: 'A', status: 'open', priority: 'p2' } })
+    const b1 = makeIssue({ id: 'epic-b.1', status: 'in_progress', parent: { id: 'epic-b', title: 'B', status: 'open', priority: 'p2' } })
+    const allIssues = [epicA, epicB, a1, b1, a2]
+    // Both epics absent; children interleaved
+    const paginated = [a1, b1, a2]
+
+    const result = groupIssues(paginated, allIssues)
+    expect(result).toHaveLength(2)
+    // First group: epicA wrapper at position of a1
+    expect(result[0]!.epic!.id).toBe('epic-a')
+    expect(result[0]!.children.map(c => c.id)).toContain('epic-a.1')
+    expect(result[0]!.children.map(c => c.id)).toContain('epic-a.2')
+    // Second group: epicB wrapper at position of b1
+    expect(result[1]!.epic!.id).toBe('epic-b')
+    expect(result[1]!.children[0]!.id).toBe('epic-b.1')
   })
 })
 
