@@ -200,6 +200,33 @@ pnpm tauri:build
 - [Beads VS Code Extension](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads) - The Planet57 VS Code extension
 - [Community Tools](https://github.com/steveyegge/beads/blob/main/docs/COMMUNITY_TOOLS.md) - Other Beads community projects
 
+## Performance
+
+### Automated benchmark
+
+Run locally with:
+
+```bash
+pnpm test:bench
+```
+
+This runs a vitest bench on `groupIssues` (the hot-path function that organises issues into epic/child groups) with a fixture of 500 issues (50 epics × 10 children). The threshold is **50ms mean** — approximately 2× the observed mean on a ubuntu-22.04 CI runner (~15–25ms). If `groupIssues` regresses to O(n²) complexity, the bench will exceed this threshold and fail CI.
+
+The same command runs automatically in **GitHub Actions** on every pull request (see `.github/workflows/ci.yml` → "Performance benchmarks" step).
+
+### Manual MCP perf check before merge
+
+Automated bench covers algorithmic regressions in pure logic. SWR cache, IPC roundtrip, and Vue reactivity are **not** visible to vitest. Before merging a PR that touches `useIssues`, `useBeadsPath`, or any caching layer, run a quick manual check:
+
+1. Start the app: `pnpm tauri:dev`
+2. Connect Tauri MCP (configured per `src-tauri/CLAUDE.md`).
+3. Open Project A with a real `.beads` directory (~100+ issues).
+4. Switch to Project B (different path).
+5. Assess: does the issue list appear **instantly** (< 1s subjective)?  
+   If it feels sluggish, check the Debug Panel (`Cmd+Shift+L`) for `[perf:bd_poll_data_cached]` log entries showing IPC timing.
+
+This checklist covers the SWR cache warm-up path, IPC roundtrip, and Vue reactivity — the three perf dimensions that vitest bench cannot observe.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
