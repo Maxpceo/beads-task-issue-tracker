@@ -24,6 +24,7 @@ import { isIssueBlocked } from '~/utils/issue-helpers'
 import { formatDate, formatTime } from '~/utils/date-format'
 import { useLocale } from '~/composables/useLocale'
 import { useKeyboardNavigation } from '~/composables/useKeyboardNavigation'
+import { scrollBehavior } from '~/utils/motion'
 
 const { t } = useI18n()
 const { locale } = useLocale()
@@ -306,7 +307,7 @@ watch(() => props.selectedId, (id) => {
   if (!id) return
   nextTick(() => {
     const row = document.querySelector(`[data-issue-id="${CSS.escape(id)}"]`)
-    row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+    row?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
   })
 })
 

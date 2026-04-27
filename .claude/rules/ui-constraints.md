@@ -45,6 +45,8 @@ Apply these opinionated constraints when building interfaces.
 - NEVER exceed `200ms` for interaction feedback
 - MUST pause looping animations when off-screen
 - SHOULD respect `prefers-reduced-motion`
+
+  For JS-driven scroll, use `scrollBehavior()` from `~/utils/motion` instead of a bare `behavior: 'smooth'` literal — this collapses scroll to `'auto'` when the OS preference is active. Loading indicators (`animate-spin`, `animate-pulse`, `animate-ping`) are exempt from the global CSS reduced-motion reset because a frozen spinner signals "app hung"; WCAG 2.3.3 explicitly permits progress indicators to keep animating. The exception block lives in `app/assets/css/tailwind.css` after the global `@media (prefers-reduced-motion: reduce)` rule.
 - NEVER introduce custom easing curves unless explicitly requested
 - SHOULD avoid animating large images or full-screen surfaces
 
