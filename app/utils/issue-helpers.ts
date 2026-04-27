@@ -339,6 +339,26 @@ export function matchesSearch(issue: Issue, term: string): boolean {
 }
 
 /**
+ * Build a map of epic id → direct children from a list of issues.
+ * Used for leaf-up filtering: an epic is transparent for status/search filters
+ * and passes through if at least one direct child matches.
+ */
+function buildChildrenByEpic(issues: Issue[]): Map<string, Issue[]> {
+  const map = new Map<string, Issue[]>()
+  const epicIds = new Set(issues.filter(i => i.type === 'epic').map(i => i.id))
+  for (const issue of issues) {
+    if (issue.type === 'epic') continue
+    const parentId = getParentIdFromIssue(issue)
+    if (parentId && epicIds.has(parentId)) {
+      let arr = map.get(parentId)
+      if (!arr) { arr = []; map.set(parentId, arr) }
+      arr.push(issue)
+    }
+  }
+  return map
+}
+
+/**
  * Filter issues based on inclusion filters, exclusion filters, and search.
  */
 export function filterIssues(
@@ -348,22 +368,45 @@ export function filterIssues(
 ): Issue[] {
   // Global-search semantics (Jira/Linear): active search bypasses all
   // filters/exclusions so the user can locate issues hidden by the current view.
+  // Leaf-up: an epic is included if itself OR at least one direct child matches.
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
-    return issues.filter(issue => matchesSearch(issue, search))
+    const childrenByEpic = buildChildrenByEpic(issues)
+    return issues.filter((issue) => {
+      if (matchesSearch(issue, search)) return true
+      if (issue.type === 'epic') {
+        const children = childrenByEpic.get(issue.id) || []
+        return children.some(c => matchesSearch(c, search))
+      }
+      return false
+    })
   }
 
   let result = issues
 
   // Status filter (default: WORKFLOW view)
+  // Leaf-up: after computing which issues directly pass, epics are included
+  // if themselves or at least one direct child passes the status filter.
   if (filters.status.length > 0) {
     const includeBlocked = filters.status.includes('blocked')
-    result = result.filter((issue) => {
+    const passesStatus = (issue: Issue): boolean => {
       if (includeBlocked && isIssueBlocked(issue)) return true
-      // Exclude dependency-blocked issues when 'blocked' is not in the filter
       if (!includeBlocked && isIssueBlocked(issue)) return false
       return filters.status.includes(issue.status)
+    }
+    const directlyMatching = new Set<string>()
+    for (const issue of result) {
+      if (passesStatus(issue)) directlyMatching.add(issue.id)
+    }
+    const childrenByEpic = buildChildrenByEpic(result)
+    result = result.filter((issue) => {
+      if (directlyMatching.has(issue.id)) return true
+      if (issue.type === 'epic') {
+        const children = childrenByEpic.get(issue.id) || []
+        return children.some(c => directlyMatching.has(c.id))
+      }
+      return false
     })
   } else {
     result = result.filter((issue) => isIssueWorkflow(issue))

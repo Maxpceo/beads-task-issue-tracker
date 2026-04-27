@@ -563,6 +563,72 @@ describe('filterIssues', () => {
     const result = filterIssues(issues, { ...noFilters, search: 'nonexistent' }, noExclusions)
     expect(result).toEqual([])
   })
+
+  // ---------------------------------------------------------------------------
+  // Leaf-up filtering for epics (status + search)
+  // ---------------------------------------------------------------------------
+
+  it('leaf-up status: epic in open included when filter=in_progress and child is in_progress', () => {
+    const epic = makeIssue({ id: 'epic-1', type: 'epic', status: 'open' })
+    const childA = makeIssue({ id: 'epic-1.1', type: 'task', status: 'in_progress', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const childB = makeIssue({ id: 'epic-1.2', type: 'task', status: 'closed', parent: { id: 'epic-1', title: 'E', status: 'open', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-1', type: 'task', status: 'closed' })
+    const result = filterIssues([epic, childA, childB, standalone], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-1', 'epic-1.1'])
+  })
+
+  it('leaf-up status: epic hidden when neither itself nor children pass filter', () => {
+    const epic = makeIssue({ id: 'epic-2', type: 'epic', status: 'open' })
+    const child = makeIssue({ id: 'epic-2.1', type: 'task', status: 'closed', parent: { id: 'epic-2', title: 'E', status: 'open', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-2', type: 'task', status: 'in_progress' })
+    const result = filterIssues([epic, child, standalone], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['standalone-2'])
+  })
+
+  it('leaf-up status: epic itself passes filter, behavior unchanged', () => {
+    const epic = makeIssue({ id: 'epic-3', type: 'epic', status: 'in_progress' })
+    const child = makeIssue({ id: 'epic-3.1', type: 'task', status: 'closed', parent: { id: 'epic-3', title: 'E', status: 'in_progress', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-3', type: 'task', status: 'in_progress' })
+    const result = filterIssues([epic, child, standalone], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-3', 'standalone-3'])
+  })
+
+  it('leaf-up status: blocked epic with in_progress child pulled in via child when filter=in_progress', () => {
+    const epic = makeIssue({ id: 'epic-4', type: 'epic', status: 'open', blockedBy: ['other-1'] })
+    const child = makeIssue({ id: 'epic-4.1', type: 'task', status: 'in_progress', parent: { id: 'epic-4', title: 'E', status: 'open', priority: 'p2' } })
+    // filter=in_progress (no blocked) → epic is blocked so excluded directly; child passes → epic pulled in via leaf-up
+    const result = filterIssues([epic, child], { ...noFilters, status: ['in_progress'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-4', 'epic-4.1'])
+  })
+
+  it('leaf-up search: epic shown when only child matches search text', () => {
+    const epic = makeIssue({ id: 'epic-5', type: 'epic', title: 'alpha' })
+    const child = makeIssue({ id: 'epic-5.1', type: 'task', title: 'beta foo bar', parent: { id: 'epic-5', title: 'alpha', status: 'open', priority: 'p2' } })
+    const standalone = makeIssue({ id: 'standalone-5', type: 'task', title: 'gamma' })
+    const result = filterIssues([epic, child, standalone], { ...noFilters, search: 'foo' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-5', 'epic-5.1'])
+  })
+
+  it('leaf-up search: epic shown when itself matches, child not automatically included', () => {
+    const epic = makeIssue({ id: 'epic-6', type: 'epic', title: 'foo bar' })
+    const child = makeIssue({ id: 'epic-6.1', type: 'task', title: 'alpha', parent: { id: 'epic-6', title: 'foo bar', status: 'open', priority: 'p2' } })
+    const result = filterIssues([epic, child], { ...noFilters, search: 'foo' }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-6'])
+  })
+
+  it('type filter is NOT leaf-up: epic excluded when filter type=task', () => {
+    const epic = makeIssue({ id: 'epic-7', type: 'epic', status: 'open' })
+    const child = makeIssue({ id: 'epic-7.1', type: 'task', status: 'open', parent: { id: 'epic-7', title: 'E', status: 'open', priority: 'p2' } })
+    const result = filterIssues([epic, child], { ...noFilters, type: ['task'] }, noExclusions)
+    expect(result.map(i => i.id)).toEqual(['epic-7.1'])
+  })
+
+  it('exclusions are NOT leaf-up: excluded epic stays excluded', () => {
+    const epic = makeIssue({ id: 'epic-8', type: 'epic', status: 'open' })
+    const child = makeIssue({ id: 'epic-8.1', type: 'task', status: 'open', parent: { id: 'epic-8', title: 'E', status: 'open', priority: 'p2' } })
+    const result = filterIssues([epic, child], noFilters, { ...noExclusions, type: ['epic'] })
+    expect(result.map(i => i.id)).toEqual(['epic-8.1'])
+  })
 })
 
 // ---------------------------------------------------------------------------
