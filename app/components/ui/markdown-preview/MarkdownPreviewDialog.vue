@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Pencil, Save, Search, X } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
+import { scrollBehavior } from '~/utils/motion'
 
 const { t } = useI18n()
 import {
@@ -188,7 +189,7 @@ function highlightCurrentMatch() {
   const currentMark = marks[idx]
   if (idx >= 0 && currentMark) {
     currentMark.classList.add('search-highlight-current')
-    currentMark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    currentMark.scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
   }
 }
 

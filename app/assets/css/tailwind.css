@@ -979,3 +979,18 @@ mark.search-highlight-current {
     scroll-behavior: auto !important;
   }
 }
+
+/* Loading indicators are exempt from reduced-motion: a frozen spinner reads
+   as "app hung" to the user. WCAG 2.3.3 explicitly allows progress indicators
+   to keep animating; the requirement is to disable purely decorative motion. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin {
+    animation-duration: 1s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .animate-pulse,
+  .animate-ping {
+    animation-duration: 2s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

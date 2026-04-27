@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Comment } from '~/types/issue'
+import { scrollBehavior } from '~/utils/motion'
 import { Button } from '~/components/ui/button'
 import { Textarea } from '~/components/ui/textarea'
 import { Avatar, AvatarFallback } from '~/components/ui/avatar'
@@ -81,7 +82,7 @@ let highlightTimer: ReturnType<typeof setTimeout> | null = null
 const scrollToComment = (commentId: string) => {
   const el = document.getElementById(`comment-${commentId}`)
   if (!el) return
-  el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  el.scrollIntoView({ behavior: scrollBehavior(), block: 'center' })
   activeCommentId.value = commentId
   if (highlightTimer) clearTimeout(highlightTimer)
   highlightTimer = setTimeout(() => { activeCommentId.value = null }, 2000)

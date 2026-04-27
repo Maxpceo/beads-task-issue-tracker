@@ -1,4 +1,5 @@
 import { type ComputedRef, ref, watch, nextTick } from 'vue'
+import { scrollBehavior } from '~/utils/motion'
 
 interface UseKeyboardNavigationOptions {
   itemIds: ComputedRef<string[]>
@@ -22,7 +23,7 @@ export function useKeyboardNavigation(options: UseKeyboardNavigationOptions) {
     nextTick(() => {
       const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id
       const el = document.querySelector(`[${dataAttribute}="${escaped}"]`)
-      el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      el?.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() })
     })
   }
 
