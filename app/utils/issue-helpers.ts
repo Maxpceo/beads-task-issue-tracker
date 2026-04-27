@@ -7,6 +7,7 @@ import type { StatusMeta } from '~/composables/useStatuses'
 import type { IssueGroup } from '~/composables/useIssues'
 import {
   REVIEW_CHAIN_STATUSES,
+  REVIEW_SET,
   computeActiveStatuses,
   computeInProgressKpiStatuses,
   computeFrozenKpiStatuses,
@@ -522,8 +523,6 @@ export function computeStatsFromIssues(issues: Issue[], statuses?: StatusMeta[])
     byPriority: { p0: 0, p1: 0, p2: 0, p3: 0, p4: 0 },
   }
 
-  const reviewSet = new Set<string>(REVIEW_CHAIN_STATUSES)
-
   // Category-mode: use statuses map for full category-based routing.
   // Legacy-mode: fall back to literal status names for backward compat (unit tests, etc.).
   const useCategoryMode = !!statuses
@@ -540,7 +539,7 @@ export function computeStatsFromIssues(issues: Issue[], statuses?: StatusMeta[])
     // isIssueBlocked MUST be checked first: in_progress+blockedBy → blocked (not inProgress)
     if (isIssueBlocked(issue)) {
       stats.blocked++
-    } else if (reviewSet.has(issue.status)) {
+    } else if (REVIEW_SET.has(issue.status)) {
       stats.inReview++
     } else if (useCategoryMode) {
       // Category-mode: route by category. Unknown/stale statuses are silently dropped.
@@ -587,10 +586,16 @@ export function computeReadyIssues(issues: Issue[]): Issue[] {
 /**
  * Set-equality check for status arrays: order does not matter.
  */
-export function isStatusSetEqual(selected: IssueStatus[], expected: readonly IssueStatus[] | IssueStatus[]): boolean {
+export function isStatusSetEqual(selected: readonly IssueStatus[], expected: readonly IssueStatus[]): boolean {
   if (selected.length !== expected.length) return false
   const set = new Set(selected)
   return expected.every(s => set.has(s))
+}
+
+/** Internal: equality check against a pre-built selected-set, avoids rebuilding the Set per call. */
+function setEqualsExpected(selSet: ReadonlySet<IssueStatus>, expected: readonly IssueStatus[]): boolean {
+  if (selSet.size !== expected.length) return false
+  return expected.every(s => selSet.has(s))
 }
 
 /** Shape of the category-resolved KPI sets passed to resolveKpiFilter. */
@@ -621,13 +626,15 @@ export type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocke
  */
 export function resolveKpiFilter(input: KpiResolverInputs): KpiFilter | null {
   const { selected: sel, workflowStatuses, allStatuses, sets } = input
-  if (sel.length === 0 || isStatusSetEqual(sel, workflowStatuses)) return 'workflow'
-  if (isStatusSetEqual(sel, allStatuses)) return 'total'
-  if (isStatusSetEqual(sel, sets.done)) return 'done'
-  if (isStatusSetEqual(sel, sets.open)) return 'open'
-  if (isStatusSetEqual(sel, sets.inProgress)) return 'in_progress'
-  if (isStatusSetEqual(sel, sets.frozen)) return 'deferred'
+  if (sel.length === 0) return 'workflow'
+  const selSet = new Set(sel)
+  if (setEqualsExpected(selSet, workflowStatuses)) return 'workflow'
+  if (setEqualsExpected(selSet, allStatuses)) return 'total'
+  if (setEqualsExpected(selSet, sets.done)) return 'done'
+  if (setEqualsExpected(selSet, sets.open)) return 'open'
+  if (setEqualsExpected(selSet, sets.inProgress)) return 'in_progress'
+  if (setEqualsExpected(selSet, sets.frozen)) return 'deferred'
   if (sel.length === 1 && sel[0] === 'blocked') return 'blocked'
-  if (isStatusSetEqual(sel, [...REVIEW_CHAIN_STATUSES])) return 'in_review'
+  if (setEqualsExpected(selSet, REVIEW_CHAIN_STATUSES)) return 'in_review'
   return null
 }

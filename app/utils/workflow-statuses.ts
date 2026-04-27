@@ -10,7 +10,7 @@ const WIP_CATEGORIES: ReadonlySet<StatusMeta['category']> = new Set(['wip'])
  * unexpectedly assigns them to the wrong category in the future.
  */
 export const REVIEW_CHAIN_STATUSES = ['inreview', 'simplified', 'reviewed', 'accepted'] as const
-const REVIEW_SET: ReadonlySet<string> = new Set(REVIEW_CHAIN_STATUSES)
+export const REVIEW_SET: ReadonlySet<string> = new Set(REVIEW_CHAIN_STATUSES)
 
 export function computeWorkflowStatuses(statuses: StatusMeta[]): IssueStatus[] {
   const out = new Set<IssueStatus>()
