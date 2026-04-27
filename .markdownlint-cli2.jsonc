@@ -1,0 +1,13 @@
+{
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD024": false
+  },
+  "ignores": [
+    "node_modules/",
+    "src-tauri/target/",
+    ".beads/",
+    "dist/"
+  ]
+}
