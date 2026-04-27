@@ -420,6 +420,20 @@ export function filterIssues(
 
 /**
  * Group issues into epic/children hierarchy.
+ *
+ * Epic grouping is preserved even when the epic itself is filtered out
+ * (e.g. clicking a KPI card narrows statuses), as long as at least one child
+ * of the epic is visible in paginatedIssues. The orphaned epic wrapper is
+ * inserted at the position of its first visible child in the sort order.
+ *
+ * Known limitation — direct parent only: only the immediate parent epic is
+ * restored. If there is a two-level hierarchy (epic-A → epic-B → task) and
+ * only the task passes the filter, epic-B wrapper appears but epic-A remains
+ * hidden. Multi-level restoration is out of scope.
+ *
+ * Known limitation — pagination: if the epic is absent from paginatedIssues
+ * AND all its children are beyond the current page window, no wrapper appears.
+ * This matches the existing paginatedIssues = slice(0, page*size) contract.
  */
 export function groupIssues(
   paginatedIssues: Issue[],
@@ -428,15 +442,32 @@ export function groupIssues(
   const groups: IssueGroup[] = []
   const processedIds = new Set<string>()
 
-  // Pass 1: Identify epic IDs
+  // Pass 1: Identify epic IDs + build epicById map for orphan restoration
   const allEpicIds = new Set<string>()
+  const epicById = new Map<string, Issue>()
   for (const issue of allIssues) {
-    if (issue.type === 'epic') allEpicIds.add(issue.id)
+    if (issue.type === 'epic') {
+      allEpicIds.add(issue.id)
+      epicById.set(issue.id, issue)
+    }
   }
 
+  // paginatedEpicIds: O(1) check "epic is directly visible in current page"
+  const paginatedEpicIds = new Set<string>()
+  for (const issue of paginatedIssues) {
+    if (issue.type === 'epic') paginatedEpicIds.add(issue.id)
+  }
+
+  // visibleEpicIds = paginatedEpicIds ∪ {parentId of children whose parent is an epic}
+  // Used to build filteredEpicChildrenMap and decide when to create orphan wrappers.
   const visibleEpicIds = new Set<string>()
   for (const issue of paginatedIssues) {
-    if (issue.type === 'epic') visibleEpicIds.add(issue.id)
+    if (issue.type === 'epic') {
+      visibleEpicIds.add(issue.id)
+    } else {
+      const parentId = getParentIdFromIssue(issue)
+      if (parentId && allEpicIds.has(parentId)) visibleEpicIds.add(parentId)
+    }
   }
 
   // Pass 2: Build children maps
@@ -480,10 +511,40 @@ export function groupIssues(
       processedIds.add(issue.id)
       filteredChildren.forEach(c => processedIds.add(c.id))
     } else {
-      // Skip children of visible epics (they'll be absorbed into the epic group)
       const parentId = getParentIdFromIssue(issue)
-      if (parentId && visibleEpicIds.has(parentId)) continue
 
+      if (parentId && visibleEpicIds.has(parentId)) {
+        // Child belongs to a visible epic.
+        if (paginatedEpicIds.has(parentId)) continue // epic is in paginated — absorbed at its own position
+        if (processedIds.has(parentId)) continue // orphan wrapper already created
+
+        // Orphan epic: epic itself was filtered out but a child is visible.
+        // Guard: if allIssues is out of sync and the epic object is missing, fall back to standalone.
+        const epic = epicById.get(parentId)
+        if (!epic) {
+          groups.push({ epic: null, children: [issue], childCount: 0, closedChildCount: 0 })
+          processedIds.add(issue.id)
+          continue
+        }
+
+        const filteredChildren = (filteredEpicChildrenMap.get(parentId) || []).sort(compareChildIssues)
+        const allChildren = (allEpicChildrenMap.get(parentId) || []).sort(compareChildIssues)
+        const closedCount = allChildren.filter(c => c.status === 'closed').length
+        const inProgressChild = allChildren.find(c => c.status === 'in_progress')
+
+        groups.push({
+          epic,
+          children: filteredChildren,
+          childCount: allChildren.length,
+          closedChildCount: closedCount,
+          inProgressChild: inProgressChild ? { id: inProgressChild.id, title: inProgressChild.title, priority: inProgressChild.priority } : undefined,
+        })
+        processedIds.add(parentId)
+        filteredChildren.forEach(c => processedIds.add(c.id))
+        continue
+      }
+
+      // Standalone task (no epic parent)
       groups.push({
         epic: null,
         children: [issue],
