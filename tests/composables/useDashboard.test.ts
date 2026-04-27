@@ -47,6 +47,7 @@ import { ref as vueRef, computed as vueComputed, watch as vueWatch } from 'vue'
 ;(globalThis as Record<string, unknown>).useBeadsPath = () => ({ beadsPath: beadsPathRef, hasStoredPath: vueRef(true) })
 
 import { bdReady, logFrontend } from '~/utils/bd-api'
+import { computeStatsFromIssues } from '~/utils/issue-helpers'
 
 const { useDashboard } = await import('~/composables/useDashboard')
 
@@ -70,6 +71,7 @@ describe('fetchStats — stale-path guard', () => {
     beadsPathRef.value = '/proj/A'
     vi.mocked(bdReady).mockReset()
     vi.mocked(logFrontend).mockClear()
+    vi.mocked(computeStatsFromIssues).mockClear()
   })
 
   // Race success-path: path changes after bdReady resolves — readyIssues must not be overwritten
@@ -127,5 +129,53 @@ describe('fetchStats — stale-path guard', () => {
       'warn',
       expect.stringContaining('[fetchStats] suppressed stale-path error'),
     )
+  })
+
+  // stats.value must not be overwritten by a stale fetch — guard must precede mutation
+  it('does not call computeStatsFromIssues when path changes mid-flight', async () => {
+    let resolveReady!: (data: Issue[]) => void
+    vi.mocked(bdReady).mockReturnValue(
+      new Promise((r) => { resolveReady = r }),
+    )
+
+    const { fetchStats } = useDashboard()
+    const promise = fetchStats([makeIssue('a-1'), makeIssue('a-2')])
+    beadsPathRef.value = '/proj/B'
+
+    resolveReady([])
+    await promise
+
+    // computeStatsFromIssues sits AFTER the path-guard. Stale fetch must bail before
+    // computing — otherwise it would overwrite the new project's stats.
+    expect(vi.mocked(computeStatsFromIssues)).not.toHaveBeenCalled()
+  })
+
+  // isLoading.value must not be reset in finally by a stale fetch while a new fetch is in-flight
+  it('does not reset isLoading after stale bail in finally block', async () => {
+    let resolveA!: (data: Issue[]) => void
+    let resolveB!: (data: Issue[]) => void
+
+    vi.mocked(bdReady)
+      .mockReturnValueOnce(new Promise((r) => { resolveA = r }))
+      .mockReturnValueOnce(new Promise((r) => { resolveB = r }))
+
+    const { fetchStats, isLoading } = useDashboard()
+
+    const promiseA = fetchStats([])
+    expect(isLoading.value).toBe(true)
+
+    beadsPathRef.value = '/proj/B'
+    const promiseB = fetchStats([])
+    expect(isLoading.value).toBe(true)
+
+    // A bails after switch — finally must NOT reset isLoading because B is in-flight
+    resolveA([])
+    await promiseA
+    expect(isLoading.value).toBe(true)
+
+    // B resolves normally
+    resolveB([])
+    await promiseB
+    expect(isLoading.value).toBe(false)
   })
 })

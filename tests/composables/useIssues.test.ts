@@ -102,7 +102,7 @@ vi.mock('~/composables/useExclusionFilters', () => ({
 }))
 
 // Импортируем после мокирования
-const { notifyStatusTransitions, setLocalWriteNotifier, useIssues, __resetForTests } = await import('~/composables/useIssues')
+const { notifyStatusTransitions, setLocalWriteNotifier, useIssues, resetForTests } = await import('~/composables/useIssues')
 
 // Вспомогательная функция для создания Issue-заглушки
 function makeIssue(id: string, status = 'open'): Issue {
@@ -236,7 +236,7 @@ describe('setLocalWriteNotifier — localWriteNotifier integration', () => {
 describe('fetchPollData — stale-path guard', () => {
   beforeEach(() => {
     beadsPathRef.value = '/proj/A'
-    __resetForTests()
+    resetForTests()
     vi.mocked(bdPollData).mockReset()
     vi.mocked(logFrontend).mockClear()
   })
@@ -353,7 +353,7 @@ describe('fetchPollData — stale-path guard', () => {
 describe('fetchIssues — stale-path guard', () => {
   beforeEach(() => {
     beadsPathRef.value = '/proj/A'
-    __resetForTests()
+    resetForTests()
     vi.mocked(bdList).mockReset()
   })
 
@@ -412,7 +412,7 @@ describe('fetchIssues — stale-path guard', () => {
 describe('fetchIssue — stale-path guard', () => {
   beforeEach(() => {
     beadsPathRef.value = '/proj/A'
-    __resetForTests()
+    resetForTests()
     vi.mocked(bdShow).mockReset()
   })
 
@@ -437,7 +437,7 @@ describe('fetchIssue — stale-path guard', () => {
 describe('searchIssues — stale-path guard', () => {
   beforeEach(() => {
     beadsPathRef.value = '/proj/A'
-    __resetForTests()
+    resetForTests()
     vi.mocked(bdSearch).mockReset()
   })
 

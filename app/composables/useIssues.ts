@@ -78,7 +78,7 @@ export async function endProjectSwitch() {
  * Reset all module-scope refs to their initial state.
  * FOR TESTS ONLY — do not call in production code.
  */
-export function __resetForTests() {
+export function resetForTests() {
   issues.value = []
   selectedIssue.value = null
   isLoading.value = false
