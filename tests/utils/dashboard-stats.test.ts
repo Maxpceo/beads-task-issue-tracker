@@ -220,3 +220,85 @@ describe('computeStatsFromIssues with statuses param', () => {
     expect(stats.open).toBe(1)
   })
 })
+
+describe('computeStatsFromIssues — category-mode with custom statuses', () => {
+  it('custom triage (active) → попадает в open count', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'triage' }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'triage', label: 'Triage', category: 'active' }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.open).toBe(1)
+    expect(stats.inProgress).toBe(0)
+    expect(stats.closed).toBe(0)
+  })
+
+  it('custom archived (done) → попадает в closed count', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'archived' }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'archived', label: 'Archived', category: 'done' }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.closed).toBe(1)
+    expect(stats.open).toBe(0)
+  })
+
+  it('custom peer_review (wip, не review-chain) → попадает в inProgress count', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'peer_review' }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'peer_review', label: 'Peer Review', category: 'wip' }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.inProgress).toBe(1)
+    expect(stats.inReview).toBe(0)
+  })
+
+  it('СТРАЖ: in_progress + blockedBy → blocked, не inProgress', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'in_progress', blockedBy: ['2'] }),
+      makeIssue({ id: '2', status: 'open' }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'in_progress', label: 'In Progress', category: 'wip' }),
+      makeStatus({ name: 'open', label: 'Open', category: 'active' }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.blocked).toBe(1)
+    expect(stats.inProgress).toBe(0)
+  })
+
+  it('СТРАЖ: inreview + blockedBy → blocked, не inReview', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'inreview', blockedBy: ['2'] }),
+      makeIssue({ id: '2', status: 'open' }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'inreview', label: 'In Review', category: 'wip' }),
+      makeStatus({ name: 'open', label: 'Open', category: 'active' }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.blocked).toBe(1)
+    expect(stats.inReview).toBe(0)
+  })
+
+  it('legacy-mode без statuses: closed/open/in_progress/deferred работают через literal switch', () => {
+    const issues = [
+      makeIssue({ id: '1', status: 'open' }),
+      makeIssue({ id: '2', status: 'in_progress' }),
+      makeIssue({ id: '3', status: 'closed' }),
+      makeIssue({ id: '4', status: 'deferred' }),
+    ]
+    // Без statuses — legacy mode
+    const stats = computeStatsFromIssues(issues)
+    expect(stats.open).toBe(1)
+    expect(stats.inProgress).toBe(1)
+    expect(stats.closed).toBe(1)
+    expect(stats.deferred).toBe(1)
+  })
+})

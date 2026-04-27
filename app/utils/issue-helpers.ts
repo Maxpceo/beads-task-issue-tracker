@@ -2,9 +2,16 @@
  * Pure helper functions for issue data manipulation.
  * Extracted from useIssues composable for testability.
  */
-import type { Issue, DashboardStats, IssueType, IssuePriority, ChildIssue } from '~/types/issue'
+import type { Issue, DashboardStats, IssueType, IssuePriority, IssueStatus, ChildIssue } from '~/types/issue'
 import type { StatusMeta } from '~/composables/useStatuses'
 import type { IssueGroup } from '~/composables/useIssues'
+import {
+  REVIEW_CHAIN_STATUSES,
+  computeActiveStatuses,
+  computeInProgressKpiStatuses,
+  computeFrozenKpiStatuses,
+  computeDoneStatuses,
+} from '~/utils/workflow-statuses'
 
 /**
  * Deduplicate issues by ID, keeping the most recently updated version.
@@ -515,40 +522,41 @@ export function computeStatsFromIssues(issues: Issue[], statuses?: StatusMeta[])
     byPriority: { p0: 0, p1: 0, p2: 0, p3: 0, p4: 0 },
   }
 
-  const REVIEW_STATUSES = new Set(['inreview', 'simplified', 'reviewed', 'accepted'])
-  const metaByName = statuses ? new Map(statuses.map(s => [s.name, s])) : null
+  const reviewSet = new Set<string>(REVIEW_CHAIN_STATUSES)
+
+  // Category-mode: use statuses map for full category-based routing.
+  // Legacy-mode: fall back to literal status names for backward compat (unit tests, etc.).
+  const useCategoryMode = !!statuses
+  const activeSet = useCategoryMode ? new Set(computeActiveStatuses(statuses!)) : null
+  const wipKpiSet = useCategoryMode ? new Set(computeInProgressKpiStatuses(statuses!)) : null
+  const frozenKpiSet = useCategoryMode ? new Set(computeFrozenKpiStatuses(statuses!)) : null
+  const doneSet = useCategoryMode ? new Set(computeDoneStatuses(statuses!)) : null
 
   for (const issue of issues) {
     if (isIssueWorkflow(issue)) {
       stats.workflow++
     }
 
+    // isIssueBlocked MUST be checked first: in_progress+blockedBy → blocked (not inProgress)
     if (isIssueBlocked(issue)) {
       stats.blocked++
-    } else if (REVIEW_STATUSES.has(issue.status)) {
+    } else if (reviewSet.has(issue.status)) {
       stats.inReview++
+    } else if (useCategoryMode) {
+      // Category-mode: route by category. Unknown/stale statuses are silently dropped.
+      if (activeSet!.has(issue.status)) stats.open++
+      else if (wipKpiSet!.has(issue.status)) stats.inProgress++
+      else if (doneSet!.has(issue.status)) stats.closed++
+      else if (frozenKpiSet!.has(issue.status)) stats.deferred++
     } else {
+      // Legacy literal-fallback (backward compat, used when statuses not provided)
       switch (issue.status) {
-        case 'open':
-          stats.open++
+        case 'open': stats.open++; break
+        case 'in_progress': stats.inProgress++; break
+        case 'closed': stats.closed++; break
+        default:
+          if (issue.status === 'deferred') stats.deferred++
           break
-        case 'in_progress':
-          stats.inProgress++
-          break
-        case 'closed':
-          stats.closed++
-          break
-        default: {
-          // Deferred: use category lookup when statuses map is available, else literal fallback
-          if (metaByName) {
-            if (metaByName.get(issue.status)?.category === 'frozen' && issue.status !== 'pinned') {
-              stats.deferred++
-            }
-          } else if (issue.status === 'deferred') {
-            stats.deferred++
-          }
-          break
-        }
       }
     }
 
@@ -574,4 +582,52 @@ export function computeReadyIssues(issues: Issue[]): Issue[] {
   return issues.filter(i =>
     i.status === 'open' && (!i.blockedBy || i.blockedBy.length === 0),
   )
+}
+
+/**
+ * Set-equality check for status arrays: order does not matter.
+ */
+export function isStatusSetEqual(selected: IssueStatus[], expected: readonly IssueStatus[] | IssueStatus[]): boolean {
+  if (selected.length !== expected.length) return false
+  const set = new Set(selected)
+  return expected.every(s => set.has(s))
+}
+
+/** Shape of the category-resolved KPI sets passed to resolveKpiFilter. */
+export interface KpiStatusSets {
+  open: IssueStatus[]
+  inProgress: IssueStatus[]
+  frozen: IssueStatus[]
+  done: IssueStatus[]
+}
+
+/** Input bundle for resolveKpiFilter — all data needed to detect the active card. */
+export interface KpiResolverInputs {
+  selected: IssueStatus[]
+  workflowStatuses: IssueStatus[]
+  allStatuses: IssueStatus[]
+  sets: KpiStatusSets
+}
+
+/** KPI card identifier (matches the union used in handleKpiClick). */
+export type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow' | 'done'
+
+/**
+ * Resolve which KPI card is currently active based on the selected status filter.
+ *
+ * Policy: strict set-equality. If the filter contains a subset/superset of a card's
+ * status set (e.g. user manually picked one custom status out of many), no card is
+ * highlighted (returns null). This avoids false positives with custom statuses.
+ */
+export function resolveKpiFilter(input: KpiResolverInputs): KpiFilter | null {
+  const { selected: sel, workflowStatuses, allStatuses, sets } = input
+  if (sel.length === 0 || isStatusSetEqual(sel, workflowStatuses)) return 'workflow'
+  if (isStatusSetEqual(sel, allStatuses)) return 'total'
+  if (isStatusSetEqual(sel, sets.done)) return 'done'
+  if (isStatusSetEqual(sel, sets.open)) return 'open'
+  if (isStatusSetEqual(sel, sets.inProgress)) return 'in_progress'
+  if (isStatusSetEqual(sel, sets.frozen)) return 'deferred'
+  if (sel.length === 1 && sel[0] === 'blocked') return 'blocked'
+  if (isStatusSetEqual(sel, [...REVIEW_CHAIN_STATUSES])) return 'in_review'
+  return null
 }

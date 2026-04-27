@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Issue, IssueStatus, UpdateIssuePayload } from '~/types/issue'
-import { isIssueBlocked } from '~/utils/issue-helpers'
+import { isIssueBlocked, isStatusSetEqual, resolveKpiFilter, type KpiFilter, type KpiStatusSets } from '~/utils/issue-helpers'
+import { REVIEW_CHAIN_STATUSES, computeActiveStatuses, computeInProgressKpiStatuses, computeFrozenKpiStatuses, computeDoneStatuses } from '~/utils/workflow-statuses'
 import { logFrontend } from '~/utils/bd-api'
 import { useProjectProfile } from '~/composables/useProjectProfile'
 import { setLocalWriteNotifier, isProjectSwitching, beginProjectSwitch, endProjectSwitch } from '~/composables/useIssues'
@@ -55,6 +56,7 @@ const { t } = useI18n()
 // Composables
 const { closePalette } = useCommandPalette()
 const { filters, workflowStatuses, allStatuses, isOnlyActive, toggleOnlyActive, toggleStatus, toggleType, togglePriority, toggleAssignee, clearFilters, setStatusFilter, setAllFilters, setSearch, toggleLabelFilter } = useFilters()
+const { statuses } = useStatuses()
 const { columns, toggleColumn, setColumns, resetColumns } = useColumnConfig()
 const { beadsPath, hasStoredPath } = useBeadsPath()
 const { success: notifySuccess, error: notifyError, warning: notifyWarning } = useNotification()
@@ -953,29 +955,23 @@ const handleRemoveLabelFilter = (label: string) => {
 }
 
 // KPI filter handlers
-type KpiFilter = 'total' | 'open' | 'in_progress' | 'in_review' | 'blocked' | 'deferred' | 'workflow' | 'done'
 
-/** Set-equality: порядок элементов не важен */
-const isStatusSetEqual = (selected: IssueStatus[], expected: IssueStatus[]) => {
-  if (selected.length !== expected.length) return false
-  const set = new Set(selected)
-  return expected.every(s => set.has(s))
-}
+/** Category-resolved status sets for each KPI card. Recomputed when statuses change. */
+const kpiStatusSets = computed<KpiStatusSets>(() => ({
+  open: computeActiveStatuses(statuses.value),
+  inProgress: computeInProgressKpiStatuses(statuses.value),
+  frozen: computeFrozenKpiStatuses(statuses.value),
+  done: computeDoneStatuses(statuses.value),
+}))
 
-const REVIEW_STATUSES_KPI = ['inreview', 'simplified', 'reviewed', 'accepted'] as const
-
-const activeKpiFilter = computed<KpiFilter | null>(() => {
-  const sel = filters.value.status
-  if (sel.length === 0 || isStatusSetEqual(sel, workflowStatuses.value)) return 'workflow'
-  if (sel.length === 1 && sel[0] === 'closed') return 'done'
-  if (isStatusSetEqual(sel, allStatuses.value)) return 'total'
-  if (sel.length === 1 && sel[0] === 'open') return 'open'
-  if (sel.length === 1 && sel[0] === 'in_progress') return 'in_progress'
-  if (sel.length === 1 && sel[0] === 'blocked') return 'blocked'
-  if (sel.length === 1 && sel[0] === 'deferred') return 'deferred'
-  if (isStatusSetEqual(sel, [...REVIEW_STATUSES_KPI])) return 'in_review'
-  return null
-})
+const activeKpiFilter = computed<KpiFilter | null>(() =>
+  resolveKpiFilter({
+    selected: filters.value.status,
+    workflowStatuses: workflowStatuses.value,
+    allStatuses: allStatuses.value,
+    sets: kpiStatusSets.value,
+  }),
+)
 
 const handleKpiClick = (kpi: KpiFilter) => {
   if (kpi === 'workflow') {
@@ -983,17 +979,17 @@ const handleKpiClick = (kpi: KpiFilter) => {
   } else if (kpi === 'total') {
     setAllFilters()
   } else if (kpi === 'open') {
-    setStatusFilter(['open'])
+    setStatusFilter([...kpiStatusSets.value.open])
   } else if (kpi === 'in_progress') {
-    setStatusFilter(['in_progress'])
+    setStatusFilter([...kpiStatusSets.value.inProgress])
   } else if (kpi === 'blocked') {
     setStatusFilter(['blocked'])
   } else if (kpi === 'deferred') {
-    setStatusFilter(['deferred'])
+    setStatusFilter([...kpiStatusSets.value.frozen])
   } else if (kpi === 'in_review') {
-    setStatusFilter([...REVIEW_STATUSES_KPI])
+    setStatusFilter([...REVIEW_CHAIN_STATUSES])
   } else if (kpi === 'done') {
-    setStatusFilter(['closed'])
+    setStatusFilter([...kpiStatusSets.value.done])
   }
 }
 
