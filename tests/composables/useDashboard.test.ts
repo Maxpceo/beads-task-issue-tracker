@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import type { Issue } from '~/types/issue'
+import { makeDeferred } from '../helpers/deferred'
 
 // Reactive beadsPath — allows mutating mid-promise to simulate project switch
 const beadsPathRef = ref('/proj/A')
@@ -76,10 +77,8 @@ describe('fetchStats — stale-path guard', () => {
 
   // Race success-path: path changes after bdReady resolves — readyIssues must not be overwritten
   it('does not write readyIssues when path changes mid-flight', async () => {
-    let resolveReady!: (data: Issue[]) => void
-    vi.mocked(bdReady).mockReturnValue(
-      new Promise((r) => { resolveReady = r }),
-    )
+    const { promise: ipcPromise, resolve: resolveReady } = makeDeferred<Issue[]>()
+    vi.mocked(bdReady).mockReturnValue(ipcPromise)
 
     const { fetchStats, readyIssues } = useDashboard()
 
@@ -133,10 +132,8 @@ describe('fetchStats — stale-path guard', () => {
 
   // stats.value must not be overwritten by a stale fetch — guard must precede mutation
   it('does not call computeStatsFromIssues when path changes mid-flight', async () => {
-    let resolveReady!: (data: Issue[]) => void
-    vi.mocked(bdReady).mockReturnValue(
-      new Promise((r) => { resolveReady = r }),
-    )
+    const { promise: ipcPromise, resolve: resolveReady } = makeDeferred<Issue[]>()
+    vi.mocked(bdReady).mockReturnValue(ipcPromise)
 
     const { fetchStats } = useDashboard()
     const promise = fetchStats([makeIssue('a-1'), makeIssue('a-2')])
@@ -152,12 +149,12 @@ describe('fetchStats — stale-path guard', () => {
 
   // isLoading.value must not be reset in finally by a stale fetch while a new fetch is in-flight
   it('does not reset isLoading after stale bail in finally block', async () => {
-    let resolveA!: (data: Issue[]) => void
-    let resolveB!: (data: Issue[]) => void
+    const { promise: promiseDeferredA, resolve: resolveA } = makeDeferred<Issue[]>()
+    const { promise: promiseDeferredB, resolve: resolveB } = makeDeferred<Issue[]>()
 
     vi.mocked(bdReady)
-      .mockReturnValueOnce(new Promise((r) => { resolveA = r }))
-      .mockReturnValueOnce(new Promise((r) => { resolveB = r }))
+      .mockReturnValueOnce(promiseDeferredA)
+      .mockReturnValueOnce(promiseDeferredB)
 
     const { fetchStats, isLoading } = useDashboard()
 

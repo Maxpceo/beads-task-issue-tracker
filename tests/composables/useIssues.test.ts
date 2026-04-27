@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
 import type { Issue } from '~/types/issue'
+import { makeDeferred } from '../helpers/deferred'
 import { bdCreate, bdPollData, bdList, bdShow, bdSearch, logFrontend } from '~/utils/bd-api'
 import type { PollData } from '~/utils/bd-api'
 
@@ -243,10 +244,8 @@ describe('fetchPollData — stale-path guard', () => {
 
   // 8.3 — success-path bail: path changes after IPC resolves
   it('returns null and does not mutate issues when path changes mid-flight', async () => {
-    let resolvePoll!: (data: PollData) => void
-    vi.mocked(bdPollData).mockReturnValue(
-      new Promise((r) => { resolvePoll = r }),
-    )
+    const { promise: ipcPromise, resolve: resolvePoll } = makeDeferred<PollData>()
+    vi.mocked(bdPollData).mockReturnValue(ipcPromise)
 
     const { fetchPollData, issues } = useIssues()
     const promise = fetchPollData()
@@ -297,10 +296,8 @@ describe('fetchPollData — stale-path guard', () => {
   // 8.6 — selectedIssue sanctity: stale fetch must not overwrite selectedIssue from new project
   it('does not overwrite selectedIssue that was set for the new project', async () => {
     const newProjectIssue = makeIssue('B-1')
-    let resolvePoll!: (data: PollData) => void
-    vi.mocked(bdPollData).mockReturnValue(
-      new Promise((r) => { resolvePoll = r }),
-    )
+    const { promise: ipcPromise, resolve: resolvePoll } = makeDeferred<PollData>()
+    vi.mocked(bdPollData).mockReturnValue(ipcPromise)
 
     const { fetchPollData, selectedIssue } = useIssues()
     // Simulate that new project already set selectedIssue
@@ -317,11 +314,6 @@ describe('fetchPollData — stale-path guard', () => {
 
   // 8.7 — lastKnownCount/Updated sanctity
   it('does not overwrite lastKnownCount after path switch', async () => {
-    let resolvePoll!: (data: PollData) => void
-    vi.mocked(bdPollData).mockReturnValue(
-      new Promise((r) => { resolvePoll = r }),
-    )
-
     const { fetchPollData } = useIssues()
 
     // Pre-populate lastKnownCount by running a successful fetch first
@@ -333,14 +325,13 @@ describe('fetchPollData — stale-path guard', () => {
     await fetchPollData()
     // lastKnownCount should now be 2
 
-    // Now reset and set up stale flight
-    vi.mocked(bdPollData).mockReturnValue(
-      new Promise((r) => { resolvePoll = r }),
-    )
-    const promise = fetchPollData()
+    // Now set up stale flight
+    const { promise: ipcPromise, resolve: resolvePoll } = makeDeferred<PollData>()
+    vi.mocked(bdPollData).mockReturnValue(ipcPromise)
+    const staleFlight = fetchPollData()
     beadsPathRef.value = '/proj/C'
     resolvePoll({ openIssues: [makeIssue('A-1')], closedIssues: [], readyIssues: [] })
-    await promise
+    await staleFlight
 
     // lastKnownCount must not be 1 (stale A's data)
     // It should stay at 2 (from B's fetch before the switch)
@@ -358,10 +349,8 @@ describe('fetchIssues — stale-path guard', () => {
   })
 
   it('returns without mutating issues when path changes mid-flight', async () => {
-    let resolveList!: (data: Issue[]) => void
-    vi.mocked(bdList).mockReturnValue(
-      new Promise((r) => { resolveList = r }),
-    )
+    const { promise: ipcPromise, resolve: resolveList } = makeDeferred<Issue[]>()
+    vi.mocked(bdList).mockReturnValue(ipcPromise)
 
     const { fetchIssues, issues } = useIssues()
     const promise = fetchIssues()
@@ -375,13 +364,13 @@ describe('fetchIssues — stale-path guard', () => {
 
   // 8.8 — isLoading race: stale fetchIssues bail must not reset isLoading of the new fetch
   it('does not reset isLoading after stale bail in finally block', async () => {
-    let resolveA!: (data: Issue[]) => void
-    let resolveB!: (data: Issue[]) => void
+    const { promise: promiseDeferredA, resolve: resolveA } = makeDeferred<Issue[]>()
+    const { promise: promiseDeferredB, resolve: resolveB } = makeDeferred<Issue[]>()
 
     // First call (A): stays in-flight
     vi.mocked(bdList)
-      .mockReturnValueOnce(new Promise((r) => { resolveA = r }))
-      .mockReturnValueOnce(new Promise((r) => { resolveB = r }))
+      .mockReturnValueOnce(promiseDeferredA)
+      .mockReturnValueOnce(promiseDeferredB)
 
     const { fetchIssues, isLoading } = useIssues()
 
@@ -417,10 +406,8 @@ describe('fetchIssue — stale-path guard', () => {
   })
 
   it('returns null and does not write selectedIssue when path changes mid-flight', async () => {
-    let resolveShow!: (data: Issue | null) => void
-    vi.mocked(bdShow).mockReturnValue(
-      new Promise((r) => { resolveShow = r }),
-    )
+    const { promise: ipcPromise, resolve: resolveShow } = makeDeferred<Issue | null>()
+    vi.mocked(bdShow).mockReturnValue(ipcPromise)
 
     const { fetchIssue, selectedIssue } = useIssues()
     const promise = fetchIssue('a-1')
@@ -442,10 +429,8 @@ describe('searchIssues — stale-path guard', () => {
   })
 
   it('does not write issues when path changes during search', async () => {
-    let resolveSearch!: (data: Issue[]) => void
-    vi.mocked(bdSearch).mockReturnValue(
-      new Promise((r) => { resolveSearch = r }),
-    )
+    const { promise: ipcPromise, resolve: resolveSearch } = makeDeferred<Issue[]>()
+    vi.mocked(bdSearch).mockReturnValue(ipcPromise)
 
     const { searchIssues, issues } = useIssues()
     const promise = searchIssues('test query')

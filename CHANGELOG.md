@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Internal
+
+- **Extract `makeDeferred<T>()` test helper** (`beads-task-issue-tracker-6vww`): added `tests/helpers/deferred.ts` exposing `makeDeferred<T>()` that returns `{ promise, resolve, reject }`. Replaced 12 occurrences of the inline `let resolveX!: (v: T) => void; new Promise(r => { resolveX = r })` boilerplate in `tests/composables/useIssues.test.ts` (8) and `tests/composables/useDashboard.test.ts` (4) with `const { promise: ipcPromise, resolve: resolveX } = makeDeferred<T>()`. Eliminates non-null assertions and copy-paste risk in async stale-path guard tests.
+
 ### Added
 
 - **Performance regression gate** (`beads-task-issue-tracker-6bm`): vitest test in `tests/perf/group-issues.test.ts` measures `groupIssues` mean over 50 iterations against a deterministic 500-issue fixture (50 epics × 10 children) and fails if mean exceeds 100ms. Runs as part of `pnpm test` (locally and in CI). Catches O(n²) regressions automatically. README documents manual MCP perf-check workflow for live scenarios (SWR cache, IPC roundtrip, Vue reactivity) that the automated gate cannot observe.
