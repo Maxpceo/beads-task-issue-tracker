@@ -80,6 +80,7 @@ Bead `kqc` добавил клиентский search по 4 полям (id/titl
 **Делать (b): заменить `bd list --json` на `bd export` в `bd_list` IPC.**
 
 Concrete scope:
+
 1. В `src-tauri/src/lib.rs:2824` (`bd_list`) сменить команду на `bd export` при `bd_major >= 1`.
 2. Распарсить JSONL (line-delimited), отфильтровать `._type == "memory"`.
 3. Убедиться что `transform_issue` корректно читает новые поля (должно — поля уже есть в struct).

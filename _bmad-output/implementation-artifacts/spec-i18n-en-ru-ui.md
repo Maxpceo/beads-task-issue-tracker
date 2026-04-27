@@ -11,7 +11,6 @@ context:
 
 <!-- Spec Change Log: Ask First #3 (Nuxt 4 compat) resolved 2026-04-19 via separate PR #43 (Nuxt 4.3 → 4.4.2). Can now use @nuxtjs/i18n@10.2.4 (latest). -->
 
-
 <frozen-after-approval reason="human-owned intent — do not modify unless human renegotiates">
 
 ## Intent
@@ -23,18 +22,21 @@ context:
 ## Boundaries & Constraints
 
 **Always:**
+
 - Все user-facing строки UI обёрнуты в `$t('key')` — никакого хардкода в компонентах
 - Fallback language = `en`; если ключ отсутствует в `ru.json` — показываем EN-текст, не ключ
 - Persistence: `useLocalStorage('beads:locale', null)` — `null` = auto, `'en'`/`'ru'` = explicit
 - Missing-key warnings логируем через `logFrontend('warn', ...)` только в dev, в prod silent
 
 **Ask First:**
+
 - Встречена строка, склеенная через `+` / template literal с переменной в середине → HALT, решить: плюрализация или `$t('key', { var })`
 - Встречен `v-html` с локализованной (не user-content) строкой → HALT (security)
 - `@nuxtjs/i18n@9.x` несовместим с Nuxt 4 `compatibilityVersion: 4` → HALT, обсудить альтернативу
 - Нативное меню Tauri не удаётся реактивно пересоздать → HALT, выбрать: требовать рестарт или оставить меню на EN
 
 **Never:**
+
 - Не переводить идентификаторы bd: статусы (`open`/`in_progress`/…), типы (`bug`/`task`/…), приоритеты (`P0`–`P4`). Badge-компоненты показывают идентификаторы as-is на любом языке
 - Не переводить user-content: issue title, description, комментарии, labels
 - Не переводить Rust backend: `log_*!`, error messages из Tauri команд — остаются EN (scope отдельного спека)
@@ -64,6 +66,7 @@ context:
 ## Code Map
 
 **New files:**
+
 - `i18n/locales/en.json` — english UI strings, nested по компоненту/фиче
 - `i18n/locales/ru.json` — russian
 - `i18n/locales/README.md` — правила: naming, что не переводим, fallback policy
@@ -73,10 +76,12 @@ context:
 - `tests/utils/date-format.test.ts`
 
 **Modified (infra):**
+
 - `package.json` — `@nuxtjs/i18n` + lock file
 - `nuxt.config.ts:33` — добавить модуль, strategy=`no_prefix`, defaultLocale=`en`, fallbackLocale=`en`, detectBrowserLanguage=`false`
 
 **Modified (components):**
+
 - `app/components/layout/*.vue` (9) — AppHeader, AboutDialog, DebugDialog, DebugPanel, SettingsDialog, UpdateDialog, UpdateIndicator, DialogsLayer, CollapsibleSection
 - `app/components/dashboard/*.vue` (10) — KpiCard, OnboardingCard, PrerequisitesCard, PathSelector, FolderPicker, PinnedList, QuickList, PriorityChart, StatusChart, DashboardContent
 - `app/components/details/*.vue` (4) — IssueDetailHeader, IssueForm, IssuePreview, CommentSection
@@ -87,6 +92,7 @@ context:
 - `app/components/issues/IssueTable.vue:274-286`, `app/components/details/IssuePreview.vue:344-356` — заменить inline `formatDate` на импорт из `~/utils/date-format`
 
 **Not modified:**
+
 - `src-tauri/**` (scope: только UI)
 - Badge content (bd-идентификаторы)
 - `app/utils/bd-api.ts` (IPC остаётся EN)
@@ -94,6 +100,7 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
+
 - [ ] `package.json`, `nuxt.config.ts` -- установить и сконфигурировать `@nuxtjs/i18n` -- инфраструктура. **Проверить совместимость с Nuxt 4 compatibilityVersion:4 перед фиксацией версии**
 - [ ] `app/composables/useLocale.ts` + test -- single source of truth для языка
 - [ ] `app/utils/date-format.ts` + test -- вынести formatDate, принимать locale
@@ -110,6 +117,7 @@ context:
 - [ ] Manual QA через Tauri MCP — см. Verification
 
 **Acceptance Criteria:**
+
 - Given свежая установка, sys = `ru-RU`, when запуск, then UI на RU
 - Given свежая установка, sys = `de-DE`, when запуск, then UI на EN (fallback)
 - Given user выбрал "English" в Settings, when reload, then UI на EN независимо от системы
@@ -127,20 +135,24 @@ context:
 ## Design Notes
 
 **Locale resolution (useLocale):**
+
 1. `localStorage.getItem('beads:locale')` — если валидное (`'en'`/`'ru'`) → использовать
 2. Иначе `navigator.language.startsWith('ru')` → `'ru'`, иначе `'en'`
 3. Невалидные в localStorage игнорируются (fallback на шаг 2)
 
 **RU plural rules (vue-i18n):**
+
 ```json
 { "issues": { "count": "нет задач | {count} задача | {count} задачи | {count} задач" } }
 ```
+
 vue-i18n требует explicit `pluralRules` конфиг для `ru` — иначе применит английские правила и выдаст неверную форму.
 
 **Rebuild меню Tauri:**
 `useAppMenu` watches `useLocale().locale` — на изменение dispose старое меню, создаёт новое. Проверить отсутствие мигания menubar на macOS.
 
 **Key naming:**
+
 - `app.*` — глобальные (title, version)
 - `common.*` — переиспользуемые (ok, cancel, confirm, delete)
 - `<component>.<subcomponent>.<element>` — специфичные (e.g. `settings.language.title`)
@@ -148,12 +160,14 @@ vue-i18n требует explicit `pluralRules` конфиг для `ru` — ин
 ## Verification
 
 **Commands:**
+
 - `pnpm test` -- все unit-тесты passed (+ новые)
 - `npx vue-tsc --noEmit` -- 0 ошибок
 - `grep -rE ">\s*[А-Я][а-я]+|>\s*[A-Z][a-z]+\s*<" app/components` -- только `$t()` и интерполяции, без хардкода
 - Скрипт симметрии ключей EN/RU — оба JSON имеют одинаковый набор путей
 
 **Manual checks (Tauri MCP):**
+
 - Screenshot EN → RU → EN без рестарта; UI реактивно
 - Очистить localStorage, сменить system language на RU в macOS, запуск → UI на RU
 - Title окна меняется; нативное меню macOS обновляется (About/Settings/Check/Logs — локализованы, Edit/Window — остаются native)

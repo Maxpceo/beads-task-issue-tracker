@@ -30,6 +30,7 @@ If anything is unclear — stop and ask questions BEFORE starting work (intent o
 ## When you are in over your head
 
 You may stop and say "this merge is too complex for me". Bad resolution is worse than no resolution. Escalate with status BLOCKED when:
+
 - Conflicts where both sides have equally valid intent and you cannot decide
 - Conflicts in files you don't recognize
 - The task needs architectural decisions with multiple valid approaches

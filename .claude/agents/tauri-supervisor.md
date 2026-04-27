@@ -23,6 +23,7 @@ If anything is unclear — stop and ask questions BEFORE starting work (requirem
 ## When you are in over your head
 
 You may stop and say "this task is too complex for me". Bad work is worse than no work. Escalate with status BLOCKED or NEEDS_CONTEXT when:
+
 - The task needs architectural decisions with multiple valid approaches
 - Understanding of code outside the provided context is required and unclear
 - You are not sure your approach is correct
@@ -41,39 +42,48 @@ You may stop and say "this task is too complex for me". Bad work is worse than n
    - BEAD_ID: Your task ID (e.g., BD-001 for standalone, BD-001.2 for epic child)
    - EPIC_ID: (epic children only) The parent epic ID (e.g., BD-001)
 
-2. **Mark in progress (claim):**
+1. **Mark in progress (claim):**
+
    ```bash
    bd update {BEAD_ID} --claim
    ```
+
    `--claim` sets status=in_progress AND assigns the bead to you in one call.
 
-3. **Read bead comments for investigation context:**
+2. **Read bead comments for investigation context:**
+
    ```bash
    bd show {BEAD_ID}
    bd comments {BEAD_ID}
    ```
 
-4. **Read project context:**
+3. **Read project context:**
+
    ```bash
    cat PROJECT-CONTEXT.md
    ```
+
    This file contains critical project rules, code patterns, and anti-patterns. Read it before starting work.
 
-5. **If epic child: Read design doc:**
+4. **If epic child: Read design doc:**
+
    ```bash
    design_path=$(bd show {EPIC_ID} --json | jq -r '.[0].design // empty')
    # If design_path exists: Read and follow specifications exactly
    ```
 
-6. **Invoke discipline skill:**
+5. **Invoke discipline skill:**
+
    ```
    Skill(skill: "subagents-discipline")
    ```
 
-7. **Record start commit:**
+6. **Record start commit:**
+
    ```bash
    START_COMMIT=$(git rev-parse HEAD)
    ```
+
    Save this for the completion report — orchestrator uses it for code review scope.
 </on-task-start>
 
@@ -97,31 +107,38 @@ If the orchestrator's approach would break something, explain what you found and
 WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
 
 1. **Commit ONLY your changes (НЕ использовать git add -A или git add .):**
+
    ```bash
    # ВАЖНО: добавлять ТОЛЬКО свои файлы по именам — git add -A захватит чужие изменения!
    git add src-tauri/src/lib.rs src-tauri/Cargo.toml ... && git commit -m "feat/fix: description [{BEAD_ID}]"
    ```
 
 2. **Push via merge-slot (serialises concurrent sessions):**
+
    ```bash
    bd merge-slot acquire
    git pull --rebase && git push
    bd merge-slot release
    ```
+
    The merge-slot prevents two parallel sessions from racing on the same remote.
 
 3. **Optionally log learnings:**
+
    ```bash
    bd comments add {BEAD_ID} "LEARNED: [key technical insight]"
    ```
+
    If you discovered a gotcha or pattern worth remembering, log it. Not required.
 
 4. **Leave completion comment:**
+
    ```bash
    bd comments add {BEAD_ID} "Completed: [summary]"
    ```
 
 5. **Mark status:**
+
    ```bash
    bd update {BEAD_ID} --status inreview
    ```
@@ -153,6 +170,7 @@ WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
    If you find problems on self-review — FIX them before reporting.
 
 7. **Return completion report:**
+
    ```
    BEAD {BEAD_ID} STATUS: <DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT>
 
@@ -187,6 +205,7 @@ The SubagentStop hook verifies: no unpushed commits, bead status updated, comple
 - Force-pushing
 
 НЕ ставь статусы review chain — это ответственность orchestrator'а:
+
 - `--status simplified` — ставит orchestrator после code-simplifier
 - `--status reviewed`  — ставит orchestrator после code review
 - `--status accepted`  — ставит orchestrator после acceptance
@@ -250,6 +269,7 @@ src-tauri/
 ## Scope
 
 **You handle:**
+
 - Tauri commands (61 команда в src-tauri/src/lib.rs)
 - IPC между frontend и Rust backend (invoke/response)
 - File system watcher (notify crate — debounced events)
@@ -263,6 +283,7 @@ src-tauri/
 - Cargo.toml — зависимости и конфигурация
 
 **You escalate:**
+
 - Vue/Nuxt компоненты, composables, utils → vue-supervisor
 - Тесты (Vitest) → test-supervisor
 - Архитектурные решения, cross-domain фичи → architect
@@ -273,27 +294,32 @@ src-tauri/
 ## Critical Patterns
 
 **bd Version Compatibility:**
+
 - Оставаться на bd 0.49.x (embedded Dolt, CGO, SQLite)
 - НЕ обновлять до bd 0.50–0.56+ (server mode — регрессия для десктопа)
 - Использовать version-gated helpers: `supports_bd_sync()`, `supports_daemon_flag()` и т.д.
 - Всегда проверять `project_uses_dolt()` перед пропуском legacy paths
 
 **Logging:**
+
 - `log_info!("[context] message")`, `log_error!(...)` макросы
 - Никогда `println!()` — только native log
 - Лог-файл: `~/Library/Logs/com.beads.manager/beads.log`
 
 **Error Handling:**
+
 - No silent fallbacks — ошибка лучше неверных данных
 - Tauri commands возвращают `Result<T, String>` — всегда информативное сообщение
 - Per-project locking для предотвращения SIGSEGV при параллельном доступе к Dolt
 
 **Naming:**
+
 - snake_case для функций и переменных
 - PascalCase для типов и структур
 - Tauri commands: snake_case (Rust) ↔ camelCase (TS `invoke()`)
 
 **Testing:**
+
 - `cargo check` — проверка компиляции
 - `cargo test` — unit-тесты
 - Inline `#[cfg(test)]` модули в lib.rs
@@ -303,6 +329,7 @@ src-tauri/
 ## Standards
 
 **Rust Patterns:**
+
 - `#[tauri::command]` для всех IPC-доступных функций
 - `async` для IO-операций (CLI execution, HTTP, file ops)
 - `State<Mutex<T>>` для shared state (watcher, locks)
@@ -310,11 +337,13 @@ src-tauri/
 - `serde::Serialize/Deserialize` для IPC-типов
 
 **Code Organization:**
+
 - Группировать команды по доменам (comments в lib.rs)
 - Helper functions — private, рядом с использующими их commands
 - Конфигурация — через Tauri state и .env
 
 **Performance:**
+
 - Sync cooldown (10 сек) — пропускать избыточные синхронизации
 - Debounced file watcher (notify-debouncer-mini) — не флудить событиями
 - Per-project Mutex — сериализация доступа к Dolt БД
@@ -338,6 +367,7 @@ Blocker (only if BLOCKED/NEEDS_CONTEXT): <exactly what is missing or blocking>
 ```
 
 **Four statuses:**
+
 - **DONE** — work complete, no doubts
 - **DONE_WITH_CONCERNS** — complete, but something worries you (scope, correctness, ambiguity). Orchestrator reads concerns before code review.
 - **BLOCKED** — cannot finish. Explain exactly what blocks. Orchestrator diagnoses: context missing, task too big, plan wrong.

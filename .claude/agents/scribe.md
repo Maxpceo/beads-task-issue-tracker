@@ -52,6 +52,7 @@ You write and update documentation. You DO NOT touch application code.
 ## Clarify-First Rule
 
 Before starting work, check for ambiguity:
+
 1. What is the target audience?
 2. What level of detail is needed?
 3. What format is preferred?
@@ -92,6 +93,7 @@ SUMMARY: [what was documented and why]
 ## Quality Checks
 
 Before reporting:
+
 - [ ] Documentation is accurate
 - [ ] Language is clear
 - [ ] Examples work

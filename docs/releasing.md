@@ -23,15 +23,18 @@
 Порядок: написать код → мёржить в main → собрать релиз.
 
 ### 1.1. Перед релизом
+
 - Все нужные beads — в статусе `accepted` (не `in_progress`, не `inreview`).
 - Все feature-ветки смёржены в `main` (skill **`merge-to-main`** или вручную).
 - `pnpm test && npx vue-tsc --noEmit` — зелёные.
 - `CHANGELOG.md` под `## [Unreleased]` содержит записи на **английском** под правильными подсекциями (`### Added`, `### Fixed`, `### Changed`, ...).
 
 ### 1.2. Запуск skill `release`
+
 Скажи Claude: **«сделай релиз»** / **«пора релизить»** / **«prepare release»**.
 
 Skill автоматически:
+
 1. Проверит git state (ветка `main`, clean tree, `[Unreleased]` не пустой).
 2. Проранжирует записи и запишет курированный блок `### Highlights` в `CHANGELOG.md` по правилам:
    - bd-compat / critical
@@ -45,6 +48,7 @@ Skill автоматически:
 Skill **не** запускает `release.sh` сам — это делает пользователь, потому что скрипт интерактивный и push необратим.
 
 ### 1.3. Запуск `./release.sh`
+
 В терминале:
 
 ```bash
@@ -52,6 +56,7 @@ Skill **не** запускает `release.sh` сам — это делает п
 ```
 
 Скрипт спросит:
+
 - **Шаг 3 (тесты)**: `y` если давно не гонял, `n` если только что.
 - **Шаг 4 (версия)**: `1` patch / `2` minor / `3` major / `4` custom. Правило:
   - Только фиксы → patch (2.3.0 → 2.3.1)
@@ -62,7 +67,9 @@ Skill **не** запускает `release.sh` сам — это делает п
 - **Шаг 9 (push тэга)**: default `N`. Набирай `y` только когда уверен — push тэга запускает GitHub Actions, создающие draft релиза.
 
 ### 1.4. Сборка в GitHub Actions
+
 После push тэга:
+
 - Workflow `Release` (см. `.github/workflows/release.yml`) собирает 6 артефактов (macOS ARM64/Intel `.dmg`, Linux `.deb`/`.AppImage`, Windows `.msi`/`.exe`).
 - Для `v*` тэга: body = `scripts/release-notes.py` output + `---` separator + «See the full CHANGELOG» link + `.github/release-footer.md`.
 - Для `latest` тэга: body = hardcoded «automatically generated development build» preamble + `.github/release-footer.md` (без `release-notes.py` — на `latest` скрипт не вызывается).
@@ -70,12 +77,14 @@ Skill **не** запускает `release.sh` сам — это делает п
 - Сборка занимает ~8–15 минут.
 
 Проверка:
+
 ```bash
 gh run list --workflow=Release --limit 2
 gh release view v<VERSION> --json assets -q '.assets[].name'
 ```
 
 ### 1.5. Smoke-тест
+
 Скачай и запусти артефакт для своей платформы (через `gh release download`, т.к. draft assets требуют авторизации):
 
 ```bash
@@ -85,6 +94,7 @@ xattr -cr /Applications/Beads\ Task-Issue\ Tracker.app
 ```
 
 ### 1.6. Публикация
+
 Когда убедился, что билд работает:
 
 ```bash
@@ -94,6 +104,7 @@ gh release edit v<VERSION> --draft=false --latest
 ```
 
 Откат (если передумал):
+
 ```bash
 gh release edit v<VERSION> --draft=true
 ```
@@ -103,6 +114,7 @@ gh release edit v<VERSION> --draft=true
 ## Сценарий 2: правка текстов release notes
 
 ### 2.1. Highlights / What's New конкретного релиза
+
 → `CHANGELOG.md`, секция этой версии (напр. `## [2.3.0]`), подсекции `### Highlights` / `### Added` / `### Fixed`.
 
 Если релиз уже выпущен — правка `CHANGELOG.md` НЕ обновит release body автоматически (body заморожен при push тэга). Обновление существующего релиза:
@@ -117,6 +129,7 @@ gh release edit v2.3.0 --notes-file /tmp/new-body.md
 ```
 
 ### 2.2. Requirements / Installation / macOS workaround (footer)
+
 → **Один файл: `.github/release-footer.md`**.
 
 ```bash
@@ -141,6 +154,7 @@ gh pr create --base main --fill
 Для **уже выпущенного** релиза правка footer-файла не влияет — нужно патчить body через `gh release edit --notes-file ...` (см. §2.1).
 
 ### 2.3. Что выкидывается из release notes
+
 → `scripts/release-notes.py` — фильтры в секции `FILTERED_SUBSECTIONS` (dropped `### Internal` / `### DX` / `### CI` / `### Docs` etc.) и ключевые слова в `is_internal_bullet()`.
 
 Если видишь, что что-то user-facing попало в фильтр (или наоборот — dev-tooling просочилось) — редактируй `release-notes.py`, добавь unit-тест, PR обычным способом.
@@ -150,10 +164,13 @@ gh pr create --base main --fill
 ## Сценарий 3: поломки и восстановление
 
 ### 3.1. Windows job упал, `.msi` не залился
+
 Обычно либо `UnicodeEncodeError` в `release-notes.py` (лечится `sys.stdout.reconfigure(encoding='utf-8')`), либо flaky bundle. Решение:
+
 1. Фиксим script / workflow на feature-ветке.
 2. Мёржим в main.
 3. **Перетэгиваем** — существующий draft сохранится, workflow догрузит недостающие артефакты:
+
    ```bash
    git push --delete origin v<VERSION>
    git tag -d v<VERSION>
@@ -161,11 +178,14 @@ gh pr create --base main --fill
    git tag v<VERSION>
    git push origin v<VERSION>
    ```
+
 4. Существующие assets получат `422 Validation Failed` на повторную загрузку — это норма, они и так на месте. Главное — что **упавшие** платформы теперь зальются.
 
 ### 3.2. Release body содержит устаревший текст
+
 - Если **footer** устарел (Requirements и т.д.) → правь `.github/release-footer.md`, merge to main, затем для уже выпущенных релизов патчь body вручную (§2.1).
 - Если **Highlights** выбраны плохо → правь `CHANGELOG.md`, перегенерируй body по тому же шаблону, что в §2.1:
+
   ```bash
   python3 scripts/release-notes.py <version> > /tmp/body.md
   { echo; echo "---"; echo; echo "See the [full CHANGELOG](https://github.com/Maxpceo/beads-task-issue-tracker/blob/main/CHANGELOG.md) for the complete history."; echo; cat .github/release-footer.md; } >> /tmp/body.md
@@ -173,6 +193,7 @@ gh pr create --base main --fill
   ```
 
 ### 3.3. Артефакт не скачивается (TLS timeout, 404)
+
 - `release-assets.githubusercontent.com` может быть недоступен с некоторых сетей (Azure CDN) — попробуй VPN или мобильный интернет.
 - Draft-assets требуют auth: скачивай через `gh release download` (использует твой токен), а не прямую ссылку из браузера.
 

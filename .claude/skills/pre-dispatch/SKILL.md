@@ -59,6 +59,7 @@ git branch --show-current
 Формат prompt'а — см. `.claude/references/workflow-templates.md §3 Dispatch Prompt Skeleton`.
 
 **Запрещено:**
+
 - «Сказать "поехали" — запущу…»
 - «Готов dispatch'ить, подтвердите»
 - Любой текстовый preview Task-вызова перед самим tool call'ом

@@ -39,15 +39,17 @@ git diff {START_COMMIT}..HEAD --stat
 git diff {START_COMMIT}..HEAD
 ```
 
-### Automated checks (run ALL applicable):
+### Automated checks (run ALL applicable)
 
 **Frontend changes** (if TypeScript/Vue files changed):
+
 ```bash
 npx vue-tsc --noEmit          # Type checking (Vue + TypeScript)
 pnpm test -- --run            # Unit tests (Vitest)
 ```
 
 **Backend changes** (if Rust files changed):
+
 ```bash
 cd src-tauri && cargo check   # Rust type/compile check
 cd src-tauri && cargo test    # Rust unit tests
@@ -63,6 +65,7 @@ cd src-tauri && cargo test    # Rust unit tests
 ### DEMO Verification (if available)
 
 Check bead comments for DEMO blocks:
+
 ```bash
 bd comments {BEAD_ID}
 ```
@@ -90,17 +93,20 @@ git diff {START_COMMIT}..HEAD
 ## Phase 1.5: Deep Review (для сложных изменений)
 
 **Запусти если** изменения затрагивают:
+
 - Сложную бизнес-логику (расчёты, workflow rules)
 - Error handling в критических путях
 - Более 200 строк кода
 - Cross-domain (backend + frontend одновременно)
 
 Используй специализированных агентов:
+
 - Silent failure hunter → проглоченные исключения, fallback на неверные значения (особенно в Tauri invoke/catch)
 - Test coverage analyzer → покрытие тестами для utils/ и composables/
 - Comment analyzer → устаревшие комментарии
 
 Рекомендуется pr-review-toolkit:
+
 - `/pr-review-toolkit:review-pr all` — полный review
 - `/pr-review-toolkit:review-pr errors` — только silent failures
 - `/pr-review-toolkit:review-pr tests` — только покрытие тестами
@@ -150,7 +156,7 @@ git diff {START_COMMIT}..HEAD
 
 ## Output Format
 
-### If APPROVED:
+### If APPROVED
 
 ```
 CODE REVIEW: APPROVED
@@ -177,7 +183,7 @@ Phase 2 - Code Quality: ✅
 VERDICT: APPROVED
 ```
 
-### If NOT APPROVED:
+### If NOT APPROVED
 
 ```
 CODE REVIEW: NOT APPROVED [SPEC_GAP|QUALITY]
@@ -202,11 +208,13 @@ ORCHESTRATOR: Redispatch supervisor with these issues.
 **You MUST actually run automated checks, not just read code.**
 
 BAD:
+
 ```
 Phase 0: Code looks correct
 ```
 
 GOOD:
+
 ```
 Phase 0: Ran `npx tsc --noEmit` — 0 errors
          Ran `npm run lint` — 0 warnings
@@ -215,11 +223,13 @@ Phase 0: Ran `npx tsc --noEmit` — 0 errors
 **You MUST cite file:line evidence for ALL findings.**
 
 BAD:
+
 ```
 Security: Looks fine
 ```
 
 GOOD:
+
 ```
 Security: Input validated at web/backend/api/v1/analytics.py:45
           Auth middleware at web/backend/middleware/auth.py:12

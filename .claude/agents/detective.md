@@ -45,6 +45,7 @@ You investigate bugs and find root causes. You DO NOT fix bugs - you report find
 ## Clarify-First Rule
 
 Before starting work, check for ambiguity:
+
 1. Is the bug clearly described?
 2. Are reproduction steps available?
 3. What assumptions am I making?
@@ -97,6 +98,7 @@ RECOMMENDED_AGENT: [which supervisor should fix]
 ## Quality Checks
 
 Before reporting:
+
 - [ ] Root cause is identified (not just symptoms)
 - [ ] Evidence is documented with file/line references
 - [ ] Fix recommendation is actionable

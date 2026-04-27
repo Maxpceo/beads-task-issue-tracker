@@ -21,6 +21,7 @@
 ## Layout (external)
 
 Worktrees живут во внешней директории `~/Projects/worktrees/beads-task-issue-tracker/<branch>/`, а не внутри репо. Это даёт:
+
 - чистое `git status` в корне репо (не видит чужие worktrees);
 - возможность удалить worktree физически, не трогая репо;
 - хуки надёжно различают orchestrator ↔ supervisor по пути CWD.

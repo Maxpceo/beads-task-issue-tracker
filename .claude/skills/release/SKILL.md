@@ -23,11 +23,13 @@ description: "Подготовка нового релиза — pre-flight chec
 Запусти ОБА вызова одновременно:
 
 **Вызов 1 — git state:**
+
 ```bash
 git status --short && echo "===BRANCH===" && git branch --show-current && echo "===AHEAD===" && git rev-list --count origin/main..HEAD 2>/dev/null
 ```
 
 **Вызов 2 — CHANGELOG state:**
+
 ```bash
 awk '/^## \[Unreleased\]/{p=1;next} /^## \[/{p=0} p' CHANGELOG.md | head -80
 ```
@@ -57,16 +59,19 @@ awk '/^## \[Unreleased\]/{p=1;next} /^## \[/{p=0} p' CHANGELOG.md | head -80
 Выбери **3–5 пунктов** — не больше. Пять равнозначно важных → бери 5. Один явный доминант → можно 3.
 
 **Формат каждого bullet:**
+
 - `- **Short title (3–6 слов)** — one-line user-facing value (без bead-IDs, без имён файлов/функций, без технических деталей).`
 - Язык: английский (CHANGELOG — English only, см. CLAUDE.md).
 - Группируй родственное: три мелких bullet'а про bd compat → один обобщённый «Full bd 1.0.x compatibility — ...».
 
 **Запись в CHANGELOG** через Edit:
+
 - Вставляй секцию `### Highlights` между `## [Unreleased]` и первой из `### Added/Fixed/Changed/...`.
 - Пустая строка до и после секции.
 - Не переписывай другие секции.
 
 **Пример того, что должно получиться:**
+
 ```markdown
 ## [Unreleased]
 
@@ -83,6 +88,7 @@ awk '/^## \[Unreleased\]/{p=1;next} /^## \[/{p=0} p' CHANGELOG.md | head -80
 ```
 
 После записи покажи пользователю **обоснование каждого пункта** в одной строке:
+
 - *«bd 1.0.x — critical compat; Custom colors — net-new visible UX; Cmd+K — net-new visible UX; toasts — long-standing fix; language switcher — first-impression change»*
 
 Это даёт пользователю шанс оспорить выбор до preview.
@@ -98,6 +104,7 @@ Release body = Highlights/What's New (из CHANGELOG, через `release-notes.
 ```
 
 Проверки:
+
 - Если в stderr есть `note: no curated ### Highlights section found` — значит секция не попала туда, куда нужно. Перечитай CHANGELOG, исправь расположение.
 - Если output содержит секцию `## Highlights` с записанными тобой пунктами — OK.
 - Если секции `## What's New` содержат `### Highlights` (дублирование) — баг в скрипте (фильтр в `release-notes.py`).
@@ -125,6 +132,7 @@ Release body = Highlights/What's New (из CHANGELOG, через `release-notes.
 > ```
 >
 > Пройди по шагам. Ориентиры:
+>
 > - Шаг 3 (тесты): `y` если давно не гонял, `n` если только что прогонял.
 > - Шаг 4 (версия): обычно `2` (minor bump) если есть новые фичи, `1` (patch) если только фиксы.
 > - Шаг 5 (promote `[Unreleased]`): Enter = yes.

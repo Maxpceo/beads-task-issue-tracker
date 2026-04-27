@@ -35,6 +35,7 @@ Skill(skill="web-interface-guidelines")
 ```
 
 **Audit trail в bead:**
+
 ```bash
 bd comments add {BEAD_ID} "Reviews: RAMS 95/100, WIG passed. Fixed: [issues if any]"
 ```

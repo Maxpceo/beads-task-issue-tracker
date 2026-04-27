@@ -27,6 +27,7 @@ Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/S
 Когда работаешь над фичей или фиксом и замечаешь рядом возможность улучшения, соответствующую best practice — **предложи** её отдельным сообщением до завершения задачи. Не реализуй без подтверждения, scope не раздувай.
 
 Что считается best practice (примеры, не исчерпывающий список):
+
 - **Фильтры/поиск**: debounce на input, persist в URL/localStorage, «Clear all», empty state, сохранение при смене проекта, keyboard navigation.
 - **UI**: `aria-label` + tooltip для icon-only кнопок, confirm-диалог для destructive действий, loading/skeleton для длинных операций, empty state когда данных нет, focus management в формах и диалогах, валидация форм.
 - **Код**: extract pure logic в `app/utils/` + тесты, устранение дублирования, типобезопасность вместо `any`, мемоизация горячих computed, разбиение раздутых компонентов.
@@ -37,6 +38,7 @@ Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/S
 Молчать, если это вкусовщина (стиль, нейминг без ясного выигрыша) или вне scope текущей задачи без видимого влияния. Не превращать каждый ответ в поток мелких замечаний — фильтр «best practice + видимое влияние».
 
 ### Issues
+
 - Полный справочник команд bd (синтаксис CLI): **[.claude/references/bd-commands.md](.claude/references/bd-commands.md)**. Worktree policy и external layout: **[.claude/references/bd-worktrees.md](.claude/references/bd-worktrees.md)**.
 - **Язык**: title, description, notes, design, acceptance — **на русском**. Английскими остаются только технические идентификаторы (имена файлов/функций, label'ы, типы, статусы, команды). Это персональный трекер Максима — он читатель, не команда/CI.
 
@@ -45,6 +47,7 @@ Canonical wording and banned-phrase list: `.claude/skills/subagents-discipline/S
 Полный heredoc-шаблон (`### Files` / `### Current state` / `### Target state` markers) + примеры + override — **[.claude/references/workflow-templates.md §1](.claude/references/workflow-templates.md)**. Hook `enforce-bead-enrichment.sh` блокирует `bd create` без markers (exempt: `--type=epic`, `--ephemeral`, `--from-markdown`/`--from-graph`/`--file`). Также блокирует Task→supervisor без enrich + PLAN-comment. Override: `SKIP_ENRICH_CHECK=1`.
 
 ### Labels
+
 When creating issues with `bd create`, **always** add `--label` based on which domain the issue touches. Pick 1-2 most relevant labels.
 
 | Label | When to use | Files / domains |
@@ -59,6 +62,7 @@ When creating issues with `bd create`, **always** add `--label` based on which d
 | `data` | Filtering, sorting, CRUD, bd-api | `bd-api.ts`, `issue-helpers.ts`, `useIssues`, `useFilters` |
 
 Examples:
+
 - `bd create --title="Fix Dolt badge" --type=bug --priority=3 --label=backend --label=sync`
 - `bd create --title="Add column resize" --type=feature --priority=2 --label=frontend --label=ui`
 - `bd create --title="Add CI workflow" --type=task --priority=2 --label=ci --label=dx`
@@ -105,6 +109,7 @@ Merge-slot сериализует `git push` между параллельным
 ### Workflow Skills
 
 Auto-trigger по триггер-фразам, процедуры в `.claude/skills/`:
+
 - **`claiming-bead`** — «возьми <ID>», «делай <ID>», «автономно <ID>»: claim + auto Plan Mode.
 - **`pre-dispatch`** — после approved плана: собирает BRANCH/START_COMMIT, выбирает supervisor'а и **немедленно вызывает** `Task(...)` inline без промежуточного вопроса.
 - **`managing-epics`** — «создай эпик», «cross-domain задача»: design doc → children → sequential dispatch.
@@ -118,6 +123,7 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 Правила применимы ко ВСЕМ workflow-skills выше — как к шагам **внутри** одного skill'а, так и к **переходам между skill'ами** (в частности: supervisor вернул `DONE` → сразу запускай `reviewing-code`; push успешен → сразу финальный отчёт, не «что дальше?»).
 
 **1. Без промежуточных вопросов.** Прогоняй все шаги подряд. Не спрашивай «запускать следующий шаг?», «продолжить?», «перейти к review?», «запускать ревью сейчас?». Промежуточный статус не выводи — ход работы виден по tool calls. Прерывайся вопросом ТОЛЬКО на реальной точке решения вне плана:
+
 - code-reviewer вернул `NOT APPROVED` → redispatch supervisor или force-accept?
 - acceptance-проверка провалилась → что делать дальше?
 - проблема вне scope'а → расширять scope или отложить в follow-up bead?
@@ -130,6 +136,7 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 **3. Фильтруй длинный вывод инструментов.** `pnpm test`, `npx vue-tsc --noEmit`, `git push` с pre-push-хуками, `cargo check` могут вывалить сотни-тысячи строк — они целиком попадают в контекст и жгут токены. Заворачивай в `2>&1 | tail -N` или `grep -E '(passed|failed|error|ok|✓|✗)'`. В контексте нужен статус + дельта, не полный лог.
 
 ### Testing
+
 - **Run before committing**: `pnpm test` (Vitest unit tests).
 - **Watch mode**: `pnpm test:watch`.
 - Tests live in `tests/` mirroring `app/` (e.g., `tests/utils/markdown.test.ts` → `app/utils/markdown.ts`).
@@ -137,18 +144,22 @@ Auto-trigger по триггер-фразам, процедуры в `.claude/sk
 - When adding or modifying pure logic, add or update corresponding tests.
 
 ### Code Organization
+
 - **Never overload `app/pages/index.vue`** — extract logic into composables (`app/composables/`) and UI sections into dedicated components (`app/components/`).
 - Keep `index.vue` as an orchestrator: layout structure, composable wiring, and minimal glue code.
 - Prefer reusable composables over inline logic for state, dialogs, resize, filtering, etc.
 - **Prefer shared components** over duplication.
 
 ### Logging
+
 All logging rules (no `console.*` in `app/`, `logFrontend()` for TS, `log_*!` macros for Rust, log-file paths per platform) auto-load from **[.claude/rules/logging.md](.claude/rules/logging.md)** when you Read any `.ts`/`.vue`/`.rs` file.
 
 ### i18n (locale-sync)
+
 All UI strings go through `$t('namespace.key')` (or `t(...)` from `useI18n()`); keys must stay in sync between `i18n/locales/en.json` and `ru.json`; user content and bd identifiers (status/type/priority/labels) are NOT translated. Full rules auto-load from **[.claude/rules/locale-sync.md](.claude/rules/locale-sync.md)** when you Read any `.vue`/`.ts` in `app/` or any `i18n/locales/*.json`.
 
 ### bd Version Compatibility (orchestrator-level)
+
 - The app works with **any bd version** — Rust backend auto-detects via `parse_bd_version()` and version-gated helpers. Handles both pre-1.0 (`major == 0`) and 1.x+ (`major >= 1`).
 - **bd 0.57+** uses a self-managing Dolt server; auto-flush/auto-import keeps JSONL in sync. No manual `bd sync` needed — that command no longer exists; use `bd dolt push` or `bd export`.
 - Never assume all projects use Dolt — check `project_uses_dolt()` before skipping legacy paths.
@@ -156,23 +167,29 @@ All UI strings go through `$t('namespace.key')` (or `t(...)` from `useI18n()`); 
 Full compatibility matrix + version-gated helper list: **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)**.
 
 ### Rust backend / Tauri
+
 Dev Server zombie-kill, Tauri MCP setup, backend-specific patterns — auto-load from **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)** when you touch any file in `src-tauri/`. Quick: `./start-dev.sh` (or `pnpm tauri:dev` for minimal start).
 
 ### Model Selection & Completion Reports
+
 **[.claude/references/orchestration.md](.claude/references/orchestration.md)** — DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT, когда Opus vs Sonnet.
 
 ### Releases & Commits
+
 **[.claude/references/release-workflow.md](.claude/references/release-workflow.md)** — `./release.sh`, CHANGELOG flow, GitHub Actions artifacts, Conventional Commits (English, `Co-Authored-By: Claude Code`).
 
 ### Plan Mode
+
 Save plans in `.claude/plans/` (local to project), never `~/.claude/plans/`. Full PLAN format: **[.claude/references/plan-mode.md](.claude/references/plan-mode.md)**.
 
 ## Permissions
 
 ### Always Allowed (no confirmation needed)
+
 - All `bd` CLI commands.
 - File operations on `.claude/` and `.beads/`.
 - `~/.claude/` (global config).
 
 ### Always Require Confirmation
+
 - `git commit`, `git push`.

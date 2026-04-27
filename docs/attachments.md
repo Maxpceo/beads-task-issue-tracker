@@ -49,6 +49,7 @@ The **filesystem** is the sole source of truth for attachments. The `external_re
 ## External References
 
 The `external_ref` field is reserved for **real external references only**:
+
 - Redmine IDs: `redmine-26167`
 - GitHub URLs: `https://github.com/org/repo/issues/42`
 - Other URLs or IDs

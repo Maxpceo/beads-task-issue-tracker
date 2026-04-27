@@ -25,6 +25,7 @@ Nested by domain, dot-separated in code:
 | `details` | Right sidebar issue detail/preview/edit forms |
 
 Examples:
+
 - `common.ok` → "OK" / "ОК"
 - `settings.language.auto` → "Auto" / "Авто"
 - `issues.filters.clearAll` → (future) "Clear all filters" / "Сбросить фильтры"

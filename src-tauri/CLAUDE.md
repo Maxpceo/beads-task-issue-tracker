@@ -80,6 +80,7 @@ All three log lines share the same counter set. Counters are **per-session total
 | `suppressed` | Cumulative batches held back (min-interval not elapsed) |
 
 Log line examples:
+
 - `Emitted coalesced update` — immediate emit path
 - `Suppressed watcher batch` — min-interval not elapsed; flush scheduled
 - `Delayed coalesced emit` — starvation-guard fired after cooldown

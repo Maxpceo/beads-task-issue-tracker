@@ -41,6 +41,7 @@ pnpm test -- tests/composables/churn-stress.test.ts
 ```
 
 These tests simulate 500+ rapid trigger events over simulated time and verify:
+
 - `onChanged` call count stays bounded (< 100 for 500 triggers)
 - Poll execution count stays bounded (< 20 for 200 triggers over 20s)
 - Pipeline converges after burst activity
@@ -60,7 +61,7 @@ These tests simulate 500+ rapid trigger events over simulated time and verify:
 ./scripts/churn-stress.sh /path/to/project/.beads 300 20
 ```
 
-4. Observe the app — it should remain responsive throughout.
+1. Observe the app — it should remain responsive throughout.
 
 ### Expected Metrics
 
@@ -80,9 +81,11 @@ Under default churn (20 writes/sec for 60s = ~1200 writes):
 ### If the UI still freezes
 
 1. **Increase `WATCHER_MIN_EMIT_INTERVAL_MS`**: Set environment variable before launching:
+
    ```bash
    WATCHER_MIN_EMIT_INTERVAL_MS=5000 pnpm tauri:dev
    ```
+
    This reduces the rate of events reaching the frontend. Min value: 250ms.
 
 2. **Increase `DEFAULT_MIN_INTERVAL_MS`** in `usePollScheduler.ts`: Widens the backpressure gate. Try 5000ms.
