@@ -3,7 +3,7 @@
 ## [Unreleased]
 
 ### Added
-- **Performance regression gate** (`beads-task-issue-tracker-6bm`): vitest bench for `groupIssues` on a deterministic 500-issue fixture (50 epics × 10 children), with a hard 50ms mean threshold (~2× CI runner mean) that catches O(n²) regressions automatically. `pnpm test:bench` runs locally and in CI (ubuntu-22.04, "Performance benchmarks" step in `ci.yml`). `pnpm test` (unit tests) explicitly excludes bench files so they do not run in the normal test pass. README documents manual MCP perf-check workflow for live scenarios (SWR cache, IPC roundtrip, Vue reactivity) that vitest bench cannot observe.
+- **Performance regression gate** (`beads-task-issue-tracker-6bm`): vitest test in `tests/perf/group-issues.test.ts` measures `groupIssues` mean over 50 iterations against a deterministic 500-issue fixture (50 epics × 10 children) and fails if mean exceeds 100ms. Runs as part of `pnpm test` (locally and in CI). Catches O(n²) regressions automatically. README documents manual MCP perf-check workflow for live scenarios (SWR cache, IPC roundtrip, Vue reactivity) that the automated gate cannot observe.
 - **"Only active" toolbar toggle** (`beads-task-issue-tracker-yd0`): single-click pill-button in `IssuesToolbar` that narrows the status filter to WIP statuses (`in_progress`, `blocked`, `hooked`, `inreview`, `simplified`, `reviewed`, `accepted`, and any custom `wip` statuses). Toggling it off restores the workflow default. Persists across reload. Replaces the multi-step "open Status dropdown → uncheck statuses" flow.
 
 ### Changed

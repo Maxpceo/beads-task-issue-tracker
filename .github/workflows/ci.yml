@@ -51,8 +51,5 @@ jobs:
       - name: Frontend tests
         run: pnpm test
 
-      - name: Performance benchmarks
-        run: pnpm test:bench
-
       - name: Rust check
         run: cargo check --manifest-path src-tauri/Cargo.toml

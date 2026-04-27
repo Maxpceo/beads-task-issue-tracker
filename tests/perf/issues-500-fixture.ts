@@ -1,8 +1,3 @@
-/**
- * Deterministic 500-issue fixture for benchmarks.
- * No Math.random — uses index-based seeding for full reproducibility run-to-run.
- * Structure: 50 epics × 10 children = 500 issues total.
- */
 import type { Issue, IssueType, IssueStatus, IssuePriority } from '~/types/issue'
 
 const STATUSES: IssueStatus[] = ['open', 'in_progress', 'blocked', 'closed', 'inreview']
@@ -11,7 +6,7 @@ const LABELS = ['frontend', 'backend', 'dx', 'ui', 'ci', 'sync', 'data']
 const CHILD_TYPES: IssueType[] = ['task', 'bug', 'feature', 'chore']
 
 function pick<T>(arr: T[], i: number): T {
-  return arr[i % arr.length]
+  return arr[i % arr.length]!
 }
 
 function makeDate(offset: number): string {

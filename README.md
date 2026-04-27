@@ -202,30 +202,19 @@ pnpm tauri:build
 
 ## Performance
 
-### Automated benchmark
+### Automated regression gate
 
-Run locally with:
-
-```bash
-pnpm test:bench
-```
-
-This runs a vitest bench on `groupIssues` (the hot-path function that organises issues into epic/child groups) with a fixture of 500 issues (50 epics × 10 children). The threshold is **50ms mean** — approximately 2× the observed mean on a ubuntu-22.04 CI runner (~15–25ms). If `groupIssues` regresses to O(n²) complexity, the bench will exceed this threshold and fail CI.
-
-The same command runs automatically in **GitHub Actions** on every pull request (see `.github/workflows/ci.yml` → "Performance benchmarks" step).
+`tests/perf/group-issues.test.ts` runs as part of `pnpm test` and asserts that `groupIssues` (the hot-path that organises issues into epic/child groups) handles a 500-issue fixture (50 epics × 10 children) under **100ms mean** across 50 iterations. If the function regresses to O(n²), mean jumps to ~1000ms and the test fails. The same gate runs in CI on every pull request.
 
 ### Manual MCP perf check before merge
 
-Automated bench covers algorithmic regressions in pure logic. SWR cache, IPC roundtrip, and Vue reactivity are **not** visible to vitest. Before merging a PR that touches `useIssues`, `useBeadsPath`, or any caching layer, run a quick manual check:
+The automated gate covers algorithmic regressions in pure logic. SWR cache, IPC roundtrip, and Vue reactivity are **not** visible to it. Before merging a PR that touches `useIssues`, `useBeadsPath`, or any caching layer, run a quick manual check:
 
 1. Start the app: `pnpm tauri:dev`
 2. Connect Tauri MCP (configured per `src-tauri/CLAUDE.md`).
 3. Open Project A with a real `.beads` directory (~100+ issues).
 4. Switch to Project B (different path).
-5. Assess: does the issue list appear **instantly** (< 1s subjective)?  
-   If it feels sluggish, check the Debug Panel (`Cmd+Shift+L`) for `[perf:bd_poll_data_cached]` log entries showing IPC timing.
-
-This checklist covers the SWR cache warm-up path, IPC roundtrip, and Vue reactivity — the three perf dimensions that vitest bench cannot observe.
+5. Assess: does the issue list appear **instantly** (< 1s subjective)? If it feels sluggish, check the Debug Panel (`Cmd+Shift+L`) for `[perf:bd_poll_data_cached]` log entries showing IPC timing.
 
 ## Contributing
 

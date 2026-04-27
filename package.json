@@ -33,8 +33,7 @@
     "tauri:dev": "./scripts/predev.sh",
     "tauri:build": "tauri build",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:bench": "vitest bench --run --config vitest.bench.config.ts"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@nuxt/telemetry": "2.8.0",
