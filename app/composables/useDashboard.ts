@@ -1,5 +1,5 @@
 import type { Issue, DashboardStats } from '~/types/issue'
-import { bdReady } from '~/utils/bd-api'
+import { bdReady, logFrontend } from '~/utils/bd-api'
 import { computeStatsFromIssues } from '~/utils/issue-helpers'
 import { useStatuses } from '~/composables/useStatuses'
 
@@ -34,29 +34,41 @@ export function useDashboard() {
   const fetchStats = async (issues?: Issue[], prefetchedReady?: Promise<Issue[]>) => {
     isLoading.value = true
     error.value = null
+    const pathAtStart = beadsPath.value
 
     try {
       // Preserve current ready count to avoid flash
       const currentReady = stats.value?.ready ?? 0
 
-      // Compute stats from issues (even if empty array)
-      stats.value = computeStatsFromIssues(excludeSystemLabels(issues ?? []), statuses.value)
-
-      // Restore ready count while waiting for bdReady
-      stats.value.ready = currentReady
-
       // Use prefetched ready data if available, otherwise fetch now
       const readyData = prefetchedReady
         ? await prefetchedReady
         : await bdReady(getPath())
-      readyIssues.value = readyData || []
 
-      // Update ready count in stats
+      if (beadsPath.value !== pathAtStart) {
+        logFrontend('debug', `[fetchStats] bail: path ${pathAtStart}→${beadsPath.value}`).catch(() => {})
+        return
+      }
+
+      // Compute stats from issues only after the path-guard — otherwise a stale
+      // call from an old project would overwrite the current project's stats
+      // before bailing out.
+      stats.value = computeStatsFromIssues(excludeSystemLabels(issues ?? []), statuses.value)
+      stats.value.ready = currentReady
+
+      readyIssues.value = readyData || []
       stats.value.ready = readyIssues.value.length
     } catch (e) {
+      if (beadsPath.value !== pathAtStart) {
+        const msg = e instanceof Error ? e.message : String(e)
+        logFrontend('warn', `[fetchStats] suppressed stale-path error: ${msg} (was=${pathAtStart})`).catch(() => {})
+        return
+      }
       error.value = e instanceof Error ? e.message : 'Failed to fetch dashboard stats'
     } finally {
-      isLoading.value = false
+      if (beadsPath.value === pathAtStart) {
+        isLoading.value = false
+      }
     }
   }
 

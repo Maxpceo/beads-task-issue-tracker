@@ -50,7 +50,7 @@
 
 | File | Exports | Key State | Purpose |
 |------|---------|-----------|---------|
-| `useIssues.ts` | `useIssues()`, `useEpicExpand()`, `isProjectSwitching` (computed), `beginProjectSwitch()`, `endProjectSwitch()` | `issues`, `selectedIssue`, pagination, sort | Main CRUD + filtering/sorting/grouping. Deduplicates by ID, builds parent-child hierarchy. Derives parent/children from dot notation IDs for bd >= 0.50. `isProjectSwitching` / `beginProjectSwitch()` / `endProjectSwitch()` guard project-switch races (counter-based). Exported types: `FetchOptions`, `PollOptions` |
+| `useIssues.ts` | `useIssues()`, `useEpicExpand()`, `isProjectSwitching` (computed), `beginProjectSwitch()`, `endProjectSwitch()`, `resetForTests()` (test-only) | `issues`, `selectedIssue`, pagination, sort | Main CRUD + filtering/sorting/grouping. Deduplicates by ID, builds parent-child hierarchy. Derives parent/children from dot notation IDs for bd >= 0.50. `isProjectSwitching` / `beginProjectSwitch()` / `endProjectSwitch()` guard project-switch races (counter-based). Stale-path guard: all fetch functions capture `currentProjectPath` at call-start and discard responses if path changed by resolve-time. `resetForTests()` resets module-level singletons for test isolation. Exported types: `FetchOptions`, `PollOptions` |
 | `useFilters.ts` | `useFilters()` | `filters` (per-project) | Inclusion filters: status, type, priority, assignee, search, labels |
 | `useExclusionFilters.ts` | `useExclusionFilters()` | `exclusions` (per-project) | Exclusion filters: status, priority, type, labels, assignee |
 | `useDashboard.ts` | `useDashboard()` | `stats`, `readyIssues` | Computes dashboard KPIs from issues array (no extra API calls) |
