@@ -1,7 +1,7 @@
 # Codebase Map - Beads Task-Issue Tracker
 
 > Auto-generated comprehensive map of the codebase for faster AI reasoning.
-> Last updated: 2026-04-19 | App version: 2.2.0
+> Last updated: 2026-04-27 | App version: 2.4.0
 
 ## Stack
 
@@ -197,7 +197,8 @@
 |------|-------------|---------|
 | `bd-api.ts` (~908 lines) | `bdList()`, `bdCreate()`, `bdUpdate()`, `bdShow()`, `bdClose()`, `bdDelete()`, `bdPollData()`, `bdCheckChanged()`, `bdSync()`, `bdMigrateToDolt()`, `bdCheckNeedsMigration()`, `trackerSync()`, `trackerDetect()`, `trackerInit()`, `trackerGetConflicts()`, `trackerResolveConflict()`, `trackerDismissConflict()`, `trackerCheckBeadsSource()`, `trackerMigrateFromBeads()`, `getBackendMode()`, `setBackendMode()`, etc. | Tauri invoke bridge — all 75 commands. Tracker types: `TrackerSyncResult`, `ConflictRecord`, `BeadsSourceInfo`, `TrackerMigrationResult`. Falls back to web API in browser mode |
 | `probe-adapter.ts` | `probeMetricsToIssues()`, `probeMetricsToPollData()`, `matchProbeProject()` | Probe response → app types adapter. `matchProbeProject()`: pure path matching with `.beads` suffix normalization |
-| `issue-helpers.ts` | `deduplicateIssues()`, `naturalCompare()`, `sortIssues()`, `filterIssues()`, `groupIssues()`, `computeStatsFromIssues()` | Pure functions extracted from useIssues + useDashboard for testability. Sorting, filtering, epic grouping, dashboard KPIs |
+| `issue-helpers.ts` | `deduplicateIssues()`, `naturalCompare()`, `sortIssues()`, `filterIssues()`, `groupIssues()`, `computeStatsFromIssues()`, `isStatusSetEqual()`, `resolveKpiFilter()` — types: `KpiFilter`, `KpiResolverInputs`, `KpiStatusSets` | Pure functions extracted from useIssues + useDashboard for testability. Sorting, filtering, epic grouping, dashboard KPIs. `resolveKpiFilter` detects which KPI card is active from a status filter set; `isStatusSetEqual` compares status sets ignoring order |
+| `workflow-statuses.ts` | `computeWorkflowStatuses()`, `computeWipStatuses()`, `computeActiveStatuses()`, `computeInProgressKpiStatuses()`, `computeFrozenKpiStatuses()`, `computeDoneStatuses()`, `REVIEW_CHAIN_STATUSES`, `REVIEW_SET` | Pure helpers for deriving status sets from `StatusMeta[]`. Category-based: Active→Open KPI, Wip→In Progress KPI (excludes blocked+review chain), Frozen→Deferred KPI (excludes pinned), Done→Done KPI. `REVIEW_SET` guards review-chain statuses from leaking into Open/In Progress counts |
 | `favorites-helpers.ts` | `normalizePath()`, `deduplicateFavorites()`, `sortFavorites()`, `isFavorite()`, `createFavoriteEntry()` | Pure functions extracted from useFavorites for testability |
 | `markdown.ts` | `renderMarkdown()`, `extractImagesFromMarkdown()`, `extractImagesFromExternalRef()`, `extractMarkdownFromExternalRef()`, `extractNonImageRefs()` | Markdown rendering + image/ref extraction. Filters `cleared:` prefixes |
 | `open-url.ts` | `openUrl()`, `openImageFile()`, `readImageFile()`, `readTextFile()`, `writeTextFile()` | URL/file opening + image loading as base64 |
@@ -468,13 +469,15 @@ Git Sync (built-in backend):
 | `tests/composables/useKeyboardNavigation.test.ts` | 17 | Arrow key navigation, scroll-to-focused |
 | `tests/utils/attachment-encoding.test.ts` | 14 | Attachment path encoding/decoding |
 | `tests/composables/useStatusColorOverrides.test.ts` | 5 | Round-trip persistence, localStorage key format, project-scoped isolation, path-switching via `reloadProjectStorage`, persistence across reload. Integration test — imports real composable against an in-memory `Storage` stub |
-| `tests/utils/dashboard-stats.test.ts` | 11 | `computeStatsFromIssues` |
+| `tests/utils/dashboard-stats.test.ts` | 82 | `computeStatsFromIssues` — category-mode vs legacy-mode routing, custom statuses, blocked/review-chain precedence |
+| `tests/utils/resolve-kpi-filter.test.ts` | 76 | `resolveKpiFilter` — KPI card detection from status filter set, round-trips for all four KPI cards |
+| `tests/utils/workflow-statuses.test.ts` | 113 | `computeWorkflowStatuses`, `computeWipStatuses`, `computeActiveStatuses`, `computeInProgressKpiStatuses`, `computeFrozenKpiStatuses`, `computeDoneStatuses`, `REVIEW_SET` |
 | `tests/utils/probe-adapter.test.ts` | 8 | `matchProbeProject` — path matching with `.beads` suffix normalization |
 | `tests/utils/hash.test.ts` | 6 | `hashPath` |
 | `tests/composables/useExclusionFilters.test.ts` | 7 | Fresh install migration, v1→v2 flag upgrade, user-choice respected, no-duplication, project switch via `setPath`, switch-back after user cleared `gt:slot`, `activeCount`/`hasActiveExclusions` reactive state. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test to re-execute the module-level watch |
 | `tests/composables/useFilters.test.ts` | 5 | Fresh install workflow default, reload survival of cleared state, A→B→A round-trip, search/labels/assignee persistence, `hasActiveFilters` reactivity. Integration test — imports real composable, uses `vi.resetModules()` + dynamic `await import()` per test |
 | `tests/composables/useNotificationCenter.test.ts` | 132 | Notification persistence, project-scope isolation, unread count, `markAllRead`, `clearAll`, 100-item cap, `setPath` project switch |
 
-**Total: 426 tests** (20 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
+**Total: 452 tests** (22 files) | **Strategy**: Pure functions in `app/utils/` for unit testing; composables tested via integration pattern (real composable + in-memory `Storage` stub + `vi.resetModules()`). `vitest.config.ts` ships a `nuxtMetaPlugin` that rewrites `import.meta.client` → `true` and `import.meta.server` → `false` in `/app/` files at Vite transform time so Nuxt-flavoured composables run under Vitest without `import.meta` guards short-circuiting.
 
 **Rust tests**: Tracker modules contain `#[cfg(test)]` blocks — run via `cargo test` in `src-tauri/`.

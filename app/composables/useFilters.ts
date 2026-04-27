@@ -3,13 +3,7 @@ import type { FilterState, IssueStatus, IssueType, IssuePriority } from '~/types
 import { useProjectStorage } from '~/composables/useProjectStorage'
 import { useStatuses } from '~/composables/useStatuses'
 import { computeWorkflowStatuses, computeWipStatuses } from '~/utils/workflow-statuses'
-
-/** Проверяет равенство двух массивов статусов как множеств (порядок не важен) */
-function isStatusSetEqual(a: IssueStatus[], b: IssueStatus[]): boolean {
-  if (a.length !== b.length) return false
-  const set = new Set(a)
-  return b.every(s => set.has(s))
-}
+import { isStatusSetEqual } from '~/utils/issue-helpers'
 
 export function useFilters() {
   const { statuses } = useStatuses()
