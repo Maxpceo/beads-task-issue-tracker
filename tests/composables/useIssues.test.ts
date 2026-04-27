@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ref } from 'vue'
 import type { Issue } from '~/types/issue'
-import { bdCreate } from '~/utils/bd-api'
+import { bdCreate, bdPollData, bdList, bdShow, bdSearch, logFrontend } from '~/utils/bd-api'
+import type { PollData } from '~/utils/bd-api'
 
 // Мокируем все composable-зависимости useIssues до импорта
 const notifySuccessMock = vi.fn()
@@ -63,8 +65,10 @@ vi.mock('~/composables/useFilters', () => ({
   }),
 }))
 
+// Reactive beadsPath — allows mutating mid-promise to simulate project switch
+const beadsPathRef = ref('/test/project')
 vi.mock('~/composables/useBeadsPath', () => ({
-  useBeadsPath: () => ({ beadsPath: { value: '/test/project' }, hasStoredPath: { value: true } }),
+  useBeadsPath: () => ({ beadsPath: beadsPathRef, hasStoredPath: ref(true) }),
 }))
 
 vi.mock('~/composables/useRepairDatabase', () => ({
@@ -98,7 +102,7 @@ vi.mock('~/composables/useExclusionFilters', () => ({
 }))
 
 // Импортируем после мокирования
-const { notifyStatusTransitions, setLocalWriteNotifier, useIssues } = await import('~/composables/useIssues')
+const { notifyStatusTransitions, setLocalWriteNotifier, useIssues, __resetForTests } = await import('~/composables/useIssues')
 
 // Вспомогательная функция для создания Issue-заглушки
 function makeIssue(id: string, status = 'open'): Issue {
@@ -187,8 +191,9 @@ describe('notifyStatusTransitions — skipNotifications guard', () => {
 
 // Nuxt auto-imports required by useIssues() — not available in vitest without polyfill
 // Define them as globalThis stubs so useIssues() can call them
+// useBeadsPath returns reactive beadsPathRef so race tests can mutate path mid-flight
+;(globalThis as Record<string, unknown>).useBeadsPath = () => ({ beadsPath: beadsPathRef, hasStoredPath: ref(true) })
 ;(globalThis as Record<string, unknown>).useFilters ??= () => ({ filters: { value: {} }, workflowStatuses: { value: [] }, allStatuses: { value: [] }, toggleStatus: vi.fn(), toggleType: vi.fn(), togglePriority: vi.fn(), toggleAssignee: vi.fn(), clearFilters: vi.fn(), setStatusFilter: vi.fn(), setAllFilters: vi.fn(), setSearch: vi.fn(), toggleLabelFilter: vi.fn(), exclusions: { value: {} } })
-;(globalThis as Record<string, unknown>).useBeadsPath ??= () => ({ beadsPath: { value: '/test/project' }, hasStoredPath: { value: true } })
 ;(globalThis as Record<string, unknown>).useRepairDatabase ??= () => ({ checkError: vi.fn().mockReturnValue(false), needsRepair: { value: false } })
 ;(globalThis as Record<string, unknown>).useMigrateToDolt ??= () => ({ checkError: vi.fn().mockReturnValue(false), needsMigration: { value: false } })
 ;(globalThis as Record<string, unknown>).useExclusionFilters ??= () => ({ exclusions: { value: {} } })
@@ -223,5 +228,232 @@ describe('setLocalWriteNotifier — localWriteNotifier integration', () => {
     await createIssue({ title: 'Test', type: 'task', priority: 'p2' } as Parameters<typeof createIssue>[0])
 
     expect(notifier).not.toHaveBeenCalled()
+  })
+})
+
+// ─── Race condition guards ─────────────────────────────────────────────────
+
+describe('fetchPollData — stale-path guard', () => {
+  beforeEach(() => {
+    beadsPathRef.value = '/proj/A'
+    __resetForTests()
+    vi.mocked(bdPollData).mockReset()
+    vi.mocked(logFrontend).mockClear()
+  })
+
+  // 8.3 — success-path bail: path changes after IPC resolves
+  it('returns null and does not mutate issues when path changes mid-flight', async () => {
+    let resolvePoll!: (data: PollData) => void
+    vi.mocked(bdPollData).mockReturnValue(
+      new Promise((r) => { resolvePoll = r }),
+    )
+
+    const { fetchPollData, issues } = useIssues()
+    const promise = fetchPollData()
+
+    // Simulate project switch while IPC is in-flight
+    beadsPathRef.value = '/proj/B'
+
+    resolvePoll({ openIssues: [makeIssue('a-1')], closedIssues: [], readyIssues: [] })
+    const result = await promise
+
+    expect(result).toBeNull()
+    expect(issues.value).toEqual([])
+  })
+
+  // 8.4 — error-path bail: IPC rejects AFTER switch — error.value must stay null
+  it('suppresses error and returns null when IPC rejects after path switch', async () => {
+    let rejectPoll!: (e: Error) => void
+    vi.mocked(bdPollData).mockReturnValue(
+      new Promise((_, r) => { rejectPoll = r }),
+    )
+
+    const { fetchPollData, error } = useIssues()
+    const promise = fetchPollData()
+
+    beadsPathRef.value = '/proj/B'
+    rejectPoll(new Error('network error'))
+    const result = await promise
+
+    expect(result).toBeNull()
+    expect(error.value).toBeNull()
+    expect(vi.mocked(logFrontend)).toHaveBeenCalledWith(
+      'warn',
+      expect.stringContaining('[fetchPollData] suppressed stale-path error'),
+    )
+  })
+
+  // 8.5 — inverse: error correctly propagated when path did NOT change
+  it('sets error.value when IPC rejects and path is unchanged', async () => {
+    vi.mocked(bdPollData).mockRejectedValue(new Error('bd error'))
+
+    const { fetchPollData, error } = useIssues()
+    const result = await fetchPollData()
+
+    expect(result).toBeNull()
+    expect(error.value).toBe('bd error')
+  })
+
+  // 8.6 — selectedIssue sanctity: stale fetch must not overwrite selectedIssue from new project
+  it('does not overwrite selectedIssue that was set for the new project', async () => {
+    const newProjectIssue = makeIssue('B-1')
+    let resolvePoll!: (data: PollData) => void
+    vi.mocked(bdPollData).mockReturnValue(
+      new Promise((r) => { resolvePoll = r }),
+    )
+
+    const { fetchPollData, selectedIssue } = useIssues()
+    // Simulate that new project already set selectedIssue
+    selectedIssue.value = newProjectIssue
+
+    const promise = fetchPollData()
+    beadsPathRef.value = '/proj/B'
+
+    resolvePoll({ openIssues: [makeIssue('A-1')], closedIssues: [], readyIssues: [] })
+    await promise
+
+    expect(selectedIssue.value).toEqual(newProjectIssue)
+  })
+
+  // 8.7 — lastKnownCount/Updated sanctity
+  it('does not overwrite lastKnownCount after path switch', async () => {
+    let resolvePoll!: (data: PollData) => void
+    vi.mocked(bdPollData).mockReturnValue(
+      new Promise((r) => { resolvePoll = r }),
+    )
+
+    const { fetchPollData } = useIssues()
+
+    // Pre-populate lastKnownCount by running a successful fetch first
+    vi.mocked(bdPollData).mockResolvedValueOnce({
+      openIssues: [makeIssue('B-1'), makeIssue('B-2')],
+      closedIssues: [],
+      readyIssues: [],
+    })
+    await fetchPollData()
+    // lastKnownCount should now be 2
+
+    // Now reset and set up stale flight
+    vi.mocked(bdPollData).mockReturnValue(
+      new Promise((r) => { resolvePoll = r }),
+    )
+    const promise = fetchPollData()
+    beadsPathRef.value = '/proj/C'
+    resolvePoll({ openIssues: [makeIssue('A-1')], closedIssues: [], readyIssues: [] })
+    await promise
+
+    // lastKnownCount must not be 1 (stale A's data)
+    // It should stay at 2 (from B's fetch before the switch)
+    const { issues } = useIssues()
+    // issues.value is still 2 items from the B-fetch (not overwritten by stale A-fetch)
+    expect(issues.value.length).toBe(2)
+  })
+})
+
+describe('fetchIssues — stale-path guard', () => {
+  beforeEach(() => {
+    beadsPathRef.value = '/proj/A'
+    __resetForTests()
+    vi.mocked(bdList).mockReset()
+  })
+
+  it('returns without mutating issues when path changes mid-flight', async () => {
+    let resolveList!: (data: Issue[]) => void
+    vi.mocked(bdList).mockReturnValue(
+      new Promise((r) => { resolveList = r }),
+    )
+
+    const { fetchIssues, issues } = useIssues()
+    const promise = fetchIssues()
+    beadsPathRef.value = '/proj/B'
+
+    resolveList([makeIssue('a-1')])
+    await promise
+
+    expect(issues.value).toEqual([])
+  })
+
+  // 8.8 — isLoading race: stale fetchIssues bail must not reset isLoading of the new fetch
+  it('does not reset isLoading after stale bail in finally block', async () => {
+    let resolveA!: (data: Issue[]) => void
+    let resolveB!: (data: Issue[]) => void
+
+    // First call (A): stays in-flight
+    vi.mocked(bdList)
+      .mockReturnValueOnce(new Promise((r) => { resolveA = r }))
+      .mockReturnValueOnce(new Promise((r) => { resolveB = r }))
+
+    const { fetchIssues, isLoading } = useIssues()
+
+    // Start fetch A (path = /proj/A)
+    const promiseA = fetchIssues()
+    expect(isLoading.value).toBe(true)
+
+    // Switch path — new fetch starts
+    beadsPathRef.value = '/proj/B'
+    const promiseB = fetchIssues()
+    expect(isLoading.value).toBe(true)
+
+    // A resolves — should bail without touching isLoading
+    resolveA([makeIssue('a-1')])
+    await promiseA
+
+    // isLoading must still be true (B is still in-flight)
+    expect(isLoading.value).toBe(true)
+
+    // B resolves normally
+    resolveB([makeIssue('b-1')])
+    await promiseB
+
+    expect(isLoading.value).toBe(false)
+  })
+})
+
+describe('fetchIssue — stale-path guard', () => {
+  beforeEach(() => {
+    beadsPathRef.value = '/proj/A'
+    __resetForTests()
+    vi.mocked(bdShow).mockReset()
+  })
+
+  it('returns null and does not write selectedIssue when path changes mid-flight', async () => {
+    let resolveShow!: (data: Issue | null) => void
+    vi.mocked(bdShow).mockReturnValue(
+      new Promise((r) => { resolveShow = r }),
+    )
+
+    const { fetchIssue, selectedIssue } = useIssues()
+    const promise = fetchIssue('a-1')
+    beadsPathRef.value = '/proj/B'
+
+    resolveShow(makeIssue('a-1'))
+    const result = await promise
+
+    expect(result).toBeNull()
+    expect(selectedIssue.value).toBeNull()
+  })
+})
+
+describe('searchIssues — stale-path guard', () => {
+  beforeEach(() => {
+    beadsPathRef.value = '/proj/A'
+    __resetForTests()
+    vi.mocked(bdSearch).mockReset()
+  })
+
+  it('does not write issues when path changes during search', async () => {
+    let resolveSearch!: (data: Issue[]) => void
+    vi.mocked(bdSearch).mockReturnValue(
+      new Promise((r) => { resolveSearch = r }),
+    )
+
+    const { searchIssues, issues } = useIssues()
+    const promise = searchIssues('test query')
+    beadsPathRef.value = '/proj/B'
+
+    resolveSearch([makeIssue('a-1'), makeIssue('a-2')])
+    await promise
+
+    expect(issues.value).toEqual([])
   })
 })

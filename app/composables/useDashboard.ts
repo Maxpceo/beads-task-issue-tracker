@@ -1,5 +1,5 @@
 import type { Issue, DashboardStats } from '~/types/issue'
-import { bdReady } from '~/utils/bd-api'
+import { bdReady, logFrontend } from '~/utils/bd-api'
 import { computeStatsFromIssues } from '~/utils/issue-helpers'
 import { useStatuses } from '~/composables/useStatuses'
 
@@ -34,6 +34,7 @@ export function useDashboard() {
   const fetchStats = async (issues?: Issue[], prefetchedReady?: Promise<Issue[]>) => {
     isLoading.value = true
     error.value = null
+    const pathAtStart = beadsPath.value
 
     try {
       // Preserve current ready count to avoid flash
@@ -49,11 +50,22 @@ export function useDashboard() {
       const readyData = prefetchedReady
         ? await prefetchedReady
         : await bdReady(getPath())
+
+      if (beadsPath.value !== pathAtStart) {
+        logFrontend('debug', `[fetchStats] bail: path ${pathAtStart}→${beadsPath.value}`).catch(() => {})
+        return
+      }
+
       readyIssues.value = readyData || []
 
       // Update ready count in stats
       stats.value.ready = readyIssues.value.length
     } catch (e) {
+      if (beadsPath.value !== pathAtStart) {
+        const msg = e instanceof Error ? e.message : String(e)
+        logFrontend('warn', `[fetchStats] suppressed stale-path error: ${msg} (was=${pathAtStart})`).catch(() => {})
+        return
+      }
       error.value = e instanceof Error ? e.message : 'Failed to fetch dashboard stats'
     } finally {
       isLoading.value = false

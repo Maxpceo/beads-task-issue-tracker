@@ -74,6 +74,22 @@ export async function endProjectSwitch() {
   projectSwitchingDepth.value = Math.max(0, projectSwitchingDepth.value - 1)
 }
 
+/**
+ * Reset all module-scope refs to their initial state.
+ * FOR TESTS ONLY — do not call in production code.
+ */
+export function __resetForTests() {
+  issues.value = []
+  selectedIssue.value = null
+  isLoading.value = false
+  isUpdating.value = false
+  error.value = null
+  lastKnownCount.value = 0
+  lastKnownUpdated.value = null
+  newlyAddedIds.value = new Set()
+  projectSwitchingDepth.value = 0
+}
+
 const markAsNewlyAdded = (id: string) => {
   newlyAddedIds.value = new Set(newlyAddedIds.value).add(id)
   setTimeout(() => {
@@ -176,11 +192,18 @@ export function useIssues() {
       isLoading.value = true
     }
     error.value = null
+    const pathAtStart = beadsPath.value
 
     try {
       // Single call with --all to get all issues (bd >= 0.55 fixed the --all flag)
       const path = getPath()
       const allIssues = await bdList({ path, includeAll: true })
+
+      if (beadsPath.value !== pathAtStart) {
+        logFrontend('debug', `[fetchIssues] bail: path ${pathAtStart}→${beadsPath.value}`).catch(() => {})
+        return
+      }
+
       const newIssues = deduplicateIssues(allIssues || [])
 
       // Rebuild parent-child hierarchy (both explicit links and dot-notation derivation)
@@ -235,6 +258,11 @@ export function useIssues() {
       lastKnownUpdated.value = maxUpdated || null
 
     } catch (e) {
+      if (beadsPath.value !== pathAtStart) {
+        const msg = e instanceof Error ? e.message : String(e)
+        logFrontend('warn', `[fetchIssues] suppressed stale-path error: ${msg} (was=${pathAtStart})`).catch(() => {})
+        return
+      }
       // Check for Dolt migration error first (more specific)
       if (checkMigrateError(e, beadsPath.value)) {
         error.value = 'Database needs migration to Dolt backend.'
@@ -245,7 +273,7 @@ export function useIssues() {
         error.value = e instanceof Error ? e.message : 'Failed to fetch issues'
       }
     } finally {
-      if (!silent) {
+      if (!silent && beadsPath.value === pathAtStart) {
         isLoading.value = false
       }
     }
@@ -260,6 +288,7 @@ export function useIssues() {
    */
   const fetchPollData = async (options?: PollOptions): Promise<Issue[] | null> => {
     error.value = null
+    const pathAtStart = beadsPath.value
     const perfStart = performance.now()
     let perfIpc = 0
     try {
@@ -267,6 +296,11 @@ export function useIssues() {
       const tIpc = performance.now()
       const data = await bdPollData(path)
       perfIpc = performance.now() - tIpc
+
+      if (beadsPath.value !== pathAtStart) {
+        logFrontend('debug', `[fetchPollData] bail: path ${pathAtStart}→${beadsPath.value}`).catch(() => {})
+        return null
+      }
 
       const mergedIssues = [...(data.openIssues || []), ...(data.closedIssues || [])]
       const newIssues = deduplicateIssues(mergedIssues)
@@ -355,6 +389,11 @@ export function useIssues() {
 
       return data.readyIssues || []
     } catch (e) {
+      if (beadsPath.value !== pathAtStart) {
+        const msg = e instanceof Error ? e.message : String(e)
+        logFrontend('warn', `[fetchPollData] suppressed stale-path error: ${msg} (was=${pathAtStart})`).catch(() => {})
+        return null
+      }
       if (checkMigrateError(e, beadsPath.value)) {
         error.value = 'Database needs migration to Dolt backend.'
       } else if (checkRepairError(e)) {
@@ -494,9 +533,15 @@ export function useIssues() {
 
   const fetchIssue = async (id: string) => {
     error.value = null
+    const pathAtStart = beadsPath.value
 
     try {
       const data = await bdShow(id, getPath())
+
+      if (beadsPath.value !== pathAtStart) {
+        logFrontend('debug', `[fetchIssue] bail: path ${pathAtStart}→${beadsPath.value}`).catch(() => {})
+        return null
+      }
 
       if (data === null) {
         selectedIssue.value = null
@@ -536,6 +581,11 @@ export function useIssues() {
 
       return data
     } catch (e) {
+      if (beadsPath.value !== pathAtStart) {
+        const msg = e instanceof Error ? e.message : String(e)
+        logFrontend('warn', `[fetchIssue] suppressed stale-path error: ${msg} (was=${pathAtStart})`).catch(() => {})
+        return null
+      }
       error.value = e instanceof Error ? e.message : 'Failed to fetch issue'
       return null
     }
@@ -818,10 +868,22 @@ export function useIssues() {
   // br-only: Full-text search via CLI (replaces client-side filtering when br is active)
   const searchIssues = async (query: string) => {
     error.value = null
+    const pathAtStart = beadsPath.value
     try {
       const results = await bdSearch(query, getPath())
+
+      if (beadsPath.value !== pathAtStart) {
+        logFrontend('debug', `[searchIssues] bail: path ${pathAtStart}→${beadsPath.value}`).catch(() => {})
+        return
+      }
+
       issues.value = deduplicateIssues(results || [])
     } catch (e) {
+      if (beadsPath.value !== pathAtStart) {
+        const msg = e instanceof Error ? e.message : String(e)
+        logFrontend('warn', `[searchIssues] suppressed stale-path error: ${msg} (was=${pathAtStart})`).catch(() => {})
+        return
+      }
       error.value = e instanceof Error ? e.message : 'Search failed'
     }
   }

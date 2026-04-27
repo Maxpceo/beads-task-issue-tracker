@@ -639,7 +639,7 @@ const handlePathChange = async () => {
           updateFromPollData(issues.value, readyData)
         } else {
           // Poll failed — fall back to stats computation without ready data
-          fetchStats(issues.value)
+          await fetchStats(issues.value)
         }
         perfFetchStats = performance.now() - tFetchStats
       }
