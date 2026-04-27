@@ -51,6 +51,7 @@ Include:
 ```
 
 Link design doc:
+
 ```bash
 bd update {EPIC_ID} --design ".designs/{EPIC_ID}.md"
 ```
@@ -83,11 +84,13 @@ Children наследуют label от domain — не от epic.
 ## Step 4: Dispatch Children (sequential)
 
 Пометить epic как `in_progress` ОДИН РАЗ (при старте первого child):
+
 ```bash
 bd update {EPIC_ID} --claim
 ```
 
 Для каждого child при dispatch:
+
 ```bash
 bd update {CHILD_ID} --claim     # BEFORE dispatch!
 START_COMMIT=$(git rev-parse HEAD)
@@ -101,6 +104,7 @@ START_COMMIT=$(git rev-parse HEAD)
 ## Step 5: Визуализация (опционально)
 
 Для крупных эпиков с > 3 children:
+
 ```bash
 bd graph {EPIC_ID}              # DAG зависимостей (ASCII)
 bd graph check                  # Циклы, orphans
@@ -110,6 +114,7 @@ bd swarm validate {EPIC_ID}     # Проверка структуры перед
 ## Step 6: Close Epic
 
 После того как ВСЕ children `accepted`:
+
 ```bash
 bd close {EPIC_ID}  # Закрывает epic и всех children
 ```

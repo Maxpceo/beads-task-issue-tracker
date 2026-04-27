@@ -15,9 +15,11 @@ inreview → simplified → reviewed → accepted → closed
 > **Execution style** — см. `CLAUDE.md § Workflow Execution Style` (без промежуточных вопросов включая переходы между skill'ами + табличный итоговый отчёт).
 
 В начале **проверь** что текущий статус bead'а действительно `inreview`:
+
 ```bash
 bd show {BEAD_ID} --json | jq -r '.[0].status'
 ```
+
 Если не `inreview` — выход (claim делает `claiming-bead`, dispatch — `pre-dispatch`; запусти их сначала). Хуки `validate-review-chain.sh` + `validate-completion.sh` сторожат валидность переходов на bd-уровне; порядок simplify → review → accept — orchestrator-дисциплина (ответственность skill'а), не enforced хуками.
 
 ## Step 1: Simplify (ОБЯЗАТЕЛЬНО перед review)
@@ -29,6 +31,7 @@ Skill(skill="simplify")
 ```
 
 После возврата:
+
 ```bash
 bd comments add {BEAD_ID} "SIMPLIFY: DONE. [резюме]"
 # или (docs/config only):
@@ -115,6 +118,7 @@ Skill(skill="web-interface-guidelines")
 ```
 
 Результаты:
+
 ```bash
 bd comments add {BEAD_ID} "Reviews: RAMS {X}/100, WIG {passed|issues: ...}. Fixed: [issues if any]"
 ```
@@ -124,17 +128,20 @@ bd comments add {BEAD_ID} "Reviews: RAMS {X}/100, WIG {passed|issues: ...}. Fixe
 ## Step 2.6: Knowledge Capture (опционально)
 
 После APPROVED:
+
 ```bash
 bd remember "инсайт" --key short-key
 ```
 
 Когда записывать:
+
 - Неочевидный баг или gotcha
 - Архитектурный паттерн для переиспользования
 - Ограничение библиотеки/API не в документации (например, reka-ui Select внутри Dialog ломается)
 - Решение, которое далось не с первой попытки
 
 Когда НЕ записывать:
+
 - Рутинная задача без сюрпризов
 - Инсайт уже записан (проверить `bd memories "keyword"`)
 
@@ -161,6 +168,7 @@ done
 **Автотесты (orchestrator):** выполнить каждый пункт из acceptance, записать результат с exit code + выводом (правило Evidence before claims).
 
 **Tauri app (визуальная проверка):** для UI-фич в Tauri-окне:
+
 - Запусти `pnpm tauri:dev` (но сначала kill zombies — см. `src-tauri/CLAUDE.md`).
 - Используй `mcp__tauri__*` tools для click/screenshot/query.
 - Альтернатива: `mcp__chrome-devtools__*` на dev-server (`pnpm dev`, без Tauri shell).
@@ -194,7 +202,9 @@ Override когда хук блокирует: `bd close {ID} --force`
 ## Pre-existing bugs
 
 Если ревьювер находит баг, который существовал ДО текущих изменений (не введён этим supervisor'ом):
+
 ```bash
 bd create "Bug: описание" -d "Найдено при review {BEAD_ID}. Баг существовал до текущих изменений."
 ```
+
 НЕ блокирует approval текущего review.

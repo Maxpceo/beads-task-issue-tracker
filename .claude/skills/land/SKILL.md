@@ -22,11 +22,13 @@ description: "Завершение рабочей сессии — закрыт�
 Запусти ОБА вызова одновременно:
 
 **Вызов 1:**
+
 ```bash
 git status --short && echo "===BRANCH===" && git branch --show-current
 ```
 
 **Вызов 2:**
+
 ```bash
 bd list --status=in_progress 2>/dev/null; echo "===INREVIEW==="; bd list --status=inreview 2>/dev/null
 ```
@@ -34,6 +36,7 @@ bd list --status=in_progress 2>/dev/null; echo "===INREVIEW==="; bd list --statu
 Покажи пользователю кратко: ветка, изменённые файлы, статус beads.
 
 Для beads со статусом `inreview` — проверь comments на "APPROVED":
+
 - APPROVED → `bd close {ID}`
 - Нет APPROVED → сообщи пользователю
 - `in_progress` → сообщи пользователю (не закрывай)
@@ -41,6 +44,7 @@ bd list --status=in_progress 2>/dev/null; echo "===INREVIEW==="; bd list --statu
 ## Блок 2: Commit (код + beads)
 
 Если есть изменения в коде (не .beads/):
+
 ```bash
 git add <файлы> && git commit -m "$(cat <<'EOF'
 описание изменений
@@ -51,6 +55,7 @@ EOF
 ```
 
 Затем beads (если есть изменения в .beads/):
+
 ```bash
 git add .beads/ && git diff --cached --quiet || git commit -m "sync beads"
 ```

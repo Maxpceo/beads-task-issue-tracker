@@ -32,6 +32,7 @@ bd comments {BEAD_ID}
 ```
 
 The orchestrator's dispatch prompt is automatically logged as a DISPATCH comment on the bead. This contains:
+
 - The investigation findings
 - Root cause analysis (file, function, line)
 - Related files that may need changes
@@ -79,6 +80,7 @@ WITH looking first:
 **Two strategies:**
 
 1. **User Journey Tests** — Test actual behavior as a user experiences it:
+
    ```bash
    # API: curl with real data
    curl -X POST localhost:3000/api/users -d '{"name":"test"}' -H "Content-Type: application/json"
@@ -117,6 +119,7 @@ bd comments add {BEAD_ID} "APPROACH: Used X instead of Y because Z"
 ```
 
 When to log:
+
 - Deviated from the suggested fix
 - Multiple valid solutions, chose one for a specific reason
 - Future maintainers might question the approach

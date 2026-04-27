@@ -14,12 +14,14 @@ Automated workflow for merging a feature branch into main.
 Если в запросе пользователя есть одна из фраз: **«без документации», «без доки», «no-docs», «skip-docs», «пропусти документацию», «skip docs»** — **пропусти Step 3 целиком**, перейди со Step 2 сразу к Step 4. В итоговом отчёте (Step 7) отметь: «Документация: пропущена по запросу».
 
 **Когда пропуск уместен:**
+
 - Внутренний рефакторинг / cleanup без новых публичных API.
 - Правки конфигов, хуков, CI, скриптов.
 - Баг-фикс без изменения контрактов.
 - Изменения < 20 строк в одном файле.
 
 **Когда уточнить у пользователя (даже если флаг есть):**
+
 - Новая фича с UI- или API-изменениями, видимыми пользователю.
 - Изменение существующих контрактов команд Tauri, composable'ов, стор'ов.
 - Новые public экспорты из `app/utils/`, `app/composables/`.
@@ -38,14 +40,18 @@ Automated workflow for merging a feature branch into main.
    - `*.md`, `*.yaml`, `*.yml`, `*.toml`, `*.json`
    - `scripts/**`, `.github/**`
 3. Если среди изменённых есть `.vue`/`.ts`/`.rs` — проверить что нет новых публичных API:
+
    ```bash
    git diff -G '^(export |function |class |fn |pub fn |#\[tauri::command\])' main..HEAD | wc -l
    ```
+
    Ожидается `0` (нет новых `export`/`function`/`class`/Rust `fn`/`pub fn`/`#[tauri::command]`).
 4. Если (2) и (3) выполнены → один `Grep` изменённых ключевых символов в `docs/` + `README.md`:
+
    ```bash
    grep -rn "symbolA\|symbolB" docs/ README.md
    ```
+
    Нет совпадений → **auto-skip Step 3**, в Step 7 отчёте отметить: «Документация: auto-skip».
 5. Если критерий (2) или (3) не выполнен, или Grep нашёл упоминания → dispatch `documentation-expert` как обычно.
 
@@ -137,6 +143,7 @@ bd merge-slot release
 ## Step 2: Create Pull Request
 
 Compose PR title and body from `git log main..HEAD`:
+
 - Title: concise summary (< 70 chars, English)
 - Body: summary + key changes list
 
@@ -319,7 +326,7 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 # git merge-base --is-ancestor <SESSION_COMMIT> origin/main  → exit 0
 ```
 
-### Условия ✅ (все должны выполниться):
+### Условия ✅ (все должны выполниться)
 
 1. Текущая ветка — `main` (`git branch --show-current` = `main`).
 2. Working tree чистый (`git status --short` пуст).
@@ -329,7 +336,7 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 6. **Все session-commits** доступны из `origin/main` (попали в main через смёрженный PR).
 7. Merge-slot не держим (`Status: open` или holder ≠ текущий юзер).
 
-### Финальная строка (печатать буквально, одна из двух):
+### Финальная строка (печатать буквально, одна из двух)
 
 **Если всё чисто:**
 
@@ -348,6 +355,7 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 ```
 
 Примеры причин (только про артефакты ЭТОЙ сессии):
+
 - `worktree сессии fix/bd-xxx не удалён`
 - `ветка сессии fix/bd-xxx не удалена локально`
 - `bead сессии beads-task-issue-tracker-aaa в in_progress (не closed)`
@@ -356,7 +364,7 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 - `держим merge-slot (надо bd merge-slot release)`
 - `не на main (текущая: fix/bd-bbb)`
 
-### Чего НЕ должно быть в причинах ⚠️:
+### Чего НЕ должно быть в причинах ⚠️
 
 - Чужие feature-ветки из параллельных сессий.
 - Чужие worktree'и (особенно `.claude/worktrees/agent-*` — служебные).
@@ -365,7 +373,7 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 
 Если сессия не трогала никаких артефактов (был чистый запрос на чтение / документацию без bead'а), скип Step 8: вердикт всегда ✅ при условии `git status` чисто и ветка = main.
 
-### Правила формата:
+### Правила формата
 
 - Финальная строка — **последняя** в ответе. После неё — ничего (даже пустой строки).
 - Перед строкой — горизонтальный разделитель `---` для визуального якоря.

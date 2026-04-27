@@ -18,6 +18,7 @@ bd show <ID>
 ```
 
 Разветвление:
+
 - **closed / done** → СТОП. Не реанимировать. Сообщить пользователю, предложить follow-up через `bd create "Fix: ..." -d "Follow-up to <ID>"` + `bd dep relate <NEW> <OLD>`.
 - **in_progress, assignee == me** → idempotent, `bd update --claim` пройдёт без изменений.
 - **in_progress, assignee ≠ me** → предупредить пользователя («bead занят другой сессией / агентом — точно claim?»). Продолжать только после подтверждения.
@@ -77,6 +78,7 @@ cd ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME"
 ## Step 3. Определить путь: Fast Path vs Supervisor Path
 
 **Fast Path** — все условия true:
+
 - Не на main/master
 - 1 файл, <20 строк, без новых классов/функций/импортов cross-file
 - **Пользователь явно подтвердил:** «без плана» / «Fast Path» / «правь сам» / «не планируй»
@@ -84,6 +86,7 @@ cd ~/Projects/worktrees/beads-task-issue-tracker/"$WT_NAME"
 Если пользователь просто сказал «делай <ID>» — это **не** явное подтверждение Fast Path. Default = Supervisor Path (Step 4).
 
 Если Fast Path:
+
 - Отредактировать файл напрямую
 - Commit + `bd close <ID>` — skip статусов inreview/simplified/reviewed/accepted
 

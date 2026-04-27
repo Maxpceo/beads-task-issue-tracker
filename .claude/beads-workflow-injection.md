@@ -6,38 +6,46 @@
    - BEAD_ID: Your task ID (e.g., BD-001 for standalone, BD-001.2 for epic child)
    - EPIC_ID: (epic children only) The parent epic ID (e.g., BD-001)
 
-2. **Mark in progress (claim):**
+1. **Mark in progress (claim):**
+
    ```bash
    bd update {BEAD_ID} --claim
    ```
+
    `--claim` sets status=in_progress AND assigns the bead to you in one call.
 
-3. **Read bead comments for investigation context:**
+2. **Read bead comments for investigation context:**
+
    ```bash
    bd show {BEAD_ID}
    bd comments {BEAD_ID}
    ```
 
-4. **Read project context:**
+3. **Read project context:**
+
    ```bash
    cat PROJECT-CONTEXT.md
    ```
 
-5. **If epic child: Read design doc:**
+4. **If epic child: Read design doc:**
+
    ```bash
    design_path=$(bd show {EPIC_ID} --json | jq -r '.[0].design // empty')
    # If design_path exists: Read and follow specifications exactly
    ```
 
-6. **Invoke discipline skill:**
+5. **Invoke discipline skill:**
+
    ```
    Skill(skill: "subagents-discipline")
    ```
 
-7. **Record start commit:**
+6. **Record start commit:**
+
    ```bash
    START_COMMIT=$(git rev-parse HEAD)
    ```
+
    Save this for the completion report — orchestrator uses it for code review scope.
 </on-task-start>
 
@@ -61,42 +69,52 @@ If the orchestrator's approach would break something, explain what you found and
 WARNING: You will be BLOCKED if you skip any step. Execute ALL in order:
 
 1. **Simplify — проверка на дублирование и упрощение:**
+
    ```
    /simplify
    ```
 
 2. **Commit ONLY your changes (НЕ использовать `git add -A` или `git add .`):**
+
    ```bash
    # Add only the specific files you changed by name — never -A / .
    git add file1 file2 ... && git commit -m "feat/fix: description [{BEAD_ID}]"
    ```
 
 3. **Push via merge-slot (serialises concurrent sessions):**
+
    ```bash
    bd merge-slot acquire
    git pull --rebase && git push
    bd merge-slot release
    ```
+
    The merge-slot prevents two parallel sessions from racing on the same remote.
 
 4. **Optionally log learnings:**
+
    ```bash
    bd comments add {BEAD_ID} "LEARNED: [key technical insight]"
    ```
+
    If you discovered a gotcha or pattern worth remembering, log it. Not required.
 
 5. **Leave completion comment:**
+
    ```bash
    bd comments add {BEAD_ID} "Completed: [summary]"
    ```
 
 6. **Mark status inreview — supervisor's job ends here:**
+
    ```bash
    bd update {BEAD_ID} --status inreview
    ```
+
    Review chain (simplified → reviewed → accepted → closed) is run by orchestrator afterwards. Do NOT set those statuses yourself.
 
 7. **Return completion report:**
+
    ```
    BEAD {BEAD_ID} COMPLETE
    Branch: {current_branch}

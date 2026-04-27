@@ -11,6 +11,7 @@ Cold-open Dolt-проекта на 1000+ issues в `bd_poll_data` занимае
 Каждый subprocess bd по факту заново поднимает embedded Dolt (`dolt sql-server` init + connection), и cost умножается на частоту poll'ов (5с active). На 1000 issues это ~24с CPU/мин.
 
 Эпик wqh покрывает двух children:
+
 - **ho6** — устранить сам spawn-bottleneck в Rust backend.
 - **v1p** — адаптировать polling interval к размеру проекта и Dolt-факту.
 

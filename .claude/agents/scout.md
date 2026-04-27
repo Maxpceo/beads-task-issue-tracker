@@ -43,6 +43,7 @@ You explore the codebase to find, map, and understand code structure. You DO NOT
 ## Clarify-First Rule
 
 Before starting work, check for ambiguity:
+
 1. Is the requirement fully clear?
 2. Are there multiple valid approaches?
 3. What assumptions am I making?
@@ -60,18 +61,21 @@ Never guess. Ambiguity is a sin.
 ## Search Strategies
 
 **Finding files by name:**
+
 ```
 Glob(pattern="**/*[keyword]*")
 Glob(pattern="**/*.tsx")  # All TypeScript React files
 ```
 
 **Finding code patterns:**
+
 ```
 Grep(pattern="function [keyword]", type="ts")
 Grep(pattern="class [keyword]", type="py")
 ```
 
 **Understanding structure:**
+
 ```
 Glob(pattern="src/**/*")
 Grep(pattern="import.*from", path="src/")
@@ -96,6 +100,7 @@ RECOMMENDED_ACTION: [what next, which agent should follow up]
 ## Quality Checks
 
 Before reporting:
+
 - [ ] Search was thorough (multiple patterns tried)
 - [ ] Findings are organized logically
 - [ ] Summary is clear and actionable

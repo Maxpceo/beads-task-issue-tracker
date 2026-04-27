@@ -19,6 +19,7 @@ You update project documentation based on code changes being merged to main.
 ## Inputs
 
 You receive:
+
 - **Branch name** being merged
 - **Commit list** (git log main..HEAD)
 
@@ -30,11 +31,13 @@ git diff main..HEAD --stat
 ```
 
 Categorize each change — **ONLY user-facing changes go in CHANGELOG**:
+
 - **feat:** → New Features (only if it changes what the user sees or does in the app)
 - **fix:** → Fixes (only if the user would notice the bug)
 - **refactor:** → Improvements (only if it changes app behavior or performance)
 
 **SKIP everything that doesn't affect the end user:**
+
 - Dev tooling: scripts (start-dev.sh, release.sh), CI/CD, workflow
 - Documentation changes (README, CHANGELOG itself, docs/)
 - Code style, linting, TypeScript-only fixes
@@ -65,6 +68,7 @@ Read current CHANGELOG.md. Look for `[Unreleased]` section.
 ```
 
 Rules:
+
 - Write in **English**
 - Each entry: `- **Short name**: One sentence description`
 - Group by category (New Features, Fixes, Improvements)
@@ -77,6 +81,7 @@ Rules:
 ## Step 3: Check README.md
 
 Read README.md. Check if changes include:
+
 - New user-facing features → add to Features section or "New in vX.X.X"
 - New commands or scripts → add to relevant section
 - Changed installation steps → update Prerequisites or Installation
@@ -97,6 +102,7 @@ Only commit files that were actually changed.
 ## Step 5: Report
 
 Return a brief summary:
+
 ```
 DOCS UPDATED
 - CHANGELOG.md: Added N entries under [Unreleased] (X features, Y fixes)

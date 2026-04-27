@@ -47,6 +47,7 @@
 ### Composables (`app/composables/`)
 
 #### Core Data
+
 | File | Exports | Key State | Purpose |
 |------|---------|-----------|---------|
 | `useIssues.ts` | `useIssues()`, `useEpicExpand()`, `isProjectSwitching` (computed), `beginProjectSwitch()`, `endProjectSwitch()` | `issues`, `selectedIssue`, pagination, sort | Main CRUD + filtering/sorting/grouping. Deduplicates by ID, builds parent-child hierarchy. Derives parent/children from dot notation IDs for bd >= 0.50. `isProjectSwitching` / `beginProjectSwitch()` / `endProjectSwitch()` guard project-switch races (counter-based). Exported types: `FetchOptions`, `PollOptions` |
@@ -55,6 +56,7 @@
 | `useDashboard.ts` | `useDashboard()` | `stats`, `readyIssues` | Computes dashboard KPIs from issues array (no extra API calls) |
 
 #### Storage & Projects
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useProjectStorage.ts` | `useProjectStorage()`, `saveProjectValue()` | Per-project localStorage via path hash (`beads:proj:{hash}:{key}`) |
@@ -63,6 +65,7 @@
 | `useFavorites.ts` | `useProjects()` | Projects — add/remove/rename/reorder, sort modes (renamed from favorites) |
 
 #### Backend & Sync
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useBackendMode.ts` | `useBackendMode()` | Backend mode switching (`br`/`bd`/`built-in`). `syncFromStorage()` syncs to Rust on mount. `ensureTrackerInit()` auto-inits `.tracker/` if needed |
@@ -71,6 +74,7 @@
 | `useConflicts.ts` | `useConflicts()` | Module-singleton for sync conflicts; wraps `trackerGetConflicts/resolveConflict/dismissConflict`; computes `diffFields`, `parsedLocal`, `parsedRemote` for diff UI |
 
 #### UI State
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useColumnConfig.ts` | `useColumnConfig()` | Issue table column visibility (per-project) |
@@ -86,24 +90,28 @@
 | `useMultiCopy.ts` | `useMultiCopy()` → `{ copiedIds, copyIssueId, isCopied }` | Module-level shared state for multi-copy feature. Hold Cmd/Ctrl and click any copy-ID button to accumulate issue IDs in a shared clipboard buffer as a comma-separated list. Safe in Nuxt SPA mode (`ssr: false`) |
 
 #### Status & Display
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useStatuses.ts` | `useStatuses()` → `{ statuses, isLoading }` | Lazy-loads `bd statuses --json` via `bd_statuses` Tauri command; caches per project path (module-level reactive cache keyed by `beadsPath`). Returns full list of built-in + custom statuses. Used by `StatusBadge`, `StatusFilterDropdown`, and `SettingsDialog` |
 | `useStatusColorOverrides.ts` | `useStatusColorOverrides()` → `{ overrides, setOverride, resetOverride }` | Per-project localStorage (`beads:proj:<hash>:status-colors`) for custom solid/gradient colors on any status badge. Applied instantly app-wide; Reset button restores default category color |
 
 #### Polling & Change Detection
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useAdaptivePolling.ts` | `useAdaptivePolling()` | Smart polling: 5s active, 30s blurred, 60s idle, paused when hidden. Cheap mtime check (1s) + expensive data fetch |
 | `useChangeDetection.ts` | `useChangeDetection()` | Change detection via native file watcher (Tauri events). Watches `.beads/` or `.tracker/` based on backend mode. SSE backend kept as dead code. 300ms debounce + 3s cooldown |
 
 #### Page Orchestration
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useSidebarResize.ts` | `useSidebarResize()` | Sidebar open/close state (persisted) + drag resize handlers |
 | `useIssueDialogs.ts` | `useIssueDialogs()` | All dialog state + ~20 handlers (delete, close, detach, deps, relations). Singleton pattern. Delete notifications |
 
 #### Dialogs & Previews
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useImagePreview.ts` | `useImagePreview()` | Image gallery viewer — loads base64 from filesystem |
@@ -111,6 +119,7 @@
 | `useAttachments.ts` | `useAttachments()` | Attachment management for issue detail |
 
 #### System
+
 | File | Exports | Purpose |
 |------|---------|---------|
 | `useUpdateChecker.ts` | `useUpdateChecker()` | App update checker via GitHub API, supports demo mode |
@@ -121,6 +130,7 @@
 ### Components (`app/components/`)
 
 #### Layout (`layout/`)
+
 | Component | Purpose |
 |-----------|---------|
 | `AppHeader.vue` | Top bar: title, zoom controls, theme toggle, notification bell, Tauri drag region |
@@ -135,6 +145,7 @@
 | `CollapsibleSection.vue` | Generic collapsible header+content wrapper |
 
 #### Layout › Settings (`layout/settings/`)
+
 | Component | Purpose |
 |-----------|---------|
 | `SettingsAppearance.vue` | Theme selector + Language picker (radio: Auto / English / Русский) — both grouped as "Appearance" |
@@ -144,6 +155,7 @@
 | `SettingsProbe.vue` | Dev-only probe toggle (`role="switch" aria-checked`, sr-only URL label) — hidden in production builds |
 
 #### Dashboard (`dashboard/`)
+
 | Component | Purpose |
 |-----------|---------|
 | `PathSelector.vue` | Project picker — filesystem tree navigation, probe expose toggle (dev-only) |
@@ -157,6 +169,7 @@
 | `PrerequisitesCard.vue` | BD CLI + Beads project validation |
 
 #### Issues (`issues/`)
+
 | Component | Purpose |
 |-----------|---------|
 | `IssueTable.vue` (35KB) | Main table — sortable columns, epic grouping, multi-select, load-more pagination |
@@ -176,6 +189,7 @@
 | `LabelBadge.vue` | Multi-label tags |
 
 #### Details (`details/`)
+
 | Component | Purpose |
 |-----------|---------|
 | `IssueDetailHeader.vue` | Issue badges (id, type, status, priority) + title + action buttons (edit, close, reopen, delete). Deduplicates desktop/mobile |
@@ -184,6 +198,7 @@
 | `CommentSection.vue` | Comments display + add |
 
 #### UI Library (`ui/`) — shadcn-vue
+
 - **Form:** Button, Input, Textarea, Label, Checkbox, Select, LabelMultiSelect
 - **Layout:** Card, Separator, ScrollArea, Avatar, Collapsible
 - **Menus:** DropdownMenu, Select
@@ -273,6 +288,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 ### Tauri Commands (76 total)
 
 #### Issue Operations
+
 | Command | bd CLI | Special Logic |
 |---------|--------|--------------|
 | `bd_list` | `bd list --limit=0 [filters]` or `bd list --all` (bd 0.55+) | Syncs before read; transforms raw→frontend format. Uses single `--all` call on bd 0.55+, falls back to 2 calls (open+closed) on older versions |
@@ -287,6 +303,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `bd_delete` | `bd delete <id> --force --hard` | Cleans up attachment folder after delete |
 
 #### Comments & Dependencies
+
 | Command | bd CLI |
 |---------|--------|
 | `bd_comments_add` | `bd comments add <id> <content>` |
@@ -297,6 +314,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `bd_available_relation_types` | Hardcoded list (differs for bd vs br client) |
 
 #### Polling & Sync
+
 | Command | Purpose |
 |---------|---------|
 | `bd_check_changed` | Cheap mtime check — `.beads/` files (bd/br) or `.tracker/tracker.db` (built-in). No CLI call |
@@ -305,6 +323,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `bd_sync` | Manual `bd sync` trigger; 10s cooldown |
 
 #### Built-in Tracker Commands (8)
+
 | Command | Purpose |
 |---------|---------|
 | `tracker_init` | Initialize `.tracker/` dir + DB + .gitignore + AGENTS.md |
@@ -317,18 +336,21 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `tracker_migrate_from_beads` | Full `.beads/` → `.tracker/` migration (JSONL import + attachment copy) |
 
 #### Backend Mode
+
 | Command | Purpose |
 |---------|---------|
 | `get_backend_mode` | Get current backend mode (`bd`/`br`/`built-in`) |
 | `set_backend_mode` | Set backend mode (updates `BACKEND_MODE` global) |
 
 #### Filesystem
+
 | Command | Purpose |
 |---------|---------|
 | `fs_exists` | File existence check |
 | `fs_list` | Directory listing with `.beads` and Dolt backend detection (`usesDolt`) |
 
 #### Attachments (all path-validated to `.beads/attachments/`)
+
 | Command | Purpose |
 |---------|---------|
 | `read_image_file` | Load image as base64 (validates extension + path) |
@@ -341,6 +363,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `write_text_file` | Write .md files in attachments |
 
 #### Update Checking
+
 | Command | Purpose |
 |---------|---------|
 | `check_for_updates` | GitHub API — app version check, platform detection |
@@ -349,6 +372,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `download_and_install_update` | Download to ~/Downloads; open DMG on macOS |
 
 #### Logging & Debug
+
 | Command | Purpose |
 |---------|---------|
 | `get/set_logging_enabled` | Toggle logging flag |
@@ -361,6 +385,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `get_bd_version` | `bd --version` (cached) |
 
 #### CLI Configuration
+
 | Command | Purpose |
 |---------|---------|
 | `get/set_cli_binary_path` | Get/set CLI binary (default: "bd"). Validates + persists |
@@ -368,6 +393,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `check_bd_compatibility` | Detect bd vs br client, semver parse, warnings |
 
 #### File Watching
+
 | Command | Purpose |
 |---------|---------|
 | `start_watching` | Watch `.beads/` (bd/br) or `.tracker/` (built-in) — emits `beads-changed` event (1s debounce) |
@@ -375,6 +401,7 @@ interface DashboardStats { total, open, inProgress, blocked, closed, ready, byTy
 | `get_watcher_status` | Return active + watched path |
 
 #### Database & Migration
+
 | Command | Purpose |
 |---------|---------|
 | `bd_repair_database` | Backup db → delete → rebuild. Handles bd < 0.50 (JSONL) vs >= 0.50 (Dolt) |

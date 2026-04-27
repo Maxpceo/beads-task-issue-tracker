@@ -124,6 +124,7 @@ Orchestrator handles remaining phases (push, status transitions, close) в от�
 ```
 
 **Два слоя защиты:**
+
 1. **Rigid language** — soft hint ("Return ONLY after..."). Работает в большинстве случаев.
 2. **Hook `block-supervisor-close-and-signing.sh`** — hard gate: блокирует `git push`, `bd close`, `bd update --status simplified|reviewed|accepted` из subagent context. Срабатывает даже если supervisor проигнорирует rigid language (instruction hierarchy: agent body перекрывает dispatch-prompt).
 
