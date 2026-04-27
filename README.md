@@ -200,6 +200,22 @@ pnpm tauri:build
 - [Beads VS Code Extension](https://marketplace.visualstudio.com/items?itemName=planet57.vscode-beads) - The Planet57 VS Code extension
 - [Community Tools](https://github.com/steveyegge/beads/blob/main/docs/COMMUNITY_TOOLS.md) - Other Beads community projects
 
+## Performance
+
+### Automated regression gate
+
+`tests/perf/group-issues.test.ts` runs as part of `pnpm test` and asserts that `groupIssues` (the hot-path that organises issues into epic/child groups) handles a 500-issue fixture (50 epics × 10 children) under **100ms mean** across 50 iterations. If the function regresses to O(n²), mean jumps to ~1000ms and the test fails. The same gate runs in CI on every pull request.
+
+### Manual MCP perf check before merge
+
+The automated gate covers algorithmic regressions in pure logic. SWR cache, IPC roundtrip, and Vue reactivity are **not** visible to it. Before merging a PR that touches `useIssues`, `useBeadsPath`, or any caching layer, run a quick manual check:
+
+1. Start the app: `pnpm tauri:dev`
+2. Connect Tauri MCP (configured per `src-tauri/CLAUDE.md`).
+3. Open Project A with a real `.beads` directory (~100+ issues).
+4. Switch to Project B (different path).
+5. Assess: does the issue list appear **instantly** (< 1s subjective)? If it feels sluggish, check the Debug Panel (`Cmd+Shift+L`) for `[perf:bd_poll_data_cached]` log entries showing IPC timing.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
