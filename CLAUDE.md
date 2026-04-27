@@ -156,7 +156,7 @@ All UI strings go through `$t('namespace.key')` (or `t(...)` from `useI18n()`); 
 Full compatibility matrix + version-gated helper list: **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)**.
 
 ### Rust backend / Tauri
-Dev Server zombie-kill, Tauri MCP setup, backend-specific patterns — auto-load from **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)** when you touch any file in `src-tauri/`. Quick: `pnpm tauri:dev` (but kill zombies first — see src-tauri/CLAUDE.md).
+Dev Server zombie-kill, Tauri MCP setup, backend-specific patterns — auto-load from **[src-tauri/CLAUDE.md](src-tauri/CLAUDE.md)** when you touch any file in `src-tauri/`. Quick: `./start-dev.sh` (or `pnpm tauri:dev` for minimal start).
 
 ### Model Selection & Completion Reports
 **[.claude/references/orchestration.md](.claude/references/orchestration.md)** — DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT, когда Opus vs Sonnet.

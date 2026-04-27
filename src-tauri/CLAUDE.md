@@ -24,6 +24,8 @@ Full logging rules (frontend + backend + log-file paths): `.claude/rules/logging
 
 ## Dev Server
 
+**Recommended entry point: `./start-dev.sh`** — wraps `pnpm tauri:dev` with extra cleanup (clears `.nuxt` / `.vite` / `.cache` caches, kills broader zombie patterns inside the project, validates Rust + bd CLI, gives a clear error when port 3133 is held by a foreign project). Use it when restarting after a crash, switching branches, or seeing flaky HMR. Below describes what `pnpm tauri:dev` itself does internally.
+
 `pnpm tauri:dev` runs `scripts/predev.sh` first — automatic pre-flight that:
 
 1. Frees port 3133 if held by a stale Nuxt process from this repo (cwd check via `lsof`). Without this, a zombie Nuxt makes the new one fall back to 3000 while the Tauri webview still loads 3133 → blank window.
