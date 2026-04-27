@@ -340,8 +340,8 @@ export function matchesSearch(issue: Issue, term: string): boolean {
 
 /**
  * Build a map of epic id → direct children from a list of issues.
- * Used for leaf-up filtering: an epic is transparent for status/search filters
- * and passes through if at least one direct child matches.
+ * Used for leaf-up filtering: an epic passes status/search filters if itself
+ * matches OR at least one direct child matches.
  */
 function buildChildrenByEpic(issues: Issue[]): Map<string, Issue[]> {
   const map = new Map<string, Issue[]>()
@@ -359,6 +359,22 @@ function buildChildrenByEpic(issues: Issue[]): Map<string, Issue[]> {
 }
 
 /**
+ * Apply a predicate with leaf-up semantics: an issue passes if it matches the
+ * predicate, or if it is an epic with at least one direct child that matches.
+ */
+function passesLeafUp(
+  issue: Issue,
+  predicate: (i: Issue) => boolean,
+  childrenByEpic: Map<string, Issue[]>,
+): boolean {
+  if (predicate(issue)) return true
+  if (issue.type === 'epic') {
+    return (childrenByEpic.get(issue.id) || []).some(predicate)
+  }
+  return false
+}
+
+/**
  * Filter issues based on inclusion filters, exclusion filters, and search.
  */
 export function filterIssues(
@@ -368,26 +384,17 @@ export function filterIssues(
 ): Issue[] {
   // Global-search semantics (Jira/Linear): active search bypasses all
   // filters/exclusions so the user can locate issues hidden by the current view.
-  // Leaf-up: an epic is included if itself OR at least one direct child matches.
   const searchTerm = filters.search?.trim()
   if (searchTerm) {
     const search = searchTerm.toLowerCase()
+    const matches = (i: Issue) => matchesSearch(i, search)
     const childrenByEpic = buildChildrenByEpic(issues)
-    return issues.filter((issue) => {
-      if (matchesSearch(issue, search)) return true
-      if (issue.type === 'epic') {
-        const children = childrenByEpic.get(issue.id) || []
-        return children.some(c => matchesSearch(c, search))
-      }
-      return false
-    })
+    return issues.filter(issue => passesLeafUp(issue, matches, childrenByEpic))
   }
 
   let result = issues
 
   // Status filter (default: WORKFLOW view)
-  // Leaf-up: after computing which issues directly pass, epics are included
-  // if themselves or at least one direct child passes the status filter.
   if (filters.status.length > 0) {
     const includeBlocked = filters.status.includes('blocked')
     const passesStatus = (issue: Issue): boolean => {
@@ -395,19 +402,8 @@ export function filterIssues(
       if (!includeBlocked && isIssueBlocked(issue)) return false
       return filters.status.includes(issue.status)
     }
-    const directlyMatching = new Set<string>()
-    for (const issue of result) {
-      if (passesStatus(issue)) directlyMatching.add(issue.id)
-    }
     const childrenByEpic = buildChildrenByEpic(result)
-    result = result.filter((issue) => {
-      if (directlyMatching.has(issue.id)) return true
-      if (issue.type === 'epic') {
-        const children = childrenByEpic.get(issue.id) || []
-        return children.some(c => directlyMatching.has(c.id))
-      }
-      return false
-    })
+    result = result.filter(issue => passesLeafUp(issue, passesStatus, childrenByEpic))
   } else {
     result = result.filter((issue) => isIssueWorkflow(issue))
   }
