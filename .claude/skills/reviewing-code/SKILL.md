@@ -22,6 +22,28 @@ bd show {BEAD_ID} --json | jq -r '.[0].status'
 
 Если не `inreview` — выход (claim делает `claiming-bead`, dispatch — `pre-dispatch`; запусти их сначала). Хуки `validate-review-chain.sh` + `validate-completion.sh` сторожат валидность переходов на bd-уровне; порядок simplify → review → accept — orchestrator-дисциплина (ответственность skill'а), не enforced хуками.
 
+## Universal sweep — упомянутые, но не созданные bead'ы
+
+Каждый review-step (1 simplify, 2 code-review, 2.5 RAMS/WIG, 3 acceptance) **ОБЯЗАН** после получения summary от skill'а / агента:
+
+1. Найти в summary findings с маркерами:
+   - simplify: `follow-up bead`, `отдельным bead`, `scope-cut`, `вне scope`, `out of scope`, `not worth fixing now`
+   - code-reviewer: `pre-existing`, `существовал до`, `баг не введён этим`, `не блокирует approval`
+   - RAMS / WIG: `non-critical follow-up`, `можно отложить`, `улучшение не блокирующее`
+   - orchestrator: `отложим в follow-up`, `починим отдельным bead`
+
+2. Каждый match — запись в локальный `FOLLOWUPS`-список (в рабочем контексте orchestrator'а, не на диск) с полями:
+   - `source-step` (`simplify` / `code-review` / `RAMS` / `acceptance`)
+   - `title` (вытащенный или сформулированный из контекста finding'а)
+   - `rationale` (1-2 строки, *почему* отдельный bead, не текущий)
+   - `suggested-label` (по домену: simplify → `dx`, RAMS → `ui`, code-reviewer → label текущего bead'а, acceptance → label текущего bead'а)
+   - `suggested-type` (`bug` для pre-existing / RAMS critical, `task` иначе)
+   - `confidence` (`certain` / `uncertain`)
+
+3. Workflow **НЕ прерывается**. Идём к следующему step'у.
+
+Список фраз — не закрытый. Если видишь явное намерение «нужно отдельной задачей» в иной формулировке — добавляй finding в `FOLLOWUPS` и в финальном отчёте предложи дописать фразу в этот список.
+
 ## Step 1: Simplify (ОБЯЗАТЕЛЬНО перед review)
 
 Запусти built-in skill `simplify` — review changed code for reuse, quality, and efficiency.
@@ -183,7 +205,47 @@ bd update {BEAD_ID} --status accepted
 
 Если проблемы — redispatch supervisor с описанием.
 
+## Step 3.5: Sweep follow-ups (перед Step 4)
+
+Если `FOLLOWUPS` непуст:
+
+1. Для каждой записи с `confidence=certain`:
+
+   ```bash
+   SKIP_ENRICH_CHECK=1 bd create \
+     --title "Follow-up из {source-step} {BEAD_ID}: {title}" \
+     -d "{rationale}" \
+     --label {suggested-label} \
+     --type {suggested-type}
+   ```
+
+   Молча. Сохраняй полученный ID.
+
+2. Записи с `confidence=uncertain` — в локальный `QUESTIONS`-список (обработается в Step 4).
+
+3. Сводка в comment текущего bead'а:
+
+   ```bash
+   bd comments add {BEAD_ID} "FOLLOWUPS: создал N bead'ов: [ID1, ID2, ...]. Сомнений: M."
+   ```
+
+4. В финальный отчёт workflow (см. CLAUDE.md «Workflow Execution Style» §2) добавь две строки в итоговую таблицу:
+
+   | Follow-ups | N созданных, M сомнений |
+   | FOLLOWUP IDs | bd-XXX, bd-YYY |
+
+Если `FOLLOWUPS` пуст — пропусти Step 3.5 и переходи к Step 4 без записи в comment.
+
 ## Step 4: Close
+
+Перед `bd close`: если `QUESTIONS` непуст — **ОДИН** AskUserQuestion с batch-форматом «N findings под вопросом, как поступить с каждым: завести как отдельный / объединить с X / отбросить». Это единственный вопрос за весь workflow и приходится строго на «scope vs follow-up» — категория, разрешённая в CLAUDE.md как «точка решения вне плана».
+
+После ответа:
+
+- «завести» / «объединить» → `SKIP_ENRICH_CHECK=1 bd create ...` либо `bd update {existing-id} ...`. Полученные ID добавь в финальный отчёт.
+- «отбросить» → `bd comments add {BEAD_ID} "DROPPED: [список с обоснованием]"` в исходный bead.
+
+Затем:
 
 ```bash
 bd close {BEAD_ID} --claim-next   # Закрыть + claim следующей готовой задачи
@@ -198,13 +260,3 @@ bd close {BEAD_ID} --claim-next   # Закрыть + claim следующей г
 - Пользователь явно сказал "skip review"
 
 Override когда хук блокирует: `bd close {ID} --force`
-
-## Pre-existing bugs
-
-Если ревьювер находит баг, который существовал ДО текущих изменений (не введён этим supervisor'ом):
-
-```bash
-bd create "Bug: описание" -d "Найдено при review {BEAD_ID}. Баг существовал до текущих изменений."
-```
-
-НЕ блокирует approval текущего review.
