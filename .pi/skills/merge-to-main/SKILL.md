@@ -36,5 +36,5 @@ description: Pi-native merge workflow. Use when user says “мержим”, �
 - Do not run `land` before this skill; merge-to-main includes commit/push.
 - `main` is read-only for ordinary agent edits/commits. Any main-branch mutation in this workflow must happen only after PR merge/checkout as part of the approved merge flow; do not make ad-hoc fixes on `main`.
 - Documentation can be skipped only for internal/config/test-only changes or explicit user request.
-- Terminal completion of pushed feature-branch work requires merged PR/origin-main ancestry evidence; otherwise use an explicit `PR_MERGED_EXCEPTION=<reason>` / `NO_REMOTE_BRANCH_COMPLETION_REQUIRED` only for local-only fast-path or spike work.
+- Terminal completion of pushed feature-branch work requires merged PR/origin-main ancestry evidence; otherwise use an explicit `PR_MERGED_EXCEPTION=<reason>`, `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`, or `--pr-merged-exception <reason>` only for local-only fast-path or spike work.
 - Final report is a two-column table with PR URL, merge evidence, and pushed branch evidence.

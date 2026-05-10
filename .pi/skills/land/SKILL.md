@@ -43,7 +43,7 @@ Work is not complete until `git push` succeeds.
    ```bash
    git merge-base --is-ancestor HEAD origin/main || gh pr view "$(git branch --show-current)" --json state,mergedAt,url
    ```
-   If this is intentionally local-only fast-path/spike work, record an explicit reason in the close command/comment with `PR_MERGED_EXCEPTION=<reason>` or `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`.
+   If this is intentionally local-only fast-path/spike work, record an explicit reason in the close command/comment with `PR_MERGED_EXCEPTION=<reason>`, `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`, or `--pr-merged-exception <reason>`.
 8. If any error happens after acquire, release merge-slot before reporting.
 9. Verify:
    ```bash
@@ -54,5 +54,5 @@ Work is not complete until `git push` succeeds.
 
 - Never use `git add .` or `git add -A`.
 - Never say “ready to push”; push.
-- Do not close remote feature-branch work until merge evidence is recorded, unless a local-only/fast-path exception reason is explicit.
+- Do not close remote feature-branch work until merge evidence is recorded, unless a local-only/fast-path exception reason is explicit via `PR_MERGED_EXCEPTION=<reason>`, `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`, or `--pr-merged-exception <reason>`.
 - Final report is a table with commands, exit codes, commits, push evidence, and PR/merge evidence or exception reason.
