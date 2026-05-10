@@ -29,7 +29,7 @@ The dispatch prompt provides:
    - If requirements are missing, wrong, or extra scope was added, stop with `NOT APPROVED [SPEC_GAP]`.
 4. Phase 2 — code quality:
    - Look for bugs, silent fallbacks, async/race issues, error handling gaps, type holes, duplicated logic, project pattern violations.
-   - For frontend changes, check i18n/logging/UI patterns where applicable.
+   - For frontend Vue changes, run the Pi Frontend Review Checklist: i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion/reduced-motion, responsive/layout, and regression evidence. Do not require undefined RAMS/WIG.
    - For backend changes, check Rust/Tauri contracts and bd compatibility.
 5. Automated checks:
    - Run only relevant checks for changed files and cite command + exit code + output excerpt.

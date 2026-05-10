@@ -21,9 +21,44 @@ interface ReviewResult {
 	startCommit: string;
 	changedFiles: string[];
 	automatedChecks: string[];
+	checkpoints: string[];
+	frontendChecklist: string[];
 	reviewerExitCode?: number;
 	reviewerOutput?: string;
 	reviewerStderr?: string;
+}
+
+const REVIEW_TRANSITIONS: Record<string, string[]> = {
+	inreview: ["simplified"],
+	simplified: ["reviewed"],
+	reviewed: ["accepted", "closed"],
+	accepted: ["closed"],
+};
+
+const FRONTEND_REVIEW_CHECKLIST = [
+	"i18n/locale sync: user-visible strings use t()/i18n and en/ru locale files stay synchronized.",
+	"Logging: no console.* in app UI code; project logging patterns are used where applicable.",
+	"Keyboard/focus: interactive controls are keyboard reachable and have visible focus states.",
+	"Accessible names: icon-only buttons/controls have aria-label/title; form controls have labels.",
+	"Semantics: buttons/links use correct elements; no div/span click targets without keyboard handling.",
+	"Touch targets: primary interactive targets are at least ~44x44px or have equivalent hit area.",
+	"Contrast/state: text and important UI states have sufficient contrast and non-color-only indicators where relevant.",
+	"Motion: animations/transitions respect reduced-motion project patterns where relevant.",
+	"Responsive/layout: component works at narrow widths without horizontal overflow or content jumping.",
+	"Regression evidence: record changed Vue files inspected, checks run/manual notes, and redispatch fix list if any.",
+];
+
+export function validateReviewTransition(from: string, to: string, comments = ""): string | undefined {
+	const allowed = REVIEW_TRANSITIONS[from] ?? [];
+	if (!allowed.includes(to)) return `invalid review transition ${from} -> ${to}`;
+	if (to === "reviewed" && !/CODE REVIEW:\s*APPROVED|VERDICT:\s*APPROVED/i.test(comments)) return "reviewed requires CODE REVIEW APPROVED evidence";
+	if (to === "accepted" && !/ACCEPTANCE|Acceptance evidence|human acceptance/i.test(comments)) return "accepted requires acceptance evidence";
+	if (to === "closed" && from !== "accepted" && !/NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments)) return "closed requires accepted status or documented no-acceptance shortcut";
+	return undefined;
+}
+
+export function frontendReviewChecklist(files: string[]): string[] {
+	return files.some((file) => /^app\/.*\.vue$/.test(file)) ? FRONTEND_REVIEW_CHECKLIST : [];
 }
 
 async function exec(pi: ExtensionAPI, command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
@@ -143,6 +178,10 @@ function render(result: ReviewResult): string {
 		`branch=${result.branch}`,
 		`startCommit=${result.startCommit}`,
 		`changedFiles=${result.changedFiles.join(", ") || "-"}`,
+		"checkpoints:",
+		...result.checkpoints.map((item) => `- ${item}`),
+		result.frontendChecklist.length > 0 ? "frontendReviewChecklist:" : "frontendReviewChecklist: not applicable",
+		...result.frontendChecklist.map((item) => `- ${item}`),
 		"automatedChecks:",
 		...result.automatedChecks.map((item) => `---\n${item}`),
 		result.reviewerExitCode === undefined ? "reviewer=not run" : `reviewerExit=${result.reviewerExitCode}`,
@@ -170,13 +209,33 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const changedRaw = await execRequired(pi, "git", ["diff", "--name-only", `${startCommit}..HEAD`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
-				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, changedFiles, automatedChecks };
+				const frontendChecklist = frontendReviewChecklist(changedFiles);
+				const checkpoints = [
+					"Selected model: bd statuses inreview -> simplified -> reviewed -> accepted -> closed with structured comments as audit evidence.",
+					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
+					"APPROVED path: record CODE REVIEW APPROVED evidence, run acceptance checks, then move reviewed -> accepted -> closed.",
+					"Terminal guard: standard and direct closed transitions require accepted/reviewing workflow state and policy evidence; direct bypass is blocked by beads-policy.",
+					"Epic completion with incomplete children: documented follow-up beads-task-issue-tracker-bco3 blocks final verification.",
+					"PR merged validation: documented follow-up beads-task-issue-tracker-eote blocks final verification unless merge workflow supplies explicit override/fast-path exception.",
+				];
+				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist };
 				if (!params.dryRun) {
-					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\n\nReview git diff ${startCommit}..HEAD. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}`;
+					await exec(pi, "bd", ["comments", "add", params.beadId, "SIMPLIFIED: review_bead simplify gate completed; scoped diff prepared for code review."]);
+					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
+					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\n\nReview git diff ${startCommit}..HEAD. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}`;
 					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
+					if (/VERDICT:\s*APPROVED|CODE REVIEW:\s*APPROVED/i.test(reviewer.output)) {
+						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
+						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
+						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\n${automatedChecks.join("\n\n")}`]);
+						await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
+					} else {
+						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: NOT APPROVED\n\nRedispatch required before completion.\n\n${reviewer.output.slice(-4000)}`]);
+						await execRequired(pi, "bd", ["update", params.beadId, "--status", "inreview"]);
+					}
 				}
 				return { content: [{ type: "text", text: render(result) }], details: result };
 			} catch (error) {

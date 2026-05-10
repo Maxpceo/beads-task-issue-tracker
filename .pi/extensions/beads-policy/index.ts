@@ -252,12 +252,127 @@ function getBeadEnrichmentError(command: string): string | undefined {
 	return undefined;
 }
 
-function commandHasInvalidReviewTransition(command: string): boolean {
-	return /\bbd\s+update\s+\S+\s+--status\s+(simplified|reviewed|accepted)\b/.test(command);
+function shellTokens(input: string): string[] {
+	return input.match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(stripQuotes) ?? [];
+}
+
+function parseBdUpdateStatus(command: string): { id: string; status: string } | undefined {
+	const valueFlags = new Set([
+		"--priority",
+		"-p",
+		"--assignee",
+		"-a",
+		"--description",
+		"-d",
+		"--title",
+		"--type",
+		"-t",
+		"--label",
+		"--labels",
+		"--add-label",
+		"--remove-label",
+		"--set-labels",
+		"--deps",
+		"--reason",
+	]);
+	for (const segment of splitShellSegments(command)) {
+		const tokens = shellTokens(segment);
+		const updateIndex = tokens.findIndex((token, index) => token === "update" && tokens[index - 1] === "bd");
+		if (updateIndex < 0) continue;
+		let id: string | undefined;
+		let status: string | undefined;
+		for (let index = updateIndex + 1; index < tokens.length; index += 1) {
+			const token = tokens[index];
+			if (token === "--status" || token === "-s") {
+				status = tokens[index + 1];
+				index += 1;
+				continue;
+			}
+			if (token.startsWith("--status=")) {
+				status = token.slice("--status=".length);
+				continue;
+			}
+			if (valueFlags.has(token)) {
+				index += 1;
+				continue;
+			}
+			if (token.startsWith("--") && token.includes("=")) continue;
+			if (token.startsWith("-")) continue;
+			id = id ?? token;
+		}
+		if (id && status) return { id, status };
+	}
+	return undefined;
+}
+
+function reviewCheckpointTransition(command: string): { id: string; status: string } | undefined {
+	const parsed = parseBdUpdateStatus(command);
+	return parsed && /^(simplified|reviewed|accepted)$/.test(parsed.status) ? parsed : undefined;
+}
+
+function directClosedTransition(command: string): { id: string; status: string } | undefined {
+	const parsed = parseBdUpdateStatus(command);
+	return parsed?.status === "closed" ? parsed : undefined;
+}
+
+function closeCommandId(command: string): string | undefined {
+	return command.match(/\bbd\s+close\s+(\S+)/)?.[1];
+}
+
+function commandHasReviewCheckpointTransition(command: string): boolean {
+	return Boolean(reviewCheckpointTransition(command));
+}
+
+function commandDirectlySetsClosed(command: string): boolean {
+	return Boolean(directClosedTransition(command));
 }
 
 function commandClosesBead(command: string): boolean {
 	return /\bbd\s+close\b/.test(command);
+}
+
+function getBdIssue(cwd: string, id: string): { status?: string } | undefined {
+	try {
+		const raw = execFileSync("bd", ["show", id, "--json"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed[0] : parsed;
+	} catch {
+		return undefined;
+	}
+}
+
+function getBdCommentsText(cwd: string, id: string): string {
+	try {
+		return execFileSync("bd", ["comments", id], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+	} catch {
+		return "";
+	}
+}
+
+function validateReviewTransitionForCommand(command: string, cwd: string): string | undefined {
+	const transition = reviewCheckpointTransition(command);
+	if (!transition) return undefined;
+	const issue = getBdIssue(cwd, transition.id);
+	const from = issue?.status;
+	const comments = getBdCommentsText(cwd, transition.id);
+	if (transition.status === "simplified" && from !== "inreview") return `simplified requires source status inreview, got ${from ?? "unknown"}`;
+	if (transition.status === "reviewed" && from !== "simplified") return `reviewed requires source status simplified, got ${from ?? "unknown"}`;
+	if (transition.status === "reviewed" && !/CODE REVIEW:\s*APPROVED|VERDICT:\s*APPROVED/i.test(comments)) return "reviewed requires CODE REVIEW APPROVED evidence";
+	if (transition.status === "accepted" && from !== "reviewed") return `accepted requires source status reviewed, got ${from ?? "unknown"}`;
+	if (transition.status === "accepted" && !/ACCEPTANCE|Acceptance evidence|human acceptance/i.test(comments)) return "accepted requires acceptance evidence";
+	return undefined;
+}
+
+function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
+	const id = directClosedTransition(command)?.id ?? closeCommandId(command);
+	if (workflowState.state === "accepted" && workflowState.activeBead && id === workflowState.activeBead) {
+		const status = getBdIssue(cwd, id)?.status;
+		return status === "accepted";
+	}
+	if (!id) return false;
+	const status = getBdIssue(cwd, id)?.status;
+	const comments = getBdCommentsText(cwd, id);
+	return status === "accepted" || (status === "reviewed" && /NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments));
 }
 
 function splitShellSegments(command: string): string[] {
@@ -519,7 +634,7 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	if (isSupervisorContext() && (commandClosesBead(command) || commandHasInvalidReviewTransition(command) || commandHasGitPush(command))) {
+	if (isSupervisorContext() && (commandClosesBead(command) || commandDirectlySetsClosed(command) || commandHasReviewCheckpointTransition(command) || commandHasGitPush(command))) {
 		return {
 			policy: "blockSupervisorClose",
 			block: true,
@@ -527,19 +642,20 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	if (commandClosesBead(command) && !["accepted", "reviewing"].includes(workflowState.state ?? "")) {
+	if ((commandClosesBead(command) || commandDirectlySetsClosed(command)) && !canCloseByReviewState(command, commandCwd, workflowState)) {
 		return {
 			policy: "blockBdCloseWithoutReview",
 			block: true,
-			reason: "Blocked: bd close requires reviewed/accepted workflow state or an explicit policy override.",
+			reason: "Blocked: terminal close requires accepted status/workflow state, or reviewed with documented no-acceptance shortcut, or an explicit policy override.",
 		};
 	}
 
-	if (commandHasInvalidReviewTransition(command) && workflowState.state !== "reviewing") {
+	const invalidReviewTransition = validateReviewTransitionForCommand(command, commandCwd);
+	if (commandHasReviewCheckpointTransition(command) && (workflowState.state !== "reviewing" || invalidReviewTransition)) {
 		return {
 			policy: "validateReviewChain",
 			block: true,
-			reason: "Blocked: orchestrator review statuses require workflow state reviewing.",
+			reason: invalidReviewTransition ?? "Blocked: orchestrator review statuses require workflow state reviewing.",
 		};
 	}
 
