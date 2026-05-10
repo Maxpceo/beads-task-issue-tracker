@@ -32,6 +32,7 @@ Claim first, then plan. Do not investigate deeply before claiming.
 
 - First non-readonly action is `/workflow-claim <ID>` (or, only if the command is unavailable, `bd update <ID> --claim` followed immediately by `/workflow-update bead=<ID> state=claimed branch=<current-branch> start=<HEAD>`).
 - Do not edit files before plan approval/auto gate.
+- Fast Path intentionally differs from the older Claude one-file/<20-line shortcut: Pi uses `AGENTS.md` risk-aware limits (low-risk direct work up to 3 code files / 80 added lines, with hard supervisor path for workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work unless explicitly justified as tiny docs-only/mechanical work).
 - If the bead is missing handoff context or concrete acceptance, enrich it or ask before implementation/dispatch.
 - Do not create follow-up beads from memory-only context; use the full self-contained template from `AGENTS.md` and add labels plus `parent-child`/`discovered-from`/blocker deps when known.
 - Do not use markdown TODOs; progress is in bd.

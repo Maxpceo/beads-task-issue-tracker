@@ -5,6 +5,8 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 
 # Dispatch Supervisor
 
+This skill runs only after a bead is claimed and the plan is approved. Approved plan means approved dispatch; do not ask an extra “continue?” question unless there is a real decision point.
+
 ## Workflow
 
 1. Guard workflow state:
@@ -16,20 +18,45 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
    ```bash
    bd show <ID> --json
    bd comments <ID> --json
+   git branch --show-current
+   git rev-parse HEAD
    ```
-   Required: status `in_progress`, no unresolved blockers, self-contained handoff sections from `AGENTS.md`, concrete acceptance/verification bullets, labels, and a `PLAN APPROVED` comment for non-fast-path work.
-3. Call typed tool, not raw subagent:
+   Required: status `in_progress`, assignee is this session/user, no unresolved blockers, self-contained handoff sections from `AGENTS.md`, concrete acceptance/verification bullets, labels, and an approved plan comment for non-fast-path work.
+3. Approved plan marker: use `PLAN APPROVED` with these fields so `.pi/extensions/beads-dispatch/index.ts` can validate readiness:
+   ```text
+   PLAN APPROVED
+   Approved-by: <user/orchestrator>
+   Approved-at: <ISO/date>
+   Start-commit: <git sha>
+   Problem: <summary>
+   Approach: <summary>
+   Rejected alternatives: <summary>
+   Files to change: <paths>
+   Acceptance: <observable checks>
+   Verification / acceptance checks: <commands/manual checks>
+   ```
+   Legacy comments like `PLAN (approved ...)` are not sufficient for typed dispatch unless a compatibility change is intentionally implemented.
+4. Call typed tool, not raw subagent:
    ```text
    dispatch_supervisor(beadId=<ID>)
    ```
-4. The tool fail-closes readiness, collects cwd branch/start commit, selects agent, logs DISPATCH comment, and runs the Pi agent.
-   Required prompt fields: `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
-5. After supervisor returns, inspect status/report.
-6. If completed and bead is `inreview`, update state:
+5. The tool fail-closes readiness, collects cwd branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
+6. After supervisor returns, inspect status/report.
+7. If completed and bead is `inreview`, update state:
    ```text
    /workflow-update state=inreview
    ```
-7. Continue with `review-bead`.
+8. Continue with `review-bead` automatically.
+
+## Supervisor selection
+
+Typed dispatch selects the default agent from labels/description/files:
+
+- `frontend` / `ui` / Vue/component/page/composable → `vue-supervisor`;
+- `backend` / `tracker` / Rust/Tauri/Cargo → `tauri-supervisor`;
+- `ci` / `dx` / tests/workflow/tooling → `test-supervisor`.
+
+If the domain is ambiguous, ask one concrete question with 2-4 options before dispatch.
 
 ## Rules
 
@@ -37,4 +64,15 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 - Do not dispatch terminal, dependency-blocked, unenriched, unlabeled, unplanned, or vague-acceptance beads; enrich it or ask the user with 2-4 options first.
 - Dispatch is required for risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain frontend+backend work unless a documented Fast Path/mechanical exception is both narrow and low-risk.
 - Do not ask for confirmation after an approved plan unless a real decision point appears.
-- If dispatch returns BLOCKED/NEEDS_CONTEXT, diagnose before redispatch.
+- If dispatch returns `BLOCKED` or `NEEDS_CONTEXT`, diagnose the missing context before redispatch.
+- Supervisor must not close beads, set orchestrator statuses, or push; `beads-policy` enforces this in subagent contexts.
+
+## Final report
+
+| Шаг | Результат |
+|---|---|
+| Guard | status/assignee/blockers |
+| BRANCH | branch |
+| START_COMMIT | sha |
+| Supervisor | selected agent and reason |
+| Dispatch | launched / dry-run / blocked reason |
