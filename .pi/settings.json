@@ -1,6 +1,6 @@
 {
   "skills": ["skills"],
   "prompts": ["prompts"],
-  "extensions": [],
+  "extensions": ["extensions/plan-mode/index.ts"],
   "enableSkillCommands": true
 }
