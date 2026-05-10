@@ -129,7 +129,6 @@ function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 	let output = 0;
 	let cacheRead = 0;
 	let cacheWrite = 0;
-	let cost = 0;
 
 	for (const entry of ctx.sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
@@ -138,21 +137,12 @@ function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 		output += usage?.output ?? 0;
 		cacheRead += usage?.cacheRead ?? 0;
 		cacheWrite += usage?.cacheWrite ?? 0;
-		cost += usage?.cost?.total ?? 0;
 	}
 
-	const context = ctx.getContextUsage();
-	const contextWindow = context?.contextWindow ?? ctx.model?.contextWindow;
-	const contextValue = context?.percent != null && contextWindow ? `${Math.round(context.percent)}%/${formatTokens(contextWindow)}` : "?";
-	const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "-";
-
 	return [
-		["model", model, ctx.model ? "text" : "muted"],
-		["ctx", contextValue, contextValue === "?" ? "muted" : "text"],
 		["in", input ? `↑${formatTokens(input)}` : "-", input ? "text" : "muted"],
 		["out", output ? `↓${formatTokens(output)}` : "-", output ? "text" : "muted"],
 		["cache", `R${formatTokens(cacheRead)}/W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"],
-		["cost", cost ? `$${cost.toFixed(3)}` : "-", cost ? "text" : "muted"],
 	] as const;
 }
 
