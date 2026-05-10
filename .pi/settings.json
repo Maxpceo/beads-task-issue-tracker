@@ -1,6 +1,6 @@
 {
   "skills": ["skills"],
   "prompts": ["prompts"],
-  "extensions": ["extensions/plan-mode/index.ts"],
+  "extensions": ["extensions/plan-mode/index.ts", "extensions/workflow-state/index.ts"],
   "enableSkillCommands": true
 }
