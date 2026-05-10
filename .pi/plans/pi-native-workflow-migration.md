@@ -145,7 +145,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
 | `validateReviewChain` | Block invalid lifecycle transitions |
-| `enforceBeadEnrichment` | Block `bd create` without `### Files`, `### Current state`, `### Target state`, except allowed exemptions |
+| `enforceBeadEnrichment` | Block agent-created non-epic beads without the full self-contained handoff template, labels, and concrete acceptance/verification bullets, except allowed exemptions |
 | `blockMutationsInPlanning` | During planning, block edit/write and mutating bash |
 | `blockSupervisorClose` | Subagents cannot close beads, set orchestrator statuses, or push |
 | `blockWorktreeInsideRepo` | Block new worktrees outside `~/Projects/worktrees/beads-task-issue-tracker/<name>`, including repo-local paths, `.claude/worktrees`, `..`, and symlink escapes |
@@ -166,7 +166,9 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | `git add .` | Blocked |
 | ordinary `git add <file>` / `git stage <file>` / `git commit` on `main` | Blocked |
 | `git push` without merge-slot | Blocked |
-| `bd create` without enrichment | Blocked |
+| issue creation without full handoff template | Blocked |
+| issue creation with vague-only acceptance | Blocked with ask-user guidance |
+| issue creation with full template, labels, and concrete checks | Allowed |
 | claim bead | Workflow state becomes `claimed` |
 | auto plan without required sections | Remains in planning |
 | auto plan with quality gate | Starts execution |

@@ -61,6 +61,32 @@ bd sync               # Sync with git
 - Agent-optimized: JSON output, ready work detection, discovered-from links
 - Prevents duplicate tracking systems and confusion
 
+### Self-Contained Beads
+
+Agent-created beads must be self-contained handoff packages. A future session must be able to implement or review the task without chat history.
+
+Required description sections for non-epic, non-exempt agent-created beads:
+
+- `### Origin`
+- `### Files`
+- `### Current state`
+- `### Target state`
+- `### Investigation findings`
+- `### Decisions`
+- `### Rejected alternatives`
+- `### Dependencies / blockers`
+- `### Acceptance criteria`
+- `### Verification / acceptance checks`
+- `### Out of scope`
+
+Also required:
+
+- Add at least one label (`--label`, `--labels`, or `-l`).
+- Add relationships when known: `parent-child:<epic-id>` for epic children, `discovered-from:<source-id>` for follow-ups, and blocker dependencies for required ordering.
+- Acceptance and verification must be observable bullet checks, not vague phrases like “works”, “done”, or “fixed”.
+- If acceptance is unclear, stop and ask the user one concrete question with 2-4 options before creating, dispatching, or closing the bead.
+- If context is insufficient, investigate first, create a spike, or ask; do not create stub tasks that rely on chat memory.
+
 ### Quick Start
 
 **Check for ready work:**
@@ -72,8 +98,57 @@ bd ready --json
 **Create new issues:**
 
 ```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+bd create "Issue title" -t bug|feature|task -p 0-4 --label dx --description "$(cat <<'EOF'
+### Origin
+- Source bead/user request and why this exists.
+### Files
+- path/to/file.ts
+### Current state
+- Observable current behavior.
+### Target state
+- Observable target behavior.
+### Investigation findings
+- Evidence gathered so far.
+### Decisions
+- Chosen approach and rationale.
+### Rejected alternatives
+- Alternative and why rejected.
+### Dependencies / blockers
+- parent-child:<epic-id> / discovered-from:<id> / blocks:<id> / none.
+### Acceptance criteria
+- Concrete observable result.
+### Verification / acceptance checks
+- Command/manual check with expected result.
+### Out of scope
+- Explicit non-goals.
+EOF
+)" --json
+
+bd create "Follow-up title" -p 1 --label dx --deps discovered-from:bd-123 --description "$(cat <<'EOF'
+### Origin
+- Discovered from bd-123.
+### Files
+- path/to/file.ts
+### Current state
+- Observable current behavior.
+### Target state
+- Observable target behavior.
+### Investigation findings
+- Evidence gathered so far.
+### Decisions
+- Chosen approach and rationale.
+### Rejected alternatives
+- Alternative and why rejected.
+### Dependencies / blockers
+- discovered-from:bd-123.
+### Acceptance criteria
+- Concrete observable result.
+### Verification / acceptance checks
+- Command/manual check with expected result.
+### Out of scope
+- Explicit non-goals.
+EOF
+)" --json
 ```
 
 **Claim and update:**

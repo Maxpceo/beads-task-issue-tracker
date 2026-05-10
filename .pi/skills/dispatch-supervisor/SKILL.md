@@ -15,8 +15,9 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 2. Guard bead:
    ```bash
    bd show <ID> --json
+   bd comments <ID> --json
    ```
-   Required: status `in_progress`.
+   Required: status `in_progress`, no unresolved blockers, self-contained handoff sections from `AGENTS.md`, concrete acceptance/verification bullets, labels, and a `PLAN APPROVED` comment for non-fast-path work.
 3. Call typed tool, not raw subagent:
    ```text
    dispatch_supervisor(beadId=<ID>)
@@ -32,5 +33,6 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 ## Rules
 
 - Do not call raw `subagent` for workflow dispatch.
+- Do not dispatch an unenriched bead or a bead with vague acceptance; enrich it or ask the user with 2-4 options first.
 - Do not ask for confirmation after an approved plan unless a real decision point appears.
 - If dispatch returns BLOCKED/NEEDS_CONTEXT, diagnose before redispatch.

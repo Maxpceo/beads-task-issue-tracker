@@ -167,16 +167,73 @@ function commandHasCommitLikeOperation(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+(commit|rebase|merge|cherry-pick|revert)\b/.test(command);
 }
 
-function commandCreatesUnenrichedBead(command: string): boolean {
-	if (!/\bbd\s+(create|new)\b/.test(command)) return false;
-	if (/--type[=\s]epic\b/.test(command)) return false;
-	if (/--ephemeral\b|--from-markdown\b|--from-graph\b|--file\b/.test(command)) return false;
-	if (/SKIP_ENRICH_CHECK=1/.test(command)) return false;
-	return !(
-		command.includes("### Files") &&
-		command.includes("### Current state") &&
-		command.includes("### Target state")
-	);
+const REQUIRED_HANDOFF_SECTIONS = [
+	"### Origin",
+	"### Files",
+	"### Current state",
+	"### Target state",
+	"### Investigation findings",
+	"### Decisions",
+	"### Rejected alternatives",
+	"### Dependencies / blockers",
+	"### Acceptance criteria",
+	"### Verification / acceptance checks",
+	"### Out of scope",
+];
+
+const VAGUE_ACCEPTANCE_PATTERN = /\b(done|works|fixed|complete|completed|ok|looks good|as expected|готово|работает|исправлено|завершено|нормально)\b/i;
+
+function hasCreateExemption(command: string): boolean {
+	return /--type[=\s]epic\b/.test(command) || /\s-t\s+epic\b/.test(command) || /--ephemeral\b|--from-markdown\b|--from-graph\b|--file\b|--body-file\b|--design-file\b/.test(command) || /SKIP_ENRICH_CHECK=1/.test(command);
+}
+
+function hasLabel(command: string): boolean {
+	return /(?:--label|--labels|-l)(?:=|\s+)\S+/.test(command);
+}
+
+function extractSection(command: string, heading: string): string {
+	const index = command.indexOf(heading);
+	if (index < 0) return "";
+	const after = command.slice(index + heading.length);
+	const next = after.search(/\s###\s+[A-ZА-Я]/);
+	return (next >= 0 ? after.slice(0, next) : after).trim();
+}
+
+function hasBullet(section: string): boolean {
+	return /(^|\s)([-*]|\d+\.)\s+\S+/.test(section);
+}
+
+function isVagueOnly(section: string): boolean {
+	const compact = section
+		.replace(/(^|\s)([-*]|\d+\.)\s+/g, " ")
+		.replace(/[`*_"']/g, "")
+		.trim();
+	return compact.length > 0 && compact.length < 80 && VAGUE_ACCEPTANCE_PATTERN.test(compact);
+}
+
+function getBeadEnrichmentError(command: string): string | undefined {
+	if (!/\bbd\s+(create|new)\b/.test(command)) return undefined;
+	if (hasCreateExemption(command)) return undefined;
+
+	const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !command.includes(section));
+	if (missing.length > 0) {
+		return `Blocked: agent-created beads require a self-contained handoff template. Missing: ${missing.join(", ")}. Ask the user or create a spike if context/acceptance is unclear.`;
+	}
+
+	if (!hasLabel(command)) {
+		return "Blocked: agent-created beads require at least one label via --label/--labels/-l so future sessions can route work.";
+	}
+
+	const acceptance = extractSection(command, "### Acceptance criteria");
+	const verification = extractSection(command, "### Verification / acceptance checks");
+	if (!hasBullet(acceptance) || !hasBullet(verification)) {
+		return "Blocked: Acceptance criteria and Verification / acceptance checks must contain concrete bullet checks. If unclear, ask the user with 2-4 options before creating the bead.";
+	}
+	if (isVagueOnly(acceptance) || isVagueOnly(verification)) {
+		return "Blocked: acceptance/verification is too vague. Ask a concrete question with 2-4 proposed acceptance options before creating the bead.";
+	}
+
+	return undefined;
 }
 
 function commandHasInvalidReviewTransition(command: string): boolean {
@@ -335,11 +392,12 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	if (commandCreatesUnenrichedBead(command)) {
+	const beadEnrichmentError = getBeadEnrichmentError(command);
+	if (beadEnrichmentError) {
 		return {
 			policy: "enforceBeadEnrichment",
 			block: true,
-			reason: "Blocked: bd create requires ### Files, ### Current state, and ### Target state markers unless explicitly exempt.",
+			reason: beadEnrichmentError,
 		};
 	}
 

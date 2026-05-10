@@ -40,5 +40,7 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 ## Rules
 
 - Planning mode is read-only.
-- If requirements are ambiguous, ask a single batched question.
+- If requirements or acceptance are ambiguous, ask a single batched question with 2-4 concrete options and stop until answered.
+- Plans must preserve self-contained handoff context: problem, approach, rejected alternatives, files, acceptance, and verification evidence.
+- New or follow-up beads created during planning must use the full template from `AGENTS.md`, include labels, and link `parent-child`, `discovered-from`, or blocker dependencies when known.
 - Edge cases are required for non-trivial work.
