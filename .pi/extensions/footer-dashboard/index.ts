@@ -11,6 +11,7 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	planMode?: string;
 	mergeSlotHeld?: boolean;
+	mergeSlotHolder?: string;
 }
 
 interface WorktreeInfo {
@@ -58,6 +59,11 @@ function formatWorktree(info: WorktreeInfo | undefined): string {
 	if (!info.isLinked) return "primary";
 	const name = info.path.split("/").filter(Boolean).pop() ?? formatPath(info.path, 18);
 	return `linked:${name}`;
+}
+
+function formatMergeSlot(workflow: WorkflowStateSnapshot): string {
+	if (!workflow.mergeSlotHeld) return "free";
+	return `held:${formatPath(workflow.mergeSlotHolder ?? "unknown", 30)}`;
 }
 
 function sanitizeStatus(text: string): string {
@@ -137,7 +143,7 @@ function workflowParts(ctx: ExtensionContext, footerData: ReadonlyFooterDataProv
 		`state ${workflow.state ?? "idle"}`,
 		`bead ${workflow.activeBead ?? "-"}`,
 		`plan ${workflow.planMode ?? "off"}`,
-		`merge ${workflow.mergeSlotHeld ? "held" : "free"}`,
+		`merge ${formatMergeSlot(workflow)}`,
 	];
 
 	if (statusParts.length > 0) parts.push(...statusParts);

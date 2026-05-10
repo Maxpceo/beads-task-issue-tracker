@@ -30,21 +30,33 @@ Work is not complete until `git push` succeeds.
    ```bash
    bd dolt commit -m "sync beads"
    ```
-6. Acquire merge-slot and push:
+6. Acquire merge-slot with an explicit session-aware holder and push. Compute `holder` once and reuse it for release; do not change `BEADS_ACTOR`:
    ```bash
-   bd merge-slot acquire
+   root=$(git rev-parse --show-toplevel)
+   branch=$(git branch --show-current)
+   branch=${branch:-no-branch}
+   branch_slug=$(printf '%s' "$branch" | tr -c 'A-Za-z0-9._/-' '_')
+   wt_hash=$(printf '%s' "$root" | shasum | cut -c1-8)
+   bead=${PI_ACTIVE_BEAD:-${BEAD_ID:-no-bead}}
+   holder="pi:${bead}:${branch_slug}:${wt_hash}"
+
+   bd merge-slot acquire --holder "$holder"
+   # After successful acquire: /workflow-update slot=held holder=<holder>
+   trap 'bd merge-slot release --holder "$holder"' EXIT
    git pull --rebase
    bd dolt pull || true
    bd dolt push || true
    git push
-   bd merge-slot release
+   bd merge-slot release --holder "$holder"
+   trap - EXIT
+   # After successful release: /workflow-update slot=free holder=-
    ```
 7. Before terminal bead completion on a pushed feature branch, verify PR/merge evidence:
    ```bash
    git merge-base --is-ancestor HEAD origin/main || gh pr view "$(git branch --show-current)" --json state,mergedAt,url
    ```
    If this is intentionally local-only fast-path/spike work, record an explicit reason in the close command/comment with `PR_MERGED_EXCEPTION=<reason>`, `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`, or `--pr-merged-exception <reason>`.
-8. If any error happens after acquire, release merge-slot before reporting.
+8. If any error happens after acquire, release merge-slot with the same `$holder` before reporting. Only mark workflow state `slot=free` after `bd merge-slot release --holder "$holder"` succeeds.
 9. Verify:
    ```bash
    git status -sb

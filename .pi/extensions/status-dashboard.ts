@@ -9,6 +9,7 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	planMode?: string;
 	mergeSlotHeld?: boolean;
+	mergeSlotHolder?: string;
 }
 
 interface WorktreeInfo {
@@ -112,6 +113,11 @@ function formatWorktree(info: WorktreeInfo | undefined): string {
 	return `linked:${name}`;
 }
 
+function formatMergeSlot(workflow: WorkflowStateSnapshot): string {
+	if (!workflow.mergeSlotHeld) return "free";
+	return `held:${truncatePlain(workflow.mergeSlotHolder ?? "unknown", 30)}`;
+}
+
 function themePart(theme: { fg(color: string, text: string): string }, label: string, value: string, valueColor = "text"): string {
 	if (!label) return theme.fg(valueColor, value);
 	return `${theme.fg("muted", `${label}:`)}${theme.fg(valueColor, value)}`;
@@ -203,6 +209,7 @@ function renderWorkflowFooter(
 	const activeBead = explicitBead ?? (snapshot.activeBead?.id ? `${snapshot.activeBead.id}*` : undefined);
 	const dirty = snapshot.dirty;
 	const slotHeld = Boolean(wf.mergeSlotHeld);
+	const slot = formatMergeSlot(wf);
 	const gitState = dirty == null ? "dirty:?" : dirty === 0 ? "clean" : `dirty:${dirty}`;
 	const gitStateColor = dirty == null ? "muted" : dirty === 0 ? "success" : "warning";
 	const worktree = wf.worktreePath ? `wf:${wf.worktreePath.split("/").filter(Boolean).pop() ?? wf.worktreePath}` : formatWorktree(snapshot.worktree);
@@ -220,7 +227,7 @@ function renderWorkflowFooter(
 		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
 		["wt", worktree, snapshot.worktree?.isLinked || wf.worktreePath ? "warning" : "text"],
 		["", gitState, gitStateColor],
-		["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"],
+		["slot", slot, slotHeld ? "error" : "success"],
 	] as const;
 	const statsParts = [
 		...sessionUsageParts(ctx),
@@ -259,7 +266,7 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const activeBead = wf.activeBead ? undefined : await detectActiveBead(pi);
 	const state = wf.state ?? "idle";
 	const bead = wf.activeBead ?? (activeBead?.id ? `${activeBead.id}*` : undefined) ?? "-";
-	const slot = wf.mergeSlotHeld ? "held" : "free";
+	const slot = formatMergeSlot(wf);
 	const text = `bead:${bead} state:${state} br:${branch} wt:${formatWorktree(worktree)} dirty:${dirty ?? "?"} slot:${slot}`;
 
 	latestDashboard = { workflow: wf, branch, dirty, worktree, activeBead };

@@ -25,6 +25,7 @@ interface WorkflowState {
 	startCommit?: string;
 	planMode: PlanMode;
 	mergeSlotHeld: boolean;
+	mergeSlotHolder?: string;
 	updatedAt: string;
 }
 
@@ -37,6 +38,7 @@ interface WorkflowStateUpdateEvent {
 	startCommit?: string;
 	planMode?: PlanMode;
 	mergeSlotHeld?: boolean;
+	mergeSlotHolder?: string;
 	ctx?: ExtensionContext;
 }
 
@@ -59,6 +61,11 @@ function isPlanMode(value: string): value is PlanMode {
 	return value === "off" || value === "strict" || value === "auto";
 }
 
+function formatMergeSlot(state: WorkflowState): string {
+	if (!state.mergeSlotHeld) return "free";
+	return state.mergeSlotHolder ? `held:${state.mergeSlotHolder}` : "held:unknown";
+}
+
 function formatState(state: WorkflowState): string {
 	return [
 		`state=${state.state}`,
@@ -67,7 +74,7 @@ function formatState(state: WorkflowState): string {
 		`worktree=${state.worktreePath ?? "-"}`,
 		`start=${state.startCommit ?? "-"}`,
 		`plan=${state.planMode}`,
-		`mergeSlot=${state.mergeSlotHeld ? "held" : "free"}`,
+		`mergeSlot=${formatMergeSlot(state)}`,
 	].join(" | ");
 }
 
@@ -87,7 +94,7 @@ function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
 	const bead = state.activeBead ?? "-";
 	const branch = state.branch ?? "-";
 	const worktree = state.worktreePath ? "wt:yes" : "wt:no";
-	const slot = state.mergeSlotHeld ? "slot:held" : "slot:free";
+	const slot = state.mergeSlotHeld ? `slot:held:${state.mergeSlotHolder ?? "unknown"}` : "slot:free";
 	ctx.ui.setStatus(
 		"workflow-state",
 		ctx.ui.theme.fg("dim", `wf:${state.state} bead:${bead} br:${branch} ${worktree} ${slot}`),
@@ -129,7 +136,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (event.worktreePath !== undefined) next.worktreePath = event.worktreePath || undefined;
 		if (event.startCommit !== undefined) next.startCommit = event.startCommit || undefined;
 		if (event.planMode !== undefined) next.planMode = event.planMode;
-		if (event.mergeSlotHeld !== undefined) next.mergeSlotHeld = event.mergeSlotHeld;
+		if (event.mergeSlotHolder !== undefined) next.mergeSlotHolder = event.mergeSlotHolder || undefined;
+		if (event.mergeSlotHeld !== undefined) {
+			next.mergeSlotHeld = event.mergeSlotHeld;
+			if (!event.mergeSlotHeld) next.mergeSlotHolder = undefined;
+		}
 		return setState(next, event.ctx);
 	}
 
@@ -250,21 +261,27 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("workflow-merge-slot", {
-		description: "Set merge-slot state. Usage: /workflow-merge-slot held|free",
+		description: "Set merge-slot state. Usage: /workflow-merge-slot held [holder]|free",
 		handler: async (args, ctx) => {
-			const value = args.trim();
+			const [value, holder] = args.trim().split(/\s+/).filter(Boolean);
 			if (value !== "held" && value !== "free") {
-				ctx.ui.notify("Usage: /workflow-merge-slot held|free", "error");
+				ctx.ui.notify("Usage: /workflow-merge-slot held [holder]|free", "error");
 				return;
 			}
-			setState({ mergeSlotHeld: value === "held" }, ctx);
+			setState(
+				{
+					mergeSlotHeld: value === "held",
+					mergeSlotHolder: value === "held" ? holder || workflowState.mergeSlotHolder : undefined,
+				},
+				ctx,
+			);
 			ctx.ui.notify(formatState(workflowState), "info");
 		},
 	});
 
 	pi.registerCommand("workflow-update", {
 		description:
-			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> plan=off|strict|auto slot=held|free",
+			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> plan=off|strict|auto slot=held|free holder=<merge-slot-holder>",
 		handler: async (args, ctx) => {
 			const kv = parseKeyValueArgs(args);
 			const next: Partial<WorkflowState> = {};
@@ -286,12 +303,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				}
 				next.planMode = kv.plan;
 			}
+			if (kv.holder) next.mergeSlotHolder = kv.holder === "-" ? undefined : kv.holder;
 			if (kv.slot) {
 				if (kv.slot !== "held" && kv.slot !== "free") {
 					ctx.ui.notify(`Invalid slot value: ${kv.slot}`, "error");
 					return;
 				}
 				next.mergeSlotHeld = kv.slot === "held";
+				if (kv.slot === "free") next.mergeSlotHolder = undefined;
 			}
 			setState(next, ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
