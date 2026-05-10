@@ -13,9 +13,14 @@ interface WorkflowStateSnapshot {
 	mergeSlotHeld?: boolean;
 }
 
+interface WorktreeInfo {
+	path: string;
+	isLinked: boolean;
+}
+
 interface FooterCache {
 	dirtyCount?: number;
-	worktreePath?: string;
+	worktree?: WorktreeInfo;
 	lastRefresh: number;
 }
 
@@ -42,6 +47,17 @@ function formatPath(path: string | undefined, maxWidth = 34): string {
 	const home = process.env.HOME;
 	const display = home && path.startsWith(home) ? `~${path.slice(home.length)}` : path;
 	return visibleWidth(display) > maxWidth ? truncateToWidth(display, maxWidth, "…") : display;
+}
+
+function isSameOrChildPath(path: string, parent: string): boolean {
+	return path === parent || path.startsWith(`${parent}/`);
+}
+
+function formatWorktree(info: WorktreeInfo | undefined): string {
+	if (!info) return "?";
+	if (!info.isLinked) return "primary";
+	const name = info.path.split("/").filter(Boolean).pop() ?? formatPath(info.path, 18);
+	return `linked:${name}`;
 }
 
 function sanitizeStatus(text: string): string {
@@ -128,31 +144,30 @@ function workflowParts(ctx: ExtensionContext, footerData: ReadonlyFooterDataProv
 	return parts;
 }
 
-async function detectDirtyCount(pi: ExtensionAPI): Promise<number | undefined> {
-	const { stdout, code } = await pi.exec("git", ["status", "--short"]);
+async function detectDirtyCount(pi: ExtensionAPI, cwd: string): Promise<number | undefined> {
+	const { stdout, code } = await pi.exec("git", ["-C", cwd, "status", "--short"]);
 	if (code !== 0) return undefined;
 	return stdout.split("\n").filter((line) => line.trim().length > 0).length;
 }
 
-async function detectWorktree(pi: ExtensionAPI, cwd: string): Promise<string | undefined> {
-	const rootResult = await pi.exec("git", ["rev-parse", "--show-toplevel"]);
+async function detectWorktree(pi: ExtensionAPI, cwd: string): Promise<WorktreeInfo | undefined> {
+	const rootResult = await pi.exec("git", ["-C", cwd, "rev-parse", "--show-toplevel"]);
 	if (rootResult.code !== 0) return undefined;
 	const root = rootResult.stdout.trim() || undefined;
 	if (!root) return undefined;
 
-	const worktreeResult = await pi.exec("git", ["worktree", "list", "--porcelain"]);
-	if (worktreeResult.code !== 0) return root;
+	const worktreeResult = await pi.exec("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
+	if (worktreeResult.code !== 0) return { path: root, isLinked: false };
 
-	const records = worktreeResult.stdout
+	const paths = worktreeResult.stdout
 		.split("\n\n")
 		.map((record) => record.trim())
-		.filter(Boolean);
-	for (const record of records) {
-		const first = record.split("\n")[0];
-		const match = first?.match(/^worktree\s+(.+)$/);
-		if (match && (cwd.startsWith(match[1]) || root === match[1])) return match[1];
-	}
-	return root;
+		.filter(Boolean)
+		.map((record) => record.split("\n")[0]?.match(/^worktree\s+(.+)$/)?.[1])
+		.filter((path): path is string => Boolean(path));
+	const primaryPath = paths[0];
+	const currentPath = paths.find((path) => isSameOrChildPath(cwd, path) || root === path) ?? root;
+	return { path: currentPath, isLinked: Boolean(primaryPath && currentPath !== primaryPath) };
 }
 
 export default function footerDashboardExtension(pi: ExtensionAPI): void {
@@ -164,8 +179,8 @@ export default function footerDashboardExtension(pi: ExtensionAPI): void {
 		const now = Date.now();
 		if (!force && now - cache.lastRefresh < REFRESH_THROTTLE_MS) return;
 		cache = {
-			dirtyCount: await detectDirtyCount(pi),
-			worktreePath: await detectWorktree(pi, ctx.cwd),
+			dirtyCount: await detectDirtyCount(pi, ctx.cwd),
+			worktree: await detectWorktree(pi, ctx.cwd),
 			lastRefresh: now,
 		};
 		activeTui?.requestRender();
@@ -186,15 +201,14 @@ export default function footerDashboardExtension(pi: ExtensionAPI): void {
 				invalidate() {},
 				render(width: number): string[] {
 					const workflow = latestWorkflowState(ctx);
-					const branch = workflow.branch ?? footerData.getGitBranch() ?? "-";
+					const branch = footerData.getGitBranch() ?? workflow.branch ?? "-";
 					const dirty = cache.dirtyCount === undefined ? "?" : `${cache.dirtyCount}`;
-					const worktree = workflow.worktreePath ?? cache.worktreePath;
 
 					return [
 						sectionLine(width, theme, "repo", [
 							`branch ${branch}`,
 							`dirty ${dirty}`,
-							`wt ${formatPath(worktree)}`,
+							`wt ${formatWorktree(cache.worktree)}`,
 						]),
 						sectionLine(width, theme, "model", modelParts(pi, ctx), { dimParts: true }),
 						sectionLine(width, theme, "workflow", workflowParts(ctx, footerData)),
