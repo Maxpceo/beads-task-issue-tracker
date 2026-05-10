@@ -159,8 +159,10 @@ Stacked branches must review exact per-task scopes. `review_bead` accepts `start
 | `wt` | Live `git -C <ctx.cwd> worktree list --porcelain`; optional workflow override shown as `wf:<name>` | `primary` means the main checkout; `linked:<name>` means the current Pi process runs in a linked worktree. `wf:<name>` means workflow state explicitly set a worktree override. |
 | `dirty` / `clean` | Live `git -C <ctx.cwd> status --short` | `dirty:?` means git status could not be read. |
 | `slot` / merge-slot | Session-local `workflow-state.mergeSlotHeld` | Intentionally workflow-owned because the footer tracks whether this Pi session believes it holds the merge slot. Acquire/release workflows must update it; raw `bd merge-slot` commands can desync it. |
-| stats / model / context / token fields | Pi runtime/session APIs | Read from current model, context usage, and assistant usage entries. |
+| `in` / `out` / `cache` | Pi assistant usage entries | Custom footer keeps token/cache totals because the standard Pi footer does not show this breakdown. |
 | `ext` | Live extension statuses from `footerData.getExtensionStatuses()` | Excludes duplicate dashboard statuses (`pi-workflow-dashboard`, `workflow-state`). |
+
+Standard Pi/theme footer owns path/branch, selected model, thinking level, context usage, and session cost display. `status-dashboard` must not duplicate those fields in the custom footer.
 
 ## Policies
 
