@@ -114,12 +114,28 @@ async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | 
 	}
 }
 
+async function findRecoverableActiveBead(pi: ExtensionAPI): Promise<string | undefined> {
+	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
+		const { stdout, code } = await pi.exec("bd", ["list", `--status=${status}`, "--json"]);
+		if (code !== 0) continue;
+		try {
+			const issues = JSON.parse(stdout) as Array<{ id?: string }>;
+			const bead = issues.find((issue) => issue.id);
+			if (bead?.id) return bead.id;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
+}
+
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<WorkflowState> {
-	if (!state.activeBead) return state;
-	if (state.state !== "idle" && !isTerminalWorkflowState(state.state)) return state;
-	const inferred = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
-	if (!inferred || inferred === state.state) return state;
-	return { ...state, state: inferred };
+	const activeBead = state.activeBead ?? (state.state === "idle" ? await findRecoverableActiveBead(pi) : undefined);
+	if (!activeBead) return state;
+	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) return state;
+	const inferred = stateFromBdStatus(await readBdStatus(pi, activeBead));
+	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return state;
+	return { ...state, activeBead, state: inferred };
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {

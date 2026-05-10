@@ -2,7 +2,12 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+interface ExtensionAPI {
+	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
+	registerTool(tool: any): void;
+	registerCommand(name: string, config: any): void;
+	events?: { emit(name: string, event: Record<string, unknown>): void };
+}
 
 const ReviewParams = {
 	type: "object",
@@ -108,7 +113,9 @@ function checksForFiles(files: string[]): string[][] {
 
 async function runChecks(pi: ExtensionAPI, files: string[]): Promise<string[]> {
 	const results: string[] = [];
-	for (const [command, ...args] of checksForFiles(files)) {
+	for (const check of checksForFiles(files)) {
+		const [command, ...args] = check;
+		if (!command) continue;
 		const { stdout, stderr, code } = await exec(pi, command, args);
 		const output = `${stdout}\n${stderr}`.trim().split("\n").slice(-20).join("\n");
 		results.push(`${command} ${args.join(" ")} -> exit ${code}\n${output}`);
@@ -126,7 +133,7 @@ function parseFrontmatter(markdown: string): { data: Record<string, string>; bod
 	const data: Record<string, string> = {};
 	for (const line of raw.split("\n")) {
 		const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-		if (match) data[match[1]] = match[2].replace(/^['\"]|['\"]$/g, "");
+		if (match?.[1]) data[match[1]] = (match[2] ?? "").replace(/^['\"]|['\"]$/g, "");
 	}
 	return { data, body: markdown.slice(end + 5).trimStart() };
 }
@@ -207,7 +214,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 		label: "Review Bead",
 		description: "Executable Pi review workflow: guard inreview, run relevant checks, then run code-reviewer agent.",
 		parameters: ReviewParams,
-		async execute(_id, params, signal, _onUpdate, ctx) {
+		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			try {
 				const bead = await getBead(pi, params.beadId);
 				if (bead.status !== "inreview") throw new Error(`review_bead requires status inreview, got ${bead.status}`);
@@ -260,7 +267,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("review-bead", {
 		description: "Show usage for the review_bead tool",
-		handler: async (args, ctx) => {
+		handler: async (args: string, ctx: { ui: { notify(message: string, level: string): void } }) => {
 			const beadId = args.trim();
 			ctx.ui.notify(
 				beadId

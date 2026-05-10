@@ -2,7 +2,20 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+interface ExtensionAPI {
+	on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown): void;
+	registerCommand(name: string, config: any): void;
+}
+
+interface ExtensionContext {
+	cwd: string;
+	sessionManager: { getEntries(): Array<{ type: string; customType?: string; data?: unknown }> };
+	ui: {
+		notify(message: string, level: string): void;
+		setStatus(key: string, value: string): void;
+		theme: { fg(style: string, value: string): string };
+	};
+}
 
 type PolicyName =
 	| "blockGitAddAll"
@@ -167,8 +180,9 @@ function isProtectedBranch(cwd: string): boolean {
 function inferCommandCwd(command: string, defaultCwd?: string): string {
 	const base = defaultCwd ?? process.cwd();
 	const match = command.match(/^\s*cd\s+([^;&|]+?)\s*&&/);
-	if (!match) return base;
-	return normalizeFsPath(match[1].trim(), base);
+	const cdPath = match?.[1];
+	if (!cdPath) return base;
+	return normalizeFsPath(cdPath.trim(), base);
 }
 
 function commandHasGitPush(command: string): boolean {
@@ -305,6 +319,7 @@ function parseBdUpdateStatus(command: string): { id: string; status: string } | 
 		let status: string | undefined;
 		for (let index = updateIndex + 1; index < tokens.length; index += 1) {
 			const token = tokens[index];
+			if (!token) continue;
 			if (token === "--status" || token === "-s") {
 				status = tokens[index + 1];
 				index += 1;
@@ -354,6 +369,7 @@ function parseBdClaimId(command: string): string | undefined {
 		let hasClaim = false;
 		for (let index = updateIndex + 1; index < tokens.length; index += 1) {
 			const token = tokens[index];
+			if (!token) continue;
 			if (token === "--claim") {
 				hasClaim = true;
 				continue;
@@ -545,10 +561,12 @@ function splitShellSegments(command: string): string[] {
 
 function extractWorktreePathFromSegment(segment: string): string | undefined {
 	const match = segment.match(/\b(?:bd\s+worktree\s+create|git\s+worktree\s+add)\s+(.+)$/);
-	if (!match) return undefined;
-	const tokens = match[1].match(/(?:"[^"]+"|'[^']+'|\S+)/g) ?? [];
+	const args = match?.[1];
+	if (!args) return undefined;
+	const tokens = args.match(/(?:"[^"]+"|'[^']+'|\S+)/g) ?? [];
 	for (let index = 0; index < tokens.length; index += 1) {
 		const token = tokens[index];
+		if (!token) continue;
 		if (["--branch", "-b", "-B", "--orphan", "--reason"].includes(token)) {
 			index += 1;
 			continue;
@@ -632,14 +650,18 @@ function hasApprovedPlanComment(cwd: string, beadId: string): boolean {
 }
 
 function recoverableApprovedWorkflowBead(cwd: string): string | undefined {
-	const raw = runCommand(cwd, "bd", ["list", "--status=in_progress", "--json"]);
-	if (!raw) return undefined;
-	try {
-		const issues = JSON.parse(raw) as BdIssueSummary[];
-		return issues.find((issue) => issue.id && hasApprovedPlanComment(cwd, issue.id))?.id;
-	} catch {
-		return undefined;
+	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
+		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+		if (!raw) continue;
+		try {
+			const issues = JSON.parse(raw) as BdIssueSummary[];
+			const bead = issues.find((issue) => issue.id && hasApprovedPlanComment(cwd, issue.id));
+			if (bead?.id) return bead.id;
+		} catch {
+			continue;
+		}
 	}
+	return undefined;
 }
 
 function hasFastPathRationale(command: string): boolean {
@@ -929,7 +951,7 @@ function toToolBlock(decision: PolicyDecision): { block: true; reason: string } 
 }
 
 export default function beadsPolicyExtension(pi: ExtensionAPI): void {
-	pi.on("tool_call", async (event, ctx) => {
+	pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
 		const workflowState = latestWorkflowState(ctx);
 
 		if (event.toolName === "bash") {
@@ -952,13 +974,13 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 		return undefined;
 	});
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
 		ctx.ui.setStatus("beads-policy", ctx.ui.theme.fg("dim", "policy:on"));
 	});
 
 	pi.registerCommand("policy-status", {
 		description: "Show active Pi beads policy engine status and overrides",
-		handler: async (_args, ctx) => {
+		handler: async (_args: string, ctx: ExtensionContext) => {
 			const skipped = [...getSkipPolicies()].join(", ") || "none";
 			ctx.ui.notify(`Beads policy engine active. Overrides: ${skipped}`, "info");
 		},
