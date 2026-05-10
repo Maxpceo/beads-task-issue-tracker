@@ -39,8 +39,13 @@ Work is not complete until `git push` succeeds.
    git push
    bd merge-slot release
    ```
-7. If any error happens after acquire, release merge-slot before reporting.
-8. Verify:
+7. Before terminal bead completion on a pushed feature branch, verify PR/merge evidence:
+   ```bash
+   git merge-base --is-ancestor HEAD origin/main || gh pr view "$(git branch --show-current)" --json state,mergedAt,url
+   ```
+   If this is intentionally local-only fast-path/spike work, record an explicit reason in the close command/comment with `PR_MERGED_EXCEPTION=<reason>` or `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`.
+8. If any error happens after acquire, release merge-slot before reporting.
+9. Verify:
    ```bash
    git status -sb
    ```
@@ -49,4 +54,5 @@ Work is not complete until `git push` succeeds.
 
 - Never use `git add .` or `git add -A`.
 - Never say “ready to push”; push.
-- Final report is a table with commands, exit codes, commits, and push evidence.
+- Do not close remote feature-branch work until merge evidence is recorded, unless a local-only/fast-path exception reason is explicit.
+- Final report is a table with commands, exit codes, commits, push evidence, and PR/merge evidence or exception reason.

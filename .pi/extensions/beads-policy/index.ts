@@ -10,6 +10,7 @@ type PolicyName =
 	| "protectPaths"
 	| "blockBdCloseWithoutReview"
 	| "blockEpicCloseWithIncompleteChildren"
+	| "blockUnmergedBranchCompletion"
 	| "validateReviewChain"
 	| "enforceBeadEnrichment"
 	| "blockMutationsInPlanning"
@@ -86,6 +87,23 @@ function runGit(cwd: string, args: string[]): string | undefined {
 		return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
 	} catch {
 		return undefined;
+	}
+}
+
+function runCommand(cwd: string, command: string, args: string[]): string | undefined {
+	try {
+		return execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return undefined;
+	}
+}
+
+function commandSucceeds(cwd: string, command: string, args: string[]): boolean {
+	try {
+		execFileSync(command, args, { cwd, encoding: "utf8", stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
 	}
 }
 
@@ -418,6 +436,54 @@ function canCloseByReviewState(command: string, cwd: string, workflowState: Work
 	return status === "accepted" || (status === "reviewed" && /NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments));
 }
 
+function hasPrMergedException(command: string): boolean {
+	return /PR_MERGED_EXCEPTION=\S+|NO_REMOTE_BRANCH_COMPLETION_REQUIRED|--pr-merged-exception\b|pr[-_ ]merged exception/i.test(command);
+}
+
+function getCurrentBranch(cwd: string): string | undefined {
+	return runGit(cwd, ["branch", "--show-current"]);
+}
+
+function hasRemoteUpstream(cwd: string): boolean {
+	const upstream = runGit(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+	return Boolean(upstream && upstream !== "@{u}");
+}
+
+function branchHeadMergedIntoOriginMain(cwd: string): boolean | undefined {
+	const originMain = runGit(cwd, ["rev-parse", "origin/main"]);
+	if (!originMain) return undefined;
+	return commandSucceeds(cwd, "git", ["merge-base", "--is-ancestor", "HEAD", "origin/main"]);
+}
+
+function githubPrMerged(cwd: string, branch: string): { merged: boolean; evidence?: string } | undefined {
+	const raw = runCommand(cwd, "gh", ["pr", "view", branch, "--json", "state,mergedAt,url"]);
+	if (!raw) return undefined;
+	try {
+		const parsed = JSON.parse(raw) as { state?: string; mergedAt?: string; url?: string };
+		const merged = parsed.state === "MERGED" || Boolean(parsed.mergedAt);
+		return { merged, evidence: parsed.url ?? `gh pr view ${branch}` };
+	} catch {
+		return undefined;
+	}
+}
+
+function unmergedBranchCompletionReason(command: string, cwd: string): string | undefined {
+	if (hasPrMergedException(command)) return undefined;
+	if (!getRepoRoot(cwd)) return undefined;
+	const branch = getCurrentBranch(cwd);
+	if (!branch || PROTECTED_BRANCHES.has(branch)) return undefined;
+	if (!hasRemoteUpstream(cwd)) return undefined;
+
+	const ancestor = branchHeadMergedIntoOriginMain(cwd);
+	if (ancestor === true) return undefined;
+	const ghMerged = githubPrMerged(cwd, branch);
+	if (ghMerged?.merged) return undefined;
+
+	const originEvidence = ancestor === false ? "HEAD is not an ancestor of origin/main" : "origin/main unavailable";
+	const prEvidence = ghMerged ? `PR ${ghMerged.evidence} is not merged` : `could not verify merged PR with gh pr view ${branch}`;
+	return `Blocked: remote branch completion for ${branch} requires a merged PR or explicit documented exception (${originEvidence}; ${prEvidence}). Use merge-to-main first, or add PR_MERGED_EXCEPTION=<reason> / NO_REMOTE_BRANCH_COMPLETION_REQUIRED for local-only fast-path or spike work.`;
+}
+
 function splitShellSegments(command: string): string[] {
 	return command.split(/\s*(?:&&|;|\|\|)\s*/).filter(Boolean);
 }
@@ -692,6 +758,15 @@ export function evaluateBashPolicy(
 			policy: "blockEpicCloseWithIncompleteChildren",
 			block: true,
 			reason: `Blocked: epic ${closeId} cannot be completed while child beads are not closed (${formatIncompleteChildren(incompleteChildren)}). Close children first or use an explicit documented policy override.`,
+		};
+	}
+
+	const unmergedBranchReason = closeId ? unmergedBranchCompletionReason(command, commandCwd) : undefined;
+	if (unmergedBranchReason) {
+		return {
+			policy: "blockUnmergedBranchCompletion",
+			block: true,
+			reason: unmergedBranchReason,
 		};
 	}
 

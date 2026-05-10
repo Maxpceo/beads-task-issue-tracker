@@ -145,6 +145,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
 | `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |
+| `blockUnmergedBranchCompletion` | Block terminal completion on pushed feature branches until branch is merged into `origin/main`, `gh` reports a merged PR, or an explicit local-only/fast-path exception is documented |
 | `validateReviewChain` | Block invalid lifecycle transitions |
 | `enforceBeadEnrichment` | Block agent-created non-epic beads without the full self-contained handoff template, labels, and concrete acceptance/verification bullets, except allowed exemptions |
 | `blockMutationsInPlanning` | During planning, block edit/write and mutating bash |
@@ -182,6 +183,8 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | supervisor tries `bd close` | Blocked |
 | direct/standard epic completion with incomplete children | Blocked |
 | epic completion with all children closed and normal acceptance evidence | Allowed |
+| terminal completion on unmerged pushed feature branch | Blocked with branch/PR lookup evidence |
+| terminal completion after origin/main ancestry, merged PR, or explicit local-only exception | Allowed through normal review/acceptance path |
 | review bead when not `inreview` | Blocked |
 | worktree inside repo | Blocked |
 | worktree under `.claude/worktrees` or path containing `..` | Blocked |
