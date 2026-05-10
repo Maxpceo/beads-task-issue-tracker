@@ -5,12 +5,41 @@ interface WorkflowStateSnapshot {
 	activeBead?: string;
 	branch?: string;
 	worktreePath?: string;
+	startCommit?: string;
+	planMode?: string;
 	mergeSlotHeld?: boolean;
 }
 
 interface WorktreeInfo {
 	path: string;
 	isLinked: boolean;
+}
+
+interface DashboardSnapshot {
+	workflow: WorkflowStateSnapshot;
+	branch: string;
+	dirty?: number;
+	worktree?: WorktreeInfo;
+}
+
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+let latestDashboard: DashboardSnapshot | undefined;
+let requestFooterRender: (() => void) | undefined;
+
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_PATTERN, "");
+}
+
+function visibleWidth(text: string): number {
+	return [...stripAnsi(text)].length;
+}
+
+function truncatePlain(text: string, maxWidth: number): string {
+	if (maxWidth <= 0) return "";
+	const chars = [...text];
+	if (chars.length <= maxWidth) return text;
+	if (maxWidth === 1) return "…";
+	return `${chars.slice(0, maxWidth - 1).join("")}…`;
 }
 
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
@@ -60,6 +89,128 @@ function formatWorktree(info: WorktreeInfo | undefined): string {
 	return `linked:${name}`;
 }
 
+function themePart(theme: { fg(color: string, text: string): string }, label: string, value: string, valueColor = "text"): string {
+	return `${theme.fg("dim", `${label} `)}${theme.fg(valueColor, value)}`;
+}
+
+function formatTokens(count: number): string {
+	if (count < 1000) return `${count}`;
+	if (count < 10_000) return `${(count / 1000).toFixed(1)}k`;
+	if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
+	return `${(count / 1_000_000).toFixed(1)}M`;
+}
+
+function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, string, string])[] {
+	let input = 0;
+	let output = 0;
+	let cacheRead = 0;
+	let cacheWrite = 0;
+
+	for (const entry of ctx.sessionManager.getEntries()) {
+		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
+		const usage = entry.message.usage;
+		input += usage?.input ?? 0;
+		output += usage?.output ?? 0;
+		cacheRead += usage?.cacheRead ?? 0;
+		cacheWrite += usage?.cacheWrite ?? 0;
+	}
+
+	return [
+		["in", input ? `↑${formatTokens(input)}` : "-", input ? "text" : "muted"],
+		["out", output ? `↓${formatTokens(output)}` : "-", output ? "text" : "muted"],
+		["cache", `R${formatTokens(cacheRead)} W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"],
+	] as const;
+}
+
+function sanitizeStatus(text: string): string {
+	return stripAnsi(text)
+		.replace(/[\r\n\t]/g, " ")
+		.replace(/ +/g, " ")
+		.trim();
+}
+
+function fitParts(
+	theme: { fg(color: string, text: string): string },
+	prefixText: string,
+	parts: readonly (readonly [string, string, string])[],
+	width: number,
+): string {
+	const prefix = theme.fg("muted", prefixText);
+	const separator = theme.fg("dim", " · ");
+	let available = Math.max(0, width - visibleWidth(prefix));
+	const rendered: string[] = [];
+
+	for (const [label, value, color] of parts) {
+		const plain = `${label} ${value}`;
+		const separatorWidth = rendered.length > 0 ? 3 : 0;
+		if (available <= separatorWidth) break;
+		const maxPartWidth = available - separatorWidth;
+		const truncatedValue = truncatePlain(value, Math.max(1, maxPartWidth - label.length - 1));
+		const part = themePart(theme, label, truncatedValue, color);
+		rendered.push(part);
+		available -= separatorWidth + Math.min(visibleWidth(plain), maxPartWidth);
+	}
+
+	return prefix + rendered.join(separator);
+}
+
+function renderWorkflowFooter(
+	ctx: ExtensionContext,
+	theme: { fg(color: string, text: string): string },
+	footerData: { getExtensionStatuses?: () => ReadonlyMap<string, string> },
+	width: number,
+): string[] {
+	const snapshot = latestDashboard;
+	if (!snapshot) return [];
+
+	const wf = snapshot.workflow;
+	const dirty = snapshot.dirty;
+	const slotHeld = Boolean(wf.mergeSlotHeld);
+	const dirtyColor = dirty == null ? "muted" : dirty === 0 ? "success" : "warning";
+	const worktree = wf.worktreePath ? `wf:${wf.worktreePath.split("/").filter(Boolean).pop() ?? wf.worktreePath}` : formatWorktree(snapshot.worktree);
+	const statusMap = footerData.getExtensionStatuses?.();
+	const statuses = Array.from(statusMap?.entries() ?? [])
+		.filter(([key]) => key !== "pi-workflow-dashboard" && key !== "workflow-state")
+		.map(([, text]) => sanitizeStatus(text))
+		.filter(Boolean)
+		.slice(0, 4)
+		.join(" · ");
+
+	const workflowParts = [
+		["wf", wf.state ?? "idle", wf.state === "idle" ? "muted" : "accent"],
+		["bead", wf.activeBead ?? "-", wf.activeBead ? "accent" : "muted"],
+		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "muted"],
+		["wt", worktree, snapshot.worktree?.isLinked || wf.worktreePath ? "warning" : "muted"],
+		["dirty", dirty == null ? "?" : String(dirty), dirtyColor],
+		["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"],
+	] as const;
+	const statsParts = [
+		...sessionUsageParts(ctx),
+		...(statuses ? [["ext", statuses, "muted"] as const] : []),
+	] as const;
+
+	return [
+		fitParts(theme, "  pi workflow  ", workflowParts, width),
+		fitParts(theme, "  pi stats     ", statsParts, width),
+	];
+}
+
+function installWorkflowFooter(ctx: ExtensionContext): void {
+	if (!ctx.hasUI) return;
+	ctx.ui.setFooter((tui, theme, footerData) => {
+		requestFooterRender = () => tui.requestRender();
+		return {
+			invalidate() {},
+			render(width: number) {
+				return renderWorkflowFooter(ctx, theme, footerData, width);
+			},
+			dispose() {
+				if (requestFooterRender) requestFooterRender = undefined;
+			},
+		};
+	});
+}
+
 async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
 	if (!ctx.hasUI) return;
 
@@ -71,18 +222,31 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const bead = wf.activeBead ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
 	const text = `bead:${bead} state:${state} br:${branch} wt:${formatWorktree(worktree)} dirty:${dirty ?? "?"} slot:${slot}`;
+
+	latestDashboard = { workflow: wf, branch, dirty, worktree };
 	ctx.ui.setStatus("pi-workflow-dashboard", ctx.ui.theme.fg("accent", text));
+	requestFooterRender?.();
 }
 
 export default function statusDashboardExtension(pi: ExtensionAPI): void {
-	pi.on("session_start", async (_event, ctx) => updateDashboard(pi, ctx));
-	pi.on("turn_start", async (_event, ctx) => updateDashboard(pi, ctx));
-	pi.on("turn_end", async (_event, ctx) => updateDashboard(pi, ctx));
+	pi.on("session_start", async (_event, ctx) => {
+		installWorkflowFooter(ctx);
+		await updateDashboard(pi, ctx);
+	});
+	pi.on("turn_start", async (_event, ctx) => {
+		installWorkflowFooter(ctx);
+		await updateDashboard(pi, ctx);
+	});
+	pi.on("turn_end", async (_event, ctx) => {
+		installWorkflowFooter(ctx);
+		await updateDashboard(pi, ctx);
+	});
 	pi.on("tool_result", async (_event, ctx) => updateDashboard(pi, ctx));
 
 	pi.registerCommand("dashboard", {
 		description: "Refresh Pi workflow dashboard footer",
 		handler: async (_args, ctx) => {
+			installWorkflowFooter(ctx);
 			await updateDashboard(pi, ctx);
 			if (ctx.hasUI) ctx.ui.notify("Pi workflow dashboard refreshed", "info");
 		},
