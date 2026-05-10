@@ -28,6 +28,18 @@ interface WorkflowState {
 	updatedAt: string;
 }
 
+interface WorkflowStateUpdateEvent {
+	state?: WorkflowStateName;
+	stateIfCurrent?: WorkflowStateName[];
+	activeBead?: string;
+	branch?: string;
+	worktreePath?: string;
+	startCommit?: string;
+	planMode?: PlanMode;
+	mergeSlotHeld?: boolean;
+	ctx?: ExtensionContext;
+}
+
 const DEFAULT_STATE: WorkflowState = {
 	state: "idle",
 	planMode: "off",
@@ -106,6 +118,24 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		persist(ctx);
 		return workflowState;
 	}
+
+	function applyEventUpdate(event: WorkflowStateUpdateEvent): WorkflowState {
+		const next: Partial<WorkflowState> = {};
+		if (event.state && (!event.stateIfCurrent || event.stateIfCurrent.includes(workflowState.state))) {
+			next.state = event.state;
+		}
+		if (event.activeBead !== undefined) next.activeBead = event.activeBead || undefined;
+		if (event.branch !== undefined) next.branch = event.branch || undefined;
+		if (event.worktreePath !== undefined) next.worktreePath = event.worktreePath || undefined;
+		if (event.startCommit !== undefined) next.startCommit = event.startCommit || undefined;
+		if (event.planMode !== undefined) next.planMode = event.planMode;
+		if (event.mergeSlotHeld !== undefined) next.mergeSlotHeld = event.mergeSlotHeld;
+		return setState(next, event.ctx);
+	}
+
+	pi.events.on("workflow-state:update", (event: WorkflowStateUpdateEvent) => {
+		applyEventUpdate(event);
+	});
 
 	pi.registerCommand("workflow-status", {
 		description: "Show current Pi workflow state",

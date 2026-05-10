@@ -51,4 +51,11 @@ If any section is missing, auto-execute is blocked and the session remains in pl
 
 ## Responsibility split
 
-This extension controls only plan-mode tool access and plan execution. It does not own bead lifecycle state; that will be handled by the planned `workflow-state` extension.
+This extension owns real plan-mode behavior: tool access, read-only command gates, plan extraction, and plan execution. It also emits `workflow-state:update` events so `.pi/extensions/workflow-state` keeps the footer/workflow `plan` field synchronized:
+
+- `/plan` -> `plan=strict`, `state=planning`
+- `/plan-auto` -> `plan=auto`, `state=planning`
+- `/plan-cancel` -> `plan=off` and `state=idle` when the current workflow state is still `planning`
+- executing an approved plan -> `plan=off`, `state=implementing` when the current workflow state is still `planning`
+
+The `workflow-state` extension remains the source of truth for bead lifecycle fields such as active bead, branch, worktree, merge slot, review, acceptance, landing, and idle reset.

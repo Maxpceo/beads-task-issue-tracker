@@ -83,6 +83,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	function syncWorkflowPlanMode(ctx: ExtensionContext, planMode: "off" | "strict" | "auto", state?: string, stateIfCurrent?: string[]): void {
+		pi.events.emit("workflow-state:update", {
+			ctx,
+			planMode,
+			state,
+			stateIfCurrent,
+		});
+	}
+
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean): void {
 		planModeEnabled = true;
 		autoExecuteEnabled = autoExecute;
@@ -90,6 +99,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		todoItems = [];
 		pi.setActiveTools(PLAN_MODE_TOOLS);
 		if (ctx.hasUI) ctx.ui.notify(`${autoExecute ? "Auto " : ""}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
+		syncWorkflowPlanMode(ctx, autoExecute ? "auto" : "strict", "planning");
 		updateStatus(ctx);
 		persistState();
 	}
@@ -101,6 +111,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		todoItems = [];
 		pi.setActiveTools(NORMAL_MODE_TOOLS);
 		if (ctx.hasUI) ctx.ui.notify("Plan mode disabled. Full access restored.");
+		syncWorkflowPlanMode(ctx, "off", "idle", ["planning"]);
 		updateStatus(ctx);
 		persistState();
 	}
@@ -284,6 +295,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				executionMode = false;
 				todoItems = [];
 				pi.setActiveTools(NORMAL_MODE_TOOLS);
+				syncWorkflowPlanMode(ctx, "off");
 				updateStatus(ctx);
 				persistState(); // Save cleared state so resume doesn't restore old execution mode
 			}
@@ -309,6 +321,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				autoExecuteEnabled = false;
 				executionMode = todoItems.length > 0;
 				pi.setActiveTools(NORMAL_MODE_TOOLS);
+				syncWorkflowPlanMode(ctx, "off", "implementing", ["planning"]);
 				updateStatus(ctx);
 				persistState();
 
@@ -362,6 +375,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			autoExecuteEnabled = false;
 			executionMode = todoItems.length > 0;
 			pi.setActiveTools(NORMAL_MODE_TOOLS);
+			syncWorkflowPlanMode(ctx, "off", "implementing", ["planning"]);
 			updateStatus(ctx);
 
 			const execMessage =
@@ -430,6 +444,9 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 		if (planModeEnabled) {
 			pi.setActiveTools(PLAN_MODE_TOOLS);
+			syncWorkflowPlanMode(ctx, autoExecuteEnabled ? "auto" : "strict", "planning");
+		} else if (!executionMode) {
+			syncWorkflowPlanMode(ctx, "off", "idle", ["planning"]);
 		}
 		updateStatus(ctx);
 	});
