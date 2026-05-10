@@ -237,10 +237,21 @@ export default function statusDashboardExtension(pi: ExtensionAPI): void {
 		void updateDashboard(pi, ctx);
 	}
 
+	function installAfterCompetingFooters(ctx: ExtensionContext): void {
+		for (const delay of [0, 50, 200, 500]) {
+			setTimeout(() => installAndRefresh(ctx), delay);
+		}
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		installWorkflowFooter(ctx);
 		await updateDashboard(pi, ctx);
-		setTimeout(() => installAndRefresh(ctx), 0);
+		installAfterCompetingFooters(ctx);
+	});
+
+	pi.on("resources_discover", async (_event, ctx) => {
+		installAndRefresh(ctx);
+		installAfterCompetingFooters(ctx);
 	});
 	pi.on("turn_start", async (_event, ctx) => {
 		installWorkflowFooter(ctx);
