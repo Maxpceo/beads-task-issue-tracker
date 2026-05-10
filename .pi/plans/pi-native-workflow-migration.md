@@ -133,7 +133,22 @@ If any required section is missing, Pi must remain in plan mode.
 | `beads-policy` | Blocking invalid or unsafe actions |
 | `beads-dispatch` | Typed subagent dispatch with correct bead context |
 | `review-workflow` | Enforced review chain |
-| `status-dashboard` | User-visible state summary |
+| `status-dashboard` | User-visible state summary; footer prefers session-local `workflow-state.activeBead` and falls back to the newest global `bd in_progress` issue marked with `*` |
+
+## Footer dashboard field sources
+
+`status-dashboard` is a display layer. It must not silently present global or stale values as session-local truth.
+
+| Footer field | Source of truth | Notes |
+|---|---|---|
+| `wf` / workflow state | Session-local `workflow-state.state` | Owned by lifecycle commands/events such as `/workflow-claim`, `/workflow-update`, `/plan`, `review_bead`, landing/acceptance flows. It is intentionally workflow-owned because bd status alone cannot tell which phase this Pi session is in. |
+| `bead` | Session-local `workflow-state.activeBead`; fallback to newest global `bd in_progress` | Explicit workflow bead is shown unmarked and is per Pi session. Global fallback is marked with `*` (for example `bead:abc*`) to show it is not session-local. |
+| `plan` | Session-local `workflow-state.planMode` emitted by `plan-mode` | `/plan`, `/plan-auto`, `/plan-cancel`, and approved execution update it. |
+| `wt` | Live `git -C <ctx.cwd> worktree list --porcelain`; optional workflow override shown as `wf:<name>` | `primary` means the main checkout; `linked:<name>` means the current Pi process runs in a linked worktree. `wf:<name>` means workflow state explicitly set a worktree override. |
+| `dirty` / `clean` | Live `git -C <ctx.cwd> status --short` | `dirty:?` means git status could not be read. |
+| `slot` / merge-slot | Session-local `workflow-state.mergeSlotHeld` | Intentionally workflow-owned because the footer tracks whether this Pi session believes it holds the merge slot. Acquire/release workflows must update it; raw `bd merge-slot` commands can desync it. |
+| stats / model / context / token fields | Pi runtime/session APIs | Read from current model, context usage, and assistant usage entries. |
+| `ext` | Live extension statuses from `footerData.getExtensionStatuses()` | Excludes duplicate dashboard statuses (`pi-workflow-dashboard`, `workflow-state`). |
 
 ## Policies
 
@@ -172,11 +187,12 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | issue creation without full handoff template | Blocked |
 | issue creation with vague-only acceptance | Blocked with ask-user guidance |
 | issue creation with full template, labels, and concrete checks | Allowed |
+| `bd create` without enrichment | Blocked |
 | 1-3 low-risk code files with active Fast Path rationale | Allowed |
 | >3 code files or >80 added lines without supervisor path | Warning requiring rationale |
 | workflow/policy/review/merge code without bead/approved plan | Blocked |
 | docs/beads-only maintenance | Allowed by Fast Path discipline |
-| claim bead | Workflow state becomes `claimed` |
+| claim bead | `/workflow-claim <id>` claims in bd and sets session-local workflow state to `claimed`; footer shows explicit workflow bead, or newest global `bd in_progress` fallback marked with `*` |
 | auto plan without required sections | Remains in planning |
 | auto plan with quality gate | Starts execution |
 | dispatch supervisor | Prompt includes bead, branch, start commit |
