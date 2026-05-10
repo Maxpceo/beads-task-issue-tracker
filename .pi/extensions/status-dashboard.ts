@@ -216,7 +216,6 @@ function renderWorkflowFooter(
 
 	const workflowParts = [
 		["wf", wf.state ?? "idle", wf.state === "idle" ? "text" : "accent"],
-		["br", snapshot.branch, snapshot.branch === "-" ? "muted" : "text"],
 		["bead", activeBead ?? "-", activeBead ? "accent" : "text"],
 		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
 		["wt", worktree, snapshot.worktree?.isLinked || wf.worktreePath ? "warning" : "text"],

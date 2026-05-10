@@ -147,7 +147,6 @@ If any required section is missing, Pi must remain in plan mode.
 | `wt` | Live `git -C <ctx.cwd> worktree list --porcelain`; optional workflow override shown as `wf:<name>` | `primary` means the main checkout; `linked:<name>` means the current Pi process runs in a linked worktree. `wf:<name>` means workflow state explicitly set a worktree override. |
 | `dirty` / `clean` | Live `git -C <ctx.cwd> status --short` | `dirty:?` means git status could not be read. |
 | `slot` / merge-slot | Session-local `workflow-state.mergeSlotHeld` | Intentionally workflow-owned because the footer tracks whether this Pi session believes it holds the merge slot. Acquire/release workflows must update it; raw `bd merge-slot` commands can desync it. |
-| branch | Live `git -C <ctx.cwd> branch --show-current`; workflow branch only as fallback | Prevents stale workflow branch overrides from hiding the actual checkout branch. |
 | stats / model / context / token fields | Pi runtime/session APIs | Read from current model, context usage, and assistant usage entries. |
 | `ext` | Live extension statuses from `footerData.getExtensionStatuses()` | Excludes duplicate dashboard statuses (`pi-workflow-dashboard`, `workflow-state`). |
 
