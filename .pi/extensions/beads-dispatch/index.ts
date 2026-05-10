@@ -11,6 +11,23 @@ interface BeadInfo {
 	status?: string;
 	assignee?: string;
 	labels?: string[];
+	dependencies?: DependencyInfo[];
+	parent?: string;
+}
+
+interface DependencyInfo {
+	id?: string;
+	issue_id?: string;
+	depends_on_id?: string;
+	status?: string;
+	type?: string;
+	dependency_type?: string;
+	title?: string;
+}
+
+interface BeadComment {
+	text?: string;
+	created_at?: string;
 }
 
 interface AgentConfig {
@@ -85,9 +102,14 @@ async function getBead(pi: ExtensionAPI, beadId: string): Promise<BeadInfo> {
 	return bead;
 }
 
-async function getGitValue(pi: ExtensionAPI, args: string[]): Promise<string> {
-	const { stdout, stderr, code } = await pi.exec("git", args);
-	if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${stderr || stdout}`);
+async function getComments(pi: ExtensionAPI, beadId: string): Promise<BeadComment[]> {
+	const json = await execJson(pi, "bd", ["comments", beadId, "--json"]);
+	return Array.isArray(json) ? json : [];
+}
+
+async function getGitValue(pi: ExtensionAPI, cwd: string, args: string[]): Promise<string> {
+	const { stdout, stderr, code } = await pi.exec("git", ["-C", cwd, ...args]);
+	if (code !== 0) throw new Error(`git -C ${cwd} ${args.join(" ")} failed: ${stderr || stdout}`);
 	return stdout.trim();
 }
 
@@ -102,16 +124,143 @@ function chooseSupervisor(bead: BeadInfo): string {
 	return "test-supervisor";
 }
 
-function buildSupervisorPrompt(bead: BeadInfo, branch: string, startCommit: string, task?: string): string {
+const REQUIRED_HANDOFF_SECTIONS = [
+	"### Origin",
+	"### Files",
+	"### Current state",
+	"### Target state",
+	"### Investigation findings",
+	"### Decisions",
+	"### Rejected alternatives",
+	"### Dependencies / blockers",
+	"### Acceptance criteria",
+	"### Verification / acceptance checks",
+	"### Out of scope",
+];
+
+const TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred"]);
+const ALLOWED_SUPERVISOR_STATUSES = new Set(["in_progress"]);
+
+const VAGUE_ACCEPTANCE_PATTERN = /\b(done|works|fixed|complete|completed|ok|looks good|as expected|готово|работает|исправлено|завершено|нормально)\b/i;
+const REQUIRED_PLAN_FIELDS = [
+	"PLAN APPROVED",
+	"Approved-by:",
+	"Approved-at:",
+	"Start-commit:",
+	"Problem:",
+	"Approach:",
+	"Rejected alternatives:",
+	"Files to change:",
+	"Acceptance:",
+	"Verification / acceptance checks:",
+];
+
+function hasBullet(section: string): boolean {
+	return /(^|\n)\s*([-*]|\d+\.)\s+\S+/.test(section);
+}
+
+function isVagueOnly(section: string): boolean {
+	const compact = section
+		.replace(/(^|\n)\s*([-*]|\d+\.)\s+/g, " ")
+		.replace(/[`*_"']/g, "")
+		.trim();
+	return compact.length > 0 && compact.length < 80 && VAGUE_ACCEPTANCE_PATTERN.test(compact);
+}
+
+function hasConcreteBullets(section: string): boolean {
+	return hasBullet(section) && !isVagueOnly(section);
+}
+
+function extractSection(text: string, heading: string): string {
+	const start = text.indexOf(heading);
+	if (start < 0) return "";
+	const after = text.slice(start + heading.length);
+	const next = after.search(/\n###\s+/);
+	return (next >= 0 ? after.slice(0, next) : after).trim();
+}
+
+function getPlanComment(comments: BeadComment[]): string | undefined {
+	return comments.map((comment) => comment.text ?? "").reverse().find((text) => /PLAN APPROVED/.test(text));
+}
+
+function missingPlanFields(plan: string | undefined): string[] {
+	if (!plan) return REQUIRED_PLAN_FIELDS;
+	return REQUIRED_PLAN_FIELDS.filter((field) => !plan.includes(field));
+}
+
+function dependencyId(dep: DependencyInfo): string | undefined {
+	return dep.depends_on_id ?? dep.id;
+}
+
+function dependencyType(dep: DependencyInfo): string | undefined {
+	return dep.type ?? dep.dependency_type;
+}
+
+function unresolvedBlockers(bead: BeadInfo): DependencyInfo[] {
+	return (bead.dependencies ?? []).filter((dep) => dependencyType(dep) === "blocks" && dep.status !== "closed");
+}
+
+export function validateSupervisorReadiness(bead: BeadInfo, comments: BeadComment[]): string[] {
+	const errors: string[] = [];
+	if (!bead.id) errors.push("bead does not exist or bd show returned no id");
+	if (bead.status && TERMINAL_STATUSES.has(bead.status)) errors.push(`terminal bead cannot be dispatched: status=${bead.status}`);
+	if (!ALLOWED_SUPERVISOR_STATUSES.has(bead.status ?? "")) errors.push(`dispatch_supervisor requires status in_progress, got ${bead.status ?? "unknown"}`);
+	if ((bead.labels ?? []).length === 0) errors.push("bead requires labels before supervisor dispatch");
+
+	const missingSections = REQUIRED_HANDOFF_SECTIONS.filter((section) => !bead.description?.includes(section));
+	if (missingSections.length > 0) errors.push(`missing handoff sections: ${missingSections.join(", ")}`);
+	if (!hasConcreteBullets(extractSection(bead.description ?? "", "### Acceptance criteria"))) errors.push("Acceptance criteria must contain concrete non-vague bullets");
+	if (!hasConcreteBullets(extractSection(bead.description ?? "", "### Verification / acceptance checks"))) errors.push("Verification / acceptance checks must contain concrete non-vague bullets");
+
+	const blockers = unresolvedBlockers(bead);
+	if (blockers.length > 0) errors.push(`unresolved blockers: ${blockers.map((dep) => dependencyId(dep) ?? "unknown").join(", ")}`);
+	const plan = getPlanComment(comments);
+	const missingFields = missingPlanFields(plan);
+	if (missingFields.length > 0) errors.push(`PLAN APPROVED comment missing fields: ${missingFields.join(", ")}`);
+	if ((bead.parent || (bead.dependencies ?? []).some((dep) => dependencyType(dep) === "parent-child")) && !getParentId(bead)) {
+		errors.push("epic child dispatch requires parent/EPIC_ID context");
+	}
+	return errors;
+}
+
+function getParentId(bead: BeadInfo): string | undefined {
+	return bead.parent ?? (bead.dependencies ?? []).find((dep) => dependencyType(dep) === "parent-child")?.depends_on_id;
+}
+
+function summarizeContext(bead: BeadInfo): string {
+	const parent = getParentId(bead) ?? "-";
+	return [`Title: ${bead.title ?? bead.id}`, `Status: ${bead.status ?? "unknown"}`, `Labels: ${(bead.labels ?? []).join(", ") || "-"}`, `EPIC_ID: ${parent}`].join("\n");
+}
+
+export function buildSupervisorPrompt(bead: BeadInfo, comments: BeadComment[], branch: string, startCommit: string, task?: string): string {
+	const plan = getPlanComment(comments) ?? "PLAN APPROVED comment not found";
+	const epicId = getParentId(bead) ?? "-";
 	return `BEAD_ID: ${bead.id}
+EPIC_ID: ${epicId}
 BRANCH: ${branch}
 START_COMMIT: ${startCommit}
 
 TASK: ${task || bead.title || "Implement the bead"}
 
+CONTEXT SUMMARY:
+${summarizeContext(bead)}
+
+APPROVED PLAN:
+${plan}
+
 Read the bead first:
 - bd show ${bead.id}
 - bd comments ${bead.id}
+
+Do not guess:
+- If requirements, acceptance, dependencies, or approach are unclear, stop before editing and return NEEDS_CONTEXT with specific questions.
+- If you are in over your head, stop and return BLOCKED or NEEDS_CONTEXT; bad work is worse than no work.
+
+Status vocabulary:
+- DONE: implementation complete with evidence and commit.
+- DONE_WITH_CONCERNS: complete but follow-up risk remains.
+- BLOCKED: cannot proceed due to dependency/environment/policy.
+- NEEDS_CONTEXT: needs user/orchestrator clarification.
 
 Follow Pi supervisor discipline:
 - Do not call bd close.
@@ -210,20 +359,22 @@ async function dispatch(
 ): Promise<DispatchResult> {
 	const cwd = params.cwd ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
-	if (mode === "supervisor" && bead.status !== "in_progress") {
-		throw new Error(`dispatch_supervisor requires bead status in_progress, got ${bead.status}`);
+	const comments = await getComments(pi, params.beadId);
+	if (mode === "supervisor") {
+		const readinessErrors = validateSupervisorReadiness(bead, comments);
+		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness failed: ${readinessErrors.join("; ")}`);
 	}
 	if (mode === "reviewer" && bead.status !== "inreview") {
 		throw new Error(`dispatch_reviewer requires bead status inreview, got ${bead.status}`);
 	}
 
-	const branch = await getGitValue(pi, ["branch", "--show-current"]);
-	const startCommit = await getGitValue(pi, ["rev-parse", "HEAD"]);
+	const branch = await getGitValue(pi, cwd, ["branch", "--show-current"]);
+	const startCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 	const agentName = params.agent ?? (mode === "supervisor" ? chooseSupervisor(bead) : mode === "reviewer" ? "code-reviewer" : "documentation-expert");
 	const agent = loadAgent(cwd, agentName);
 	const prompt =
 		mode === "supervisor"
-			? buildSupervisorPrompt(bead, branch, startCommit, params.task)
+			? buildSupervisorPrompt(bead, comments, branch, startCommit, params.task)
 			: mode === "reviewer"
 				? buildReviewerPrompt(bead, branch, startCommit, params.task)
 				: buildDocsPrompt(bead, branch, startCommit, params.task);

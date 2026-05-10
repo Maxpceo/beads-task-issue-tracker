@@ -22,7 +22,8 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
    ```text
    dispatch_supervisor(beadId=<ID>)
    ```
-4. The tool collects branch/start commit, selects agent, logs DISPATCH comment, and runs the Pi agent.
+4. The tool fail-closes readiness, collects cwd branch/start commit, selects agent, logs DISPATCH comment, and runs the Pi agent.
+   Required prompt fields: `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 5. After supervisor returns, inspect status/report.
 6. If completed and bead is `inreview`, update state:
    ```text
@@ -33,7 +34,7 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 ## Rules
 
 - Do not call raw `subagent` for workflow dispatch.
-- Do not dispatch an unenriched bead or a bead with vague acceptance; enrich it or ask the user with 2-4 options first.
+- Do not dispatch terminal, dependency-blocked, unenriched, unlabeled, unplanned, or vague-acceptance beads; enrich it or ask the user with 2-4 options first.
 - Dispatch is required for risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain frontend+backend work unless a documented Fast Path/mechanical exception is both narrow and low-risk.
 - Do not ask for confirmation after an approved plan unless a real decision point appears.
 - If dispatch returns BLOCKED/NEEDS_CONTEXT, diagnose before redispatch.
