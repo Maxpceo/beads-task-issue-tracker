@@ -90,7 +90,8 @@ function formatWorktree(info: WorktreeInfo | undefined): string {
 }
 
 function themePart(theme: { fg(color: string, text: string): string }, label: string, value: string, valueColor = "text"): string {
-	return `${theme.fg("dim", `${label} `)}${theme.fg(valueColor, value)}`;
+	if (!label) return theme.fg(valueColor, value);
+	return `${theme.fg("muted", `${label}:`)}${theme.fg(valueColor, value)}`;
 }
 
 function formatTokens(count: number): string {
@@ -118,7 +119,7 @@ function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 	return [
 		["in", input ? `↑${formatTokens(input)}` : "-", input ? "text" : "muted"],
 		["out", output ? `↓${formatTokens(output)}` : "-", output ? "text" : "muted"],
-		["cache", `R${formatTokens(cacheRead)} W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"],
+		["cache", `R${formatTokens(cacheRead)}/W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"],
 	] as const;
 }
 
@@ -135,17 +136,18 @@ function fitParts(
 	parts: readonly (readonly [string, string, string])[],
 	width: number,
 ): string {
-	const prefix = theme.fg("muted", prefixText);
-	const separator = theme.fg("dim", " · ");
+	const prefix = theme.fg("accent", prefixText);
+	const separator = theme.fg("muted", "  ");
 	let available = Math.max(0, width - visibleWidth(prefix));
 	const rendered: string[] = [];
 
 	for (const [label, value, color] of parts) {
-		const plain = `${label} ${value}`;
-		const separatorWidth = rendered.length > 0 ? 3 : 0;
+		const plain = label ? `${label}:${value}` : value;
+		const separatorWidth = rendered.length > 0 ? 2 : 0;
 		if (available <= separatorWidth) break;
 		const maxPartWidth = available - separatorWidth;
-		const truncatedValue = truncatePlain(value, Math.max(1, maxPartWidth - label.length - 1));
+		const labelWidth = label ? label.length + 1 : 0;
+		const truncatedValue = truncatePlain(value, Math.max(1, maxPartWidth - labelWidth));
 		const part = themePart(theme, label, truncatedValue, color);
 		rendered.push(part);
 		available -= separatorWidth + Math.min(visibleWidth(plain), maxPartWidth);
@@ -166,7 +168,8 @@ function renderWorkflowFooter(
 	const wf = snapshot.workflow;
 	const dirty = snapshot.dirty;
 	const slotHeld = Boolean(wf.mergeSlotHeld);
-	const dirtyColor = dirty == null ? "muted" : dirty === 0 ? "success" : "warning";
+	const gitState = dirty == null ? "dirty:?" : dirty === 0 ? "clean" : `dirty:${dirty}`;
+	const gitStateColor = dirty == null ? "muted" : dirty === 0 ? "success" : "warning";
 	const worktree = wf.worktreePath ? `wf:${wf.worktreePath.split("/").filter(Boolean).pop() ?? wf.worktreePath}` : formatWorktree(snapshot.worktree);
 	const statusMap = footerData.getExtensionStatuses?.();
 	const statuses = Array.from(statusMap?.entries() ?? [])
@@ -177,21 +180,21 @@ function renderWorkflowFooter(
 		.join(" · ");
 
 	const workflowParts = [
-		["wf", wf.state ?? "idle", wf.state === "idle" ? "muted" : "accent"],
-		["bead", wf.activeBead ?? "-", wf.activeBead ? "accent" : "muted"],
-		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "muted"],
-		["wt", worktree, snapshot.worktree?.isLinked || wf.worktreePath ? "warning" : "muted"],
-		["dirty", dirty == null ? "?" : String(dirty), dirtyColor],
+		["wf", wf.state ?? "idle", wf.state === "idle" ? "text" : "accent"],
+		["bead", wf.activeBead ?? "-", wf.activeBead ? "accent" : "text"],
+		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
+		["wt", worktree, snapshot.worktree?.isLinked || wf.worktreePath ? "warning" : "text"],
+		["", gitState, gitStateColor],
 		["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"],
 	] as const;
 	const statsParts = [
 		...sessionUsageParts(ctx),
-		...(statuses ? [["ext", statuses, "muted"] as const] : []),
+		...(statuses ? [["ext", statuses, "text"] as const] : []),
 	] as const;
 
 	return [
-		fitParts(theme, "  pi workflow  ", workflowParts, width),
-		fitParts(theme, "  pi stats     ", statsParts, width),
+		fitParts(theme, "  workflow  ", workflowParts, width),
+		fitParts(theme, "  stats     ", statsParts, width),
 	];
 }
 
