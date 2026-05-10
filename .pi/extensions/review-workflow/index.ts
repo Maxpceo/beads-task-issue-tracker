@@ -9,6 +9,7 @@ const ReviewParams = {
 	properties: {
 		beadId: { type: "string", description: "Bead ID to review" },
 		startCommit: { type: "string", description: "Start commit override for scoped diff" },
+		endCommit: { type: "string", description: "End commit override for scoped diff; use this for stacked branches so later task commits are excluded", default: "HEAD" },
 		dryRun: { type: "boolean", description: "Prepare review context without spawning reviewer", default: false },
 	},
 	required: ["beadId"],
@@ -19,6 +20,7 @@ interface ReviewResult {
 	beadId: string;
 	branch: string;
 	startCommit: string;
+	endCommit: string;
 	changedFiles: string[];
 	automatedChecks: string[];
 	checkpoints: string[];
@@ -84,6 +86,11 @@ async function getComments(pi: ExtensionAPI, beadId: string): Promise<string> {
 
 function findStartCommit(comments: string): string | undefined {
 	const matches = [...comments.matchAll(/START_COMMIT:\s*([a-f0-9]{7,40})/gi)];
+	return matches.at(-1)?.[1];
+}
+
+function findEndCommit(comments: string): string | undefined {
+	const matches = [...comments.matchAll(/END_COMMIT:\s*([a-f0-9]{7,40}|HEAD)/gi)];
 	return matches.at(-1)?.[1];
 }
 
@@ -177,6 +184,8 @@ function render(result: ReviewResult): string {
 		`bead=${result.beadId}`,
 		`branch=${result.branch}`,
 		`startCommit=${result.startCommit}`,
+		`endCommit=${result.endCommit}`,
+		`diff=${result.startCommit}..${result.endCommit}`,
 		`changedFiles=${result.changedFiles.join(", ") || "-"}`,
 		"checkpoints:",
 		...result.checkpoints.map((item) => `- ${item}`),
@@ -205,8 +214,10 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const comments = await getComments(pi, params.beadId);
 				const startCommit = params.startCommit || findStartCommit(comments);
 				if (!startCommit) throw new Error("No startCommit provided and no START_COMMIT found in comments.");
+				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
 				const branch = await execRequired(pi, "git", ["branch", "--show-current"]);
-				const changedRaw = await execRequired(pi, "git", ["diff", "--name-only", `${startCommit}..HEAD`]);
+				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "reviewing", branch, startCommit, endCommit });
+				const changedRaw = await execRequired(pi, "git", ["diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
@@ -218,11 +229,11 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
 					"PR merged validation: beads-policy blocks terminal completion on remote feature branches until HEAD is merged into origin/main, gh reports a merged PR, or an explicit documented exception is supplied.",
 				];
-				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist };
+				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist };
 				if (!params.dryRun) {
-					await exec(pi, "bd", ["comments", "add", params.beadId, "SIMPLIFIED: review_bead simplify gate completed; scoped diff prepared for code review."]);
+					await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
-					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\n\nReview git diff ${startCommit}..HEAD. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}`;
+					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}`;
 					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
@@ -232,9 +243,12 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
 						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\n${automatedChecks.join("\n\n")}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
+						await exec(pi, "bd", ["close", params.beadId, "--reason", "Reviewed and accepted by review_bead"]);
+						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "closed", branch, startCommit, endCommit });
 					} else {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: NOT APPROVED\n\nRedispatch required before completion.\n\n${reviewer.output.slice(-4000)}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "inreview"]);
+						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "inreview", branch, startCommit, endCommit });
 					}
 				}
 				return { content: [{ type: "text", text: render(result) }], details: result };

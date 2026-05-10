@@ -9,9 +9,11 @@ const WORKFLOW_STATES = [
 	"inreview",
 	"reviewing",
 	"accepted",
+	"closed",
 	"landing",
 	"merged",
 	"blocked",
+	"deferred",
 ] as const;
 
 type WorkflowStateName = (typeof WORKFLOW_STATES)[number];
@@ -23,6 +25,7 @@ interface WorkflowState {
 	branch?: string;
 	worktreePath?: string;
 	startCommit?: string;
+	endCommit?: string;
 	planMode: PlanMode;
 	mergeSlotHeld: boolean;
 	updatedAt: string;
@@ -35,6 +38,7 @@ interface WorkflowStateUpdateEvent {
 	branch?: string;
 	worktreePath?: string;
 	startCommit?: string;
+	endCommit?: string;
 	planMode?: PlanMode;
 	mergeSlotHeld?: boolean;
 	ctx?: ExtensionContext;
@@ -66,6 +70,7 @@ function formatState(state: WorkflowState): string {
 		`branch=${state.branch ?? "-"}`,
 		`worktree=${state.worktreePath ?? "-"}`,
 		`start=${state.startCommit ?? "-"}`,
+		`end=${state.endCommit ?? "-"}`,
 		`plan=${state.planMode}`,
 		`mergeSlot=${state.mergeSlotHeld ? "held" : "free"}`,
 	].join(" | ");
@@ -81,6 +86,40 @@ async function detectStartCommit(pi: ExtensionAPI): Promise<string | undefined> 
 	const { stdout, code } = await pi.exec("git", ["rev-parse", "HEAD"]);
 	if (code !== 0) return undefined;
 	return stdout.trim() || undefined;
+}
+
+function isTerminalWorkflowState(state: WorkflowStateName): boolean {
+	return state === "closed" || state === "blocked" || state === "deferred" || state === "merged";
+}
+
+function stateFromBdStatus(status?: string): WorkflowStateName | undefined {
+	if (status === "in_progress") return "implementing";
+	if (status === "inreview") return "inreview";
+	if (status === "reviewed" || status === "accepted") return "accepted";
+	if (status === "closed") return "closed";
+	if (status === "blocked") return "blocked";
+	if (status === "deferred") return "deferred";
+	return undefined;
+}
+
+async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | undefined> {
+	const { stdout, code } = await pi.exec("bd", ["show", beadId, "--json"]);
+	if (code !== 0) return undefined;
+	try {
+		const parsed = JSON.parse(stdout);
+		const bead = Array.isArray(parsed) ? parsed[0] : parsed;
+		return bead?.status;
+	} catch {
+		return undefined;
+	}
+}
+
+async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<WorkflowState> {
+	if (!state.activeBead) return state;
+	if (state.state !== "idle" && !isTerminalWorkflowState(state.state)) return state;
+	const inferred = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
+	if (!inferred || inferred === state.state) return state;
+	return { ...state, state: inferred };
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
@@ -128,6 +167,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (event.branch !== undefined) next.branch = event.branch || undefined;
 		if (event.worktreePath !== undefined) next.worktreePath = event.worktreePath || undefined;
 		if (event.startCommit !== undefined) next.startCommit = event.startCommit || undefined;
+		if (event.endCommit !== undefined) next.endCommit = event.endCommit || undefined;
 		if (event.planMode !== undefined) next.planMode = event.planMode;
 		if (event.mergeSlotHeld !== undefined) next.mergeSlotHeld = event.mergeSlotHeld;
 		return setState(next, event.ctx);
@@ -264,7 +304,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("workflow-update", {
 		description:
-			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> plan=off|strict|auto slot=held|free",
+			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> end=<sha> plan=off|strict|auto slot=held|free",
 		handler: async (args, ctx) => {
 			const kv = parseKeyValueArgs(args);
 			const next: Partial<WorkflowState> = {};
@@ -279,6 +319,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			if (kv.branch) next.branch = kv.branch;
 			if (kv.worktree) next.worktreePath = kv.worktree;
 			if (kv.start) next.startCommit = kv.start;
+			if (kv.end) next.endCommit = kv.end;
 			if (kv.plan) {
 				if (!isPlanMode(kv.plan)) {
 					ctx.ui.notify(`Invalid plan mode: ${kv.plan}`, "error");
@@ -306,7 +347,13 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : cloneState(DEFAULT_STATE);
 		workflowState.branch = workflowState.branch ?? (await detectBranch(pi));
-		updateFooter(ctx, workflowState);
+		const reconciled = await reconcileActiveBeadState(pi, workflowState);
+		if (reconciled.state !== workflowState.state) {
+			workflowState = reconciled;
+			persist(ctx);
+		} else {
+			updateFooter(ctx, workflowState);
+		}
 	});
 
 	pi.on("before_agent_start", async () => {

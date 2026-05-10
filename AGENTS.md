@@ -9,6 +9,10 @@ Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
 Pi domain rules for logging, locale sync, UI constraints, frontend review, and src-tauri/bd compatibility: `.pi/rules/domain.md`.
 Progress is tracked in bd, not as markdown task lists.
 
+Pi controls one active bead through the per-task lifecycle:
+`idle -> claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed -> idle/next task`.
+Do not start, claim, implement, or dispatch unrelated work while the active bead is non-terminal; terminal states are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. If the active bead reaches `inreview`, the next action is `review-bead` / `review_bead`, not another task. `land` is an explicit save/push checkpoint and `merge-to-main` is an explicit session-final PR/merge workflow; neither is an automatic per-task stage.
+
 ## Fast Path / Large Change Discipline
 
 Fast Path is allowed only when the orchestrator explicitly judges the change to be trivial, low-risk, and cheaper than supervisor dispatch.

@@ -380,9 +380,25 @@ async function dispatch(
 				: buildDocsPrompt(bead, branch, startCommit, params.task);
 
 	await addDispatchComment(pi, bead.id, agentName, branch, startCommit, prompt);
+	if (mode === "supervisor") {
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", branch, startCommit });
+	} else if (mode === "reviewer") {
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "reviewing", branch, startCommit });
+	}
 	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, startCommit, exitCode: 0, output: prompt, stderr: "" };
 
 	const result = await runPiAgent(agent, prompt, cwd, signal);
+	if (mode === "supervisor") {
+		const endCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
+		const updatedBead = await getBead(pi, bead.id);
+		pi.events.emit("workflow-state:update", {
+			activeBead: bead.id,
+			state: updatedBead.status === "inreview" ? "inreview" : "implementing",
+			branch,
+			startCommit,
+			endCommit,
+		});
+	}
 	return { agent: agentName, beadId: bead.id, branch, startCommit, ...result };
 }
 

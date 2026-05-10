@@ -18,7 +18,8 @@ type PolicyName =
 	| "blockWorktreeInsideRepo"
 	| "blockMainMutation"
 	| "staleWorktreeGuard"
-	| "fastPathDiscipline";
+	| "fastPathDiscipline"
+	| "enforceActiveBeadLifecycle";
 
 interface PolicyDecision {
 	policy: PolicyName;
@@ -45,6 +46,8 @@ const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/age
 const FAST_PATH_FILE_THRESHOLD = 3;
 const FAST_PATH_ADDED_LINE_THRESHOLD = 80;
 const SUPERVISOR_READY_STATES = new Set(["plan_approved", "implementing", "inreview", "reviewing", "accepted"]);
+const TERMINAL_WORKFLOW_STATES = new Set(["closed", "blocked", "deferred", "merged"]);
+const NON_TERMINAL_WORKFLOW_STATES = new Set(["claimed", "planning", "plan_approved", "implementing", "inreview", "reviewing", "accepted", "landing"]);
 const RISKY_FILE_PREFIXES = [
 	".pi/extensions/beads-policy/",
 	".pi/extensions/beads-dispatch/",
@@ -342,6 +345,58 @@ function commandHasReviewCheckpointTransition(command: string): boolean {
 	return Boolean(reviewCheckpointTransition(command));
 }
 
+function parseBdClaimId(command: string): string | undefined {
+	for (const segment of splitShellSegments(command)) {
+		const tokens = shellTokens(segment);
+		const updateIndex = tokens.findIndex((token, index) => token === "update" && tokens[index - 1] === "bd");
+		if (updateIndex < 0) continue;
+		let id: string | undefined;
+		let hasClaim = false;
+		for (let index = updateIndex + 1; index < tokens.length; index += 1) {
+			const token = tokens[index];
+			if (token === "--claim") {
+				hasClaim = true;
+				continue;
+			}
+			if (token.startsWith("-")) continue;
+			id = id ?? token;
+		}
+		if (id && hasClaim) return id;
+	}
+	return undefined;
+}
+
+function parseWorkflowCommandBead(command: string): string | undefined {
+	return command.match(/\/(?:workflow-claim|workflow-set-bead)\s+(\S+)/)?.[1] ?? command.match(/\/workflow-update\b[^;&|]*\bbead=(\S+)/)?.[1];
+}
+
+function commandStartsDifferentBead(command: string): string | undefined {
+	return parseBdClaimId(command) ?? parseWorkflowCommandBead(command);
+}
+
+function commandDispatchesBead(command: string): string | undefined {
+	return command.match(/\bdispatch_supervisor\s*\(\s*beadId\s*=\s*([^\s,)]+)/)?.[1] ?? command.match(/\bdispatch_supervisor\b[^;&|]*\bbeadId=(\S+)/)?.[1];
+}
+
+function commandReviewsBead(command: string): string | undefined {
+	return command.match(/\breview_bead\s*\(\s*beadId\s*=\s*([^\s,)]+)/)?.[1] ?? command.match(/\/review-bead\s+(\S+)/)?.[1];
+}
+
+export function activeBeadLifecycleReason(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): string | undefined {
+	const activeBead = workflowState.activeBead;
+	const state = workflowState.state ?? "idle";
+	if (!activeBead || TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
+	if (!NON_TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
+	if (targetBead && targetBead === activeBead) return undefined;
+	if (state === "inreview") return `Blocked: active bead ${activeBead} is inreview; next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+	return `Blocked: active bead ${activeBead} is non-terminal (${state}). Finish it to closed, block/defer it with an explicit reason, or hand it off before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+}
+
+function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
+	const reason = activeBeadLifecycleReason(targetBead, action, workflowState);
+	return reason ? { policy: "enforceActiveBeadLifecycle", block: true, reason } : undefined;
+}
+
 function commandDirectlySetsClosed(command: string): boolean {
 	return Boolean(directClosedTransition(command));
 }
@@ -572,6 +627,21 @@ function isSupervisorPathActive(workflowState: WorkflowStateSnapshot): boolean {
 	return hasActiveBead(workflowState) && SUPERVISOR_READY_STATES.has(workflowState.state ?? "");
 }
 
+function hasApprovedPlanComment(cwd: string, beadId: string): boolean {
+	return /PLAN APPROVED/i.test(getBdCommentsText(cwd, beadId));
+}
+
+function recoverableApprovedWorkflowBead(cwd: string): string | undefined {
+	const raw = runCommand(cwd, "bd", ["list", "--status=in_progress", "--json"]);
+	if (!raw) return undefined;
+	try {
+		const issues = JSON.parse(raw) as BdIssueSummary[];
+		return issues.find((issue) => issue.id && hasApprovedPlanComment(cwd, issue.id))?.id;
+	} catch {
+		return undefined;
+	}
+}
+
 function hasFastPathRationale(command: string): boolean {
 	return /FAST_PATH_RATIONALE=\S+|fast[-_ ]path rationale|--fast-path-rationale\b/i.test(command);
 }
@@ -603,6 +673,9 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 	const rationale = hasFastPathRationale(command) || hasMechanicalBatchMarker(command);
 
 	if (risky && !supervisorPath) {
+		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
+		const recoveredBead = recoverableApprovedWorkflowBead(cwd);
+		if (recoveredBead) return undefined;
 		return {
 			policy: "fastPathDiscipline",
 			block: true,
@@ -670,12 +743,31 @@ function isSupervisorContext(): boolean {
 	return /supervisor/i.test(process.env.PI_AGENT_ROLE ?? "") || /supervisor/i.test(process.env.PI_SUBAGENT_ROLE ?? "");
 }
 
+function workflowStateFromBdStatus(status?: string): string | undefined {
+	if (status === "in_progress") return "implementing";
+	if (status === "inreview") return "inreview";
+	if (status === "reviewed" || status === "accepted") return "accepted";
+	if (status === "closed") return "closed";
+	if (status === "blocked") return "blocked";
+	if (status === "deferred") return "deferred";
+	return undefined;
+}
+
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
 	const last = entries
 		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
 		.pop() as { data?: WorkflowStateSnapshot } | undefined;
-	return last?.data ?? {};
+	const state = last?.data ?? {};
+	if (state.activeBead && state.state && state.state !== "idle") return state;
+	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd);
+	if (!recoveredBead) return state;
+	const issue = getBdIssue(ctx.cwd, recoveredBead);
+	return {
+		...state,
+		activeBead: recoveredBead,
+		state: workflowStateFromBdStatus(issue?.status) ?? "implementing",
+	};
 }
 
 export function evaluateBashPolicy(
@@ -685,6 +777,18 @@ export function evaluateBashPolicy(
 ): PolicyDecision | undefined {
 	const command = normalizeCommand(commandInput);
 	const commandCwd = inferCommandCwd(command, options.cwd);
+
+	const nextBead = commandStartsDifferentBead(command);
+	const dispatchBead = commandDispatchesBead(command);
+	const reviewBead = commandReviewsBead(command);
+	const lifecycleDecision = nextBead
+		? activeBeadLifecycleDecision(nextBead, "start/claim another bead", workflowState)
+		: dispatchBead
+			? activeBeadLifecycleDecision(dispatchBead, "dispatch supervisor", workflowState)
+			: reviewBead
+				? activeBeadLifecycleDecision(reviewBead, "review", workflowState)
+				: undefined;
+	if (lifecycleDecision) return lifecycleDecision;
 
 	if (/\bgit\s+add\s+(-A\b|--all\b|\.(\s|$))/.test(command)) {
 		return {
@@ -761,15 +865,9 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	const unmergedBranchReason = closeId ? unmergedBranchCompletionReason(command, commandCwd) : undefined;
-	if (unmergedBranchReason) {
-		return {
-			policy: "blockUnmergedBranchCompletion",
-			block: true,
-			reason: unmergedBranchReason,
-		};
-	}
-
+	// Per-task bead closure is allowed before merge-to-main in multi-task sessions.
+	// Session-final merge evidence is enforced by merge-to-main/final verdict workflows,
+	// not by blocking every accepted bead close on a feature branch.
 	if ((commandClosesBead(command) || commandDirectlySetsClosed(command)) && !canCloseByReviewState(command, commandCwd, workflowState)) {
 		return {
 			policy: "blockBdCloseWithoutReview",
@@ -787,6 +885,12 @@ export function evaluateBashPolicy(
 		};
 	}
 
+	return undefined;
+}
+
+export function evaluateToolPolicy(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
+	if (toolName === "dispatch_supervisor") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
+	if (toolName === "review_bead") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
 	return undefined;
 }
 
@@ -835,6 +939,9 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 			if (decision) ctx.ui.notify(`[${decision.policy}] ${decision.reason}`, "warning");
 			return undefined;
 		}
+
+		const toolDecision = applySkip(evaluateToolPolicy(event.toolName, event.input as Record<string, unknown>, workflowState));
+		if (toolDecision?.block) return toToolBlock(toolDecision);
 
 		if (event.toolName === "edit" || event.toolName === "write") {
 			const targetPath = String(event.input.path ?? "");

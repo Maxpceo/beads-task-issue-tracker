@@ -1,0 +1,31 @@
+import { describe, expect, it } from 'vitest'
+
+import reviewWorkflowExtension from '../../.pi/extensions/review-workflow/index'
+
+describe('review_workflow scoped review', () => {
+  it('uses endCommit for stacked branch diff scope in dryRun', async () => {
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const pi = {
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') return { stdout: 'START_COMMIT: aaa1111\nEND_COMMIT: bbb2222', stderr: '', code: 0 }
+        if (command === 'git' && args[0] === 'branch') return { stdout: 'feature/test\n', stderr: '', code: 0 }
+        if (command === 'git' && args[0] === 'diff') return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    reviewWorkflowExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, { cwd: process.cwd() })
+
+    expect(execCalls).toContainEqual({ command: 'git', args: ['diff', '--name-only', 'aaa1111..bbb2222'] })
+    expect(result.details.endCommit).toBe('bbb2222')
+    expect(result.content[0].text).toContain('diff=aaa1111..bbb2222')
+  })
+})

@@ -5,7 +5,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 
 # Land
 
-Work is not complete until `git push` succeeds. `land` saves session work to the feature branch; `merge-to-main` is the later PR → merge → checkout main workflow.
+`land` is an explicit user-triggered save/push checkpoint for the current feature branch. It is not an automatic per-task stage and is not required after a bead reaches `closed`. `merge-to-main` is the later explicit PR → merge → checkout main workflow.
 
 ## Workflow
 
@@ -21,6 +21,7 @@ Work is not complete until `git push` succeeds. `land` saves session work to the
    - `inreview` with `CODE REVIEW: APPROVED` and acceptance evidence may be closed by the orchestrator;
    - `inreview` without approval remains open and must be listed;
    - `in_progress` remains open unless the work is explicitly accepted/closed by an allowed fast-path route.
+   - Do not use `land` to skip the lifecycle controller: active `inreview` beads still need `review-bead`, and active non-terminal beads block unrelated next work unless explicitly handed off/deferred with reason.
 4. Run quality gates if code changed:
    ```bash
    pnpm test && npx vue-tsc --noEmit
@@ -60,6 +61,7 @@ Work is not complete until `git push` succeeds. `land` saves session work to the
 
 - Never use `git add .` or `git add -A`.
 - Never say “ready to push”; push during this workflow.
+- Do not run `land` automatically after every bead; after `closed`, the next bead may be claimed without a push checkpoint unless the user asks to save/push.
 - Merge-slot serializes pushes between parallel sessions. Do not run `git push` if `bd merge-slot acquire` failed.
 - Do not close remote feature-branch work until merge evidence is recorded, unless a local-only/fast-path exception reason is explicit.
 - Evidence before claims: final report must include commands, exit codes, commits, push evidence, and PR/merge evidence or exception reason.
