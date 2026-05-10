@@ -17,23 +17,19 @@ Claim first, then plan. Do not investigate deeply before claiming.
    ```
 2. If closed, stop and propose a follow-up bead.
 3. If assigned to someone else, ask before stealing.
-4. Claim:
-   ```bash
-   bd update <ID> --claim
-   ```
-5. Update Pi workflow state:
+4. Claim and set this Pi session's active bead:
    ```text
-   /workflow-update bead=<ID> state=claimed branch=<current-branch> start=<HEAD>
+   /workflow-claim <ID>
    ```
-   The footer also live-detects the newest `bd` `in_progress` issue as a fallback, but lifecycle state (`state=claimed`, `start`, branch) still requires this explicit workflow update.
-6. If the user requested a worktree, create it with an absolute external path and run setup.
-7. Enter planning:
+   This runs `bd update <ID> --claim` and records session-local workflow state (`bead`, `state=claimed`, current branch, start commit), so each Pi instance can show its own active bead in the footer.
+5. If the user requested a worktree, create it with an absolute external path and run setup.
+6. Enter planning:
    - strict/default: `/plan`
    - only if explicitly requested “plan and implement”: `/plan-auto`
-8. Continue with `plan-bead`.
+7. Continue with `plan-bead`.
 
 ## Rules
 
-- First non-readonly action is `bd update <ID> --claim`.
+- First non-readonly action is `/workflow-claim <ID>` (or, only if the command is unavailable, `bd update <ID> --claim` followed immediately by `/workflow-update bead=<ID> state=claimed branch=<current-branch> start=<HEAD>`).
 - Do not edit files before plan approval/auto gate.
 - Do not use markdown TODOs; progress is in bd.

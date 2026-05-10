@@ -133,7 +133,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `beads-policy` | Blocking invalid or unsafe actions |
 | `beads-dispatch` | Typed subagent dispatch with correct bead context |
 | `review-workflow` | Enforced review chain |
-| `status-dashboard` | User-visible state summary; footer prefers explicit workflow-state bead and falls back to the newest `bd in_progress` issue |
+| `status-dashboard` | User-visible state summary; footer prefers session-local `workflow-state.activeBead` and falls back to the newest global `bd in_progress` issue marked with `*` |
 
 ## Policies
 
@@ -162,7 +162,7 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | `git add .` | Blocked |
 | `git push` without merge-slot | Blocked |
 | `bd create` without enrichment | Blocked |
-| claim bead | Workflow state becomes `claimed`; footer bead shows explicit workflow bead or newest `bd in_progress` fallback |
+| claim bead | `/workflow-claim <id>` claims in bd and sets session-local workflow state to `claimed`; footer shows explicit workflow bead, or newest global `bd in_progress` fallback marked with `*` |
 | auto plan without required sections | Remains in planning |
 | auto plan with quality gate | Starts execution |
 | dispatch supervisor | Prompt includes bead, branch, start commit |

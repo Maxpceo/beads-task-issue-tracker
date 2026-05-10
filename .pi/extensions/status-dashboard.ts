@@ -190,7 +190,8 @@ function renderWorkflowFooter(
 	if (!snapshot) return [];
 
 	const wf = snapshot.workflow;
-	const activeBead = wf.activeBead ?? snapshot.activeBead?.id;
+	const explicitBead = wf.activeBead;
+	const activeBead = explicitBead ?? (snapshot.activeBead?.id ? `${snapshot.activeBead.id}*` : undefined);
 	const dirty = snapshot.dirty;
 	const slotHeld = Boolean(wf.mergeSlotHeld);
 	const gitState = dirty == null ? "dirty:?" : dirty === 0 ? "clean" : `dirty:${dirty}`;
@@ -248,7 +249,7 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const worktree = await currentWorktree(pi, ctx.cwd);
 	const activeBead = wf.activeBead ? undefined : await detectActiveBead(pi);
 	const state = wf.state ?? "idle";
-	const bead = wf.activeBead ?? activeBead?.id ?? "-";
+	const bead = wf.activeBead ?? (activeBead?.id ? `${activeBead.id}*` : undefined) ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
 	const text = `bead:${bead} state:${state} br:${branch} wt:${formatWorktree(worktree)} dirty:${dirty ?? "?"} slot:${slot}`;
 
