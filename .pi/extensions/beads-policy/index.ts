@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type PolicyName =
@@ -10,6 +14,7 @@ type PolicyName =
 	| "blockMutationsInPlanning"
 	| "blockSupervisorClose"
 	| "blockWorktreeInsideRepo"
+	| "blockMainMutation"
 	| "staleWorktreeGuard";
 
 interface PolicyDecision {
@@ -25,7 +30,15 @@ interface WorkflowStateSnapshot {
 	planMode?: string;
 }
 
+interface BashPolicyOptions {
+	cwd?: string;
+}
+
 const PROTECTED_PATHS = [".env", ".git/", "node_modules/"];
+const PROTECTED_BRANCHES = new Set(["main", "master"]);
+const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
+const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
+const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/agents|\.pi\/skills|scripts)\/|\.(ts|tsx|vue|rs|js|mjs|cjs|css|scss|sh)$/;
 
 function getSkipPolicies(): Set<string> {
 	return new Set(
@@ -51,6 +64,66 @@ function normalizeCommand(command: string): string {
 	return command.replace(/\s+/g, " ").trim();
 }
 
+function runGit(cwd: string, args: string[]): string | undefined {
+	try {
+		return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+	} catch {
+		return undefined;
+	}
+}
+
+function stripQuotes(value: string): string {
+	return value.replace(/^['"]|['"]$/g, "");
+}
+
+function expandHome(value: string): string {
+	if (value === "~") return os.homedir();
+	if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+	if (value.startsWith("$HOME/")) return path.join(os.homedir(), value.slice(6));
+	return value;
+}
+
+function normalizeFsPath(value: string, cwd = process.cwd()): string {
+	const expanded = expandHome(stripQuotes(value));
+	return path.resolve(cwd, expanded);
+}
+
+function realpathExistingOrParent(targetPath: string): string {
+	let cursor = targetPath;
+	while (!fs.existsSync(cursor)) {
+		const next = path.dirname(cursor);
+		if (next === cursor) return path.resolve(targetPath);
+		cursor = next;
+	}
+	try {
+		const real = fs.realpathSync(cursor);
+		return path.join(real, path.relative(cursor, targetPath));
+	} catch {
+		return path.resolve(targetPath);
+	}
+}
+
+function getBranchForPath(filePath: string): string | undefined {
+	const dir = fs.existsSync(filePath) && fs.statSync(filePath).isDirectory() ? filePath : path.dirname(filePath);
+	return runGit(dir, ["branch", "--show-current"]);
+}
+
+function getRepoRoot(cwd: string): string | undefined {
+	return runGit(cwd, ["rev-parse", "--show-toplevel"]);
+}
+
+function isProtectedBranch(cwd: string): boolean {
+	const branch = runGit(cwd, ["branch", "--show-current"]);
+	return branch ? PROTECTED_BRANCHES.has(branch) : false;
+}
+
+function inferCommandCwd(command: string, defaultCwd?: string): string {
+	const base = defaultCwd ?? process.cwd();
+	const match = command.match(/^\s*cd\s+([^;&|]+?)\s*&&/);
+	if (!match) return base;
+	return normalizeFsPath(match[1].trim(), base);
+}
+
 function commandHasGitPush(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+push\b/.test(command);
 }
@@ -73,8 +146,12 @@ function commandHasMutatingGitOrFs(command: string): boolean {
 	);
 }
 
-function commandCreatesWorktreeInsideRepo(command: string): boolean {
-	return /\b(git\s+worktree\s+add|bd\s+worktree\s+create)\s+(?!\/|~|\.\.\/)/.test(command);
+function commandHasMainLocalMutation(command: string): boolean {
+	return /(^|[;&|]\s*)git\s+(add|commit)\b/.test(command);
+}
+
+function commandHasCommitLikeOperation(command: string): boolean {
+	return /(^|[;&|]\s*)git\s+(commit|rebase|merge|cherry-pick|revert)\b/.test(command);
 }
 
 function commandCreatesUnenrichedBead(command: string): boolean {
@@ -97,6 +174,83 @@ function commandClosesBead(command: string): boolean {
 	return /\bbd\s+close\b/.test(command);
 }
 
+function splitShellSegments(command: string): string[] {
+	return command.split(/\s*(?:&&|;|\|\|)\s*/).filter(Boolean);
+}
+
+function extractWorktreePathFromSegment(segment: string): string | undefined {
+	const match = segment.match(/\b(?:bd\s+worktree\s+create|git\s+worktree\s+add)\s+(.+)$/);
+	if (!match) return undefined;
+	const tokens = match[1].match(/(?:"[^"]+"|'[^']+'|\S+)/g) ?? [];
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (["--branch", "-b", "-B", "--orphan", "--reason"].includes(token)) {
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("-")) continue;
+		return token;
+	}
+	return undefined;
+}
+
+function invalidWorktreePath(command: string, cwd?: string): string | undefined {
+	for (const segment of splitShellSegments(command)) {
+		if (!/\b(?:bd\s+worktree\s+create|git\s+worktree\s+add)\b/.test(segment)) continue;
+		const rawPath = extractWorktreePathFromSegment(segment);
+		if (!rawPath) continue;
+		const unquoted = stripQuotes(rawPath);
+		if (!unquoted.startsWith("/") && !unquoted.startsWith("~/") && !unquoted.startsWith("$HOME/")) return unquoted;
+		if (unquoted.includes("..")) return unquoted;
+		const resolved = realpathExistingOrParent(normalizeFsPath(unquoted, cwd));
+		const allowedRoot = realpathExistingOrParent(WORKTREE_ROOT);
+		if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) return unquoted;
+	}
+	return undefined;
+}
+
+function getStagedFiles(cwd: string): string[] {
+	return (runGit(cwd, ["diff", "--cached", "--name-only"]) ?? "")
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+}
+
+function isCodeFile(file: string): boolean {
+	return CODE_FILE_PATTERN.test(file) && !META_ONLY_PATTERN.test(file);
+}
+
+function evaluateStaleGuard(command: string, cwd: string): PolicyDecision | undefined {
+	if (!commandHasCommitLikeOperation(command)) return undefined;
+	if (!getRepoRoot(cwd)) return undefined;
+	if (isProtectedBranch(cwd)) return undefined;
+
+	const staged = getStagedFiles(cwd);
+	const stagedCode = staged.filter(isCodeFile);
+	const originMain = runGit(cwd, ["rev-parse", "origin/main"]);
+	if (!originMain) {
+		if (stagedCode.length === 0) return undefined;
+		return {
+			policy: "staleWorktreeGuard",
+			block: true,
+			reason: "Blocked: origin/main is unavailable for a code change; run git fetch origin before commit-like operations.",
+		};
+	}
+
+	const mergeBase = runGit(cwd, ["merge-base", "HEAD", "origin/main"]);
+	if (!mergeBase || mergeBase === originMain) return undefined;
+	if (stagedCode.length === 0) return undefined;
+
+	const mainDiff = new Set((runGit(cwd, ["diff", "--name-only", mergeBase, "origin/main"]) ?? "").split("\n").filter(Boolean));
+	const intersect = stagedCode.filter((file) => mainDiff.has(file));
+	if (intersect.length === 0) return undefined;
+	return {
+		policy: "staleWorktreeGuard",
+		block: true,
+		reason: `Blocked: branch is stale vs origin/main and staged code files intersect main changes: ${intersect.slice(0, 5).join(", ")}. Run git fetch origin && git rebase origin/main.`,
+	};
+}
+
 function isSupervisorContext(): boolean {
 	return /supervisor/i.test(process.env.PI_AGENT_ROLE ?? "") || /supervisor/i.test(process.env.PI_SUBAGENT_ROLE ?? "");
 }
@@ -109,8 +263,13 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	return last?.data ?? {};
 }
 
-export function evaluateBashPolicy(commandInput: string, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
+export function evaluateBashPolicy(
+	commandInput: string,
+	workflowState: WorkflowStateSnapshot = {},
+	options: BashPolicyOptions = {},
+): PolicyDecision | undefined {
 	const command = normalizeCommand(commandInput);
+	const commandCwd = inferCommandCwd(command, options.cwd);
 
 	if (/\bgit\s+add\s+(-A\b|--all\b|\.(\s|$))/.test(command)) {
 		return {
@@ -128,6 +287,26 @@ export function evaluateBashPolicy(commandInput: string, workflowState: Workflow
 			reason: "Blocked: workflow is in planning mode; only read-only commands are allowed.",
 		};
 	}
+
+	if (commandHasMainLocalMutation(command) && isProtectedBranch(commandCwd)) {
+		return {
+			policy: "blockMainMutation",
+			block: true,
+			reason: "Blocked: git add/commit on main/master is not allowed. Use a feature branch or approved merge/release workflow.",
+		};
+	}
+
+	const invalidWorktree = invalidWorktreePath(command, commandCwd);
+	if (invalidWorktree) {
+		return {
+			policy: "blockWorktreeInsideRepo",
+			block: true,
+			reason: `Blocked: worktree path must be under ${WORKTREE_ROOT}; got ${invalidWorktree}.`,
+		};
+	}
+
+	const staleDecision = evaluateStaleGuard(command, commandCwd);
+	if (staleDecision) return staleDecision;
 
 	if (commandHasGitPush(command) && !workflowState.mergeSlotHeld && !commandAcquiresMergeSlotBeforePush(command)) {
 		return {
@@ -169,24 +348,16 @@ export function evaluateBashPolicy(commandInput: string, workflowState: Workflow
 		};
 	}
 
-	if (commandCreatesWorktreeInsideRepo(command)) {
-		return {
-			policy: "blockWorktreeInsideRepo",
-			block: true,
-			reason: "Blocked: create worktrees with an absolute external path, not inside the repository.",
-		};
-	}
-
 	return undefined;
 }
 
-function evaluatePathPolicy(toolName: string, path: string, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
-	const normalizedPath = path.replace(/\\/g, "/");
+export function evaluatePathPolicy(toolName: string, targetPath: string, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
+	const normalizedPath = targetPath.replace(/\\/g, "/");
 	if (PROTECTED_PATHS.some((protectedPath) => normalizedPath.includes(protectedPath))) {
 		return {
 			policy: "protectPaths",
 			block: true,
-			reason: `Blocked: ${path} is protected.`,
+			reason: `Blocked: ${targetPath} is protected.`,
 		};
 	}
 
@@ -196,6 +367,14 @@ function evaluatePathPolicy(toolName: string, path: string, workflowState: Workf
 			policy: "blockMutationsInPlanning",
 			block: true,
 			reason: "Blocked: workflow is in planning mode; edit/write are disabled.",
+		};
+	}
+
+	if ((toolName === "edit" || toolName === "write") && PROTECTED_BRANCHES.has(getBranchForPath(targetPath) ?? "")) {
+		return {
+			policy: "blockMainMutation",
+			block: true,
+			reason: `Blocked: edit/write on main/master is not allowed for ${targetPath}. Use a feature branch or external worktree.`,
 		};
 	}
 
@@ -212,14 +391,14 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 
 		if (event.toolName === "bash") {
 			const command = String(event.input.command ?? "");
-			const decision = applySkip(evaluateBashPolicy(command, workflowState));
+			const decision = applySkip(evaluateBashPolicy(command, workflowState, { cwd: ctx.cwd }));
 			if (decision?.block) return toToolBlock(decision);
 			return undefined;
 		}
 
 		if (event.toolName === "edit" || event.toolName === "write") {
-			const path = String(event.input.path ?? "");
-			const decision = applySkip(evaluatePathPolicy(event.toolName, path, workflowState));
+			const targetPath = String(event.input.path ?? "");
+			const decision = applySkip(evaluatePathPolicy(event.toolName, targetPath, workflowState));
 			if (decision?.block) return toToolBlock(decision);
 		}
 

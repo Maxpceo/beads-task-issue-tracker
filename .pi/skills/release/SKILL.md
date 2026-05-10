@@ -32,4 +32,5 @@ description: Pi-native release workflow. Use when user says “сделай ре
 
 - Evidence before claims.
 - Do not skip changelog review.
+- `main` is read-only for ordinary agent edits/commits. Release-time main mutations are allowed only inside this approved release workflow, with a clean tree, quality gates, and merge-slot-protected push/tag handling.
 - If release script asks for human input or fails, stop with exact output.
