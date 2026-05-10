@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { renderPathRulesLoaded } from "../path-rules/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	registerTool(tool: any): void;
@@ -33,6 +34,7 @@ interface ReviewResult {
 	reviewerExitCode?: number;
 	reviewerOutput?: string;
 	reviewerStderr?: string;
+	pathRulesLoaded?: string;
 }
 
 const REVIEW_TRANSITIONS: Record<string, string[]> = {
@@ -198,6 +200,7 @@ function render(result: ReviewResult): string {
 		...result.checkpoints.map((item) => `- ${item}`),
 		result.frontendChecklist.length > 0 ? "frontendReviewChecklist:" : "frontendReviewChecklist: not applicable",
 		...result.frontendChecklist.map((item) => `- ${item}`),
+		result.pathRulesLoaded ?? "PATH_RULES_LOADED:\nNot evaluated.",
 		"automatedChecks:",
 		...result.automatedChecks.map((item) => `---\n${item}`),
 		result.reviewerExitCode === undefined ? "reviewer=not run" : `reviewerExit=${result.reviewerExitCode}`,
@@ -228,6 +231,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
+				const pathRulesLoaded = await renderPathRulesLoaded(ctx.cwd, changedFiles);
 				const checkpoints = [
 					"Selected model: bd statuses inreview -> simplified -> reviewed -> accepted -> closed with structured comments as audit evidence.",
 					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
@@ -236,11 +240,11 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
 					"Merge validation: per-task bead close may happen before merge; explicit merge-to-main performs PR/origin-main evidence and final session verdict checks.",
 				];
-				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist };
+				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, pathRulesLoaded };
 				if (!params.dryRun) {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
-					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}`;
+					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
 					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;

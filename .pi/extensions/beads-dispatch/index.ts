@@ -2,7 +2,13 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
+
+interface ExtensionAPI {
+	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
+	registerTool(tool: any): void;
+	events: { emit(name: string, event: Record<string, unknown>): void };
+}
 
 interface BeadInfo {
 	id: string;
@@ -48,6 +54,8 @@ interface DispatchResult {
 	stderr: string;
 }
 
+type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean };
+
 const DispatchParams = {
 	type: "object",
 	properties: {
@@ -69,7 +77,7 @@ function parseFrontmatter(markdown: string): { data: Record<string, string>; bod
 	const data: Record<string, string> = {};
 	for (const line of raw.split("\n")) {
 		const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-		if (match) data[match[1]] = match[2].replace(/^['\"]|['\"]$/g, "");
+		if (match?.[1]) data[match[1]] = (match[2] ?? "").replace(/^['\"]|['\"]$/g, "");
 	}
 	return { data, body: markdown.slice(end + 5).trimStart() };
 }
@@ -232,7 +240,7 @@ function summarizeContext(bead: BeadInfo): string {
 	return [`Title: ${bead.title ?? bead.id}`, `Status: ${bead.status ?? "unknown"}`, `Labels: ${(bead.labels ?? []).join(", ") || "-"}`, `EPIC_ID: ${parent}`].join("\n");
 }
 
-export function buildSupervisorPrompt(bead: BeadInfo, comments: BeadComment[], branch: string, startCommit: string, task?: string): string {
+export function buildSupervisorPrompt(bead: BeadInfo, comments: BeadComment[], branch: string, startCommit: string, task?: string, pathRules = "PATH_RULES_LOADED:\nNot evaluated."): string {
 	const plan = getPlanComment(comments) ?? "PLAN APPROVED comment not found";
 	const epicId = getParentId(bead) ?? "-";
 	return `BEAD_ID: ${bead.id}
@@ -247,6 +255,8 @@ ${summarizeContext(bead)}
 
 APPROVED PLAN:
 ${plan}
+
+${pathRules}
 
 Read the bead first:
 - bd show ${bead.id}
@@ -372,12 +382,15 @@ async function dispatch(
 	const startCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 	const agentName = params.agent ?? (mode === "supervisor" ? chooseSupervisor(bead) : mode === "reviewer" ? "code-reviewer" : "documentation-expert");
 	const agent = loadAgent(cwd, agentName);
+	const contextText = `${bead.title ?? ""}\n${bead.description ?? ""}\n${comments.map((comment) => comment.text ?? "").join("\n")}`;
+	const targetFiles = inferTargetFilesFromText(contextText);
+	const pathRules = await renderPathRulesLoaded(cwd, targetFiles);
 	const prompt =
 		mode === "supervisor"
-			? buildSupervisorPrompt(bead, comments, branch, startCommit, params.task)
+			? buildSupervisorPrompt(bead, comments, branch, startCommit, params.task, pathRules)
 			: mode === "reviewer"
-				? buildReviewerPrompt(bead, branch, startCommit, params.task)
-				: buildDocsPrompt(bead, branch, startCommit, params.task);
+				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
+				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
 	await addDispatchComment(pi, bead.id, agentName, branch, startCommit, prompt);
 	if (mode === "supervisor") {
@@ -422,7 +435,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Supervisor",
 		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
 		parameters: DispatchParams,
-		async execute(_id, params, signal, _onUpdate, ctx) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			try {
 				const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
@@ -437,7 +450,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Reviewer",
 		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview.",
 		parameters: DispatchParams,
-		async execute(_id, params, signal, _onUpdate, ctx) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			try {
 				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
@@ -452,7 +465,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Docs Agent",
 		description: "Typed beads workflow dispatch to the Pi documentation-expert agent.",
 		parameters: DispatchParams,
-		async execute(_id, params, signal, _onUpdate, ctx) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			try {
 				const result = await dispatch(pi, "docs", params, signal, ctx.cwd);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
