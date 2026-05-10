@@ -64,7 +64,7 @@ Build a Pi-native workflow for this project that preserves the useful parts of t
 |---|---|
 | Foundation | `.pi/settings.json`, basic `.pi` layout, `AGENTS.md` Pi workflow section |
 | Plan Mode | Project-local `plan-mode` extension with bd allowlist, strict mode, auto mode, plan quality gate |
-| Workflow state | Explicit state machine for active bead, branch, worktree, plan mode, merge-slot |
+| Workflow state | Explicit per-task state machine for active bead, branch, worktree, plan mode, merge-slot, start commit, and optional end commit |
 | Policy engine | Centralized policies replacing Claude hooks: main/master mutation guard, git add all block, strict worktree layout, stale worktree guard, merge-slot push gate, enrichment, lifecycle, protected paths |
 | Typed dispatch | `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent` wrappers over Pi subagent execution |
 | Pi agents | Pi-native supervisor/reviewer/documentation agent definitions |
@@ -124,15 +124,27 @@ AUTO_EXECUTE_ALLOWED: true
 
 If any required section is missing, Pi must remain in plan mode.
 
+## Per-task lifecycle controller
+
+Pi sessions must keep one active bead in a deterministic lifecycle:
+
+```text
+idle -> claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed -> idle/next task
+```
+
+Terminal per-task states are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. `accepted` is not terminal; the bead still needs terminal close. While an active bead is non-terminal, Pi must block claiming, dispatching, or implementing another bead. If the active bead is `inreview`, the next valid action is `review-bead` / `review_bead`; unrelated work is blocked or redirected with that message. `land` is not part of the mandatory per-task lifecycle: it is an explicit user-triggered save/push checkpoint. `merge-to-main` remains an explicit user-triggered session-final workflow and includes commit/gates/push/PR/merge/main checkout.
+
+Stacked branches must review exact per-task scopes. `review_bead` accepts `startCommit` and `endCommit`; if `endCommit` is absent it uses the latest `END_COMMIT:` comment or `HEAD`. Supervisors/orchestrators should record `/workflow-update end=<sha>` or an `END_COMMIT: <sha>` comment before moving from implementation to review when later commits may be added for other beads.
+
 ## Workflow state responsibility split
 
 | Component | Responsibility |
 |---|---|
 | `plan-mode` | Tool access, read-only restrictions, strict/auto execution UI |
-| `workflow-state` | Bead lifecycle state, active bead, worktree, branch, merge-slot state |
-| `beads-policy` | Blocking invalid or unsafe actions |
+| `workflow-state` | Bead lifecycle state, active bead, worktree, branch, merge-slot state, start/end commit scope; reconciles active non-terminal bd status so an active bead does not silently display `idle` |
+| `beads-policy` | Blocking invalid or unsafe actions, including unrelated next-work transitions while the active bead is non-terminal |
 | `beads-dispatch` | Typed subagent dispatch with correct bead context |
-| `review-workflow` | Enforced review chain |
+| `review-workflow` | Enforced review chain with exact `startCommit..endCommit` scope support |
 | `status-dashboard` | User-visible state summary; footer prefers session-local `workflow-state.activeBead` and falls back to the newest global `bd in_progress` issue marked with `*` |
 
 ## Footer dashboard field sources
@@ -160,7 +172,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
 | `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |
-| `blockUnmergedBranchCompletion` | Block terminal completion on pushed feature branches until branch is merged into `origin/main`, `gh` reports a merged PR, or an explicit local-only/fast-path exception is documented |
+| `blockUnmergedBranchCompletion` | Deprecated for per-task bead close: multi-task sessions may close accepted beads before explicit `merge-to-main`; merge/origin-main evidence is enforced by session-final `merge-to-main` verdict, not every bead close |
 | `validateReviewChain` | Block invalid lifecycle transitions |
 | `enforceBeadEnrichment` | Block agent-created non-epic beads without the full self-contained handoff template, labels, and concrete acceptance/verification bullets, except allowed exemptions |
 | `blockMutationsInPlanning` | During planning, block edit/write and mutating bash |
@@ -168,6 +180,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `blockWorktreeInsideRepo` | Block new worktrees outside `~/Projects/worktrees/beads-task-issue-tracker/<name>`, including repo-local paths, `.claude/worktrees`, `..`, and symlink escapes |
 | `staleWorktreeGuard` | Block commit-like operations when staged code intersects newer `origin/main`; if `origin/main` is unavailable, hard-block code changes and allow docs/beads-only maintenance |
 | `fastPathDiscipline` | Warn when direct code work exceeds 3 files or 80 added lines without rationale; hard-block risky scopes or large commit-like work without active bead/approved plan |
+| `enforceActiveBeadLifecycle` | Block claiming, dispatching, reviewing, or implementing a different bead while the active bead is non-terminal; `inreview` redirects to `review-bead` / `review_bead` |
 
 Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an explicit reason.
 
@@ -199,14 +212,19 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | supervisor tries `bd close` | Blocked |
 | direct/standard epic completion with incomplete children | Blocked |
 | epic completion with all children closed and normal acceptance evidence | Allowed |
-| terminal completion on unmerged pushed feature branch | Blocked with branch/PR lookup evidence |
-| terminal completion after origin/main ancestry, merged PR, or explicit local-only exception | Allowed through normal review/acceptance path |
+| accepted bead close on unmerged feature branch | Allowed; per-task lifecycle ends at `closed`, and session-final merge evidence is checked by explicit `merge-to-main` |
+| merge-to-main requested before origin/main ancestry | Runs explicit PR/merge workflow and final verdict checks; no preceding `land` required |
+| active bead `claimed`/`planning`/`implementing`/`reviewing`, then claim another bead | Blocked by `enforceActiveBeadLifecycle` |
+| active bead `inreview`, then claim/dispatch another bead | Blocked with next action pointing to `review-bead` / `review_bead` |
+| active bead `closed`, then claim next bead | Allowed without requiring `land` |
 | review bead when not `inreview` | Blocked |
 | worktree inside repo | Blocked |
 | worktree under `.claude/worktrees` or path containing `..` | Blocked |
 | worktree under `~/Projects/worktrees/beads-task-issue-tracker/<name>` | Allowed |
 | stale worktree commit with overlapping staged code | Blocked |
 | dashboard after worktree creation | Shows worktree path |
+| `review_bead(beadId, startCommit, endCommit)` on stacked branch | Reviews only `startCommit..endCommit`, excluding later unrelated commits |
+| merge-to-main requested | Runs explicit commit/gates/push/PR/merge/main checkout workflow; no preceding `land` required |
 | land fails after acquiring merge-slot | Releases merge-slot before reporting |
 
 ## Resume instructions

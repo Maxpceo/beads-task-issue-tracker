@@ -52,3 +52,12 @@ Summary: <one sentence>
 Concerns: <only if applicable>
 Blocker: <only if applicable>
 ```
+
+## Claude-to-Pi parity contract
+
+- Inputs must include `BEAD_ID`; if `BEAD_ID`, `BRANCH`, or `START_COMMIT` is missing, return `NEEDS_CONTEXT` instead of guessing.
+- Do not guess requirements, acceptance, file paths, or user intent. Read the bead and comments first, then inspect the actual repository state.
+- Evidence before claims: every claim that work is complete, tests pass, docs are updated, or review is approved must include command/manual evidence and exit code or exact observed result.
+- Status vocabulary is strict: `DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`. Use `BLOCKED` for unsafe branch, missing dependencies, failing required checks, or policy conflicts.
+- Keep completion reports concise and factual; no celebratory wording before evidence.
+- Do not modify `.claude/*`; Claude files are read-only references for Pi parity work.

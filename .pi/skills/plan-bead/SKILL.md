@@ -11,6 +11,7 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
    ```text
    /workflow-status
    ```
+   If workflow state shows another non-terminal bead, stop and continue that bead. If it is `inreview`, switch to `review-bead` instead of planning unrelated work.
 2. Enter plan mode if not already active:
    - `/plan` for strict approval.
    - `/plan-auto` only when the user explicitly authorized automatic execution.
@@ -40,6 +41,7 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 ## Rules
 
 - Planning mode is read-only.
+- The per-task lifecycle is `claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed`; do not plan another bead before the active bead is terminal (`closed`, `blocked`, or explicit `deferred`/handoff).
 - If requirements or acceptance are ambiguous, ask a single batched question with 2-4 concrete options and stop until answered.
 - Plans must preserve self-contained handoff context: problem, approach, rejected alternatives, files, acceptance, and verification evidence.
 - New or follow-up beads created during planning must use the full template from `AGENTS.md`, include labels, and link `parent-child`, `discovered-from`, or blocker dependencies when known.
