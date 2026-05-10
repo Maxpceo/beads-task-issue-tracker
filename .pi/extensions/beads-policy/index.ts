@@ -103,9 +103,18 @@ function realpathExistingOrParent(targetPath: string): string {
 	}
 }
 
+function nearestExistingDirectory(targetPath: string): string {
+	let cursor = fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory() ? targetPath : path.dirname(targetPath);
+	while (!fs.existsSync(cursor)) {
+		const next = path.dirname(cursor);
+		if (next === cursor) return path.dirname(targetPath);
+		cursor = next;
+	}
+	return cursor;
+}
+
 function getBranchForPath(filePath: string): string | undefined {
-	const dir = fs.existsSync(filePath) && fs.statSync(filePath).isDirectory() ? filePath : path.dirname(filePath);
-	return runGit(dir, ["branch", "--show-current"]);
+	return runGit(nearestExistingDirectory(filePath), ["branch", "--show-current"]);
 }
 
 function getRepoRoot(cwd: string): string | undefined {
@@ -147,7 +156,7 @@ function commandHasMutatingGitOrFs(command: string): boolean {
 }
 
 function commandHasMainLocalMutation(command: string): boolean {
-	return /(^|[;&|]\s*)git\s+(add|commit)\b/.test(command);
+	return /(^|[;&|]\s*)git\s+(add|stage|commit)\b/.test(command);
 }
 
 function commandHasProtectedBranchFsMutation(command: string): boolean {
@@ -302,7 +311,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockMainMutation",
 			block: true,
-			reason: "Blocked: file mutations and git add/commit on main/master are not allowed. Use a feature branch or approved merge/release workflow.",
+			reason: "Blocked: file mutations and git add/stage/commit on main/master are not allowed. Use a feature branch or approved merge/release workflow.",
 		};
 	}
 

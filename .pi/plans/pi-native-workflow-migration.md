@@ -140,7 +140,7 @@ If any required section is missing, Pi must remain in plan mode.
 | Policy | Behavior |
 |---|---|
 | `blockGitAddAll` | Block `git add .`, `git add -A`, `git add --all` |
-| `blockMainMutation` | Block edit/write and ordinary `git add`/`git commit` on `main`/`master`, including `.pi/*`; use a feature branch/worktree unless an approved merge/release workflow or explicit override applies |
+| `blockMainMutation` | Block edit/write and ordinary `git add`/`git stage`/`git commit` on `main`/`master`, including `.pi/*`; use a feature branch/worktree unless an approved merge/release workflow or explicit override applies |
 | `requireMergeSlotForPush` | Block `git push` unless workflow state says merge-slot is held |
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
@@ -164,7 +164,7 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | edit/write `.pi/*` on `main` | Blocked |
 | edit/write in feature worktree | Allowed |
 | `git add .` | Blocked |
-| ordinary `git add <file>` / `git commit` on `main` | Blocked |
+| ordinary `git add <file>` / `git stage <file>` / `git commit` on `main` | Blocked |
 | `git push` without merge-slot | Blocked |
 | `bd create` without enrichment | Blocked |
 | claim bead | Workflow state becomes `claimed` |
