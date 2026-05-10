@@ -150,6 +150,10 @@ function commandHasMainLocalMutation(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+(add|commit)\b/.test(command);
 }
 
+function commandHasProtectedBranchFsMutation(command: string): boolean {
+	return /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(command) || /(^|[^<])>(?!>)/.test(command) || />>/.test(command);
+}
+
 function commandHasCommitLikeOperation(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+(commit|rebase|merge|cherry-pick|revert)\b/.test(command);
 }
@@ -229,7 +233,13 @@ function evaluateStaleGuard(command: string, cwd: string): PolicyDecision | unde
 	const stagedCode = staged.filter(isCodeFile);
 	const originMain = runGit(cwd, ["rev-parse", "origin/main"]);
 	if (!originMain) {
-		if (stagedCode.length === 0) return undefined;
+		if (stagedCode.length === 0) {
+			return {
+				policy: "staleWorktreeGuard",
+				block: false,
+				reason: "Warning: origin/main is unavailable; docs/beads-only commit-like operation is allowed, but run git fetch origin before code changes.",
+			};
+		}
 		return {
 			policy: "staleWorktreeGuard",
 			block: true,
@@ -288,11 +298,11 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	if (commandHasMainLocalMutation(command) && isProtectedBranch(commandCwd)) {
+	if ((commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command)) && isProtectedBranch(commandCwd)) {
 		return {
 			policy: "blockMainMutation",
 			block: true,
-			reason: "Blocked: git add/commit on main/master is not allowed. Use a feature branch or approved merge/release workflow.",
+			reason: "Blocked: file mutations and git add/commit on main/master are not allowed. Use a feature branch or approved merge/release workflow.",
 		};
 	}
 
@@ -393,6 +403,7 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 			const command = String(event.input.command ?? "");
 			const decision = applySkip(evaluateBashPolicy(command, workflowState, { cwd: ctx.cwd }));
 			if (decision?.block) return toToolBlock(decision);
+			if (decision) ctx.ui.notify(`[${decision.policy}] ${decision.reason}`, "warning");
 			return undefined;
 		}
 
