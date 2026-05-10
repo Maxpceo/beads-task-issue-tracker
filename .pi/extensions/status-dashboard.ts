@@ -50,6 +50,8 @@ function shorten(path: string | undefined): string {
 }
 
 async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+	if (!ctx.hasUI) return;
+
 	const wf = latestWorkflowState(ctx);
 	const branch = wf.branch ?? (await gitValue(pi, ["branch", "--show-current"])) ?? "-";
 	const dirty = await dirtyCount(pi);
@@ -71,7 +73,7 @@ export default function statusDashboardExtension(pi: ExtensionAPI): void {
 		description: "Refresh Pi workflow dashboard footer",
 		handler: async (_args, ctx) => {
 			await updateDashboard(pi, ctx);
-			ctx.ui.notify("Pi workflow dashboard refreshed", "info");
+			if (ctx.hasUI) ctx.ui.notify("Pi workflow dashboard refreshed", "info");
 		},
 	});
 }

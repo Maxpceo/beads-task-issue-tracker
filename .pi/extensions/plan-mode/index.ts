@@ -54,6 +54,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	function updateStatus(ctx: ExtensionContext): void {
+		if (!ctx.hasUI) return;
+
 		// Footer status
 		if (executionMode && todoItems.length > 0) {
 			const completed = todoItems.filter((t) => t.completed).length;
@@ -87,7 +89,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionMode = false;
 		todoItems = [];
 		pi.setActiveTools(PLAN_MODE_TOOLS);
-		ctx.ui.notify(`${autoExecute ? "Auto " : ""}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
+		if (ctx.hasUI) ctx.ui.notify(`${autoExecute ? "Auto " : ""}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
 		updateStatus(ctx);
 		persistState();
 	}
@@ -98,7 +100,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionMode = false;
 		todoItems = [];
 		pi.setActiveTools(NORMAL_MODE_TOOLS);
-		ctx.ui.notify("Plan mode disabled. Full access restored.");
+		if (ctx.hasUI) ctx.ui.notify("Plan mode disabled. Full access restored.");
 		updateStatus(ctx);
 		persistState();
 	}
@@ -138,6 +140,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("todos", {
 		description: "Show current plan todo list",
 		handler: async (_args, ctx) => {
+			if (!ctx.hasUI) return;
 			if (todoItems.length === 0) {
 				ctx.ui.notify("No todos. Create a plan first with /plan", "info");
 				return;
