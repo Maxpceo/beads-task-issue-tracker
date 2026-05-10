@@ -1,6 +1,10 @@
 {
   "skills": ["skills"],
   "prompts": ["prompts"],
-  "extensions": ["extensions/plan-mode/index.ts", "extensions/workflow-state/index.ts"],
+  "extensions": [
+    "extensions/plan-mode/index.ts",
+    "extensions/workflow-state/index.ts",
+    "extensions/beads-policy/index.ts"
+  ],
   "enableSkillCommands": true
 }
