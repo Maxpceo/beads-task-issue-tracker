@@ -9,6 +9,7 @@ type PolicyName =
 	| "requireMergeSlotForPush"
 	| "protectPaths"
 	| "blockBdCloseWithoutReview"
+	| "blockEpicCloseWithIncompleteChildren"
 	| "validateReviewChain"
 	| "enforceBeadEnrichment"
 	| "blockMutationsInPlanning"
@@ -331,11 +332,32 @@ function commandClosesBead(command: string): boolean {
 	return /\bbd\s+close\b/.test(command);
 }
 
-function getBdIssue(cwd: string, id: string): { status?: string } | undefined {
+interface BdIssueSummary {
+	id?: string;
+	status?: string;
+	issue_type?: string;
+	title?: string;
+}
+
+function parseBdJson(raw: string): any {
+	const parsed = JSON.parse(raw);
+	return Array.isArray(parsed) ? parsed[0] : parsed;
+}
+
+function getBdIssue(cwd: string, id: string): BdIssueSummary | undefined {
 	try {
 		const raw = execFileSync("bd", ["show", id, "--json"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		return parseBdJson(raw);
+	} catch {
+		return undefined;
+	}
+}
+
+function getEpicChildren(cwd: string, id: string): BdIssueSummary[] | undefined {
+	try {
+		const raw = execFileSync("bd", ["list", "--parent", id, "--json"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
 		const parsed = JSON.parse(raw);
-		return Array.isArray(parsed) ? parsed[0] : parsed;
+		return Array.isArray(parsed) ? parsed : [];
 	} catch {
 		return undefined;
 	}
@@ -363,8 +385,29 @@ function validateReviewTransitionForCommand(command: string, cwd: string): strin
 	return undefined;
 }
 
+function terminalCloseId(command: string): string | undefined {
+	return directClosedTransition(command)?.id ?? closeCommandId(command);
+}
+
+function incompleteEpicChildren(cwd: string, id: string): BdIssueSummary[] | undefined {
+	const issue = getBdIssue(cwd, id);
+	if (issue?.issue_type !== "epic") return undefined;
+	const children = getEpicChildren(cwd, id);
+	if (!children) return [];
+	const incomplete = children.filter((child) => child.id !== id && child.status !== "closed");
+	return incomplete.length > 0 ? incomplete : undefined;
+}
+
+function formatIncompleteChildren(children: BdIssueSummary[]): string {
+	if (children.length === 0) return "unable to read child list";
+	return children
+		.slice(0, 5)
+		.map((child) => `${child.id ?? "unknown"}:${child.status ?? "unknown"}`)
+		.join(", ");
+}
+
 function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
-	const id = directClosedTransition(command)?.id ?? closeCommandId(command);
+	const id = terminalCloseId(command);
 	if (workflowState.state === "accepted" && workflowState.activeBead && id === workflowState.activeBead) {
 		const status = getBdIssue(cwd, id)?.status;
 		return status === "accepted";
@@ -639,6 +682,16 @@ export function evaluateBashPolicy(
 			policy: "blockSupervisorClose",
 			block: true,
 			reason: "Blocked: supervisor contexts cannot close beads, set orchestrator statuses, or push.",
+		};
+	}
+
+	const closeId = terminalCloseId(command);
+	const incompleteChildren = closeId ? incompleteEpicChildren(commandCwd, closeId) : undefined;
+	if (incompleteChildren) {
+		return {
+			policy: "blockEpicCloseWithIncompleteChildren",
+			block: true,
+			reason: `Blocked: epic ${closeId} cannot be completed while child beads are not closed (${formatIncompleteChildren(incompleteChildren)}). Close children first or use an explicit documented policy override.`,
 		};
 	}
 

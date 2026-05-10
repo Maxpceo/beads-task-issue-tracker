@@ -144,6 +144,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `requireMergeSlotForPush` | Block `git push` unless workflow state says merge-slot is held |
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
+| `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |
 | `validateReviewChain` | Block invalid lifecycle transitions |
 | `enforceBeadEnrichment` | Block agent-created non-epic beads without the full self-contained handoff template, labels, and concrete acceptance/verification bullets, except allowed exemptions |
 | `blockMutationsInPlanning` | During planning, block edit/write and mutating bash |
@@ -179,6 +180,8 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | auto plan with quality gate | Starts execution |
 | dispatch supervisor | Prompt includes bead, branch, start commit |
 | supervisor tries `bd close` | Blocked |
+| direct/standard epic completion with incomplete children | Blocked |
+| epic completion with all children closed and normal acceptance evidence | Allowed |
 | review bead when not `inreview` | Blocked |
 | worktree inside repo | Blocked |
 | worktree under `.claude/worktrees` or path containing `..` | Blocked |

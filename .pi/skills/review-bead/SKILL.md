@@ -43,6 +43,6 @@ description: Pi-native review chain for beads in inreview. Use when supervisor f
 - Evidence before claims is mandatory.
 - Frontend/UI changes require the explicit Pi Frontend Review Checklist; do not require undefined RAMS/WIG.
 - Direct terminal status updates are invalid before accepted/reviewed-with-no-acceptance evidence.
-- Epic completion with incomplete children is tracked as follow-up `beads-task-issue-tracker-bco3` and blocks final verification until implemented.
+- Epic completion with incomplete children is blocked by `beads-policy` for both standard close and direct `closed` status updates; close child beads first or use an explicit documented override.
 - PR merged validation is tracked as follow-up `beads-task-issue-tracker-eote` and is required by merge/land workflows or explicit override.
 - Create follow-up beads for out-of-scope findings.

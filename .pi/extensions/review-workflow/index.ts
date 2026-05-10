@@ -215,7 +215,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
 					"APPROVED path: record CODE REVIEW APPROVED evidence, run acceptance checks, then move reviewed -> accepted -> closed.",
 					"Terminal guard: standard and direct closed transitions require accepted/reviewing workflow state and policy evidence; direct bypass is blocked by beads-policy.",
-					"Epic completion with incomplete children: documented follow-up beads-task-issue-tracker-bco3 blocks final verification.",
+					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
 					"PR merged validation: documented follow-up beads-task-issue-tracker-eote blocks final verification unless merge workflow supplies explicit override/fast-path exception.",
 				];
 				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist };
