@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## Pi-native Workflow
+
+For Pi sessions, the source of truth is this `AGENTS.md` file plus `.pi/*`.
+`CLAUDE.md` and `.claude/*` are Claude Code workflow references and MUST NOT be modified unless the user explicitly asks for Claude Code workflow changes.
+
+Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
+Progress is tracked in bd, not as markdown task lists.
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference

@@ -1,0 +1,6 @@
+{
+  "skills": ["skills"],
+  "prompts": ["prompts"],
+  "extensions": [],
+  "enableSkillCommands": true
+}
