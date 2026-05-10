@@ -6,6 +6,7 @@ For Pi sessions, the source of truth is this `AGENTS.md` file plus `.pi/*`.
 `CLAUDE.md` and `.claude/*` are Claude Code workflow references and MUST NOT be modified unless the user explicitly asks for Claude Code workflow changes.
 
 Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
+Pi domain rules for logging, locale sync, UI constraints, frontend review, and src-tauri/bd compatibility: `.pi/rules/domain.md`.
 Progress is tracked in bd, not as markdown task lists.
 
 ## Fast Path / Large Change Discipline
