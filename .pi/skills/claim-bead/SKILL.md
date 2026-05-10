@@ -25,6 +25,7 @@ Claim first, then plan. Do not investigate deeply before claiming.
    ```text
    /workflow-update bead=<ID> state=claimed branch=<current-branch> start=<HEAD>
    ```
+   The footer also live-detects the newest `bd` `in_progress` issue as a fallback, but lifecycle state (`state=claimed`, `start`, branch) still requires this explicit workflow update.
 6. If the user requested a worktree, create it with an absolute external path and run setup.
 7. Enter planning:
    - strict/default: `/plan`
