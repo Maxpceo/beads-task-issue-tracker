@@ -112,7 +112,7 @@ The last line must be exactly one of these forms:
 ## Rules
 
 - `main` is read-only for ordinary agent edits/commits. Any main-branch mutation in this workflow must happen only after PR merge/checkout as part of the approved merge flow; do not make ad-hoc fixes on `main`.
-- Terminal completion of pushed feature-branch work requires merged PR/origin-main ancestry evidence; otherwise use an explicit `PR_MERGED_EXCEPTION=<reason>`, `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`, or `--pr-merged-exception <reason>` only for local-only fast-path or spike work.
+- Per-task bead close can happen before merge in multi-task sessions; session-final completion requires merged PR/origin-main ancestry evidence in this workflow.
 - Do not report merge completion until checkout/pull main and final verdict checks have run.
 - `land` remains optional/manual; never require it as a pre-step before merge-to-main.
 - Final report is a two-column table plus the mandatory final verdict line.

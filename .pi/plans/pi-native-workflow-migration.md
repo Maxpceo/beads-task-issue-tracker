@@ -172,7 +172,7 @@ Stacked branches must review exact per-task scopes. `review_bead` accepts `start
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
 | `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |
-| `blockUnmergedBranchCompletion` | Block terminal completion on pushed feature branches until branch is merged into `origin/main`, `gh` reports a merged PR, or an explicit local-only/fast-path exception is documented |
+| `blockUnmergedBranchCompletion` | Deprecated for per-task bead close: multi-task sessions may close accepted beads before explicit `merge-to-main`; merge/origin-main evidence is enforced by session-final `merge-to-main` verdict, not every bead close |
 | `validateReviewChain` | Block invalid lifecycle transitions |
 | `enforceBeadEnrichment` | Block agent-created non-epic beads without the full self-contained handoff template, labels, and concrete acceptance/verification bullets, except allowed exemptions |
 | `blockMutationsInPlanning` | During planning, block edit/write and mutating bash |
@@ -212,8 +212,8 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | supervisor tries `bd close` | Blocked |
 | direct/standard epic completion with incomplete children | Blocked |
 | epic completion with all children closed and normal acceptance evidence | Allowed |
-| terminal completion on unmerged pushed feature branch | Blocked with branch/PR lookup evidence |
-| terminal completion after origin/main ancestry, merged PR, or explicit local-only exception | Allowed through normal review/acceptance path |
+| accepted bead close on unmerged feature branch | Allowed; per-task lifecycle ends at `closed`, and session-final merge evidence is checked by explicit `merge-to-main` |
+| merge-to-main requested before origin/main ancestry | Runs explicit PR/merge workflow and final verdict checks; no preceding `land` required |
 | active bead `claimed`/`planning`/`implementing`/`reviewing`, then claim another bead | Blocked by `enforceActiveBeadLifecycle` |
 | active bead `inreview`, then claim/dispatch another bead | Blocked with next action pointing to `review-bead` / `review_bead` |
 | active bead `closed`, then claim next bead | Allowed without requiring `land` |

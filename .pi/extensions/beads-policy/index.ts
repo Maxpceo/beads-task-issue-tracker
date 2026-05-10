@@ -498,8 +498,7 @@ function formatIncompleteChildren(children: BdIssueSummary[]): string {
 function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
 	const id = terminalCloseId(command);
 	if (workflowState.state === "accepted" && workflowState.activeBead && id === workflowState.activeBead) {
-		const status = getBdIssue(cwd, id)?.status;
-		return status === "accepted";
+		return true;
 	}
 	if (!id) return false;
 	const status = getBdIssue(cwd, id)?.status;

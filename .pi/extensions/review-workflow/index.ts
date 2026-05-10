@@ -234,7 +234,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					"APPROVED path: record CODE REVIEW APPROVED evidence, run acceptance checks, then move reviewed -> accepted -> closed.",
 					"Terminal guard: standard and direct closed transitions require accepted/reviewing workflow state and policy evidence; direct bypass is blocked by beads-policy.",
 					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
-					"PR merged validation: beads-policy blocks terminal completion on remote feature branches until HEAD is merged into origin/main, gh reports a merged PR, or an explicit documented exception is supplied.",
+					"Merge validation: per-task bead close may happen before merge; explicit merge-to-main performs PR/origin-main evidence and final session verdict checks.",
 				];
 				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist };
 				if (!params.dryRun) {

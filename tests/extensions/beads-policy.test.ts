@@ -54,4 +54,14 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.block).toBe(true)
   })
+
+  it('allows accepted bead close before explicit merge-to-main', () => {
+    const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+      activeBead: 'bead-a',
+      state: 'accepted',
+    })
+
+    expect(decision?.policy).not.toBe('blockUnmergedBranchCompletion')
+    expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
 })

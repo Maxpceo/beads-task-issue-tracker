@@ -46,11 +46,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
    bd merge-slot release
    ```
 8. If any error happens after acquire, release merge-slot before reporting.
-9. Before terminal bead completion on a pushed feature branch, verify PR/merge evidence:
-   ```bash
-   git merge-base --is-ancestor HEAD origin/main || gh pr view "$(git branch --show-current)" --json state,mergedAt,url
-   ```
-   If this is intentionally local-only fast-path/spike work, record an explicit reason in the close command/comment with `PR_MERGED_EXCEPTION=<reason>`, `NO_REMOTE_BRANCH_COMPLETION_REQUIRED`, or `--pr-merged-exception <reason>`.
+9. Do not require merge evidence for per-task bead close. `land` is only a save/push checkpoint; session-final merge evidence belongs to explicit `merge-to-main`.
 10. Verify final pushed state:
    ```bash
    git status -sb
@@ -63,7 +59,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 - Never say “ready to push”; push during this workflow.
 - Do not run `land` automatically after every bead; after `closed`, the next bead may be claimed without a push checkpoint unless the user asks to save/push.
 - Merge-slot serializes pushes between parallel sessions. Do not run `git push` if `bd merge-slot acquire` failed.
-- Do not close remote feature-branch work until merge evidence is recorded, unless a local-only/fast-path exception reason is explicit.
+- Do not treat `land` as merge completion. Per-task bead close may happen before merge; session-final merge evidence is recorded by explicit `merge-to-main`.
 - Evidence before claims: final report must include commands, exit codes, commits, push evidence, and PR/merge evidence or exception reason.
 - If follow-up beads were created during this session, list them even if already closed.
 
@@ -77,7 +73,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 | Closed beads | IDs / — |
 | Open session beads | IDs and reason / — |
 | Follow-up beads | count / — |
-| Merge evidence | origin-main ancestor / PR / exception |
+| Save evidence | pushed branch / not required |
 
 If follow-up beads exist, add:
 
