@@ -176,6 +176,40 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	pi.registerCommand("workflow-claim", {
+		description: "Claim a bead and set this Pi session's active workflow bead. Usage: /workflow-claim <bead-id>",
+		handler: async (args, ctx) => {
+			const bead = args.trim().split(/\s+/).filter(Boolean)[0];
+			if (!bead) {
+				ctx.ui.notify("Usage: /workflow-claim <bead-id>", "error");
+				return;
+			}
+
+			const showResult = await pi.exec("bd", ["show", bead, "--json"]);
+			if (showResult.code !== 0) {
+				ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
+				return;
+			}
+
+			const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
+			if (claimResult.code !== 0) {
+				ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
+				return;
+			}
+
+			setState(
+				{
+					activeBead: bead,
+					state: "claimed",
+					branch: await detectBranch(pi),
+					startCommit: await detectStartCommit(pi),
+				},
+				ctx,
+			);
+			ctx.ui.notify(`Claimed ${bead}; ${formatState(workflowState)}`, "success");
+		},
+	});
+
 	pi.registerCommand("workflow-set-state", {
 		description: `Set workflow state. Values: ${WORKFLOW_STATES.join(", ")}`,
 		handler: async (args, ctx) => {
