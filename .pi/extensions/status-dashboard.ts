@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 interface WorkflowStateSnapshot {
 	state?: string;
@@ -37,16 +38,14 @@ function stripAnsi(text: string): string {
 	return text.replace(ANSI_PATTERN, "");
 }
 
-function visibleWidth(text: string): number {
-	return [...stripAnsi(text)].length;
+function truncatePlain(text: string, maxWidth: number): string {
+	return truncateToWidth(text, maxWidth, "…");
 }
 
-function truncatePlain(text: string, maxWidth: number): string {
-	if (maxWidth <= 0) return "";
-	const chars = [...text];
-	if (chars.length <= maxWidth) return text;
-	if (maxWidth === 1) return "…";
-	return `${chars.slice(0, maxWidth - 1).join("")}…`;
+function clampFooterLine(line: string, width: number): string {
+	// TUI treats over-width component output as fatal. Keep a final ANSI-aware
+	// guard here even though fitParts also budgets each part.
+	return truncateToWidth(line, Math.max(0, width), "…");
 }
 
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
@@ -187,7 +186,7 @@ function fitParts(
 		available -= separatorWidth + Math.min(visibleWidth(plain), maxPartWidth);
 	}
 
-	return prefix + rendered.join(separator);
+	return clampFooterLine(prefix + rendered.join(separator), width);
 }
 
 function renderWorkflowFooter(
@@ -232,7 +231,7 @@ function renderWorkflowFooter(
 	return [
 		fitParts(theme, "  workflow  ", workflowParts, width),
 		fitParts(theme, "  stats     ", statsParts, width),
-	];
+	].map((line) => clampFooterLine(line, width));
 }
 
 function installWorkflowFooter(ctx: ExtensionContext): void {
