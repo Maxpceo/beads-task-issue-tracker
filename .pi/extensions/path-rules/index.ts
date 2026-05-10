@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+interface ExtensionAPI {
+	log?: { debug?: (message: string) => void };
+}
+
 export interface LoadedPathRule {
 	path: string;
 	content: string;
@@ -82,6 +86,10 @@ export async function loadPathRules(cwd: string, targetFiles: string[], options:
 	}
 
 	return { rules, skipped, targets };
+}
+
+export default function pathRulesExtension(_pi: ExtensionAPI): { name: string } {
+	return { name: "path-rules" };
 }
 
 export function inferTargetFilesFromText(text: string): string[] {
