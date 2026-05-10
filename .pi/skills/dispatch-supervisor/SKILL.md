@@ -34,5 +34,6 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 
 - Do not call raw `subagent` for workflow dispatch.
 - Do not dispatch an unenriched bead or a bead with vague acceptance; enrich it or ask the user with 2-4 options first.
+- Dispatch is required for risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain frontend+backend work unless a documented Fast Path/mechanical exception is both narrow and low-risk.
 - Do not ask for confirmation after an approved plan unless a real decision point appears.
 - If dispatch returns BLOCKED/NEEDS_CONTEXT, diagnose before redispatch.

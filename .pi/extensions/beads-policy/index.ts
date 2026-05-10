@@ -15,7 +15,8 @@ type PolicyName =
 	| "blockSupervisorClose"
 	| "blockWorktreeInsideRepo"
 	| "blockMainMutation"
-	| "staleWorktreeGuard";
+	| "staleWorktreeGuard"
+	| "fastPathDiscipline";
 
 interface PolicyDecision {
 	policy: PolicyName;
@@ -39,6 +40,21 @@ const PROTECTED_BRANCHES = new Set(["main", "master"]);
 const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
 const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/agents|\.pi\/skills|scripts)\/|\.(ts|tsx|vue|rs|js|mjs|cjs|css|scss|sh)$/;
+const FAST_PATH_FILE_THRESHOLD = 3;
+const FAST_PATH_ADDED_LINE_THRESHOLD = 80;
+const SUPERVISOR_READY_STATES = new Set(["plan_approved", "implementing", "inreview", "reviewing", "accepted"]);
+const RISKY_FILE_PREFIXES = [
+	".pi/extensions/beads-policy/",
+	".pi/extensions/beads-dispatch/",
+	".pi/extensions/review-workflow/",
+	".pi/extensions/workflow-state/",
+	".pi/skills/merge-to-main/",
+	".pi/skills/release/",
+	".pi/skills/dispatch-supervisor/",
+	".pi/skills/review-bead/",
+	".pi/agents/",
+	"scripts/",
+];
 
 function getSkipPolicies(): Set<string> {
 	return new Set(
@@ -290,6 +306,105 @@ function isCodeFile(file: string): boolean {
 	return CODE_FILE_PATTERN.test(file) && !META_ONLY_PATTERN.test(file);
 }
 
+function getChangedFiles(cwd: string): string[] {
+	const tracked = (runGit(cwd, ["diff", "--name-only", "HEAD"]) ?? "").split("\n");
+	const untracked = (runGit(cwd, ["ls-files", "--others", "--exclude-standard"]) ?? "").split("\n");
+	return [...new Set([...tracked, ...untracked].map((file) => file.trim()).filter(Boolean))];
+}
+
+function countFileLines(cwd: string, file: string): number {
+	try {
+		return fs.readFileSync(path.join(cwd, file), "utf8").split("\n").filter((line) => line.length > 0).length;
+	} catch {
+		return 0;
+	}
+}
+
+function getUntrackedFiles(cwd: string): Set<string> {
+	return new Set((runGit(cwd, ["ls-files", "--others", "--exclude-standard"]) ?? "").split("\n").map((file) => file.trim()).filter(Boolean));
+}
+
+function getAddedLines(cwd: string, files: string[]): number {
+	let total = 0;
+	const untracked = getUntrackedFiles(cwd);
+	for (const file of files) {
+		if (untracked.has(file)) {
+			total += countFileLines(cwd, file);
+			continue;
+		}
+		const stat = runGit(cwd, ["diff", "--numstat", "HEAD", "--", file]);
+		if (!stat) continue;
+		const added = Number(stat.split(/\s+/)[0]);
+		if (Number.isFinite(added)) total += added;
+	}
+	return total;
+}
+
+function hasActiveBead(workflowState: WorkflowStateSnapshot): boolean {
+	return Boolean(workflowState.activeBead);
+}
+
+function isSupervisorPathActive(workflowState: WorkflowStateSnapshot): boolean {
+	return hasActiveBead(workflowState) && SUPERVISOR_READY_STATES.has(workflowState.state ?? "");
+}
+
+function hasFastPathRationale(command: string): boolean {
+	return /FAST_PATH_RATIONALE=\S+|fast[-_ ]path rationale|--fast-path-rationale\b/i.test(command);
+}
+
+function hasMechanicalBatchMarker(command: string): boolean {
+	return /MECHANICAL_BATCH=1|mechanical batch|--label(?:=|\s+)mechanical|--labels(?:=|\s+)mechanical/i.test(command);
+}
+
+function hasRiskyScope(files: string[]): boolean {
+	return files.some((file) => RISKY_FILE_PREFIXES.some((prefix) => file.startsWith(prefix)));
+}
+
+function hasCrossDomainScope(files: string[]): boolean {
+	const frontend = files.some((file) => file.startsWith("app/") || file.startsWith("i18n/"));
+	const backend = files.some((file) => file.startsWith("src-tauri/"));
+	return frontend && backend;
+}
+
+function evaluateFastPathDiscipline(command: string, cwd: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
+	if (!getRepoRoot(cwd)) return undefined;
+	const changedCodeFiles = getChangedFiles(cwd).filter(isCodeFile);
+	if (changedCodeFiles.length === 0) return undefined;
+
+	const addedLines = getAddedLines(cwd, changedCodeFiles);
+	const thresholdExceeded = changedCodeFiles.length > FAST_PATH_FILE_THRESHOLD || addedLines > FAST_PATH_ADDED_LINE_THRESHOLD;
+	const risky = hasRiskyScope(changedCodeFiles) || hasCrossDomainScope(changedCodeFiles);
+	const supervisorPath = isSupervisorPathActive(workflowState);
+	const activeBead = hasActiveBead(workflowState);
+	const rationale = hasFastPathRationale(command) || hasMechanicalBatchMarker(command);
+
+	if (risky && !supervisorPath) {
+		return {
+			policy: "fastPathDiscipline",
+			block: true,
+			reason: `Blocked: risky scope requires an active bead with approved plan/supervisor path. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
+		};
+	}
+
+	if (thresholdExceeded && !activeBead && commandHasCommitLikeOperation(command)) {
+		return {
+			policy: "fastPathDiscipline",
+			block: true,
+			reason: `Blocked: large code change without active bead (${changedCodeFiles.length} files, ${addedLines} added lines). Create/claim a self-contained bead with concrete acceptance or dispatch supervisor.`,
+		};
+	}
+
+	if (thresholdExceeded && !supervisorPath && !rationale) {
+		return {
+			policy: "fastPathDiscipline",
+			block: false,
+			reason: `Fast Path threshold exceeded (${changedCodeFiles.length} code files, ${addedLines} added lines). Add explicit FAST_PATH_RATIONALE or use supervisor path; mechanical batches must stay narrow and be marked mechanical.`,
+		};
+	}
+
+	return undefined;
+}
+
 function evaluateStaleGuard(command: string, cwd: string): PolicyDecision | undefined {
 	if (!commandHasCommitLikeOperation(command)) return undefined;
 	if (!getRepoRoot(cwd)) return undefined;
@@ -383,6 +498,9 @@ export function evaluateBashPolicy(
 
 	const staleDecision = evaluateStaleGuard(command, commandCwd);
 	if (staleDecision) return staleDecision;
+
+	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
+	if (fastPathDecision) return fastPathDecision;
 
 	if (commandHasGitPush(command) && !workflowState.mergeSlotHeld && !commandAcquiresMergeSlotBeforePush(command)) {
 		return {

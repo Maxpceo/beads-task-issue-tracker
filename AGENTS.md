@@ -8,6 +8,16 @@ For Pi sessions, the source of truth is this `AGENTS.md` file plus `.pi/*`.
 Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
 Progress is tracked in bd, not as markdown task lists.
 
+## Fast Path / Large Change Discipline
+
+Fast Path is allowed only when the orchestrator explicitly judges the change to be trivial, low-risk, and cheaper than supervisor dispatch.
+
+- Low-risk direct work: up to 3 code files and up to 80 added lines, with clear acceptance evidence.
+- Threshold exceeded: continue only with an explicit `FAST_PATH_RATIONALE`/written rationale or switch to supervisor path.
+- Hard supervisor path: workflow/policy/review/merge logic, `.pi/agents`, scripts, or cross-domain frontend + backend changes require an active bead and approved plan/supervisor workflow.
+- Mechanical batches are allowed only with an explicit mechanical label/reason, narrow scope, and review evidence.
+- Docs/beads-only maintenance should not trigger Fast Path blocks, but still needs accurate bd tracking when it creates work.
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference

@@ -150,6 +150,7 @@ If any required section is missing, Pi must remain in plan mode.
 | `blockSupervisorClose` | Subagents cannot close beads, set orchestrator statuses, or push |
 | `blockWorktreeInsideRepo` | Block new worktrees outside `~/Projects/worktrees/beads-task-issue-tracker/<name>`, including repo-local paths, `.claude/worktrees`, `..`, and symlink escapes |
 | `staleWorktreeGuard` | Block commit-like operations when staged code intersects newer `origin/main`; if `origin/main` is unavailable, hard-block code changes and allow docs/beads-only maintenance |
+| `fastPathDiscipline` | Warn when direct code work exceeds 3 files or 80 added lines without rationale; hard-block risky scopes or large commit-like work without active bead/approved plan |
 
 Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an explicit reason.
 
@@ -169,6 +170,10 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | issue creation without full handoff template | Blocked |
 | issue creation with vague-only acceptance | Blocked with ask-user guidance |
 | issue creation with full template, labels, and concrete checks | Allowed |
+| 1-3 low-risk code files with active Fast Path rationale | Allowed |
+| >3 code files or >80 added lines without supervisor path | Warning requiring rationale |
+| workflow/policy/review/merge code without bead/approved plan | Blocked |
+| docs/beads-only maintenance | Allowed by Fast Path discipline |
 | claim bead | Workflow state becomes `claimed` |
 | auto plan without required sections | Remains in planning |
 | auto plan with quality gate | Starts execution |
