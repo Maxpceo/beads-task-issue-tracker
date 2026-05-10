@@ -232,9 +232,15 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 }
 
 export default function statusDashboardExtension(pi: ExtensionAPI): void {
+	function installAndRefresh(ctx: ExtensionContext): void {
+		installWorkflowFooter(ctx);
+		void updateDashboard(pi, ctx);
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		installWorkflowFooter(ctx);
 		await updateDashboard(pi, ctx);
+		setTimeout(() => installAndRefresh(ctx), 0);
 	});
 	pi.on("turn_start", async (_event, ctx) => {
 		installWorkflowFooter(ctx);
