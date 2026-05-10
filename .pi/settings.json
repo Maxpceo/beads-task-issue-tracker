@@ -5,7 +5,8 @@
     "extensions/plan-mode/index.ts",
     "extensions/workflow-state/index.ts",
     "extensions/beads-policy/index.ts",
-    "extensions/beads-dispatch/index.ts"
+    "extensions/beads-dispatch/index.ts",
+    "extensions/review-workflow/index.ts"
   ],
   "enableSkillCommands": true
 }
