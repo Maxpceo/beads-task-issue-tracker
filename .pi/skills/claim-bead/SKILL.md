@@ -35,4 +35,6 @@ Claim first, then plan. Do not investigate deeply before claiming.
 
 - First non-readonly action is `bd update <ID> --claim`.
 - Do not edit files before plan approval/auto gate.
+- If the bead is missing handoff context or concrete acceptance, enrich it or ask before implementation/dispatch.
+- Do not create follow-up beads from memory-only context; use the full self-contained template from `AGENTS.md` and add labels plus `parent-child`/`discovered-from`/blocker deps when known.
 - Do not use markdown TODOs; progress is in bd.

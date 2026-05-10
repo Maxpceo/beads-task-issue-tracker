@@ -65,7 +65,7 @@ Build a Pi-native workflow for this project that preserves the useful parts of t
 | Foundation | `.pi/settings.json`, basic `.pi` layout, `AGENTS.md` Pi workflow section |
 | Plan Mode | Project-local `plan-mode` extension with bd allowlist, strict mode, auto mode, plan quality gate |
 | Workflow state | Explicit state machine for active bead, branch, worktree, plan mode, merge-slot |
-| Policy engine | Centralized policies replacing Claude hooks: git add all block, merge-slot push gate, enrichment, lifecycle, protected paths |
+| Policy engine | Centralized policies replacing Claude hooks: main/master mutation guard, git add all block, strict worktree layout, stale worktree guard, merge-slot push gate, enrichment, lifecycle, protected paths |
 | Typed dispatch | `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent` wrappers over Pi subagent execution |
 | Pi agents | Pi-native supervisor/reviewer/documentation agent definitions |
 | Pi skills | Pi-native skills: claim, plan, dispatch, review, land, merge, release |
@@ -140,15 +140,19 @@ If any required section is missing, Pi must remain in plan mode.
 | Policy | Behavior |
 |---|---|
 | `blockGitAddAll` | Block `git add .`, `git add -A`, `git add --all` |
+| `blockMainMutation` | Block edit/write and ordinary `git add`/`git stage`/`git commit` on `main`/`master`, including `.pi/*`; use a feature branch/worktree unless an approved merge/release workflow or explicit override applies |
 | `requireMergeSlotForPush` | Block `git push` unless workflow state says merge-slot is held |
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
+| `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |
+| `blockUnmergedBranchCompletion` | Block terminal completion on pushed feature branches until branch is merged into `origin/main`, `gh` reports a merged PR, or an explicit local-only/fast-path exception is documented |
 | `validateReviewChain` | Block invalid lifecycle transitions |
-| `enforceBeadEnrichment` | Block `bd create` without `### Files`, `### Current state`, `### Target state`, except allowed exemptions |
+| `enforceBeadEnrichment` | Block agent-created non-epic beads without the full self-contained handoff template, labels, and concrete acceptance/verification bullets, except allowed exemptions |
 | `blockMutationsInPlanning` | During planning, block edit/write and mutating bash |
 | `blockSupervisorClose` | Subagents cannot close beads, set orchestrator statuses, or push |
-| `blockWorktreeInsideRepo` | Block worktrees created inside the repository |
-| `staleWorktreeGuard` | Warn/block when worktree is stale vs main |
+| `blockWorktreeInsideRepo` | Block new worktrees outside `~/Projects/worktrees/beads-task-issue-tracker/<name>`, including repo-local paths, `.claude/worktrees`, `..`, and symlink escapes |
+| `staleWorktreeGuard` | Block commit-like operations when staged code intersects newer `origin/main`; if `origin/main` is unavailable, hard-block code changes and allow docs/beads-only maintenance |
+| `fastPathDiscipline` | Warn when direct code work exceeds 3 files or 80 added lines without rationale; hard-block risky scopes or large commit-like work without active bead/approved plan |
 
 Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an explicit reason.
 
@@ -159,16 +163,33 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | `/plan`, then edit/write | Blocked |
 | `/plan`, `bd update` | Blocked |
 | `/plan`, `bd show` | Allowed |
+| edit/write project file on `main` | Blocked |
+| edit/write `.pi/*` on `main` | Blocked |
+| edit/write in feature worktree | Allowed |
 | `git add .` | Blocked |
+| ordinary `git add <file>` / `git stage <file>` / `git commit` on `main` | Blocked |
 | `git push` without merge-slot | Blocked |
-| `bd create` without enrichment | Blocked |
+| issue creation without full handoff template | Blocked |
+| issue creation with vague-only acceptance | Blocked with ask-user guidance |
+| issue creation with full template, labels, and concrete checks | Allowed |
+| 1-3 low-risk code files with active Fast Path rationale | Allowed |
+| >3 code files or >80 added lines without supervisor path | Warning requiring rationale |
+| workflow/policy/review/merge code without bead/approved plan | Blocked |
+| docs/beads-only maintenance | Allowed by Fast Path discipline |
 | claim bead | Workflow state becomes `claimed` |
 | auto plan without required sections | Remains in planning |
 | auto plan with quality gate | Starts execution |
 | dispatch supervisor | Prompt includes bead, branch, start commit |
 | supervisor tries `bd close` | Blocked |
+| direct/standard epic completion with incomplete children | Blocked |
+| epic completion with all children closed and normal acceptance evidence | Allowed |
+| terminal completion on unmerged pushed feature branch | Blocked with branch/PR lookup evidence |
+| terminal completion after origin/main ancestry, merged PR, or explicit local-only exception | Allowed through normal review/acceptance path |
 | review bead when not `inreview` | Blocked |
 | worktree inside repo | Blocked |
+| worktree under `.claude/worktrees` or path containing `..` | Blocked |
+| worktree under `~/Projects/worktrees/beads-task-issue-tracker/<name>` | Allowed |
+| stale worktree commit with overlapping staged code | Blocked |
 | dashboard after worktree creation | Shows worktree path |
 | land fails after acquiring merge-slot | Releases merge-slot before reporting |
 

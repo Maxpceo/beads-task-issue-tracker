@@ -8,7 +8,8 @@
     "extensions/beads-dispatch/index.ts",
     "extensions/review-workflow/index.ts",
     "extensions/status-dashboard.ts",
-    "extensions/session-context/index.ts"
+    "extensions/session-context/index.ts",
+    "extensions/memory-capture/index.ts"
   ],
   "enableSkillCommands": true
 }

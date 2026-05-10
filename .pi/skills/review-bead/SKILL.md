@@ -24,13 +24,15 @@ description: Pi-native review chain for beads in inreview. Use when supervisor f
    ```text
    dispatch_reviewer(beadId=<ID>)
    ```
-5. If reviewer returns `NOT APPROVED`, redispatch supervisor with exact fixes.
-6. If approved, run relevant acceptance checks with fresh evidence.
-7. Close only after evidence:
+5. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.
+6. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and redispatch supervisor with exact fixes; do not advance to `reviewed`, `accepted`, or `closed`.
+7. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then move `reviewed -> accepted -> closed`.
+8. For frontend Vue diffs, run the Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo` (i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion, responsive/layout, regression evidence).
+9. Close only after evidence:
    ```bash
    bd close <ID> --reason "Reviewed and accepted"
    ```
-8. Update state:
+10. Update state:
    ```text
    /workflow-update state=accepted
    ```
@@ -39,5 +41,8 @@ description: Pi-native review chain for beads in inreview. Use when supervisor f
 
 - Never skip spec compliance.
 - Evidence before claims is mandatory.
-- Frontend/UI changes require i18n/logging/accessibility attention.
+- Frontend/UI changes require the explicit Pi Frontend Review Checklist; do not require undefined RAMS/WIG.
+- Direct terminal status updates are invalid before accepted/reviewed-with-no-acceptance evidence.
+- Epic completion with incomplete children is blocked by `beads-policy` for both standard close and direct `closed` status updates; close child beads first or use an explicit documented override.
+- PR merged validation is tracked as follow-up `beads-task-issue-tracker-eote` and is required by merge/land workflows or explicit override.
 - Create follow-up beads for out-of-scope findings.
