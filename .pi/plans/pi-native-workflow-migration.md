@@ -154,7 +154,7 @@ Stacked branches must review exact per-task scopes. `review_bead` accepts `start
 | Footer field | Source of truth | Notes |
 |---|---|---|
 | `wf` / workflow state | Session-local `workflow-state.state` | Owned by lifecycle commands/events such as `/workflow-claim`, `/workflow-update`, `/plan`, `review_bead`, landing/acceptance flows. It is intentionally workflow-owned because bd status alone cannot tell which phase this Pi session is in. |
-| `bead` | Session-local `workflow-state.activeBead`; fallback to newest global `bd in_progress` | Explicit workflow bead is shown unmarked and is per Pi session. Global fallback is marked with `*` (for example `bead:abc*`) to show it is not session-local. |
+| `bead` | Session-local `workflow-state.activeBead`; fallback to newest global `bd in_progress` | Footer display compacts full bd ids to the suffix after the last hyphen (for example `beads-task-issue-tracker-tf9p` renders as `bead:tf9p`). Explicit workflow bead is shown unmarked and is per Pi session. Global fallback is marked with `*` (for example `bead:nxnx*`) to show it is not session-local. Internal workflow/bd state keeps the full id. |
 | `plan` | Session-local `workflow-state.planMode` emitted by `plan-mode` | `/plan`, `/plan-auto`, `/plan-cancel`, and approved execution update it. |
 | `wt` | Live `git -C <ctx.cwd> worktree list --porcelain`; optional workflow override shown as `wf:<name>` | `primary` means the main checkout; `linked:<name>` means the current Pi process runs in a linked worktree. `wf:<name>` means workflow state explicitly set a worktree override. |
 | `dirty` / `clean` | Live `git -C <ctx.cwd> status --short` | `dirty:?` means git status could not be read. |
