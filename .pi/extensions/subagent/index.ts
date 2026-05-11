@@ -274,6 +274,7 @@ async function runSingleAgent(
 	if (!agent) {
 		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
 		const now = Date.now();
+		const errorMessage = `Unknown agent: "${agentName}". Available agents: ${available}.`;
 		return {
 			agent: agentName,
 			agentSource: "unknown",
@@ -283,8 +284,9 @@ async function runSingleAgent(
 			startedAt: now,
 			completedAt: now,
 			messages: [],
-			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
+			stderr: errorMessage,
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			errorMessage,
 			step,
 		};
 	}
@@ -780,7 +782,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "user";
+			const scope: AgentScope = args.agentScope ?? "project";
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
@@ -844,6 +846,9 @@ export default function (pi: ExtensionAPI) {
 				return theme.fg("dim", parts.join(" · "));
 			};
 
+			const renderErrorText = (r: SingleResult): string =>
+				Array.from(new Set([r.errorMessage, r.stderr.trim()].filter((part): part is string => Boolean(part)))).join("\n");
+
 			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
 				const toShow = limit ? items.slice(-limit) : items;
 				const skipped = limit && items.length > limit ? items.length - limit : 0;
@@ -873,8 +878,9 @@ export default function (pi: ExtensionAPI) {
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
 					container.addChild(new Text(renderRunStats(r), 0, 0));
-					if (isError && r.errorMessage)
-						container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+					const errorText = renderErrorText(r);
+					if (isError && errorText)
+						container.addChild(new Text(theme.fg("error", `Error: ${errorText}`), 0, 0));
 					container.addChild(new Spacer(1));
 					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
@@ -909,7 +915,8 @@ export default function (pi: ExtensionAPI) {
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 				text += `\n${renderRunStats(r)}`;
-				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
+				const errorText = renderErrorText(r);
+				if (isError && errorText) text += `\n${theme.fg("error", `Error: ${errorText}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
 					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
@@ -954,6 +961,7 @@ export default function (pi: ExtensionAPI) {
 						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 						const displayItems = getDisplayItems(r.messages);
 						const finalOutput = getFinalOutput(r.messages);
+						const errorText = renderErrorText(r);
 
 						container.addChild(new Spacer(1));
 						container.addChild(
@@ -964,6 +972,7 @@ export default function (pi: ExtensionAPI) {
 							),
 						);
 						container.addChild(new Text(renderRunStats(r), 0, 0));
+						if (errorText) container.addChild(new Text(theme.fg("error", `Error: ${errorText}`), 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls
@@ -1006,8 +1015,10 @@ export default function (pi: ExtensionAPI) {
 				for (const r of details.results) {
 					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
+					const errorText = renderErrorText(r);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
 					text += `\n${renderRunStats(r)}`;
+					if (errorText) text += `\n${theme.fg("error", `Error: ${errorText}`)}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				}
@@ -1045,12 +1056,14 @@ export default function (pi: ExtensionAPI) {
 						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 						const displayItems = getDisplayItems(r.messages);
 						const finalOutput = getFinalOutput(r.messages);
+						const errorText = renderErrorText(r);
 
 						container.addChild(new Spacer(1));
 						container.addChild(
 							new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
 						);
 						container.addChild(new Text(renderRunStats(r), 0, 0));
+						if (errorText) container.addChild(new Text(theme.fg("error", `Error: ${errorText}`), 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls
@@ -1094,8 +1107,10 @@ export default function (pi: ExtensionAPI) {
 								? theme.fg("success", "✓")
 								: theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
+					const errorText = renderErrorText(r);
 					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
 					text += `\n${renderRunStats(r)}`;
+					if (errorText) text += `\n${theme.fg("error", `Error: ${errorText}`)}`;
 					if (displayItems.length === 0)
 						text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
