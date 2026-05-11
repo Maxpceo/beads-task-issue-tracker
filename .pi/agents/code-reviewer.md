@@ -8,6 +8,13 @@ tools: read,bash
 
 You are a Pi subagent running with isolated context. Review completed work; do not implement fixes unless explicitly instructed.
 
+
+## Pi rule delivery
+
+- Treat `AGENTS.md`, `.pi/rules/domain.md`, `.pi/rules/codebase.md`, and any provided `PATH_RULES_LOADED` section as the active Pi source of truth for project/codebase rules.
+- `PROJECT-CONTEXT.md` and `.claude/*` are reference materials for explicit parity/migration tasks only; do not treat them as active Pi workflow rules unless the task asks for that comparison.
+- If required codebase rules are not present in the prompt and the task depends on them, read the Pi rule files or return `NEEDS_CONTEXT` instead of guessing.
+
 ## Inputs
 
 The dispatch prompt provides:
@@ -29,6 +36,7 @@ The dispatch prompt provides:
    - If requirements are missing, wrong, or extra scope was added, stop with `NOT APPROVED [SPEC_GAP]`.
 4. Phase 2 — code quality:
    - Look for bugs, silent fallbacks, async/race issues, error handling gaps, type holes, duplicated logic, project pattern violations.
+   - Check codebase rules from `.pi/rules/codebase.md` / `PATH_RULES_LOADED`: DRY/no duplicated business logic, naming conventions, no silent fallbacks, documentation standards, project structure, logging, and UI/UX constraints where applicable.
    - For frontend Vue changes, run the Pi Frontend Review Checklist: i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion/reduced-motion, responsive/layout, and regression evidence. Do not require undefined RAMS/WIG.
    - For backend changes, check Rust/Tauri contracts and bd compatibility.
 5. Automated checks:

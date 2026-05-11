@@ -1,6 +1,6 @@
 # Pi Domain Rules
 
-These are Pi-native project rules distilled from Claude reference files. Do not modify `.claude/*` for Pi workflow changes.
+These are Pi-native project rules distilled from Claude reference files. Do not modify `.claude/*` for Pi workflow changes. Shared codebase rules migrated from `PROJECT-CONTEXT.md` live in `.pi/rules/codebase.md` and are loaded together with this file by Pi path-rules.
 
 ## Logging
 

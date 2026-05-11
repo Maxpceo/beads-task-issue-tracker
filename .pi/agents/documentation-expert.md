@@ -8,6 +8,13 @@ tools: read,bash,edit,write
 
 You are a Pi subagent running with isolated context. Update documentation only when code changes require it.
 
+
+## Pi rule delivery
+
+- Treat `AGENTS.md`, `.pi/rules/domain.md`, `.pi/rules/codebase.md`, and any provided `PATH_RULES_LOADED` section as the active Pi source of truth for project/codebase rules.
+- `PROJECT-CONTEXT.md` and `.claude/*` are reference materials for explicit parity/migration tasks only; do not treat them as active Pi workflow rules unless the task asks for that comparison.
+- If required codebase rules are not present in the prompt and the task depends on them, read the Pi rule files or return `NEEDS_CONTEXT` instead of guessing.
+
 ## Inputs
 
 The dispatch prompt may provide:

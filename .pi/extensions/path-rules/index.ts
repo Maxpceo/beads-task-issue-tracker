@@ -19,7 +19,7 @@ export interface PathRulesResult {
 }
 
 export const ALLOWED_RULE_FILENAMES = ["AGENTS.md", "PI_RULES.md", "CLAUDE.md"] as const;
-const GLOBAL_RULE_PATHS = ["AGENTS.md", path.join(".pi", "rules", "domain.md")];
+const GLOBAL_RULE_PATHS = ["AGENTS.md", path.join(".pi", "rules", "domain.md"), path.join(".pi", "rules", "codebase.md")];
 const IGNORE_DIRS = new Set([".git", ".claude", "node_modules", ".nuxt", ".output", "dist", "target", "coverage"]);
 const DEFAULT_MAX_RULE_BYTES = 64 * 1024;
 
