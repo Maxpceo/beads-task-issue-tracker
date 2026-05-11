@@ -85,13 +85,29 @@ async function detectActiveBead(pi: ExtensionAPI): Promise<ActiveBeadInfo | unde
 	}
 }
 
+function normalizeGitPath(path: string): string {
+	return path.replace(/\/+$/, "");
+}
+
 function isSameOrChildPath(path: string, parent: string): boolean {
-	return path === parent || path.startsWith(`${parent}/`);
+	const normalizedPath = normalizeGitPath(path);
+	const normalizedParent = normalizeGitPath(parent);
+	return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
 }
 
 async function currentWorktree(pi: ExtensionAPI, cwd: string): Promise<WorktreeInfo | undefined> {
 	const root = await gitValue(pi, ["rev-parse", "--show-toplevel"], cwd);
 	if (!root) return undefined;
+
+	const absoluteGitDir = await gitValue(pi, ["rev-parse", "--absolute-git-dir"], cwd);
+	const commonGitDir = await gitValue(pi, ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd);
+	if (absoluteGitDir && commonGitDir) {
+		return {
+			path: root,
+			isLinked: normalizeGitPath(absoluteGitDir) !== normalizeGitPath(commonGitDir),
+		};
+	}
+
 	const { stdout, code } = await pi.exec("git", ["-C", cwd, "worktree", "list", "--porcelain"]);
 	if (code !== 0) return { path: root, isLinked: false };
 	const paths = stdout
@@ -102,7 +118,7 @@ async function currentWorktree(pi: ExtensionAPI, cwd: string): Promise<WorktreeI
 		.filter((path): path is string => Boolean(path));
 	const primaryPath = paths[0];
 	const currentPath = paths.find((path) => isSameOrChildPath(cwd, path) || root === path) ?? root;
-	return { path: currentPath, isLinked: Boolean(primaryPath && currentPath !== primaryPath) };
+	return { path: currentPath, isLinked: Boolean(primaryPath && normalizeGitPath(currentPath) !== normalizeGitPath(primaryPath)) };
 }
 
 function pathBasename(path: string): string {
