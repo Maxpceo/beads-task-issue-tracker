@@ -2,6 +2,65 @@ import { describe, expect, it } from 'vitest'
 
 import { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy } from '../../.pi/extensions/beads-policy/index'
 
+describe('Pi merge-slot push policy', () => {
+  const workflowState = {
+    activeBead: 'bead-a',
+    state: 'implementing',
+    mergeSlotHeld: false,
+  }
+
+  it('allows git push when current bd merge-slot holder evidence matches the actor', () => {
+    const decision = evaluateBashPolicy('git push', workflowState, {
+      currentActor: 'Maxpceo',
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'in_progress',
+        metadata: { holder: 'Maxpceo' },
+      },
+    })
+
+    expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+  })
+
+  it('blocks git push without workflow-state slot or current bd holder evidence', () => {
+    const decision = evaluateBashPolicy('git push', workflowState, {
+      currentActor: 'Maxpceo',
+      bdMergeSlotIssue: null,
+    })
+
+    expect(decision?.policy).toBe('requireMergeSlotForPush')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks git push after release/free slot evidence', () => {
+    const decision = evaluateBashPolicy('git push', workflowState, {
+      currentActor: 'Maxpceo',
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'open',
+        metadata: { waiters: [] },
+      },
+    })
+
+    expect(decision?.policy).toBe('requireMergeSlotForPush')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks git push when bd merge-slot is held by another actor', () => {
+    const decision = evaluateBashPolicy('git push', workflowState, {
+      currentActor: 'Maxpceo',
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'in_progress',
+        metadata: { holder: 'other-agent' },
+      },
+    })
+
+    expect(decision?.policy).toBe('requireMergeSlotForPush')
+    expect(decision?.block).toBe(true)
+  })
+})
+
 describe('Pi active bead lifecycle policy', () => {
   it.each(['claimed', 'planning', 'implementing', 'inreview', 'reviewing'])(
     'blocks claiming another bead while active bead is %s',

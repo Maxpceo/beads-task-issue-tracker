@@ -53,6 +53,8 @@ interface WorkflowStateSnapshot {
 
 interface BashPolicyOptions {
 	cwd?: string;
+	bdMergeSlotIssue?: BdMergeSlotIssue | null;
+	currentActor?: string;
 }
 
 const PROTECTED_PATHS = [".env", ".git/", "node_modules/"];
@@ -430,6 +432,15 @@ interface BdIssueSummary {
 	status?: string;
 	issue_type?: string;
 	title?: string;
+	metadata?: Record<string, unknown>;
+}
+
+interface BdMergeSlotIssue extends BdIssueSummary {
+	metadata?: {
+		holder?: unknown;
+		waiters?: unknown;
+		[key: string]: unknown;
+	};
 }
 
 function parseBdJson(raw: string): any {
@@ -444,6 +455,23 @@ function getBdIssue(cwd: string, id: string): BdIssueSummary | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function getCurrentActor(cwd: string, override?: string): string | undefined {
+	const actor = override ?? process.env.BEADS_ACTOR ?? runGit(cwd, ["config", "user.name"]) ?? process.env.USER;
+	return actor?.trim() || undefined;
+}
+
+function getBdMergeSlotIssue(cwd: string): BdMergeSlotIssue | undefined {
+	return getBdIssue(cwd, "beads-task-issue-tracker-merge-slot") as BdMergeSlotIssue | undefined;
+}
+
+function currentActorHoldsBdMergeSlot(cwd: string, options: BashPolicyOptions): boolean {
+	const actor = getCurrentActor(cwd, options.currentActor);
+	if (!actor) return false;
+	const issue = options.bdMergeSlotIssue === undefined ? getBdMergeSlotIssue(cwd) : options.bdMergeSlotIssue;
+	if (!issue || issue.status !== "in_progress") return false;
+	return typeof issue.metadata?.holder === "string" && issue.metadata.holder.trim() === actor;
 }
 
 function getEpicChildren(cwd: string, id: string): BdIssueSummary[] | undefined {
@@ -903,11 +931,16 @@ export function evaluateBashPolicy(
 	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
 	if (fastPathDecision) return fastPathDecision;
 
-	if (commandHasGitPush(command) && !workflowState.mergeSlotHeld && !commandAcquiresMergeSlotBeforePush(command)) {
+	if (
+		commandHasGitPush(command) &&
+		!workflowState.mergeSlotHeld &&
+		!commandAcquiresMergeSlotBeforePush(command) &&
+		!currentActorHoldsBdMergeSlot(commandCwd, options)
+	) {
 		return {
 			policy: "requireMergeSlotForPush",
 			block: true,
-			reason: "Blocked: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true).",
+			reason: "Blocked: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true or current bd merge-slot holder evidence).",
 		};
 	}
 
