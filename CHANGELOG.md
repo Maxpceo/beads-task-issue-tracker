@@ -14,6 +14,7 @@
 
 ### Changed
 
+- **Pi agents dashboard close hint** (`beads-task-issue-tracker-hnqx`): `/agents-dashboard` now shows a dedicated close hint that documents `/agents-dashboard hide`, while wide terminals also mention `clear`; command help now lists both `hide` and `clear`.
 - **Pi subagent dashboard card polish** (`beads-task-issue-tracker-cff1`): `/agents-dashboard` cards now use status-colored borders and agent titles, add consistent horizontal padding, and show expanded usage stats (`ctx`, `in`, `out`, `cache`, `write`) instead of context-only usage text.
 - **Leaf-up filtering for epics in status and search filters** (`beads-task-issue-tracker-arfh`): status and search filters are now transparent for epics — an epic stays visible if itself OR at least one direct child matches. Eliminates visual flicker of epic borders when switching KPI cards. Type filter and exclusions remain direct (epic excluded as usual).
 - **KPI cards now resolve status sets via bd categories** (`beads-task-issue-tracker-qpo`): `Open / In Progress / Deferred / Done` KPI cards use `active/wip/frozen/done` category mappings instead of hardcoded built-in status names. Custom statuses defined via `.beads/custom-status-categories.json` are automatically counted in the matching KPI card. `Workflow / Ready / In Review / Blocked / All` cards keep their existing semantics. Adds `computeActiveStatuses`, `computeInProgressKpiStatuses`, `computeFrozenKpiStatuses`, `computeDoneStatuses` helpers and `resolveKpiFilter` for testable KPI filter detection.
