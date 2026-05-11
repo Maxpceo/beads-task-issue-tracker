@@ -23,15 +23,17 @@ The dispatch prompt may provide:
    - `git diff {START_COMMIT}..HEAD --stat` if `START_COMMIT` is provided.
    - Otherwise use `git diff main..HEAD --stat` and `git log main..HEAD --oneline`.
 2. Decide whether docs are required:
-   - User-facing feature/fix/API/command behavior → update docs.
-   - Internal refactor/tests/config/workflow-only → usually no docs.
+   - Any code change during merge-to-main → update `CHANGELOG.md` under `[Unreleased]` or record an explicit skip reason.
+   - User-facing feature/fix/API/command behavior/setup change → update `README.md` or `docs/` as needed.
+   - Internal refactor/tests/config/workflow-only changes may skip docs only with a clear reason.
 3. Update only relevant files:
-   - `CHANGELOG.md` under `[Unreleased]` for user-facing changes.
+   - `CHANGELOG.md` under `[Unreleased]` for code changes that need release notes.
    - `README.md` or `docs/` only if public behavior/setup changed.
 4. Write CHANGELOG/README entries in English.
-5. Commit explicit documentation files only if instructed by dispatch or merge workflow.
-6. Do not call `git push`.
-7. Do not call `bd close`.
+5. If no documentation files are changed, include `Docs skip reason: <reason>` in the report.
+6. Commit explicit documentation files only if instructed by dispatch or merge workflow.
+7. Do not call `git push`.
+8. Do not call `bd close`.
 
 ## Evidence before claims
 
@@ -45,6 +47,7 @@ DOCS REPORT
 Status: UPDATED|NOTHING_TO_UPDATE|PARTIAL|ERROR
 Branch: <branch>
 Files: <changed docs or ->
+Docs skip reason: <reason or ->
 Checks: <commands + exit codes + output excerpts>
 Commit: <sha or not committed with reason>
 Summary: <short summary>

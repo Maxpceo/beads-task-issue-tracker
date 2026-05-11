@@ -9,6 +9,32 @@ Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
 Pi domain rules for logging, locale sync, UI constraints, frontend review, and src-tauri/bd compatibility: `.pi/rules/domain.md`.
 Progress is tracked in bd, not as markdown task lists.
 
+## Evidence Before Claims (Iron Law)
+
+Completion reports and status claims must be backed by fresh evidence in the same message. Do not write hedging claims like “should work”, “probably”, “seems”, “looks correct”, “выглядит корректно”, “должно работать”, “наверное”, or “вроде проходит”.
+
+- Claims that tests/builds/checks pass require the command, exit code, and relevant output excerpt.
+- Claims that a bug is fixed or acceptance is met require the exact command/manual check and observed result.
+- If a command was not run, say so explicitly; do not imply it passed.
+- Celebratory wording is allowed only after evidence, never instead of evidence.
+
+## Workflow Execution Style
+
+For workflow/task execution, proceed through approved steps without intermediate permission prompts. Do not ask “continue?”, “run review?”, “push now?”, or similar when the next step is already part of the approved workflow.
+
+Stop and ask only at real decision points:
+
+- code review returns `NOT APPROVED`;
+- acceptance checks fail;
+- fixing requires expanding scope or creating follow-up work that is not clearly in scope;
+- an unapproved destructive/hard-to-reverse action is needed.
+
+Final workflow/task reports should use a concise two-column table (`| Шаг | Результат |`) plus a short “Текущее состояние” section. Normal Q&A does not need this table format.
+
+For long-running or noisy commands (`pnpm test`, `npx vue-tsc --noEmit`, `cargo check`, `git push` hooks), filter output with `tail -N`/targeted grep where practical. Preserve exit code and the important failure/success excerpt; do not dump thousands of lines into context.
+
+Stage and commit explicit file paths only. Do not stage whole trees with dot/all shortcuts.
+
 Pi controls one active bead through the per-task lifecycle:
 `idle -> claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed -> idle/next task`.
 Do not start, claim, implement, or dispatch unrelated work while the active bead is non-terminal; terminal states are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. If the active bead reaches `inreview`, the next action is `review-bead` / `review_bead`, not another task. `land` is an explicit save/push checkpoint and `merge-to-main` is an explicit session-final PR/merge workflow; neither is an automatic per-task stage.
@@ -30,9 +56,11 @@ This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get sta
 ```bash
 bd ready              # Find available work
 bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+bd update <id> --claim --json      # Claim work
+bd close <id>         # Close only after review/acceptance evidence
+bd dolt status        # Inspect Dolt-backed bead state when needed
+bd dolt pull          # Pull bd/Dolt state when needed
+bd dolt push          # Push bd/Dolt state when needed
 ```
 
 ## Landing the Plane (Session Completion)
@@ -48,8 +76,11 @@ bd sync               # Sync with git
 
    ```bash
    git pull --rebase
-   bd sync
+   bd dolt pull || true   # bd 0.57+ has no bd sync; Dolt projects sync with bd dolt
+   bd dolt push || true   # for legacy JSONL projects, commit named .beads/ paths instead
+   bd merge-slot acquire
    git push
+   bd merge-slot release
    git status  # MUST show "up to date with origin"
    ```
 
@@ -64,10 +95,22 @@ bd sync               # Sync with git
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+## Permissions and Confirmation
+
+Safe/read-only investigation does not need confirmation: reading files, searching, inspecting git/bd state, and running non-mutating checks. Mutating workflow steps that are already part of an approved bead plan or explicit skill (`land`, `merge-to-main`, `review-bead`) may proceed without intermediate prompts.
+
+Ask before actions that are destructive, hard to reverse, or outside the approved plan, including force-push, reset, deleting worktrees/branches with uncommitted work, closing or stealing someone else’s bead, broad scope expansion, or modifying protected/secrets files.
+
+Do not modify `CLAUDE.md`, `.claude/*`, or Claude-specific workflow files unless the user explicitly requests Claude Code workflow changes. For Pi workflow changes, update `AGENTS.md` and `.pi/*`.
+
+`.pi/extensions/beads-policy` and related Pi policy extensions are authoritative when they block a tool call. Do not bypass policy blocks unless the user explicitly approves a documented override.
+
 <!-- BEGIN BEADS INTEGRATION -->
 ## Issue Tracking with bd (beads)
 
 **IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+
+Bead titles, descriptions, notes, design text, acceptance criteria, and comments should be written in Russian for Maxim. Keep technical identifiers unchanged: file/function names, commands, labels, statuses, types, and API names.
 
 ### Why bd?
 
@@ -97,10 +140,47 @@ Required description sections for non-epic, non-exempt agent-created beads:
 Also required:
 
 - Add at least one label (`--label`, `--labels`, or `-l`).
+- Choose labels from the domain table below when possible.
 - Add relationships when known: `parent-child:<epic-id>` for epic children, `discovered-from:<source-id>` for follow-ups, and blocker dependencies for required ordering.
 - Acceptance and verification must be observable bullet checks, not vague phrases like “works”, “done”, or “fixed”.
 - If acceptance is unclear, stop and ask the user one concrete question with 2-4 options before creating, dispatching, or closing the bead.
-- If context is insufficient, investigate first, create a spike, or ask; do not create stub tasks that rely on chat memory.
+- If context is insufficient, investigate first, create an investigation bead, or ask; do not create stub tasks that rely on chat memory.
+
+### Domain labels
+
+When creating beads, always add 1-2 relevant labels:
+
+| Label | When to use | Files / domains |
+|---|---|---|
+| `frontend` | Vue components, composables, pages | `app/components/`, `app/composables/`, `app/pages/` |
+| `backend` | Rust code, Tauri commands | `src-tauri/src/` |
+| `tracker` | Built-in tracker engine | `src-tauri/src/tracker/` |
+| `ui` | Visual components, shadcn, themes, CSS | `app/components/ui/`, themes, styles |
+| `ci` | GitHub Actions, automation | `.github/workflows/` |
+| `dx` | Dev tools, tests, configs, docs | `tests/`, config files, docs, agent workflow files |
+| `sync` | Sync, Dolt, polling, watcher | `useAdaptivePolling`, `useChangeDetection`, `useSyncStatus`, sync Rust code |
+| `data` | Filtering, sorting, CRUD, bd API | `bd-api.ts`, `issue-helpers.ts`, `useIssues`, `useFilters` |
+| `pi` | Pi workflow, skills, agents, extensions | `.pi/`, `AGENTS.md` |
+| `workflow` | Lifecycle/review/merge/release policy | `.pi/skills/`, `.pi/extensions/`, workflow docs |
+
+### `bd todo` vs full beads
+
+Use `bd todo` only for tiny, local reminders where all of these are true:
+
+- change is under ~5 lines and usually one file;
+- no supervisor/review chain is needed;
+- no self-contained handoff package is needed;
+- losing rich context would not hurt a future session.
+
+Use `bd create` with the full self-contained template for bugs, features, multi-file work, cross-domain work, anything needing review, or anything another agent may need to pick up later.
+
+`bd todo` shortcuts are regular task issues:
+
+```bash
+bd todo add "Tiny follow-up"
+bd todo list
+bd todo done <id>
+```
 
 ### Quick Start
 
@@ -181,11 +261,20 @@ bd close bd-42 --reason "Completed" --json
 
 ### Issue Types
 
+Current `bd create --type` supports:
+
 - `bug` - Something broken
 - `feature` - New functionality
 - `task` - Work item (tests, docs, refactoring)
 - `epic` - Large feature with subtasks
 - `chore` - Maintenance (dependencies, tooling)
+- `decision` - ADR/design decision record
+
+Claude-era references may mention `spike`, `story`, and `milestone`. Do not use those as `--type` unless current bd custom type config supports them. Until then, model them as:
+
+- spike/research → `task` with `dx`, `backend`, `frontend`, or relevant domain labels and explicit investigation acceptance;
+- story → `feature` with user-facing acceptance criteria;
+- milestone → `epic` or a `decision`/documentation bead, depending on whether it contains work.
 
 ### Priorities
 
@@ -204,13 +293,14 @@ bd close bd-42 --reason "Completed" --json
    - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
 5. **Complete**: `bd close <id> --reason "Done"`
 
-### Auto-Sync
+### bd 0.57+ Dolt sync
 
-bd automatically syncs via Dolt:
+bd 0.57+ uses a self-managing Dolt server with auto-flush/auto-import. The old `bd sync` command no longer exists.
 
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
+- Each write auto-commits to Dolt history.
+- Use `bd dolt pull` / `bd dolt push` for remote Dolt sync when needed.
+- For legacy JSONL projects, commit named `.beads/` paths explicitly instead of relying on Dolt commands.
+- No manual `bd sync` step is required or available.
 
 ### Important Rules
 
