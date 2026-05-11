@@ -1,12 +1,20 @@
 # Agent Instructions
 
+## Project Nature
+
+This is a task tracker for AI-agent workflows. The human is primarily the task setter and reviewer; agents create most issue content, implementation notes, acceptance evidence, and handoff context.
+
+Treat bd issues as durable handoff packages for future agents. Titles, descriptions, comments, plans, and acceptance evidence should be self-contained enough to continue work without chat history.
+
 ## Pi-native Workflow
 
 For Pi sessions, the source of truth is this `AGENTS.md` file plus `.pi/*`.
 `CLAUDE.md` and `.claude/*` are Claude Code workflow references and MUST NOT be modified unless the user explicitly asks for Claude Code workflow changes.
 
 Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
+Pi plans and design notes live in `.pi/plans/` or bd, not in `.claude/plans/`.
 Pi domain rules for logging, locale sync, UI constraints, frontend review, and src-tauri/bd compatibility: `.pi/rules/domain.md`.
+Pi agent contracts, reporting vocabulary, and model guidance: `.pi/agents/README.md`.
 Progress is tracked in bd, not as markdown task lists.
 
 ## Evidence Before Claims (Iron Law)
@@ -17,6 +25,16 @@ Completion reports and status claims must be backed by fresh evidence in the sam
 - Claims that a bug is fixed or acceptance is met require the exact command/manual check and observed result.
 - If a command was not run, say so explicitly; do not imply it passed.
 - Celebratory wording is allowed only after evidence, never instead of evidence.
+
+## Proactive Best-Practice Suggestions
+
+When working on a feature or fix and you notice a nearby best-practice improvement with clear impact, propose it before completing the task. Do not implement it without confirmation and do not expand scope silently.
+
+Use this format: `Заметил: <что>. Почему: <best practice / concrete impact>. Делать сейчас / отдельным bead / пропустить?`
+
+Good candidates include: accessibility labels/tooltips for icon-only controls, destructive-action confirmation, loading/empty states, focus management, form validation, debounced search/filter inputs, URL/localStorage persistence for filters, extracting pure logic to `app/utils/` with tests, removing duplication, stronger types instead of `any`, and replacing hardcoded UI strings with `$t(...)`.
+
+Do not raise style-only or naming-only preferences unless they have a clear maintainability, accessibility, correctness, or user-impact benefit. Avoid flooding the user with minor suggestions.
 
 ## Workflow Execution Style
 
@@ -111,6 +129,8 @@ Do not modify `CLAUDE.md`, `.claude/*`, or Claude-specific workflow files unless
 **IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
 
 Bead titles, descriptions, notes, design text, acceptance criteria, and comments should be written in Russian for Maxim. Keep technical identifiers unchanged: file/function names, commands, labels, statuses, types, and API names.
+
+Project-facing open-source text such as `CHANGELOG.md`, `README.md`, release notes, and commit messages should be written in English unless the user explicitly requests otherwise.
 
 ### Why bd?
 
