@@ -257,10 +257,26 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 		startCommit: currentScope.startCommit ?? state.startCommit,
 	};
 
-	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
+	if (state.activeBead && state.state !== "idle") {
+		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
+		if (bdState && isTerminalWorkflowState(bdState)) {
+			return {
+				state: {
+					...state,
+					activeBead: undefined,
+					state: "idle",
+					branch: currentScope.branch ?? state.branch,
+					worktreePath: currentScope.worktreePath,
+					startCommit: currentScope.startCommit,
+					endCommit: undefined,
+				},
+				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
+			};
+		}
+		if (isTerminalWorkflowState(state.state)) return { state };
+
 		const commentsText = await readBdComments(pi, state.activeBead);
 		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && (hasSessionOwnershipEvidence(commentsText, scope) || workflowStateHasCurrentScopeEvidence(state, scope));
-		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
 		if (!hasOwnership) {
 			return {
 				state: {
@@ -287,20 +303,6 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 					endCommit: undefined,
 				},
 				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a non-terminal bd status"),
-			};
-		}
-		if (isTerminalWorkflowState(bdState)) {
-			return {
-				state: {
-					...state,
-					activeBead: undefined,
-					state: "idle",
-					branch: currentScope.branch ?? state.branch,
-					worktreePath: currentScope.worktreePath,
-					startCommit: currentScope.startCommit,
-					endCommit: undefined,
-				},
-				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
 			};
 		}
 		const bdInProgressMatchesLocalPreImplementation = bdState === "implementing" && ["claimed", "planning", "plan_approved"].includes(state.state);
@@ -350,8 +352,13 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (ctx) updateFooter(ctx, workflowState);
 	}
 
-	function setState(partial: Partial<WorkflowState>, ctx?: ExtensionContext): WorkflowState {
+	function assignState(partial: Partial<WorkflowState>): WorkflowState {
 		workflowState = { ...workflowState, ...partial };
+		return workflowState;
+	}
+
+	function setState(partial: Partial<WorkflowState>, ctx?: ExtensionContext): WorkflowState {
+		assignState(partial);
 		persist(ctx);
 		return workflowState;
 	}
@@ -549,7 +556,8 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				}
 				next.mergeSlotHeld = kv.slot === "held";
 			}
-			setState(next, ctx);
+			assignState(next);
+			await ensureReconciled(ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
 		},
 	});
