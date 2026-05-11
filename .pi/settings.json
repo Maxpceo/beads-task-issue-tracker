@@ -12,6 +12,7 @@
     "extensions/status-dashboard.ts",
     "extensions/session-context/index.ts",
     "extensions/memory-capture/index.ts",
+    "extensions/follow-up-reminder/index.ts",
     "extensions/warp-notifications/index.ts"
   ],
   "enableSkillCommands": true
