@@ -410,8 +410,8 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 	if (!activeBead || TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
 	if (!NON_TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
 	if (targetBead && targetBead === activeBead) return undefined;
-	if (state === "inreview") return `Blocked: active bead ${activeBead} is inreview; next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
-	return `Blocked: active bead ${activeBead} is non-terminal (${state}). Finish it to closed, block/defer it with an explicit reason, or hand it off before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+	if (state === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
+	return `Blocked: active bead ${activeBead} is non-terminal (${state}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
 }
 
 function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -692,11 +692,49 @@ function hasExactField(text: string, names: string[], value?: string): boolean {
 	return names.some((name) => new RegExp(`(^|\\n)\\s*${name}\\s*[:=]\\s*${escaped}(\\s|$)`, "im").test(text));
 }
 
+function readFieldValues(text: string, names: string[]): string[] {
+	const namePattern = names.map(escapeRegExp).join("|");
+	const values: string[] = [];
+	const regex = new RegExp(`(^|\\n)\\s*(${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
+	for (const match of text.matchAll(regex)) {
+		const value = match[3]?.trim();
+		if (value) values.push(value);
+	}
+	return values;
+}
+
+function latestFieldValue(text: string, names: string[]): string | undefined {
+	return readFieldValues(text, names).at(-1);
+}
+
+function latestFieldMatches(text: string, names: string[], current?: string): boolean {
+	if (!current) return false;
+	return latestFieldValue(text, names) === current;
+}
+
+function latestFieldIsForeign(text: string, names: string[], current?: string): boolean {
+	if (!current) return false;
+	const latest = latestFieldValue(text, names);
+	return Boolean(latest && latest !== current);
+}
+
+function hasForeignSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const hasCurrentEvidence = latestFieldMatches(commentsText, branchNames, scope.branch) || latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
+	if (hasCurrentEvidence) return false;
+	return latestFieldIsForeign(commentsText, branchNames, scope.branch) || latestFieldIsForeign(commentsText, worktreeNames, scope.worktreePath);
+}
+
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
-	const branchMatches = hasExactField(commentsText, ["BRANCH", "Branch", "branch"], scope.branch);
-	const worktreeMatches = hasExactField(commentsText, ["WORKTREE", "Worktree", "worktree", "worktreePath"], scope.worktreePath);
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	if (hasForeignSessionOwnershipEvidence(commentsText, scope)) return false;
+	const branchMatches = latestFieldMatches(commentsText, branchNames, scope.branch);
+	const worktreeMatches = latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
 	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
-	return branchMatches || worktreeMatches || (startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
+	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(commentsText);
+	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
 }
 
 function currentRecoveryScope(cwd: string): RecoveryScope {
@@ -852,10 +890,14 @@ export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot,
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
+	const hasForeignWorktree = Boolean(state.worktreePath && scope.worktreePath && state.worktreePath !== scope.worktreePath);
+	const hasForeignBranch = Boolean(state.branch && scope.branch && state.branch !== scope.branch);
+	if (hasForeignWorktree || hasForeignBranch) return false;
+
 	return Boolean(
 		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
-			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit) ||
-			(state.branch && scope.branch && state.branch === scope.branch && state.startCommit),
+			(state.branch && scope.branch && state.branch === scope.branch) ||
+			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit),
 	);
 }
 
@@ -867,7 +909,11 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const state = last?.data ?? {};
 	const scope = currentRecoveryScope(ctx.cwd);
 	if (state.activeBead && state.state && state.state !== "idle") {
-		const hasCommentEvidence = hasSessionOwnershipEvidence(getBdCommentsText(ctx.cwd, state.activeBead), scope);
+		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
+		if (hasForeignSessionOwnershipEvidence(commentsText, scope)) {
+			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+		}
+		const hasCommentEvidence = hasSessionOwnershipEvidence(commentsText, scope);
 		if (hasCommentEvidence || workflowStateHasCurrentScopeEvidence(state, scope)) {
 			return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
 		}

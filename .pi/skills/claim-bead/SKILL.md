@@ -15,7 +15,7 @@ Claim first, then plan. Do not investigate deeply before claiming.
    ```text
    /workflow-status
    ```
-   If another active bead is non-terminal (`claimed`, `planning`, `plan_approved`, `implementing`, `inreview`, `reviewing`, or `accepted`), stop. Finish it to `closed`, mark it `blocked`/`deferred` with an explicit reason, or hand it off before claiming unrelated work. If it is `inreview`, run `review-bead` next.
+   If another active bead is non-terminal (`claimed`, `planning`, `plan_approved`, `implementing`, `inreview`, `reviewing`, or `accepted`), stop. First verify it belongs to this current session by matching branch/worktree/start-commit evidence. If ownership is stale, foreign, or ambiguous, do not review or mutate it automatically: run `/workflow-reset` or ask for explicit takeover confirmation. If it is a confirmed current-session `inreview` bead, run `review-bead` next.
 2. Read-only guard:
    ```bash
    bd show <ID> --json

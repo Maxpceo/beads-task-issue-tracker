@@ -13,8 +13,9 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```bash
    bd show <ID> --json
    bd comments <ID> --json
+   /workflow-status
    ```
-   Required: status `inreview`.
+   Required: status `inreview` and explicit current-session ownership evidence (matching branch, worktree, or approved-plan/start-commit comment). If ownership is stale, foreign, or ambiguous, do not launch `review_bead` or `dispatch_reviewer`; run `/workflow-reset` for stale local state or ask for explicit takeover confirmation.
 2. Update workflow state:
    ```text
    /workflow-update bead=<ID> state=reviewing
@@ -69,7 +70,7 @@ bd comments add <ID> "PATTERN: <pattern>"
 - Never skip spec compliance.
 - Frontend/UI changes require the explicit Pi Frontend Review Checklist; do not require undefined RAMS/WIG.
 - Direct terminal status updates are invalid before accepted/reviewed-with-no-acceptance evidence.
-- A bead in `inreview` blocks unrelated next work; the valid next action is this review workflow.
+- A confirmed current-session bead in `inreview` blocks unrelated next work; the valid next action is this review workflow. A stale/foreign `inreview` state must be reset or explicitly confirmed before any review/mutation.
 - Epic completion with incomplete children is blocked by `beads-policy` for both standard close and direct `closed` status updates; close child beads first or use an explicit documented override.
 - PR merged validation is required by merge/land workflows or explicit override.
 - Create follow-up beads for out-of-scope findings.

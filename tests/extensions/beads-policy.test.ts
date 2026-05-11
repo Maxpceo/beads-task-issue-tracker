@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
+import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
 describe('Pi merge-slot push policy', () => {
   const workflowState = {
@@ -82,6 +86,8 @@ describe('Pi active bead lifecycle policy', () => {
     })
 
     expect(reason).toContain('review-bead / review_bead')
+    expect(reason).toContain('confirming current-session branch/worktree ownership')
+    expect(reason).toContain('/workflow-reset')
     expect(reason).toContain('bead-a')
   })
 
@@ -146,5 +152,147 @@ describe('Pi active bead lifecycle policy', () => {
 
     expect(decision?.policy).not.toBe('blockUnmergedBranchCompletion')
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
+
+  it('prefers later current ownership evidence over old foreign workflow comments', () => {
+    const comments = [
+      'DISPATCH (test-supervisor)',
+      'BRANCH: fix/other',
+      'WORKTREE: /repo/other',
+      'REDISPATCH (test-supervisor)',
+      'BRANCH: fix/current',
+      'WORKTREE: /repo/current',
+    ].join('\n')
+
+    expect(hasSessionOwnershipEvidence(comments, { branch: 'fix/current', worktreePath: '/repo/current' })).toBe(true)
+  })
+
+  it('does not confirm active workflow-state when later bd comments show foreign ownership', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      const fakeBd = join(binDir, 'bd')
+      writeFileSync(fakeBd, `#!/bin/sh
+if [ "$1" = "comments" ]; then
+  cat <<'EOF'
+DISPATCH (test-supervisor)
+BRANCH: fix/current
+WORKTREE: ${repo}
+REDISPATCH (test-supervisor)
+BRANCH: fix/foreign
+WORKTREE: /repo/foreign
+EOF
+  exit 0
+fi
+exit 1
+`)
+      chmodSync(fakeBd, 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const ctx = {
+        cwd: repo,
+        sessionManager: {
+          getEntries: () => [
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                activeBead: 'bead-active',
+                state: 'inreview',
+                branch: 'fix/current',
+                worktreePath: repo,
+                startCommit,
+              },
+            },
+          ],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const result = await toolCallHandler(
+        { toolName: 'bash', input: { command: 'bd update bead-next --claim --json' } },
+        ctx,
+      )
+
+      expect(result).toBeUndefined()
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores restored foreign workflow-state even when start commit matches current HEAD', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    try {
+      execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const notifications: Array<{ message: string; level: string }> = []
+      const ctx = {
+        cwd: repo,
+        sessionManager: {
+          getEntries: () => [
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                activeBead: 'bead-foreign',
+                state: 'inreview',
+                branch: 'fix/foreign',
+                worktreePath: '/repo/foreign',
+                startCommit,
+              },
+            },
+          ],
+        },
+        ui: {
+          notify(message: string, level: string) {
+            notifications.push({ message, level })
+          },
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const result = await toolCallHandler(
+        { toolName: 'bash', input: { command: 'bd update bead-current --claim --json' } },
+        ctx,
+      )
+
+      expect(result).toBeUndefined()
+      expect(notifications).toEqual([])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 })
