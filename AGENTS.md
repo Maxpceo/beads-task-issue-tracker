@@ -130,10 +130,47 @@ Required description sections for non-epic, non-exempt agent-created beads:
 Also required:
 
 - Add at least one label (`--label`, `--labels`, or `-l`).
+- Choose labels from the domain table below when possible.
 - Add relationships when known: `parent-child:<epic-id>` for epic children, `discovered-from:<source-id>` for follow-ups, and blocker dependencies for required ordering.
 - Acceptance and verification must be observable bullet checks, not vague phrases like “works”, “done”, or “fixed”.
 - If acceptance is unclear, stop and ask the user one concrete question with 2-4 options before creating, dispatching, or closing the bead.
-- If context is insufficient, investigate first, create a spike, or ask; do not create stub tasks that rely on chat memory.
+- If context is insufficient, investigate first, create an investigation bead, or ask; do not create stub tasks that rely on chat memory.
+
+### Domain labels
+
+When creating beads, always add 1-2 relevant labels:
+
+| Label | When to use | Files / domains |
+|---|---|---|
+| `frontend` | Vue components, composables, pages | `app/components/`, `app/composables/`, `app/pages/` |
+| `backend` | Rust code, Tauri commands | `src-tauri/src/` |
+| `tracker` | Built-in tracker engine | `src-tauri/src/tracker/` |
+| `ui` | Visual components, shadcn, themes, CSS | `app/components/ui/`, themes, styles |
+| `ci` | GitHub Actions, automation | `.github/workflows/` |
+| `dx` | Dev tools, tests, configs, docs | `tests/`, config files, docs, agent workflow files |
+| `sync` | Sync, Dolt, polling, watcher | `useAdaptivePolling`, `useChangeDetection`, `useSyncStatus`, sync Rust code |
+| `data` | Filtering, sorting, CRUD, bd API | `bd-api.ts`, `issue-helpers.ts`, `useIssues`, `useFilters` |
+| `pi` | Pi workflow, skills, agents, extensions | `.pi/`, `AGENTS.md` |
+| `workflow` | Lifecycle/review/merge/release policy | `.pi/skills/`, `.pi/extensions/`, workflow docs |
+
+### `bd todo` vs full beads
+
+Use `bd todo` only for tiny, local reminders where all of these are true:
+
+- change is under ~5 lines and usually one file;
+- no supervisor/review chain is needed;
+- no self-contained handoff package is needed;
+- losing rich context would not hurt a future session.
+
+Use `bd create` with the full self-contained template for bugs, features, multi-file work, cross-domain work, anything needing review, or anything another agent may need to pick up later.
+
+`bd todo` shortcuts are regular task issues:
+
+```bash
+bd todo add "Tiny follow-up"
+bd todo list
+bd todo done <id>
+```
 
 ### Quick Start
 
@@ -214,11 +251,20 @@ bd close bd-42 --reason "Completed" --json
 
 ### Issue Types
 
+Current `bd create --type` supports:
+
 - `bug` - Something broken
 - `feature` - New functionality
 - `task` - Work item (tests, docs, refactoring)
 - `epic` - Large feature with subtasks
 - `chore` - Maintenance (dependencies, tooling)
+- `decision` - ADR/design decision record
+
+Claude-era references may mention `spike`, `story`, and `milestone`. Do not use those as `--type` unless current bd custom type config supports them. Until then, model them as:
+
+- spike/research → `task` with `dx`, `backend`, `frontend`, or relevant domain labels and explicit investigation acceptance;
+- story → `feature` with user-facing acceptance criteria;
+- milestone → `epic` or a `decision`/documentation bead, depending on whether it contains work.
 
 ### Priorities
 
