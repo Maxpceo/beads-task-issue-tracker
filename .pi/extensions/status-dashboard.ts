@@ -96,7 +96,7 @@ function isSameOrChildPath(path: string, parent: string): boolean {
 	return normalizedPath === normalizedParent || normalizedPath.startsWith(`${normalizedParent}/`);
 }
 
-async function currentWorktree(pi: ExtensionAPI, cwd: string): Promise<WorktreeInfo | undefined> {
+async function detectWorktreeAt(pi: ExtensionAPI, cwd: string): Promise<WorktreeInfo | undefined> {
 	const root = await gitValue(pi, ["rev-parse", "--show-toplevel"], cwd);
 	if (!root) return undefined;
 
@@ -120,6 +120,21 @@ async function currentWorktree(pi: ExtensionAPI, cwd: string): Promise<WorktreeI
 	const primaryPath = paths[0];
 	const currentPath = paths.find((path) => isSameOrChildPath(cwd, path) || root === path) ?? root;
 	return { path: currentPath, isLinked: Boolean(primaryPath && normalizeGitPath(currentPath) !== normalizeGitPath(primaryPath)) };
+}
+
+async function currentWorktree(pi: ExtensionAPI, candidatePaths: readonly (string | undefined)[]): Promise<WorktreeInfo | undefined> {
+	let fallback: WorktreeInfo | undefined;
+	const seen = new Set<string>();
+	for (const candidatePath of candidatePaths) {
+		if (!candidatePath) continue;
+		const normalizedPath = normalizeGitPath(candidatePath);
+		if (seen.has(normalizedPath)) continue;
+		seen.add(normalizedPath);
+		const worktree = await detectWorktreeAt(pi, candidatePath);
+		if (worktree?.isLinked) return worktree;
+		fallback ??= worktree;
+	}
+	return fallback;
 }
 
 function pathBasename(path: string): string {
@@ -271,7 +286,7 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const wf = latestWorkflowState(ctx);
 	const branch = (await gitValue(pi, ["branch", "--show-current"], ctx.cwd)) ?? wf.branch ?? "-";
 	const dirty = await dirtyCount(pi, ctx.cwd);
-	const worktree = await currentWorktree(pi, ctx.cwd);
+	const worktree = await currentWorktree(pi, [ctx.cwd, wf.worktreePath]);
 	const activeBead = wf.activeBead ? undefined : await detectActiveBead(pi);
 	const state = wf.state ?? "idle";
 	const bead = wf.activeBead ?? (activeBead?.id ? `${activeBead.id}*` : undefined) ?? "-";

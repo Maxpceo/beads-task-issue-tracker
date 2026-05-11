@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- **Pi footer linked-worktree fallback** (`beads-task-issue-tracker-ocyy`): the status dashboard now validates both the runtime `ctx.cwd` and `workflow-state.worktreePath` with Git before deciding whether to render `wt:<worktree>`, so linked worktree sessions are shown even when the runtime cwd resolves to the primary checkout, while primary branch sessions still omit `wt`.
 - **Pi agents dashboard Unicode width crash** (`beads-task-issue-tracker-roo6`): `/agents-dashboard` now uses Pi TUI display-width helpers for truncation and padding, preventing double-width running icons such as `⏳` from rendering one column wider than the terminal and crashing the TUI.
 - **Pi workflow-state terminal cleanup** (`beads-task-issue-tracker-owhf`): terminal bd statuses now clear stale active-bead state back to `idle` before persistence and policy reconciliation, preventing closed/accepted beads from blocking the next Pi workflow turn.
 - **Pi footer linked-worktree indicator** (`beads-task-issue-tracker-jy5b`): the status dashboard now detects linked worktrees via Git's absolute git-dir metadata, so the footer/status line shows `wt:<worktree>` from linked checkouts and stays hidden in the primary checkout.
