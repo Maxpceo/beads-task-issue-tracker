@@ -124,6 +124,13 @@ function formatTokens(count: number): string {
 	return `${(count / 1_000_000).toFixed(1)}M`;
 }
 
+function compactBeadId(id: string): string {
+	const fallbackMarker = id.endsWith("*") ? "*" : "";
+	const rawId = fallbackMarker ? id.slice(0, -1) : id;
+	const suffix = rawId.split("-").filter(Boolean).pop() ?? rawId;
+	return `${suffix}${fallbackMarker}`;
+}
+
 function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, string, string])[] {
 	let input = 0;
 	let output = 0;
@@ -191,6 +198,7 @@ function renderWorkflowFooter(
 	const wf = snapshot.workflow;
 	const explicitBead = wf.activeBead;
 	const activeBead = explicitBead ?? (snapshot.activeBead?.id ? `${snapshot.activeBead.id}*` : undefined);
+	const displayBead = activeBead ? compactBeadId(activeBead) : "-";
 	const dirty = snapshot.dirty;
 	const slotHeld = Boolean(wf.mergeSlotHeld);
 	const gitState = dirty == null ? "dirty:?" : dirty === 0 ? "clean" : `dirty:${dirty}`;
@@ -206,7 +214,7 @@ function renderWorkflowFooter(
 
 	const workflowParts = [
 		["wf", wf.state ?? "idle", wf.state === "idle" ? "text" : "accent"],
-		["bead", activeBead ?? "-", activeBead ? "accent" : "text"],
+		["bead", displayBead, activeBead ? "accent" : "text"],
 		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
 		["wt", worktree, snapshot.worktree?.isLinked || wf.worktreePath ? "warning" : "text"],
 		["", gitState, gitStateColor],
