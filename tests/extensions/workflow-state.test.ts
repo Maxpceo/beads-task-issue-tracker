@@ -99,6 +99,40 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications.at(-1)?.message).toContain('/workflow-reset')
   })
 
+  it('clears restored active bead with explicit foreign worktree even when start commit matches', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'shared-head',
+      issues: {
+        'bead-foreign': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/other\nWORKTREE: /repo/other\nSTART_COMMIT: shared-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'inreview',
+            activeBead: 'bead-foreign',
+            branch: 'fix/other',
+            worktreePath: '/repo/other',
+            startCommit: 'shared-head',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(notifications.at(-1)?.message).toContain('stale or foreign')
+  })
+
   it('keeps restored active bead when session state matches current worktree even without comments', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',

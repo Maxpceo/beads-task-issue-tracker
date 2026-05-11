@@ -158,9 +158,32 @@ function hasExactField(text: string, names: string[], value?: string): boolean {
 	return names.some((name) => new RegExp(`(^|\\n)\\s*${name}\\s*[:=]\\s*${escaped}(\\s|$)`, "im").test(text));
 }
 
+function readFieldValues(text: string, names: string[]): string[] {
+	const namePattern = names.map(escapeRegExp).join("|");
+	const values: string[] = [];
+	const regex = new RegExp(`(^|\\n)\\s*(${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
+	for (const match of text.matchAll(regex)) {
+		const value = match[3]?.trim();
+		if (value) values.push(value);
+	}
+	return values;
+}
+
+function hasForeignField(text: string, names: string[], current?: string): boolean {
+	if (!current) return false;
+	return readFieldValues(text, names).some((value) => value !== current);
+}
+
+function hasForeignSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	return hasForeignField(commentsText, branchNames, scope.branch) || hasForeignField(commentsText, worktreeNames, scope.worktreePath);
+}
+
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
 	const branchNames = ["BRANCH", "Branch", "branch"];
 	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	if (hasForeignSessionOwnershipEvidence(commentsText, scope)) return false;
 	const branchMatches = hasExactField(commentsText, branchNames, scope.branch);
 	const worktreeMatches = hasExactField(commentsText, worktreeNames, scope.worktreePath);
 	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
@@ -173,10 +196,15 @@ export function hasSessionOwnershipEvidence(commentsText: string, scope: Recover
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
-	return Boolean(
-		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
-			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit),
-	);
+	const hasForeignWorktree = Boolean(state.worktreePath && scope.worktreePath && state.worktreePath !== scope.worktreePath);
+	const hasForeignBranch = Boolean(state.branch && scope.branch && state.branch !== scope.branch);
+	if (hasForeignWorktree || hasForeignBranch) return false;
+
+	const hasMatchingWorktree = Boolean(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath);
+	const hasMatchingBranch = Boolean(state.branch && scope.branch && state.branch === scope.branch);
+	const hasMatchingStartCommit = Boolean(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit);
+
+	return hasMatchingWorktree || hasMatchingBranch || hasMatchingStartCommit;
 }
 
 async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string> {
@@ -218,7 +246,8 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 	};
 
 	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
-		const hasOwnership = hasSessionOwnershipEvidence(await readBdComments(pi, state.activeBead), scope) || workflowStateHasCurrentScopeEvidence(state, scope);
+		const commentsText = await readBdComments(pi, state.activeBead);
+		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && (hasSessionOwnershipEvidence(commentsText, scope) || workflowStateHasCurrentScopeEvidence(state, scope));
 		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
 		if (!hasOwnership) {
 			return {
