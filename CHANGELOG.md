@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Pi workflow-chain dashboard extension** (`beads-task-issue-tracker-r62v`): project-local `.pi/extensions/workflow-chain` adds `/workflow-chain` (`/chain`) commands for listing configured chains, dashboard-style dry-runs, and safe read-only/demo execution while keeping workflow-critical typed steps as explicit handoffs.
 - **Pi follow-up reminder extension** (`beads-task-issue-tracker-tbc6`): project-local `.pi/extensions/follow-up-reminder` detects out-of-scope/follow-up markers in assistant output, persists scoped candidates, shows unresolved reminders before `/land` or `merge-to-main`, and provides `/follow-ups`, `/follow-up-resolve`, and `/follow-up-clear` commands with candidate-specific resolution handling.
 - **Pi Warp notification extension** (`beads-task-issue-tracker-tmfe`): project-local `.pi/extensions/warp-notifications` sends turn-complete and attention notifications through Warp OSC 777, macOS notifications, or both. Includes `/warp-notify-settings`, `/warp-notify-test`, configurable sounds, `PI_WARP_NOTIFICATIONS_BACKEND`, and extension-local README setup notes.
 - **Non-blocking Pi bead purpose widget** (`beads-task-issue-tracker-cqbx`): project-local `.pi/extensions/bead-purpose` reads the active `workflow-state`, resolves bd titles best-effort, and displays active bead/state/next-action guidance without blocking prompts.
