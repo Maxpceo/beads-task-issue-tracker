@@ -77,7 +77,7 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> = {}): Promise<{ status: string; footer: string[] }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> = {}, width = 120): Promise<{ status: string; footer: string[] }> {
   const handlers: RegisteredHandlers = {}
   let status = ''
   let footer: { render: (width: number) => string[] } | undefined
@@ -118,7 +118,7 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
   statusDashboardExtension(pi)
   await handlers.turn_start?.({}, ctx)
 
-  return { status, footer: footer?.render(120) ?? [] }
+  return { status, footer: footer?.render(width) ?? [] }
 }
 
 describe('Pi status-dashboard worktree display', () => {
@@ -169,5 +169,15 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.status).not.toContain(`wt:${linkedName}`)
     expect(dashboard.status).not.toContain('wt:')
     expect(dashboard.footer.join('\n')).not.toContain('wt:')
+  })
+
+  it('keeps the linked worktree indicator visible in a constrained footer width', async () => {
+    const { linked } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(linked, {}, 40)
+    const workflowLine = dashboard.footer[0] ?? ''
+
+    expect(dashboard.status).toContain('wt:')
+    expect(workflowLine).toContain('wt:')
   })
 })

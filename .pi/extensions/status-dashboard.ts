@@ -246,12 +246,12 @@ function renderWorkflowFooter(
 		.slice(0, 4)
 		.join(" · ");
 
-	const workflowParts: Array<readonly [string, string, string]> = [
-		["wf", wf.state ?? "idle", wf.state === "idle" ? "text" : "accent"],
+	const workflowParts: Array<readonly [string, string, string]> = [["wf", wf.state ?? "idle", wf.state === "idle" ? "text" : "accent"]];
+	if (worktree) workflowParts.push(["wt", worktree, "warning"]);
+	workflowParts.push(
 		["bead", displayBead, activeBead ? "accent" : "text"],
 		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
-	];
-	if (worktree) workflowParts.push(["wt", worktree, "warning"]);
+	);
 	workflowParts.push(["", gitState, gitStateColor], ["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"]);
 	const statsParts = [
 		...sessionUsageParts(ctx),
