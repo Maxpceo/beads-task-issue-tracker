@@ -86,7 +86,7 @@ describe('subagent dashboard helpers', () => {
     expect(brokenSelection.warnings).toContain('Unknown agent: missing')
   })
 
-  it('renders live running and error cards within narrow widths', () => {
+  it('renders live running and error cards with a close hint within narrow widths', () => {
     const state = createDashboardState(selectDashboardAgents(agents, teams))
     upsertDashboardCard(state, {
       agent: 'supervisor',
@@ -113,6 +113,7 @@ describe('subagent dashboard helpers', () => {
     const lines = renderDashboardLines(state, 52, theme, 4_000)
     const supervisorLine = lines.find((line) => line.includes('supervisor'))
 
+    expect(lines.join('\n')).toContain('Close: /agents-dashboard hide')
     expect(lines.join('\n')).toContain('supervisor')
     expect(lines.join('\n')).toContain('[running]')
     expect(lines.join('\n')).toContain('ctx:12k in:3k out:900')
@@ -157,6 +158,7 @@ describe('subagent dashboard helpers', () => {
     const { theme } = createTheme()
     const lines = renderDashboardLines(state, 138, theme, 17_000)
 
+    expect(lines.join('\n')).toContain('Close: /agents-dashboard hide or clear')
     expect(lines.some((line) => line.includes('⏳'))).toBe(true)
     expect(lines.every((line) => visibleWidth(line) <= 138)).toBe(true)
   })

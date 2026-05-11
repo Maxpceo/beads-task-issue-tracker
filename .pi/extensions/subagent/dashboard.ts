@@ -185,9 +185,11 @@ export function renderDashboardLines(
 	const failed = cards.filter((card) => card.status === "failed" || card.status === "aborted").length;
 	const done = cards.filter((card) => card.status === "completed").length;
 	const title = state.teamName ? `Pi agent-team dashboard: ${state.teamName}` : "Pi agent-team dashboard";
+	const closeHint = safeWidth >= 72 ? "Close: /agents-dashboard hide or clear" : "Close: /agents-dashboard hide";
 	const lines = [
 		truncate(theme.fg("accent", (theme.bold ?? ((text: string) => text))(title)), safeWidth),
-		truncate(theme.fg("dim", `${cards.length} agents · ${running} running · ${done} done · ${failed} error · /agents-dashboard clear hides`), safeWidth),
+		truncate(theme.fg("dim", `${cards.length} agents · ${running} running · ${done} done · ${failed} error`), safeWidth),
+		truncate(theme.fg("dim", closeHint), safeWidth),
 	];
 	for (const warning of state.warnings) lines.push(truncate(theme.fg("warning", `! ${warning}`), safeWidth));
 	if (cards.length === 0) {
