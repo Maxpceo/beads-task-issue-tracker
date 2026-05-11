@@ -213,55 +213,55 @@ bd ready --json
 **Create new issues:**
 
 ```bash
-bd create "Issue title" -t bug|feature|task -p 0-4 --label dx --description "$(cat <<'EOF'
+bd create "Добавить проверку формата задач" -t bug|feature|task -p 0-4 --label dx --description "$(cat <<'EOF'
 ### Origin
-- Source bead/user request and why this exists.
+- Запрос пользователя или исходный bead, из-за которого появилась задача.
 ### Files
 - path/to/file.ts
 ### Current state
-- Observable current behavior.
+- Наблюдаемое текущее поведение.
 ### Target state
-- Observable target behavior.
+- Наблюдаемое целевое поведение.
 ### Investigation findings
-- Evidence gathered so far.
+- Уже собранные факты и ссылки на проверенные файлы/команды.
 ### Decisions
-- Chosen approach and rationale.
+- Выбранный подход и причина выбора.
 ### Rejected alternatives
-- Alternative and why rejected.
+- Рассмотренная альтернатива и причина отказа.
 ### Dependencies / blockers
-- parent-child:<epic-id> / discovered-from:<id> / blocks:<id> / none.
+- parent-child:<epic-id> / discovered-from:<id> / blocks:<id> / нет.
 ### Acceptance criteria
-- Concrete observable result.
+- Конкретный наблюдаемый результат для приёмки.
 ### Verification / acceptance checks
-- Command/manual check with expected result.
+- Команда или ручная проверка с ожидаемым результатом.
 ### Out of scope
-- Explicit non-goals.
+- Явные не-цели задачи.
 EOF
 )" --json
 
-bd create "Follow-up title" -p 1 --label dx --deps discovered-from:bd-123 --description "$(cat <<'EOF'
+bd create "Уточнить обработку найденной проблемы" -p 1 --label dx --deps discovered-from:bd-123 --description "$(cat <<'EOF'
 ### Origin
-- Discovered from bd-123.
+- Обнаружено в ходе работы над bd-123.
 ### Files
 - path/to/file.ts
 ### Current state
-- Observable current behavior.
+- Наблюдаемое текущее поведение.
 ### Target state
-- Observable target behavior.
+- Наблюдаемое целевое поведение.
 ### Investigation findings
-- Evidence gathered so far.
+- Уже собранные факты и ссылки на проверенные файлы/команды.
 ### Decisions
-- Chosen approach and rationale.
+- Выбранный подход и причина выбора.
 ### Rejected alternatives
-- Alternative and why rejected.
+- Рассмотренная альтернатива и причина отказа.
 ### Dependencies / blockers
 - discovered-from:bd-123.
 ### Acceptance criteria
-- Concrete observable result.
+- Конкретный наблюдаемый результат для приёмки.
 ### Verification / acceptance checks
-- Command/manual check with expected result.
+- Команда или ручная проверка с ожидаемым результатом.
 ### Out of scope
-- Explicit non-goals.
+- Явные не-цели задачи.
 EOF
 )" --json
 ```
@@ -276,7 +276,7 @@ bd update bd-42 --priority 1 --json
 **Complete work:**
 
 ```bash
-bd close bd-42 --reason "Completed" --json
+bd close bd-42 --reason "Выполнено" --json
 ```
 
 ### Issue Types
@@ -310,8 +310,8 @@ Claude-era references may mention `spike`, `story`, and `milestone`. Do not use 
 2. **Claim your task atomically**: `bd update <id> --claim`
 3. **Work on it**: Implement, test, document
 4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
+   - `bd create "Описать найденную проблему" --description="Кратко: что обнаружено, где воспроизводится, какой ожидаемый результат" -p 1 --label dx --deps discovered-from:<parent-id>`
+5. **Complete**: `bd close <id> --reason "Выполнено"`
 
 ### bd 0.57+ Dolt sync
 

@@ -24,7 +24,7 @@ An epic is an organizational group. Prefer one feature branch for the whole epic
 
 1. Create or inspect the epic:
    ```bash
-   bd create "Feature name" -t epic --label <domain> --description "..."
+   bd create "Реализовать крупную функцию" -t epic --label <domain> --description "Краткий русский контекст эпика и ожидаемый результат"
    bd show <EPIC_ID> --json
    ```
    Epic descriptions should still be self-contained when practical, but child beads carry the implementation handoff detail.
@@ -34,29 +34,29 @@ An epic is an organizational group. Prefer one feature branch for the whole epic
    - use a Pi architect/design-doc agent when available; otherwise the orchestrator drafts the design in plan mode and asks for approval before child creation.
 3. Create child beads with full `AGENTS.md` handoff sections, labels, and dependencies:
    ```bash
-   bd create "Backend child" -t task --label backend --deps parent-child:<EPIC_ID> --description "$(cat <<'EOF'
+   bd create "Реализовать backend-часть" -t task --label backend --deps parent-child:<EPIC_ID> --description "$(cat <<'EOF'
    ### Origin
-   - Child of <EPIC_ID> ...
+   - Дочерняя задача <EPIC_ID>: зачем нужна эта часть эпика.
    ### Files
-   - ...
+   - src-tauri/src/...
    ### Current state
-   - ...
+   - Наблюдаемое текущее поведение.
    ### Target state
-   - ...
+   - Наблюдаемое целевое поведение.
    ### Investigation findings
-   - ...
+   - Уже собранные факты и ссылки на проверенные файлы/команды.
    ### Decisions
-   - ...
+   - Выбранный подход и причина выбора.
    ### Rejected alternatives
-   - ...
+   - Рассмотренная альтернатива и причина отказа.
    ### Dependencies / blockers
-   - parent-child:<EPIC_ID>; blocks/dependencies as needed.
+   - parent-child:<EPIC_ID>; blocks/dependencies при необходимости.
    ### Acceptance criteria
-   - Concrete observable checks.
+   - Конкретные наблюдаемые проверки для приёмки.
    ### Verification / acceptance checks
-   - Commands/manual checks with expected results.
+   - Команды или ручные проверки с ожидаемыми результатами.
    ### Out of scope
-   - ...
+   - Явные не-цели задачи.
    EOF
    )"
    ```
@@ -83,7 +83,7 @@ An epic is an organizational group. Prefer one feature branch for the whole epic
 8. Close the epic only after all child beads are closed or an explicit documented override is approved:
    ```bash
    bd list --parent <EPIC_ID> --json
-   bd close <EPIC_ID> --reason "All children closed and accepted"
+   bd close <EPIC_ID> --reason "Все дочерние задачи закрыты и приняты"
    ```
    `beads-policy` blocks standard and direct epic close while child beads are incomplete.
 

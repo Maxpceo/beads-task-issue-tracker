@@ -6,6 +6,64 @@ import { describe, expect, it } from 'vitest'
 
 import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
+const russianHandoffDescription = [
+  '### Origin',
+  '- Запрос пользователя требует проверки политики.',
+  '### Files',
+  '- .pi/extensions/beads-policy/index.ts',
+  '### Current state',
+  '- Сейчас проверяется тестовый сценарий.',
+  '### Target state',
+  '- Политика принимает русское описание с техническими identifiers.',
+  '### Investigation findings',
+  '- Проверка выполняется через evaluateBashPolicy.',
+  '### Decisions',
+  '- Используем ручной policy invocation.',
+  '### Rejected alternatives',
+  '- Не создаём лишние реальные данные для unit-теста.',
+  '### Dependencies / blockers',
+  '- Нет.',
+  '### Acceptance criteria',
+  '- Русскоязычный bead content не блокируется locale guard.',
+  '### Verification / acceptance checks',
+  '- pnpm test -- tests/extensions/beads-policy.test.ts завершается с exit code 0.',
+  '### Out of scope',
+  '- Изменение bd CLI.',
+].join('\n')
+
+describe('Pi bead Russian locale policy', () => {
+  it('blocks clearly English bead create title before writing to bd', () => {
+    const decision = evaluateBashPolicy('bd create "Fix Dolt badge" -t task --label dx --description "Краткое русское описание" --json')
+
+    expect(decision?.policy).toBe('enforceBeadRussianLocale')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('title is clearly English')
+  })
+
+  it('blocks clearly English bead update title', () => {
+    const decision = evaluateBashPolicy('bd update bead-a --title "Add CI workflow" --json')
+
+    expect(decision?.policy).toBe('enforceBeadRussianLocale')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks clearly English bead update description', () => {
+    const decision = evaluateBashPolicy('bd update bead-a --description "Details about the current behavior and expected result" --json')
+
+    expect(decision?.policy).toBe('enforceBeadRussianLocale')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('description is clearly English')
+  })
+
+  it('allows Russian bead content with technical identifiers and required English headings', () => {
+    const command = `bd create "Проверить bd-api sync" -t task --label dx --description "${russianHandoffDescription}" --json`
+    const decision = evaluateBashPolicy(command)
+
+    expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+  })
+})
+
 describe('Pi merge-slot push policy', () => {
   const workflowState = {
     activeBead: 'bead-a',
