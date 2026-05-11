@@ -16,18 +16,11 @@ interface WorktreeInfo {
 	isLinked: boolean;
 }
 
-interface ActiveBeadInfo {
-	id: string;
-	startedAt?: string;
-	updatedAt?: string;
-}
-
 interface DashboardSnapshot {
 	workflow: WorkflowStateSnapshot;
 	branch: string;
 	dirty?: number;
 	worktree?: WorktreeInfo;
-	activeBead?: ActiveBeadInfo;
 }
 
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
@@ -67,23 +60,6 @@ async function dirtyCount(pi: ExtensionAPI, cwd: string): Promise<number | undef
 	const { stdout, code } = await pi.exec("git", ["-C", cwd, "status", "--short"]);
 	if (code !== 0) return undefined;
 	return stdout.split("\n").filter((line) => line.trim().length > 0).length;
-}
-
-function dateMs(value: string | undefined): number {
-	return value ? Date.parse(value) || 0 : 0;
-}
-
-async function detectActiveBead(pi: ExtensionAPI): Promise<ActiveBeadInfo | undefined> {
-	const { stdout, code } = await pi.exec("bd", ["list", "--status", "in_progress", "--json"]);
-	if (code !== 0) return undefined;
-	try {
-		const issues = JSON.parse(stdout) as Array<{ id?: string; started_at?: string; updated_at?: string }>;
-		return issues
-			.filter((issue): issue is { id: string; started_at?: string; updated_at?: string } => Boolean(issue.id))
-			.sort((a, b) => dateMs(b.started_at) - dateMs(a.started_at) || dateMs(b.updated_at) - dateMs(a.updated_at) || a.id.localeCompare(b.id))[0];
-	} catch {
-		return undefined;
-	}
 }
 
 function normalizeGitPath(path: string): string {
@@ -230,8 +206,7 @@ function renderWorkflowFooter(
 	if (!snapshot) return [];
 
 	const wf = snapshot.workflow;
-	const explicitBead = wf.activeBead;
-	const activeBead = explicitBead ?? (snapshot.activeBead?.id ? `${snapshot.activeBead.id}*` : undefined);
+	const activeBead = wf.activeBead;
 	const displayBead = activeBead ? compactBeadId(activeBead) : "-";
 	const dirty = snapshot.dirty;
 	const slotHeld = Boolean(wf.mergeSlotHeld);
@@ -287,9 +262,8 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const branch = (await gitValue(pi, ["branch", "--show-current"], ctx.cwd)) ?? wf.branch ?? "-";
 	const dirty = await dirtyCount(pi, ctx.cwd);
 	const worktree = await currentWorktree(pi, [ctx.cwd, wf.worktreePath]);
-	const activeBead = wf.activeBead ? undefined : await detectActiveBead(pi);
 	const state = wf.state ?? "idle";
-	const bead = wf.activeBead ?? (activeBead?.id ? `${activeBead.id}*` : undefined) ?? "-";
+	const bead = wf.activeBead ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
 	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`];
 	const statusWorktree = formatWorktree(worktree);
@@ -297,7 +271,7 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	statusParts.push(`dirty:${dirty ?? "?"}`, `slot:${slot}`);
 	const text = statusParts.join(" ");
 
-	latestDashboard = { workflow: wf, branch, dirty, worktree, activeBead };
+	latestDashboard = { workflow: wf, branch, dirty, worktree };
 	ctx.ui.setStatus("pi-workflow-dashboard", ctx.ui.theme.fg("accent", text));
 	requestFooterRender?.();
 }

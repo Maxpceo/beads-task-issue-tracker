@@ -77,18 +77,23 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> = {}, width = 120): Promise<{ status: string; footer: string[] }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> = {}, width = 120): Promise<{ status: string; footer: string[]; bdCalls: string[] }> {
   const handlers: RegisteredHandlers = {}
   let status = ''
   let footer: { render: (width: number) => string[] } | undefined
   const theme = { fg: (_color: string, text: string) => text }
+  const bdCalls: string[] = []
   const pi = {
     on(event: keyof RegisteredHandlers, handler: RegisteredHandlers[typeof event]) {
       handlers[event] = handler
     },
     registerCommand() {},
     async exec(command: string, args: string[]) {
-      if (command === 'bd') return { stdout: '', stderr: '', code: 1 }
+      if (command === 'bd') {
+        bdCalls.push(args.join(' '))
+        if (args.join(' ') === 'list --status in_progress --json') return { stdout: JSON.stringify([{ id: 'beads-task-issue-tracker-foreign', started_at: '2026-01-01T00:00:00Z' }]), stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 1 }
+      }
       try {
         return { stdout: execFileSync(command, args, { encoding: 'utf8' }), stderr: '', code: 0 }
       } catch (error) {
@@ -118,7 +123,7 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
   statusDashboardExtension(pi)
   await handlers.turn_start?.({}, ctx)
 
-  return { status, footer: footer?.render(width) ?? [] }
+  return { status, footer: footer?.render(width) ?? [], bdCalls }
 }
 
 describe('Pi status-dashboard worktree display', () => {
@@ -130,6 +135,18 @@ describe('Pi status-dashboard worktree display', () => {
   it('does not fall back to wt:primary in extension status text', () => {
     expect(source).not.toContain('?? "primary"')
     expect(source).toContain('if (statusWorktree) statusParts.push(`wt:${statusWorktree}`)')
+  })
+
+  it('does not display a global bd in_progress fallback when workflow has no active bead', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary)
+
+    expect(dashboard.status).toContain('bead:-')
+    expect(dashboard.status).not.toContain('*')
+    expect(dashboard.footer.join('\n')).toContain('bead:-')
+    expect(dashboard.footer.join('\n')).not.toContain('*')
+    expect(dashboard.bdCalls).not.toContain('list --status in_progress --json')
   })
 
   it('reports the current linked worktree basename in status and footer output', async () => {
