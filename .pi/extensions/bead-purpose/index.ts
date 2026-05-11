@@ -137,8 +137,10 @@ function renderPurposeWidget(snapshot: BeadPurposeSnapshot, theme: ExtensionCont
 
 export default function beadPurposeExtension(pi: ExtensionAPI): void {
 	const titleCache = new Map<string, string | undefined>();
+	let refreshGeneration = 0;
 
 	async function refresh(ctx: ExtensionContext): Promise<void> {
+		const generation = ++refreshGeneration;
 		if (!ctx.hasUI) return;
 		const workflow = latestWorkflowState(ctx);
 		const state = workflow.state ?? "idle";
@@ -153,6 +155,10 @@ export default function beadPurposeExtension(pi: ExtensionAPI): void {
 		let title = titleCache.get(workflow.activeBead);
 		if (!titleCache.has(workflow.activeBead)) {
 			const resolved = await resolveBeadTitle(pi, workflow.activeBead);
+			if (generation !== refreshGeneration) return;
+			const currentWorkflow = latestWorkflowState(ctx);
+			const currentState = currentWorkflow.state ?? "idle";
+			if (!isActivePurpose({ ...currentWorkflow, state: currentState }) || currentWorkflow.activeBead !== workflow.activeBead || currentState !== state) return;
 			title = resolved.title;
 			lookupFailed = resolved.lookupFailed;
 			titleCache.set(workflow.activeBead, title);

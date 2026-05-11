@@ -30,7 +30,7 @@ function loadExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function createHarness(options: { bdCode?: number; title?: string } = {}) {
+function createHarness(options: { bdCode?: number; title?: string; exec?: () => Promise<{ stdout: string; stderr: string; code: number }> } = {}) {
   const handlers: Record<string, Handler> = {}
   const theme = { fg: (_color: string, text: string) => text }
   const statuses: Array<[string, string | undefined]> = []
@@ -40,11 +40,11 @@ function createHarness(options: { bdCode?: number; title?: string } = {}) {
     events: { on: (event: string, handler: Handler) => { handlers[`event:${event}`] = handler } },
     on: (event: string, handler: Handler) => { handlers[event] = handler },
     registerCommand() {},
-    exec: async () => ({
+    exec: options.exec ?? (async () => ({
       code: options.bdCode ?? 0,
       stdout: JSON.stringify({ title: options.title ?? 'Resolved bead title' }),
       stderr: '',
-    }),
+    })),
   }
   extension(pi)
 
@@ -92,5 +92,21 @@ describe('bead-purpose extension', () => {
 
     expect(h.statuses.at(-1)?.[1]).toContain('beads-task-issue-tracker-cqbx · implementing')
     expect(h.statuses.at(-1)?.[1]).toContain('title unavailable')
+  })
+
+  it('does not restore active widget/status when delayed title lookup resolves after idle refresh', async () => {
+    let resolveLookup!: (value: { stdout: string; stderr: string; code: number }) => void
+    const h = createHarness({
+      exec: () => new Promise(resolve => { resolveLookup = resolve }),
+    })
+    const activeCtx = h.ctx({ activeBead: 'beads-task-issue-tracker-cqbx', state: 'implementing' })
+
+    const delayedActiveRefresh = h.handlers.session_start?.({}, activeCtx)
+    await h.handlers.turn_start?.({}, h.ctx({ state: 'idle' }))
+    resolveLookup({ code: 0, stdout: JSON.stringify({ title: 'Stale title' }), stderr: '' })
+    await delayedActiveRefresh
+
+    expect(h.widgets).toEqual([['bead-purpose', undefined]])
+    expect(h.statuses).toEqual([['bead-purpose', 'purpose:no active bead']])
   })
 })
