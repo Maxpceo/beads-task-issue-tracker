@@ -205,7 +205,7 @@ function renderWorkflowFooter(
 	const slotHeld = Boolean(wf.mergeSlotHeld);
 	const gitState = dirty == null ? "dirty:?" : dirty === 0 ? "clean" : `dirty:${dirty}`;
 	const gitStateColor = dirty == null ? "muted" : dirty === 0 ? "success" : "warning";
-	const worktree = wf.worktreePath ? `wf:${pathBasename(wf.worktreePath)}` : formatWorktree(snapshot.worktree);
+	const worktree = formatWorktree(snapshot.worktree);
 	const statusMap = footerData.getExtensionStatuses?.();
 	const statuses = Array.from(statusMap?.entries() ?? [])
 		.filter(([key]) => key !== "pi-workflow-dashboard" && key !== "workflow-state")
@@ -259,8 +259,11 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const state = wf.state ?? "idle";
 	const bead = wf.activeBead ?? (activeBead?.id ? `${activeBead.id}*` : undefined) ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
-	const statusWorktree = formatWorktree(worktree) ?? "primary";
-	const text = `bead:${bead} state:${state} br:${branch} wt:${statusWorktree} dirty:${dirty ?? "?"} slot:${slot}`;
+	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`];
+	const statusWorktree = formatWorktree(worktree);
+	if (statusWorktree) statusParts.push(`wt:${statusWorktree}`);
+	statusParts.push(`dirty:${dirty ?? "?"}`, `slot:${slot}`);
+	const text = statusParts.join(" ");
 
 	latestDashboard = { workflow: wf, branch, dirty, worktree, activeBead };
 	ctx.ui.setStatus("pi-workflow-dashboard", ctx.ui.theme.fg("accent", text));
