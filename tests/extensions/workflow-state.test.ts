@@ -280,13 +280,13 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications.at(-1)?.message).toContain('not launching review from stale local state')
   })
 
-  it('does not let bd in_progress clobber restored local planning state', async () => {
-    const { eventHandlers, ctx } = makeHarness({
+  it('keeps same-session planning state when bd status is still broad in_progress', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
       startCommit: 'current-head',
       issues: {
-        'bead-current': { status: 'in_progress', comments: '' },
+        'bead-current': { status: 'in_progress', comments: 'PLAN APPROVED\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
       },
       entries: [
         {
@@ -310,7 +310,43 @@ describe('Pi workflow-state session-scoped recovery', () => {
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
     expect(context.message.content).toContain('state=planning')
+    expect(context.message.content).toContain('bead=bead-current')
     expect(context.message.content).not.toContain('state=implementing')
+    expect(notifications).toEqual([])
+  })
+
+  it('keeps same-session plan_approved state when bd status is still broad in_progress', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': { status: 'in_progress', comments: 'PLAN APPROVED\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'plan_approved',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=plan_approved')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(notifications).toEqual([])
   })
 
   it('recovers only the inreview bead whose comments match the current branch/worktree', async () => {
