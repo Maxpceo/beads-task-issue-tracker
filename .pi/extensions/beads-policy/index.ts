@@ -43,6 +43,10 @@ interface PolicyDecision {
 interface WorkflowStateSnapshot {
 	state?: string;
 	activeBead?: string;
+	branch?: string;
+	worktreePath?: string;
+	startCommit?: string;
+	endCommit?: string;
 	mergeSlotHeld?: boolean;
 	planMode?: string;
 }
@@ -806,20 +810,36 @@ function workflowStateFromBdStatus(status?: string): string | undefined {
 	return undefined;
 }
 
+function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
+	return Boolean(
+		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
+			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit) ||
+			(state.branch && scope.branch && state.branch === scope.branch && state.startCommit),
+	);
+}
+
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
 	const last = entries
 		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
 		.pop() as { data?: WorkflowStateSnapshot } | undefined;
 	const state = last?.data ?? {};
-	if (state.activeBead && state.state && state.state !== "idle") return state;
-	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd);
-	if (!recoveredBead) return state;
+	const scope = currentRecoveryScope(ctx.cwd);
+	if (state.activeBead && state.state && state.state !== "idle") {
+		const hasCommentEvidence = hasSessionOwnershipEvidence(getBdCommentsText(ctx.cwd, state.activeBead), scope);
+		if (hasCommentEvidence || workflowStateHasCurrentScopeEvidence(state, scope)) return state;
+		return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+	}
+	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd, scope);
+	if (!recoveredBead) return { ...state, branch: scope.branch };
 	const issue = getBdIssue(ctx.cwd, recoveredBead);
 	return {
 		...state,
 		activeBead: recoveredBead,
 		state: workflowStateFromBdStatus(issue?.status) ?? "implementing",
+		branch: scope.branch,
+		worktreePath: scope.worktreePath,
+		startCommit: scope.startCommit,
 	};
 }
 
