@@ -162,6 +162,14 @@ export function hasSessionOwnershipEvidence(commentsText: string, scope: Recover
 	return branchMatches || worktreeMatches || (startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
 }
 
+function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
+	return Boolean(
+		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
+			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit) ||
+			(state.branch && scope.branch && state.branch === scope.branch && state.startCommit),
+	);
+}
+
 async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string> {
 	const { stdout, code } = await pi.exec("bd", ["comments", beadId]);
 	return code === 0 ? stdout : "";
@@ -197,7 +205,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 	};
 
 	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
-		const hasOwnership = hasSessionOwnershipEvidence(await readBdComments(pi, state.activeBead), scope);
+		const hasOwnership = hasSessionOwnershipEvidence(await readBdComments(pi, state.activeBead), scope) || workflowStateHasCurrentScopeEvidence(state, scope);
 		if (!hasOwnership) {
 			return {
 				...state,
