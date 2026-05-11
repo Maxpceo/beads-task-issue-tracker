@@ -22,6 +22,12 @@ const ReviewParams = {
 	additionalProperties: false,
 } as const;
 
+interface AgentRunResult {
+	code: number;
+	output: string;
+	stderr: string;
+}
+
 interface ReviewResult {
 	beadId: string;
 	branch: string;
@@ -31,6 +37,9 @@ interface ReviewResult {
 	automatedChecks: string[];
 	checkpoints: string[];
 	frontendChecklist: string[];
+	simplifierExitCode?: number;
+	simplifierOutput?: string;
+	simplifierStderr?: string;
 	reviewerExitCode?: number;
 	reviewerOutput?: string;
 	reviewerStderr?: string;
@@ -157,11 +166,15 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: process.execPath, args };
 }
 
-async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): Promise<{ code: number; output: string; stderr: string }> {
-	const agentPath = path.join(cwd, ".pi", "agents", "code-reviewer.md");
-	if (!fs.existsSync(agentPath)) throw new Error("Missing .pi/agents/code-reviewer.md");
+function hasSimplifiableCodeDiff(files: string[]): boolean {
+	return files.some((file) => /\.(vue|ts|tsx|js|jsx|mjs|cjs|rs|css|scss)$/.test(file) || file.startsWith("src-tauri/"));
+}
+
+async function runAgent(cwd: string, agentName: string, prompt: string, signal?: AbortSignal): Promise<AgentRunResult> {
+	const agentPath = path.join(cwd, ".pi", "agents", `${agentName}.md`);
+	if (!fs.existsSync(agentPath)) throw new Error(`Missing .pi/agents/${agentName}.md`);
 	const parsed = parseFrontmatter(fs.readFileSync(agentPath, "utf8"));
-	const system = await writeTempFile("code-reviewer-system", parsed.body);
+	const system = await writeTempFile(`${agentName}-system`, parsed.body);
 	const args = ["--mode", "json", "-p", "--no-session", "--append-system-prompt", system.file];
 	if (parsed.data.tools) args.push("--tools", parsed.data.tools);
 	if (parsed.data.model) args.push("--model", parsed.data.model);
@@ -188,6 +201,14 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): P
 	}
 }
 
+function createSimplifierPrompt(beadId: string, branch: string, startCommit: string, endCommit: string): string {
+	return `BEAD_ID: ${beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSimplify/refine only the changed code in git diff ${startCommit}..${endCommit}. Preserve exact behavior and scope. Do not close beads, push, or change workflow status. If no safe simplification is available, say so with evidence.`;
+}
+
+function formatSimplifierComment(startCommit: string, endCommit: string, simplifier: AgentRunResult): string {
+	return `SIMPLIFY: COMPLETED\n\nScoped diff: ${startCommit}..${endCommit}\nAgent exit: ${simplifier.code}\n\n${simplifier.output.slice(-4000)}${simplifier.stderr ? `\n\nSTDERR:\n${simplifier.stderr.slice(-1000)}` : ""}`;
+}
+
 function render(result: ReviewResult): string {
 	return [
 		`bead=${result.beadId}`,
@@ -203,6 +224,9 @@ function render(result: ReviewResult): string {
 		result.pathRulesLoaded ?? "PATH_RULES_LOADED:\nNot evaluated.",
 		"automatedChecks:",
 		...result.automatedChecks.map((item) => `---\n${item}`),
+		result.simplifierExitCode === undefined ? "simplifier=not run" : `simplifierExit=${result.simplifierExitCode}`,
+		result.simplifierStderr ? `simplifierStderr:\n${result.simplifierStderr}` : "",
+		result.simplifierOutput ? `simplifierOutput:\n${result.simplifierOutput.slice(-8000)}` : "",
 		result.reviewerExitCode === undefined ? "reviewer=not run" : `reviewerExit=${result.reviewerExitCode}`,
 		result.reviewerStderr ? `reviewerStderr:\n${result.reviewerStderr}` : "",
 		result.reviewerOutput ? `reviewerOutput:\n${result.reviewerOutput.slice(-8000)}` : "",
@@ -215,7 +239,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "review_bead",
 		label: "Review Bead",
-		description: "Executable Pi review workflow: guard inreview, run relevant checks, then run code-reviewer agent.",
+		description: "Executable Pi review workflow: guard inreview, run relevant checks, run code-simplifier when applicable, then run code-reviewer agent.",
 		parameters: ReviewParams,
 		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			try {
@@ -242,10 +266,26 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				];
 				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, pathRulesLoaded };
 				if (!params.dryRun) {
-					await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
+					const shouldSimplify = hasSimplifiableCodeDiff(changedFiles);
+					if (shouldSimplify) {
+						const simplifyPrompt = createSimplifierPrompt(params.beadId, branch, startCommit, endCommit);
+						const simplifier = await runAgent(ctx.cwd, "code-simplifier", simplifyPrompt, signal);
+						result.simplifierExitCode = simplifier.code;
+						result.simplifierOutput = simplifier.output;
+						result.simplifierStderr = simplifier.stderr;
+						if (simplifier.code !== 0) {
+							await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFY: FAILED\n\nScoped diff: ${startCommit}..${endCommit}\nAgent exit: ${simplifier.code}\n\n${simplifier.output.slice(-4000)}${simplifier.stderr ? `\n\nSTDERR:\n${simplifier.stderr.slice(-1000)}` : ""}`]);
+							await execRequired(pi, "bd", ["update", params.beadId, "--status", "inreview"]);
+							pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "inreview", branch, startCommit, endCommit });
+							return { content: [{ type: "text", text: render(result) }], details: result };
+						}
+						await exec(pi, "bd", ["comments", "add", params.beadId, formatSimplifierComment(startCommit, endCommit, simplifier)]);
+					} else {
+						await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFY: SKIPPED\n\nReason: scoped diff ${startCommit}..${endCommit} has no applicable code files. Changed files: ${changedFiles.join(", ") || "-"}`]);
+					}
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
-					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
-					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
+					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\nSimplifier evidence was recorded before this review (${shouldSimplify ? "SIMPLIFY: COMPLETED" : "SIMPLIFY: SKIPPED"}).\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
+					const reviewer = await runAgent(ctx.cwd, "code-reviewer", prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
@@ -275,7 +315,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 			const beadId = args.trim();
 			ctx.ui.notify(
 				beadId
-					? `Ask the agent to call review_bead with beadId=${beadId}. The tool will guard status, run checks, and invoke code-reviewer.`
+					? `Ask the agent to call review_bead with beadId=${beadId}. The tool will guard status, run checks, invoke code-simplifier when applicable, and then invoke code-reviewer.`
 					: "Usage: /review-bead <bead-id> then ask the agent to call review_bead.",
 				"info",
 			);

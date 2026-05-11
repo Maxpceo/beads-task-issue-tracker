@@ -19,7 +19,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```text
    /workflow-update bead=<ID> state=reviewing
    ```
-3. Prefer executable review workflow when available. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
+3. Prefer executable review workflow when available. It runs checks, dispatches `.pi/agents/code-simplifier.md` before `.pi/agents/code-reviewer.md` for applicable code diffs, records simplifier evidence, then proceeds to code review. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
    ```text
    review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>)
    ```
@@ -29,8 +29,8 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```
 5. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.
 6. Simplify/reuse pass:
-   - record `SIMPLIFY: DONE ...`, or
-   - record `SIMPLIFY: SKIPPED. docs/config only` when no code simplification is applicable.
+   - record `SIMPLIFY: COMPLETED ...` with code-simplifier output/evidence, or
+   - record `SIMPLIFY: SKIPPED ...` when no code simplification is applicable.
 7. Code review must check spec compliance first, then quality. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and redispatch supervisor with exact fixes; do not advance to `reviewed`, `accepted`, or `closed`.
 8. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then move `reviewed -> accepted -> closed`. After close, update workflow state to `closed`; `land` is not required before the next bead.
 9. For frontend Vue diffs, run the Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo` (i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion, responsive/layout, regression evidence). This intentionally replaces undefined Claude RAMS/WIG requirements in Pi.
