@@ -129,6 +129,74 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bead=bead-current')
   })
 
+
+  it('reconciles restored active bead with bd inreview status for footer context', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': { status: 'inreview', comments: '' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'implementing',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=inreview')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(context.message.content).not.toContain('state=implementing')
+  })
+
+  it('does not let bd in_progress clobber restored local planning state', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': { status: 'in_progress', comments: '' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'planning',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            planMode: 'strict',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=planning')
+    expect(context.message.content).not.toContain('state=implementing')
+  })
+
   it('recovers only the inreview bead whose comments match the current branch/worktree', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',

@@ -838,6 +838,19 @@ function workflowStateFromBdStatus(status?: string): string | undefined {
 	return undefined;
 }
 
+export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot, bdStatus?: string): WorkflowStateSnapshot {
+	const bdState = workflowStateFromBdStatus(bdStatus);
+	if (!bdState || bdState === state.state) return state;
+
+	// `in_progress` is bd's broad worker status and can coexist with Pi-local
+	// planning/plan_approved state.  Later review/terminal statuses are
+	// authoritative for lifecycle guards because they may be written by raw bd
+	// commands or typed review tools during the same Pi session.
+	if (bdState === "implementing") return state;
+
+	return { ...state, state: bdState };
+}
+
 function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
 	return Boolean(
 		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
@@ -855,7 +868,9 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const scope = currentRecoveryScope(ctx.cwd);
 	if (state.activeBead && state.state && state.state !== "idle") {
 		const hasCommentEvidence = hasSessionOwnershipEvidence(getBdCommentsText(ctx.cwd, state.activeBead), scope);
-		if (hasCommentEvidence || workflowStateHasCurrentScopeEvidence(state, scope)) return state;
+		if (hasCommentEvidence || workflowStateHasCurrentScopeEvidence(state, scope)) {
+			return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
+		}
 		return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 	}
 	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd, scope);

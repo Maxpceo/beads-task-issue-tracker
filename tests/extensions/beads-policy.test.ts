@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy } from '../../.pi/extensions/beads-policy/index'
+import { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
 describe('Pi merge-slot push policy', () => {
   const workflowState = {
@@ -83,6 +83,30 @@ describe('Pi active bead lifecycle policy', () => {
 
     expect(reason).toContain('review-bead / review_bead')
     expect(reason).toContain('bead-a')
+  })
+
+
+  it('reconciles stale implementing state to bd inreview for redirect decisions', () => {
+    const reconciled = reconcileWorkflowStateWithBdStatus({
+      activeBead: 'bead-a',
+      state: 'implementing',
+    }, 'inreview')
+
+    const decision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, reconciled)
+
+    expect(reconciled.state).toBe('inreview')
+    expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(decision?.reason).toContain('review-bead / review_bead')
+    expect(decision?.reason).not.toContain('implementing')
+  })
+
+  it('does not let broad bd in_progress clobber local planning state', () => {
+    const reconciled = reconcileWorkflowStateWithBdStatus({
+      activeBead: 'bead-a',
+      state: 'planning',
+    }, 'in_progress')
+
+    expect(reconciled.state).toBe('planning')
   })
 
   it('allows next claim after active bead reaches closed terminal state', () => {
