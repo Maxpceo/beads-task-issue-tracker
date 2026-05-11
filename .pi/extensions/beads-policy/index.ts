@@ -26,6 +26,7 @@ type PolicyName =
 	| "blockUnmergedBranchCompletion"
 	| "validateReviewChain"
 	| "enforceBeadEnrichment"
+	| "enforceBeadRussianLocale"
 	| "blockMutationsInPlanning"
 	| "blockSupervisorClose"
 	| "blockWorktreeInsideRepo"
@@ -267,6 +268,167 @@ function isVagueOnly(section: string): boolean {
 		.replace(/[`*_"']/g, "")
 		.trim();
 	return compact.length > 0 && compact.length < 80 && VAGUE_ACCEPTANCE_PATTERN.test(compact);
+}
+
+const COMMON_ENGLISH_PROSE_WORDS = new Set([
+	"add",
+	"allows",
+	"alternative",
+	"and",
+	"ask",
+	"be",
+	"bug",
+	"check",
+	"checks",
+	"child",
+	"command",
+	"complete",
+	"completed",
+	"concrete",
+	"create",
+	"current",
+	"details",
+	"discovered",
+	"done",
+	"expected",
+	"feature",
+	"fix",
+	"found",
+	"from",
+	"how",
+	"issue",
+	"manual",
+	"needed",
+	"observable",
+	"out",
+	"reason",
+	"request",
+	"result",
+	"source",
+	"state",
+	"target",
+	"task",
+	"the",
+	"this",
+	"with",
+	"work",
+	"works",
+	"why",
+]);
+
+const TECHNICAL_ENGLISH_TOKENS = new Set([
+	"api",
+	"bd",
+	"bead",
+	"beads",
+	"blocks",
+	"cli",
+	"ci",
+	"css",
+	"deps",
+	"dolt",
+	"dx",
+	"epic",
+	"frontend",
+	"backend",
+	"json",
+	"jsonl",
+	"md",
+	"nuxt",
+	"pi",
+	"rust",
+	"tauri",
+	"ts",
+	"tsx",
+	"ui",
+	"url",
+	"vue",
+]);
+
+function stripLocaleExemptText(text: string): string {
+	let stripped = text;
+	for (const heading of REQUIRED_HANDOFF_SECTIONS) {
+		stripped = stripped.replace(new RegExp(escapeRegExp(heading), "gi"), " ");
+	}
+	return stripped
+		.replace(/```[\s\S]*?```/g, " ")
+		.replace(/`[^`]*`/g, " ")
+		.replace(/https?:\/\/\S+/g, " ")
+		.replace(/\b[a-z0-9_.\/-]+\.(ts|tsx|vue|rs|js|json|jsonl|md|sh|css)\b/gi, " ")
+		.replace(/\b(parent-child|discovered-from|blocks):[\w.-]+\b/gi, " ")
+		.replace(/<[^>]+>/g, " ")
+		.replace(/--?[\w-]+(?:=\S+)?/g, " ");
+}
+
+function localeEvidence(text: string): { cyrillic: number; latinProse: number; commonEnglish: number } {
+	const stripped = stripLocaleExemptText(text);
+	const cyrillic = stripped.match(/[А-Яа-яЁё]/g)?.length ?? 0;
+	const latinWords = stripped.match(/[A-Za-z][A-Za-z'-]{2,}/g) ?? [];
+	const proseWords = latinWords
+		.map((word) => word.toLowerCase().replace(/^['-]+|['-]+$/g, ""))
+		.filter((word) => word.length >= 3)
+		.filter((word) => !TECHNICAL_ENGLISH_TOKENS.has(word))
+		.filter((word) => !/^[a-z]+\d+$/.test(word));
+	const commonEnglish = proseWords.filter((word) => COMMON_ENGLISH_PROSE_WORDS.has(word)).length;
+	return { cyrillic, latinProse: proseWords.length, commonEnglish };
+}
+
+function isClearlyEnglishBeadText(text: string, field: "title" | "description"): boolean {
+	const evidence = localeEvidence(text);
+	if (field === "title") return evidence.cyrillic === 0 && (evidence.commonEnglish >= 1 || evidence.latinProse >= 2);
+	return evidence.cyrillic < 10 && (evidence.commonEnglish >= 3 || evidence.latinProse >= 8);
+}
+
+function valueAfterFlag(segment: string, flags: string[]): string | undefined {
+	for (const flag of flags) {
+		const escaped = escapeRegExp(flag);
+		const quoted = segment.match(new RegExp(`${escaped}(?:=|\\s+)(["'])([\\s\\S]*?)\\1`));
+		if (quoted?.[2]) return quoted[2];
+		const unquoted = segment.match(new RegExp(`${escaped}=([^\\s;&|]+)|${escaped}\\s+([^\\s;&|]+)`));
+		const value = unquoted?.[1] ?? unquoted?.[2];
+		if (value) return value;
+	}
+	return undefined;
+}
+
+function parseBdCreateTitle(segment: string): string | undefined {
+	const explicit = valueAfterFlag(segment, ["--title"]);
+	if (explicit) return explicit;
+	const tokens = shellTokens(segment);
+	const createIndex = tokens.findIndex((token, index) => (token === "create" || token === "new") && tokens[index - 1] === "bd");
+	if (createIndex < 0) return undefined;
+	const valueFlags = new Set(["--priority", "-p", "--description", "-d", "--type", "-t", "--label", "--labels", "-l", "--deps", "--parent"]);
+	for (let index = createIndex + 1; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token) continue;
+		if (valueFlags.has(token)) {
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--") && token.includes("=")) continue;
+		if (token.startsWith("-")) continue;
+		return token;
+	}
+	return undefined;
+}
+
+function getBeadLocaleError(command: string): string | undefined {
+	for (const segment of splitShellSegments(command)) {
+		const isCreate = /\bbd\s+(create|new)\b/.test(segment);
+		const isUpdate = /\bbd\s+update\b/.test(segment);
+		if (!isCreate && !isUpdate) continue;
+
+		const title = isCreate ? parseBdCreateTitle(segment) : valueAfterFlag(segment, ["--title"]);
+		if (title && isClearlyEnglishBeadText(title, "title")) {
+			return "Blocked: bead title is clearly English. Write bead titles in Russian for Maxim; keep only technical identifiers in English.";
+		}
+
+		const description = valueAfterFlag(segment, ["--description", "-d"]);
+		if (description && isClearlyEnglishBeadText(description, "description")) {
+			return "Blocked: bead description is clearly English. Write bead descriptions in Russian for Maxim while preserving required section headings and technical identifiers.";
+		}
+	}
+	return undefined;
 }
 
 function getBeadEnrichmentError(command: string): string | undefined {
@@ -1011,6 +1173,15 @@ export function evaluateBashPolicy(
 			policy: "requireMergeSlotForPush",
 			block: true,
 			reason: "Blocked: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true or current bd merge-slot holder evidence).",
+		};
+	}
+
+	const beadLocaleError = getBeadLocaleError(command);
+	if (beadLocaleError) {
+		return {
+			policy: "enforceBeadRussianLocale",
+			block: true,
+			reason: beadLocaleError,
 		};
 	}
 
