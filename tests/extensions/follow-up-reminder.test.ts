@@ -98,9 +98,15 @@ describe('follow-up-reminder state reduction', () => {
     expect(result.find((item) => item.id === 'fu-2')?.status).toBe('cleared')
   })
 
-  it('ignores corrupted or unknown custom entry versions', () => {
+  it('ignores corrupted, malformed, or unknown custom entries without throwing', () => {
     const result = reduceFollowUpState([
       custom({ version: 2, action: 'candidate', candidate: candidate() }),
+      custom({ version: 1, action: 'candidate' }),
+      custom({ version: 1, action: 'candidate', candidate: null }),
+      custom({ version: 1, action: 'candidate', candidate: { id: 'fu-bad' } }),
+      custom({ version: 1, action: 'resolve' }),
+      custom({ version: 1, action: 'clear', id: 42, reason: 'bad', at: '2026-05-11T00:00:00.000Z' }),
+      custom({ version: 1, action: 'clear-all', reason: 'bad', at: '2026-05-11T00:00:00.000Z', scope: null }),
       custom({ bad: true }),
       { type: 'custom', customType: 'other', data: { version: 1 } },
     ] as any)

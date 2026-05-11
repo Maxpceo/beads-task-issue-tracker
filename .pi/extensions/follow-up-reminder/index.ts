@@ -130,10 +130,36 @@ export function extractFollowUpCandidates(text: string, scope: FollowUpScope = {
 	return matches;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isString(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function isFollowUpCandidate(value: unknown): value is FollowUpCandidate {
+	if (!isPlainObject(value)) return false;
+	if (!isString(value.id) || !isString(value.markerType) || !isString(value.snippet) || !isString(value.sourceTime)) return false;
+	if (value.status !== "open" && value.status !== "resolved" && value.status !== "cleared") return false;
+	for (const field of ["activeBead", "branch", "worktreePath", "sourceEntryId", "resolution"] as const) {
+		if (value[field] !== undefined && typeof value[field] !== "string") return false;
+	}
+	return true;
+}
+
+function isFollowUpScope(value: unknown): value is FollowUpScope {
+	if (value === undefined) return true;
+	if (!isPlainObject(value)) return false;
+	return ["activeBead", "branch", "worktreePath"].every((field) => value[field] === undefined || typeof value[field] === "string");
+}
+
 function isFollowUpEvent(value: unknown): value is FollowUpReminderEvent {
-	if (!value || typeof value !== "object") return false;
-	const event = value as { version?: unknown; action?: unknown };
-	return event.version === 1 && typeof event.action === "string";
+	if (!isPlainObject(value) || value.version !== 1 || typeof value.action !== "string") return false;
+	if (value.action === "candidate") return isFollowUpCandidate(value.candidate);
+	if (value.action === "resolve" || value.action === "clear") return isString(value.id) && isString(value.reason) && isString(value.at);
+	if (value.action === "clear-all") return isString(value.reason) && isString(value.at) && isFollowUpScope(value.scope);
+	return false;
 }
 
 function latestWorkflowState(entries: SessionEntry[]): WorkflowStateSnapshot {
