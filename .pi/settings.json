@@ -8,6 +8,7 @@
     "extensions/beads-policy/index.ts",
     "extensions/beads-dispatch/index.ts",
     "extensions/review-workflow/index.ts",
+    "extensions/workflow-chain/index.ts",
     "extensions/subagent/index.ts",
     "extensions/status-dashboard.ts",
     "extensions/session-context/index.ts",
