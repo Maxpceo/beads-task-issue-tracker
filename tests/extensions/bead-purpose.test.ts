@@ -4,6 +4,8 @@ import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/bead-purpose/index.ts'), 'utf8')
+const runtimeOwnerKey = 'runtime:test-bead-purpose'
+;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
 
 type Handler = (event: unknown, ctx: MockContext) => Promise<void> | void
 
@@ -51,7 +53,7 @@ function createHarness(options: { bdCode?: number; title?: string; exec?: () => 
   function ctx(data?: unknown): MockContext {
     return {
       hasUI: true,
-      sessionManager: { getEntries: () => data ? [{ type: 'custom', customType: 'workflow-state', data }] : [] },
+      sessionManager: { getEntries: () => data ? [{ type: 'custom', customType: 'workflow-state', data: { ...(data as Record<string, unknown>), runtimeOwnerKey } }] : [] },
       ui: {
         theme,
         setStatus: (key, text) => statuses.push([key, text]),

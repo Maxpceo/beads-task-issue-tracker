@@ -6,6 +6,9 @@ import { describe, expect, it } from 'vitest'
 
 import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
+const runtimeOwnerKey = 'runtime:test-beads-policy'
+;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
+
 const russianHandoffDescription = [
   '### Origin',
   '- Запрос пользователя требует проверки политики.',
@@ -33,7 +36,7 @@ const russianHandoffDescription = [
 
 describe('Pi bead Russian locale policy', () => {
   it('blocks clearly English bead create title before writing to bd', () => {
-    const decision = evaluateBashPolicy('bd create "Fix Dolt badge" -t task --label dx --description "Краткое русское описание" --json')
+    const decision = evaluateBashPolicy('bd create "Fix Dolt badge" -t task --label dx --description "Краткое русское описание" --json', {}, { cwd: tmpdir() })
 
     expect(decision?.policy).toBe('enforceBeadRussianLocale')
     expect(decision?.block).toBe(true)
@@ -41,14 +44,14 @@ describe('Pi bead Russian locale policy', () => {
   })
 
   it('blocks clearly English bead update title', () => {
-    const decision = evaluateBashPolicy('bd update bead-a --title "Add CI workflow" --json')
+    const decision = evaluateBashPolicy('bd update bead-a --title "Add CI workflow" --json', {}, { cwd: tmpdir() })
 
     expect(decision?.policy).toBe('enforceBeadRussianLocale')
     expect(decision?.block).toBe(true)
   })
 
   it('blocks clearly English bead update description', () => {
-    const decision = evaluateBashPolicy('bd update bead-a --description "Details about the current behavior and expected result" --json')
+    const decision = evaluateBashPolicy('bd update bead-a --description "Details about the current behavior and expected result" --json', {}, { cwd: tmpdir() })
 
     expect(decision?.policy).toBe('enforceBeadRussianLocale')
     expect(decision?.block).toBe(true)
@@ -57,7 +60,7 @@ describe('Pi bead Russian locale policy', () => {
 
   it('allows Russian bead content with technical identifiers and required English headings', () => {
     const command = `bd create "Проверить bd-api sync" -t task --label dx --description "${russianHandoffDescription}" --json`
-    const decision = evaluateBashPolicy(command)
+    const decision = evaluateBashPolicy(command, {}, { cwd: tmpdir() })
 
     expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
     expect(decision?.policy).not.toBe('enforceBeadEnrichment')
@@ -273,6 +276,15 @@ describe('Pi active bead lifecycle policy', () => {
                 branch: 'fix/current',
                 startCommit,
                 sessionKey: 'id:session-current',
+                runtimeOwnerKey,
+              },
+            },
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                state: 'idle',
+                runtimeOwnerKey: 'runtime:other-live-pane',
               },
             },
           ],

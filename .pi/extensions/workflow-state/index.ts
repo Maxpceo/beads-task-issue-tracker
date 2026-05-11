@@ -48,6 +48,7 @@ interface WorkflowState {
 	startCommit?: string;
 	endCommit?: string;
 	sessionKey?: string;
+	runtimeOwnerKey?: string;
 	planMode: PlanMode;
 	mergeSlotHeld: boolean;
 	updatedAt: string;
@@ -97,6 +98,19 @@ function formatState(state: WorkflowState): string {
 		`plan=${state.planMode}`,
 		`mergeSlot=${state.mergeSlotHeld ? "held" : "free"}`,
 	].join(" | ");
+}
+
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
+
+export function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
+
+function isCurrentRuntimeWorkflowState(data: unknown): data is WorkflowState {
+	const state = data as WorkflowState | undefined;
+	return Boolean(state?.runtimeOwnerKey && state.runtimeOwnerKey === currentRuntimeOwnerKey());
 }
 
 function currentSessionKey(ctx?: ExtensionContext): string | undefined {
@@ -372,6 +386,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
 
 	function persist(ctx?: ExtensionContext): void {
+		workflowState.runtimeOwnerKey = currentRuntimeOwnerKey();
 		workflowState.updatedAt = new Date().toISOString();
 		pi.appendEntry("workflow-state", cloneState(workflowState));
 		if (ctx) updateFooter(ctx, workflowState);
@@ -437,7 +452,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("workflow-reset", {
 		description: "Reset Pi workflow state to idle",
 		handler: async (_args, ctx) => {
-			workflowState = { ...cloneState(DEFAULT_STATE), branch: await detectBranch(pi, ctx.cwd), worktreePath: await detectWorktreePath(pi, ctx.cwd), startCommit: await detectStartCommit(pi, ctx.cwd), updatedAt: new Date().toISOString() };
+			workflowState = {
+				...cloneState(DEFAULT_STATE),
+				branch: await detectBranch(pi, ctx.cwd),
+				worktreePath: await detectWorktreePath(pi, ctx.cwd),
+				startCommit: await detectStartCommit(pi, ctx.cwd),
+				runtimeOwnerKey: currentRuntimeOwnerKey(),
+				updatedAt: new Date().toISOString(),
+			};
 			persist(ctx);
 			ctx.ui.notify("Workflow state reset to idle", "info");
 		},
@@ -603,10 +625,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		const entries = ctx.sessionManager.getEntries();
 		const lastStateEntry = entries
 			.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+			.filter((entry: { data?: unknown }) => isCurrentRuntimeWorkflowState(entry.data))
 			.pop() as { data?: WorkflowState } | undefined;
 
-		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : cloneState(DEFAULT_STATE);
+		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : { ...cloneState(DEFAULT_STATE), runtimeOwnerKey: currentRuntimeOwnerKey() };
 		workflowState.branch = workflowState.branch ?? (await detectBranch(pi, ctx.cwd));
+		workflowState.worktreePath = workflowState.worktreePath ?? (await detectWorktreePath(pi, ctx.cwd));
+		workflowState.startCommit = workflowState.startCommit ?? (await detectStartCommit(pi, ctx.cwd));
+		persist(ctx);
 		await ensureReconciled(ctx);
 	});
 

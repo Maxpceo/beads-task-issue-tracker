@@ -39,6 +39,7 @@
 
 ### Fixed
 
+- **Pi live workflow-state isolation** (`beads-task-issue-tracker-8238`): workflow-state consumers now ignore later custom entries from other live Pi runtimes, preventing `/workflow-reset` in one parallel session from resetting another session's workflow footer/context/policy state.
 - **Pi session-scoped workflow recovery** (`beads-task-issue-tracker-lh5o`): `workflow-state` and `beads-policy` now require the current Pi session key before recovering or continuing an active bead, preventing parallel sessions on the same branch/worktree/start commit from auto-taking each other's workflow state. The status dashboard now reports only the explicit workflow-state bead instead of guessing from unrelated `in_progress` beads.
 - **Pi reload worktree context** (`beads-task-issue-tracker-c0uk`): `workflow-state` now scopes Git detection to Pi's `ctx.cwd`, so Reload no longer falls back to the primary checkout (`main` / `worktree=-`) when the active Pi session is running from a linked worktree.
 - **Pi footer worktree visibility at narrow widths** (`beads-task-issue-tracker-yxjg`): the workflow footer now prioritizes `wt:<worktree>` immediately after the workflow state when a linked worktree is detected, so constrained terminal widths no longer hide the linked-worktree indicator behind lower-priority bead/plan fields.

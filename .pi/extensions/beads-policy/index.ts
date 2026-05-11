@@ -54,6 +54,7 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	endCommit?: string;
 	sessionKey?: string;
+	runtimeOwnerKey?: string;
 	mergeSlotHeld?: boolean;
 	planMode?: string;
 }
@@ -909,6 +910,14 @@ function currentRecoveryScope(cwd: string, sessionKey?: string): RecoveryScope {
 	};
 }
 
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
+
+function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
+
 function currentSessionKey(ctx?: ExtensionContext): string | undefined {
 	const manager = ctx?.sessionManager;
 	const sessionId = manager?.getSessionId?.();
@@ -1093,8 +1102,10 @@ function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scop
 
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
+	const runtimeOwnerKey = currentRuntimeOwnerKey();
 	const last = entries
 		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+		.filter((entry: { data?: unknown }) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === runtimeOwnerKey)
 		.pop() as { data?: WorkflowStateSnapshot } | undefined;
 	const state = last?.data ?? {};
 	const scope = currentRecoveryScope(ctx.cwd, currentSessionKey(ctx));
