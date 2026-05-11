@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 type NotifyKind = "complete" | "needs-input" | "error" | "test";
+type NotificationBackend = "warp" | "macos" | "both";
 type SoundKind = "complete" | "attention";
 
 interface TurnState {
@@ -18,6 +19,7 @@ interface TurnState {
 
 interface WarpNotifyConfig {
 	notificationsEnabled: boolean;
+	notificationBackend: NotificationBackend;
 	soundEnabled: boolean;
 	completeSoundEnabled: boolean;
 	attentionSoundEnabled: boolean;
@@ -30,6 +32,8 @@ const OSC_777_PREFIX = "\x1b]777;notify;";
 const DEFAULT_COMPLETE_SOUND = "/System/Library/Sounds/Pop.aiff";
 const DEFAULT_INPUT_SOUND = "/System/Library/Sounds/Glass.aiff";
 const SYSTEM_SOUNDS_DIR = "/System/Library/Sounds";
+const WARP_BUNDLE_ID = "dev.warp.Warp-Stable";
+const TERMINAL_NOTIFIER_PATHS = ["/opt/homebrew/bin/terminal-notifier", "/usr/local/bin/terminal-notifier"];
 const MAX_SNIPPET_LENGTH = 180;
 const MAX_ACTION_LENGTH = 48;
 const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +41,7 @@ const CONFIG_PATH = path.join(EXTENSION_DIR, "config.json");
 
 const DEFAULT_CONFIG: WarpNotifyConfig = {
 	notificationsEnabled: true,
+	notificationBackend: "both",
 	soundEnabled: true,
 	completeSoundEnabled: true,
 	attentionSoundEnabled: true,
@@ -68,6 +73,12 @@ function envFlag(name: string, fallback: boolean): boolean {
 	return envFlagValue(name) ?? fallback;
 }
 
+function envBackend(name: string, fallback: NotificationBackend): NotificationBackend {
+	const value = process.env[name];
+	if (value === "warp" || value === "macos" || value === "both") return value;
+	return fallback;
+}
+
 function isConfig(value: unknown): value is Partial<WarpNotifyConfig> {
 	return Boolean(value) && typeof value === "object";
 }
@@ -79,6 +90,9 @@ function readConfig(): WarpNotifyConfig {
 		if (!isConfig(parsed)) return { ...DEFAULT_CONFIG };
 		const config = { ...DEFAULT_CONFIG };
 		if (typeof parsed.notificationsEnabled === "boolean") config.notificationsEnabled = parsed.notificationsEnabled;
+		if (parsed.notificationBackend === "warp" || parsed.notificationBackend === "macos" || parsed.notificationBackend === "both") {
+			config.notificationBackend = parsed.notificationBackend;
+		}
 		if (typeof parsed.soundEnabled === "boolean") config.soundEnabled = parsed.soundEnabled;
 		if (typeof parsed.completeSoundEnabled === "boolean") config.completeSoundEnabled = parsed.completeSoundEnabled;
 		if (typeof parsed.attentionSoundEnabled === "boolean") config.attentionSoundEnabled = parsed.attentionSoundEnabled;
@@ -105,6 +119,7 @@ function effectiveConfig(): WarpNotifyConfig {
 	const config = readConfig();
 	return {
 		notificationsEnabled: envFlag("PI_WARP_NOTIFICATIONS", config.notificationsEnabled),
+		notificationBackend: envBackend("PI_WARP_NOTIFICATIONS_BACKEND", config.notificationBackend),
 		soundEnabled: envFlag("PI_WARP_NOTIFICATIONS_SOUND", config.soundEnabled),
 		completeSoundEnabled: envFlag("PI_WARP_NOTIFICATIONS_COMPLETE_SOUND", config.completeSoundEnabled),
 		attentionSoundEnabled: envFlag("PI_WARP_NOTIFICATIONS_ATTENTION_SOUND", config.attentionSoundEnabled),
@@ -117,13 +132,21 @@ function status(value: boolean): string {
 	return value ? "on" : "off";
 }
 
+function backendLabel(backend: NotificationBackend): string {
+	if (backend === "warp") return "Warp only";
+	if (backend === "macos") return "macOS only";
+	return "Both";
+}
+
 function soundName(soundPath: string): string {
 	return path.basename(soundPath).replace(/\.aiff$/i, "") || soundPath;
 }
 
-function notify(title: string, body: string): void {
-	if (!effectiveConfig().notificationsEnabled) return;
+function terminalNotifierPath(): string | undefined {
+	return TERMINAL_NOTIFIER_PATHS.find((candidate) => existsSync(candidate));
+}
 
+function notifyWarp(title: string, body: string): void {
 	const payload = `${OSC_777_PREFIX}${sanitizeOscPart(title)};${sanitizeOscPart(body)}${OSC_BEL}`;
 	try {
 		writeFileSync("/dev/tty", payload);
@@ -134,6 +157,45 @@ function notify(title: string, body: string): void {
 			// Notifications must never break Pi execution.
 		}
 	}
+}
+
+function osascriptLiteral(value: string): string {
+	return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function notifyMacos(title: string, body: string): void {
+	if (process.platform !== "darwin") return;
+
+	try {
+		const notifier = terminalNotifierPath();
+		if (notifier) {
+			const child = spawn(notifier, [
+				"-title",
+				sanitizeOscPart(title),
+				"-message",
+				sanitizeOscPart(body),
+				"-activate",
+				WARP_BUNDLE_ID,
+				"-group",
+				"pi-warp-notifications",
+			], { detached: true, stdio: "ignore" });
+			child.unref();
+			return;
+		}
+
+		const script = `display notification "${osascriptLiteral(sanitizeOscPart(body))}" with title "${osascriptLiteral(sanitizeOscPart(title))}"`;
+		const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
+		child.unref();
+	} catch {
+		// macOS notifications are best-effort only.
+	}
+}
+
+function notify(title: string, body: string): void {
+	const config = effectiveConfig();
+	if (!config.notificationsEnabled) return;
+	if (config.notificationBackend === "warp" || config.notificationBackend === "both") notifyWarp(title, body);
+	if (config.notificationBackend === "macos" || config.notificationBackend === "both") notifyMacos(title, body);
 }
 
 function soundPathFor(kind: NotifyKind, config = effectiveConfig()): string {
@@ -256,11 +318,25 @@ function availableSystemSounds(): string[] {
 function menuSummary(config: WarpNotifyConfig): string {
 	return [
 		`Notifications: ${status(config.notificationsEnabled)}`,
+		`Backend: ${backendLabel(config.notificationBackend)}`,
 		`Sounds: ${status(config.soundEnabled)}`,
 		`Complete sound: ${status(config.completeSoundEnabled)} (${soundName(config.completeSoundPath)})`,
 		`Attention sound: ${status(config.attentionSoundEnabled)} (${soundName(config.attentionSoundPath)})`,
 		`Config: ${CONFIG_PATH}`,
 	].join("\n");
+}
+
+async function chooseBackend(ctx: ExtensionCommandContext): Promise<void> {
+	const current = effectiveConfig().notificationBackend;
+	const options = ["Both", "Warp only", "macOS only", "Back"];
+	const choice = await ctx.ui.select(`Notification backend\nCurrent: ${backendLabel(current)}`, options);
+	if (!choice || choice === "Back") return;
+	const next = readConfig();
+	if (choice === "Both") next.notificationBackend = "both";
+	if (choice === "Warp only") next.notificationBackend = "warp";
+	if (choice === "macOS only") next.notificationBackend = "macos";
+	writeConfig(next);
+	ctx.ui.notify(`Notification backend set to ${choice}`, "success");
 }
 
 async function chooseSound(ctx: ExtensionCommandContext, kind: SoundKind): Promise<void> {
@@ -313,6 +389,7 @@ async function openSettingsMenu(ctx: ExtensionCommandContext): Promise<void> {
 		const effective = effectiveConfig();
 		const choice = await ctx.ui.select(`Warp notification settings\n\n${menuSummary(effective)}`, [
 			`${config.notificationsEnabled ? "Disable" : "Enable"} notifications`,
+			"Choose notification backend…",
 			`${config.soundEnabled ? "Disable" : "Enable"} all sounds`,
 			`${config.completeSoundEnabled ? "Disable" : "Enable"} completion sound`,
 			`${config.attentionSoundEnabled ? "Disable" : "Enable"} attention sound`,
@@ -327,6 +404,10 @@ async function openSettingsMenu(ctx: ExtensionCommandContext): Promise<void> {
 
 		if (!choice || choice === "Close") return;
 
+		if (choice === "Choose notification backend…") {
+			await chooseBackend(ctx);
+			continue;
+		}
 		if (choice === "Choose completion sound…") {
 			await chooseSound(ctx, "complete");
 			continue;
