@@ -520,7 +520,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("agents-dashboard", {
 		description:
-			"Show a persistent project-local agent-team grid dashboard. Optional: /agents-dashboard <team>, refresh, or clear.",
+			"Show a persistent project-local agent-team grid dashboard. Optional: /agents-dashboard <team>, refresh, hide, or clear.",
 		handler: async (args, ctx) => {
 			const requested = args.trim();
 			if (requested === "clear" || requested === "hide") {
