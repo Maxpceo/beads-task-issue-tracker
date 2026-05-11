@@ -185,17 +185,38 @@ async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope)
 }
 
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<WorkflowState> {
-	const scope = {
-		branch: state.branch ?? (await detectBranch(pi)),
-		worktreePath: state.worktreePath ?? (await detectWorktreePath(pi)),
-		startCommit: state.startCommit ?? (await detectStartCommit(pi)),
+	const currentScope = {
+		branch: await detectBranch(pi),
+		worktreePath: await detectWorktreePath(pi),
+		startCommit: await detectStartCommit(pi),
 	};
-	const activeBead = state.activeBead ?? (state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined);
-	if (!activeBead) return state;
-	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) return state;
+	const scope = {
+		branch: currentScope.branch ?? state.branch,
+		worktreePath: currentScope.worktreePath ?? state.worktreePath,
+		startCommit: currentScope.startCommit ?? state.startCommit,
+	};
+
+	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
+		const hasOwnership = hasSessionOwnershipEvidence(await readBdComments(pi, state.activeBead), scope);
+		if (!hasOwnership) {
+			return {
+				...state,
+				activeBead: undefined,
+				state: "idle",
+				branch: currentScope.branch ?? state.branch,
+				worktreePath: currentScope.worktreePath,
+				startCommit: currentScope.startCommit,
+				endCommit: undefined,
+			};
+		}
+		return state;
+	}
+
+	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
+	if (!activeBead) return { ...state, branch: currentScope.branch ?? state.branch };
 	const inferred = stateFromBdStatus(await readBdStatus(pi, activeBead));
 	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return state;
-	return { ...state, activeBead, state: inferred };
+	return { ...state, activeBead, state: inferred, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {

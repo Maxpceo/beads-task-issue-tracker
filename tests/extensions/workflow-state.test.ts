@@ -7,6 +7,7 @@ function makeHarness(options: {
   worktreePath: string
   startCommit: string
   issues: Record<string, { status: string; comments: string }>
+  entries?: Array<{ type: string; customType?: string; data?: unknown }>
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
@@ -43,7 +44,7 @@ function makeHarness(options: {
   }
 
   const ctx: any = {
-    sessionManager: { getEntries: () => [] },
+    sessionManager: { getEntries: () => options.entries ?? [] },
     ui: { notify: () => undefined, setStatus: () => undefined, theme: { fg: (_style: string, value: string) => value } },
   }
 
@@ -62,6 +63,30 @@ describe('Pi workflow-state session-scoped recovery', () => {
         'bead-tf9p': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: old-branch\nSTART_COMMIT: old-head' },
         'bead-15tu': { status: 'inreview', comments: 'CODE REVIEW: pending from another session' },
       },
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+  })
+
+  it('clears stale restored active bead when ownership does not match current worktree', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/main',
+      startCommit: 'current-head',
+      issues: {
+        'bead-tf9p': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/old\nWORKTREE: /repo/old\nSTART_COMMIT: old-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { state: 'inreview', activeBead: 'bead-tf9p', branch: 'main', planMode: 'off', mergeSlotHeld: false, updatedAt: new Date().toISOString() },
+        },
+      ],
     })
 
     await eventHandlers.get('session_start')?.({}, ctx)
