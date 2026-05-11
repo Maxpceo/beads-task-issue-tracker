@@ -45,6 +45,7 @@ export interface DashboardTheme {
 }
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const CARD_PADDING_X = 2;
 
 function visibleLength(text: string): number {
 	return text.replace(ANSI_RE, "").length;
@@ -155,22 +156,27 @@ function elapsedText(card: AgentDashboardCard, now: number): string {
 
 function renderCard(card: AgentDashboardCard, width: number, theme: DashboardTheme, now: number): string[] {
 	const inner = Math.max(8, width - 2);
+	const contentWidth = Math.max(4, inner - CARD_PADDING_X * 2);
 	const color = statusColor(card.status);
 	const bold = theme.bold ?? ((text: string) => text);
-	const title = `${theme.fg(color, statusIcon(card.status))} ${theme.fg("toolTitle", bold(card.agent))} ${theme.fg("muted", `[${card.status}]`)}`;
+	const borderColor = card.status === "idle" ? "borderMuted" : color;
+	const border = (text: string) => theme.fg(borderColor, text);
+	const title = `${theme.fg(color, statusIcon(card.status))} ${theme.fg(color, bold(card.agent))} ${theme.fg("muted", `[${card.status}]`)}`;
 	const source = card.source !== "unknown" ? `src:${card.source}` : "src:?";
 	const task = card.task || card.description || "No active task";
 	const stats = [elapsedText(card, now), `tools:${card.toolCount}`, card.contextText].filter(Boolean).join(" · ");
 	const preview = card.errorMessage ? `Error: ${card.errorMessage}` : card.lastPreview || "Last activity: idle";
 	const previewColor = card.errorMessage ? "error" : "dim";
+	const row = (content: string) =>
+		`${border("│")}${" ".repeat(CARD_PADDING_X)}${padRight(content, contentWidth)}${" ".repeat(CARD_PADDING_X)}${border("│")}`;
 	return [
-		`┌${"─".repeat(inner)}┐`,
-		`│${padRight(title, inner)}│`,
-		`│${padRight(theme.fg("dim", source), inner)}│`,
-		`│${padRight(theme.fg("muted", truncate(task.replace(/\s+/g, " "), inner)), inner)}│`,
-		`│${padRight(theme.fg("dim", stats), inner)}│`,
-		`│${padRight(theme.fg(previewColor, truncate(preview.replace(/\s+/g, " "), inner)), inner)}│`,
-		`└${"─".repeat(inner)}┘`,
+		border(`┌${"─".repeat(inner)}┐`),
+		row(title),
+		row(theme.fg("dim", source)),
+		row(theme.fg("muted", truncate(task.replace(/\s+/g, " "), contentWidth))),
+		row(theme.fg("dim", stats)),
+		row(theme.fg(previewColor, truncate(preview.replace(/\s+/g, " "), contentWidth))),
+		border(`└${"─".repeat(inner)}┘`),
 	];
 }
 

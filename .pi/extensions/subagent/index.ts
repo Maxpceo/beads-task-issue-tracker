@@ -69,6 +69,16 @@ function formatUsageStats(
 	return parts.join(" ");
 }
 
+function formatDashboardUsage(usage: UsageStats): string | undefined {
+	const parts: string[] = [];
+	if (usage.contextTokens > 0) parts.push(`ctx:${formatTokens(usage.contextTokens)}`);
+	if (usage.input > 0) parts.push(`in:${formatTokens(usage.input)}`);
+	if (usage.output > 0) parts.push(`out:${formatTokens(usage.output)}`);
+	if (usage.cacheRead > 0) parts.push(`cache:${formatTokens(usage.cacheRead)}`);
+	if (usage.cacheWrite > 0) parts.push(`write:${formatTokens(usage.cacheWrite)}`);
+	return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
 function formatToolCall(
 	toolName: string,
 	args: Record<string, unknown>,
@@ -215,7 +225,7 @@ function resultToDashboardCard(result: SingleResult): AgentDashboardCard {
 		startedAt: result.startedAt,
 		completedAt: result.completedAt,
 		toolCount: getToolCallCount(result.messages),
-		contextText: result.usage.contextTokens > 0 ? `ctx:${formatTokens(result.usage.contextTokens)}` : undefined,
+		contextText: formatDashboardUsage(result.usage),
 		lastPreview: getLastPreview(result.messages),
 		errorMessage: errorMessage || undefined,
 	};

@@ -51,9 +51,18 @@ const teams: TestAgentTeamConfigResult = {
   warnings: [],
 }
 
-const theme = {
-  fg: (_color: string, text: string) => text,
-  bold: (text: string) => text,
+function createTheme() {
+  const colors: string[] = []
+  return {
+    colors,
+    theme: {
+      fg: (color: string, text: string) => {
+        colors.push(color)
+        return text
+      },
+      bold: (text: string) => text,
+    },
+  }
 }
 
 describe('subagent dashboard helpers', () => {
@@ -85,7 +94,7 @@ describe('subagent dashboard helpers', () => {
       task: 'Implement a persistent visual dashboard with a very long task description',
       startedAt: 1_000,
       toolCount: 2,
-      contextText: 'ctx:12k',
+      contextText: 'ctx:12k in:3k out:900',
       lastPreview: 'reading .pi/extensions/subagent/index.ts',
     })
     upsertDashboardCard(state, {
@@ -99,12 +108,19 @@ describe('subagent dashboard helpers', () => {
       errorMessage: 'Unknown agent: missing-agent',
     })
 
+    const { colors, theme } = createTheme()
     const lines = renderDashboardLines(state, 52, theme, 4_000)
+    const supervisorLine = lines.find((line) => line.includes('supervisor'))
 
     expect(lines.join('\n')).toContain('supervisor')
     expect(lines.join('\n')).toContain('[running]')
+    expect(lines.join('\n')).toContain('ctx:12k in:3k out:900')
     expect(lines.join('\n')).toContain('missing-agent')
     expect(lines.join('\n')).toContain('Unknown agent')
+    expect(supervisorLine?.startsWith('│  ')).toBe(true)
+    expect(colors).toContain('warning')
+    expect(colors).toContain('error')
+    expect(colors).toContain('borderMuted')
     expect(lines.every((line) => line.length <= 52)).toBe(true)
   })
 })
