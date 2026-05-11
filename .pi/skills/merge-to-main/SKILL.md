@@ -33,11 +33,15 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
    ```
    If any error happens after acquire, release merge-slot before reporting.
 7. Create PR with `gh pr create`.
-8. Dispatch docs agent if user-facing changes require docs:
+8. Dispatch docs agent for documentation coverage before merge:
    ```text
    dispatch_docs_agent(beadId=<ID>)
    ```
-   Documentation can be skipped only for internal/config/test-only changes or explicit user request.
+   The docs agent must inspect the branch diff and handle CHANGELOG/README/docs coverage during this merge workflow, not during `land`:
+   - for code changes, update `CHANGELOG.md` under `[Unreleased]` or record an explicit skip reason;
+   - for user-facing behavior/setup/API changes, update `README.md` or `docs/` as needed;
+   - CHANGELOG/README entries must be written in English.
+   Documentation can be skipped only for internal/config/test-only changes, workflow-only changes, or explicit user request, and the skip reason must be recorded in the merge report.
 9. Wait for CI when checks exist. Do not merge with failing checks.
 10. Merge PR via merge-slot. If acquire fails, stop before `gh pr merge`:
     ```bash
@@ -93,7 +97,7 @@ Final report format:
 | Commit | `<sha>` or not required |
 | Push | OK / not required |
 | PR | `#N` URL |
-| Docs | updated / skipped with reason |
+| Docs | CHANGELOG/README/docs updated or skipped with explicit reason |
 | CI | PASS / skipped with reason |
 | Merge | merge commit / evidence |
 | Branch | `main`, `<sha>` |
@@ -115,4 +119,5 @@ The last line must be exactly one of these forms:
 - Per-task bead close can happen before merge in multi-task sessions; session-final completion requires merged PR/origin-main ancestry evidence in this workflow.
 - Do not report merge completion until checkout/pull main and final verdict checks have run.
 - `land` remains optional/manual; never require it as a pre-step before merge-to-main.
+- CHANGELOG/README/docs coverage belongs to this merge-to-main documentation phase and the documentation expert, not to `land`.
 - Final report is a two-column table plus the mandatory final verdict line.
