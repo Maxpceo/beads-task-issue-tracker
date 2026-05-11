@@ -41,6 +41,34 @@ function getTextContent(message: AssistantMessage): string {
 		.join("\n");
 }
 
+function normalizePlanModeActivationText(text: string): string {
+	return text
+		.toLocaleLowerCase("ru-RU")
+		.replace(/ё/g, "е")
+		.replace(/[.!…]+$/u, "")
+		.replace(/\s+/gu, " ")
+		.trim();
+}
+
+function isNaturalLanguagePlanModeActivation(text: string): boolean {
+	if (/[?？]/u.test(text)) return false;
+
+	const normalized = normalizePlanModeActivationText(text);
+	if (!normalized) return false;
+
+	const russianActivationPatterns = [
+		/^(?:пожалуйста\s+)?(?:перейди|переведи|введи|запусти)(?:\s+(?:меня|нас|сессию))?\s+в\s+(?:строгий\s+)?режим\s+планирования$/u,
+		/^(?:пожалуйста\s+)?(?:включи|активируй|запусти)\s+(?:строгий\s+)?режим\s+планирования$/u,
+		/^(?:пожалуйста\s+)?(?:сделай|работай)(?:\s+(?:это|задачу))?\s+в\s+режиме\s+планирования$/u,
+	];
+	const englishActivationPatterns = [
+		/^(?:please\s+)?(?:enter|switch(?:\s+me|\s+us|\s+the\s+session)?\s+to|go\s+to|start|enable|activate)\s+(?:strict\s+)?plan\s+mode$/u,
+		/^(?:please\s+)?put(?:\s+(?:me|us|the\s+session))?\s+(?:into|in)\s+(?:strict\s+)?plan\s+mode$/u,
+	];
+
+	return [...russianActivationPatterns, ...englishActivationPatterns].some((pattern) => pattern.test(normalized));
+}
+
 export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let autoExecuteEnabled = false;
@@ -164,6 +192,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.registerShortcut(Key.ctrlAlt("p"), {
 		description: "Toggle plan mode",
 		handler: async (ctx) => togglePlanMode(ctx),
+	});
+
+	// Natural-language activation for clear enter-plan-mode requests.
+	pi.on("input", async (event, ctx) => {
+		if (event.source === "extension") return;
+		if (!isNaturalLanguagePlanModeActivation(event.text)) return;
+
+		enterPlanMode(ctx, false);
+		return { action: "handled" };
 	});
 
 	// Block destructive bash commands in plan mode

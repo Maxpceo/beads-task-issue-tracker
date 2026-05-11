@@ -4,7 +4,7 @@ Project-local Pi plan mode adapted for the beads workflow.
 
 ## Features
 
-- Read-only exploration mode via `/plan`.
+- Read-only exploration mode via `/plan` or clear natural-language activation phrases.
 - Auto-execute mode via `/plan-auto` with a required plan quality gate.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands.
@@ -22,6 +22,15 @@ Project-local Pi plan mode adapted for the beads workflow.
 - `/plan-cancel` — cancel plan mode and restore normal tools.
 - `/todos` — show current plan progress.
 - `Ctrl+Alt+P` — toggle strict plan mode.
+
+## Natural-language activation
+
+Clear requests to enter plan mode are handled like `/plan` and activate strict plan mode without sending the phrase to the agent. Supported phrase families include:
+
+- Russian: `перейди в режим планирования`, `введи в режим планирования`, `переведи меня в режим планирования`, `включи режим планирования`, `активируй режим планирования`, `сделай в режиме планирования`.
+- English: `enter plan mode`, `switch to plan mode`, `go to plan mode`, `enable plan mode`, `activate plan mode`, `put me into plan mode`.
+
+Informational or ambiguous prompts are not handled and continue as normal user input, for example: `что такое режим планирования?`, `объясни режим планирования`, `what is plan mode?`.
 
 ## Auto-execute quality gate
 
@@ -53,7 +62,7 @@ If any section is missing, auto-execute is blocked and the session remains in pl
 
 This extension owns real plan-mode behavior: tool access, read-only command gates, plan extraction, and plan execution. It also emits `workflow-state:update` events so `.pi/extensions/workflow-state` keeps the footer/workflow `plan` field synchronized:
 
-- `/plan` -> `plan=strict`, `state=planning`
+- `/plan` or a supported natural-language activation phrase -> `plan=strict`, `state=planning`
 - `/plan-auto` -> `plan=auto`, `state=planning`
 - `/plan-cancel` -> `plan=off` and `state=idle` when the current workflow state is still `planning`
 - executing an approved plan -> `plan=off`, `state=implementing` when the current workflow state is still `planning`
