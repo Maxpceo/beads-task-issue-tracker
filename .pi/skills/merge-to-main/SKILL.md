@@ -62,6 +62,13 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
 
 The final line of the merge report must answer whether the current Pi session can be closed. Scope the verdict to artifacts created or claimed by this session only; ignore unrelated worktrees, branches, and beads from parallel sessions.
 
+Classify final-state evidence before writing the verdict:
+
+- session-scoped blockers: artifacts created, claimed, or intentionally reused by this merge session that still need cleanup or verification;
+- unrelated parallel checkout state: branches, dirty files, worktrees, or beads that belong to another session/agent and appeared independently of this merge after the session commits were landed.
+
+Unrelated parallel checkout state can be mentioned in the report as background context, but it must not change a successful session-scoped verdict into `⚠️ Сессию НЕ закрывать`. Keep the verdict strict for this session's artifacts only. If a dirty file, non-main branch, open bead, retained worktree, or missing branch cleanup belongs to this merge session, it remains a blocker.
+
 Track session artifacts during the workflow:
 
 - session beads: beads claimed or created by this Pi session;
@@ -83,8 +90,8 @@ echo "=== merge-slot ==="; bd show beads-task-issue-tracker-merge-slot 2>&1 | gr
 
 Conditions for `session can close`:
 
-1. Current branch is `main`.
-2. Working tree is clean.
+1. Current branch is `main`, unless the checkout has already been reused by unrelated parallel activity after this session's merge completed; in that case, document the unrelated branch and keep evaluating the session artifacts below.
+2. Working tree is clean for this session's files; unrelated dirty files from parallel activity are background context, not a session blocker.
 3. Merge-slot is not held by this session.
 4. Session commits are ancestors of `origin/main`.
 5. Session branches and worktrees were removed or explicitly documented as intentionally retained.
