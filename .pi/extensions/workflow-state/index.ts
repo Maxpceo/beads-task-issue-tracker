@@ -1,4 +1,19 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+interface ExtensionAPI {
+	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
+	appendEntry(type: string, data: unknown): void;
+	events: { on(name: string, handler: (event: WorkflowStateUpdateEvent) => void): void };
+	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
+	registerCommand(name: string, config: { description: string; handler: (args: string, ctx: ExtensionContext) => unknown }): void;
+}
+
+interface ExtensionContext {
+	sessionManager: { getEntries(): Array<{ type: string; customType?: string; data?: unknown }> };
+	ui: {
+		notify(message: string, level?: string): void;
+		setStatus(key: string, value: string | undefined): void;
+		theme: { fg(style: string, value: string): string };
+	};
+}
 
 const WORKFLOW_STATES = [
 	"idle",
@@ -88,6 +103,12 @@ async function detectStartCommit(pi: ExtensionAPI): Promise<string | undefined> 
 	return stdout.trim() || undefined;
 }
 
+async function detectWorktreePath(pi: ExtensionAPI): Promise<string | undefined> {
+	const { stdout, code } = await pi.exec("git", ["rev-parse", "--show-toplevel"]);
+	if (code !== 0) return undefined;
+	return stdout.trim() || undefined;
+}
+
 function isTerminalWorkflowState(state: WorkflowStateName): boolean {
 	return state === "closed" || state === "blocked" || state === "deferred" || state === "merged";
 }
@@ -114,14 +135,56 @@ async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | 
 	}
 }
 
-async function findRecoverableActiveBead(pi: ExtensionAPI): Promise<string | undefined> {
+interface RecoveryScope {
+	branch?: string;
+	worktreePath?: string;
+	startCommit?: string;
+}
+
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasExactField(text: string, names: string[], value?: string): boolean {
+	if (!value) return false;
+	const escaped = escapeRegExp(value);
+	return names.some((name) => new RegExp(`(^|\\n)\\s*${name}\\s*[:=]\\s*${escaped}(\\s|$)`, "im").test(text));
+}
+
+export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchMatches = hasExactField(commentsText, ["BRANCH", "Branch", "branch"], scope.branch);
+	const worktreeMatches = hasExactField(commentsText, ["WORKTREE", "Worktree", "worktree", "worktreePath"], scope.worktreePath);
+	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
+
+	// A branch/worktree match is explicit ownership.  A start commit match is
+	// accepted only when the comment is a Pi workflow comment, avoiding broad
+	// recovery of arbitrary global bd statuses.
+	return branchMatches || worktreeMatches || (startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
+}
+
+function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
+	return Boolean(
+		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
+			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit) ||
+			(state.branch && scope.branch && state.branch === scope.branch && state.startCommit),
+	);
+}
+
+async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string> {
+	const { stdout, code } = await pi.exec("bd", ["comments", beadId]);
+	return code === 0 ? stdout : "";
+}
+
+async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope): Promise<string | undefined> {
 	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
 		const { stdout, code } = await pi.exec("bd", ["list", `--status=${status}`, "--json"]);
 		if (code !== 0) continue;
 		try {
 			const issues = JSON.parse(stdout) as Array<{ id?: string }>;
-			const bead = issues.find((issue) => issue.id);
-			if (bead?.id) return bead.id;
+			for (const issue of issues) {
+				if (!issue.id) continue;
+				if (hasSessionOwnershipEvidence(await readBdComments(pi, issue.id), scope)) return issue.id;
+			}
 		} catch {
 			continue;
 		}
@@ -130,12 +193,38 @@ async function findRecoverableActiveBead(pi: ExtensionAPI): Promise<string | und
 }
 
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<WorkflowState> {
-	const activeBead = state.activeBead ?? (state.state === "idle" ? await findRecoverableActiveBead(pi) : undefined);
-	if (!activeBead) return state;
-	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) return state;
+	const currentScope = {
+		branch: await detectBranch(pi),
+		worktreePath: await detectWorktreePath(pi),
+		startCommit: await detectStartCommit(pi),
+	};
+	const scope = {
+		branch: currentScope.branch ?? state.branch,
+		worktreePath: currentScope.worktreePath ?? state.worktreePath,
+		startCommit: currentScope.startCommit ?? state.startCommit,
+	};
+
+	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
+		const hasOwnership = hasSessionOwnershipEvidence(await readBdComments(pi, state.activeBead), scope) || workflowStateHasCurrentScopeEvidence(state, scope);
+		if (!hasOwnership) {
+			return {
+				...state,
+				activeBead: undefined,
+				state: "idle",
+				branch: currentScope.branch ?? state.branch,
+				worktreePath: currentScope.worktreePath,
+				startCommit: currentScope.startCommit,
+				endCommit: undefined,
+			};
+		}
+		return state;
+	}
+
+	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
+	if (!activeBead) return { ...state, branch: currentScope.branch ?? state.branch };
 	const inferred = stateFromBdStatus(await readBdStatus(pi, activeBead));
 	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return state;
-	return { ...state, activeBead, state: inferred };
+	return { ...state, activeBead, state: inferred, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
