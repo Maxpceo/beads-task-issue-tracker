@@ -95,6 +95,16 @@ bd dolt push          # Push bd/Dolt state when needed
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+## Permissions and Confirmation
+
+Safe/read-only investigation does not need confirmation: reading files, searching, inspecting git/bd state, and running non-mutating checks. Mutating workflow steps that are already part of an approved bead plan or explicit skill (`land`, `merge-to-main`, `review-bead`) may proceed without intermediate prompts.
+
+Ask before actions that are destructive, hard to reverse, or outside the approved plan, including force-push, reset, deleting worktrees/branches with uncommitted work, closing or stealing someone else’s bead, broad scope expansion, or modifying protected/secrets files.
+
+Do not modify `CLAUDE.md`, `.claude/*`, or Claude-specific workflow files unless the user explicitly requests Claude Code workflow changes. For Pi workflow changes, update `AGENTS.md` and `.pi/*`.
+
+`.pi/extensions/beads-policy` and related Pi policy extensions are authoritative when they block a tool call. Do not bypass policy blocks unless the user explicitly approves a documented override.
+
 <!-- BEGIN BEADS INTEGRATION -->
 ## Issue Tracking with bd (beads)
 
