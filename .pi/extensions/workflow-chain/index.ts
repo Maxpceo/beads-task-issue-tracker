@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+import { renderWorkflowDashboard, truncateWorkflowPreview, type WorkflowDashboardModel, type WorkflowDashboardStatus, type WorkflowDashboardStep } from "./dashboard";
+
 interface ExecResult { stdout: string; stderr: string; code: number }
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<ExecResult>;
@@ -314,6 +316,105 @@ export function typedWorkflowBlockReason(chain: WorkflowChain, state: WorkflowSn
 	return `Blocked before mutation: workflow-critical typed step ${step.operation} is handoff-only in workflow-chain v1. Use ${step.handoff ?? step.operation} instead.`;
 }
 
+function requiredStateText(step: WorkflowChainStep): string | undefined {
+	return Array.isArray(step.requiredState) ? step.requiredState.join("|") : step.requiredState;
+}
+
+function stepOperationText(step: WorkflowChainStep): string {
+	return step.operation ?? step.message ?? `${Math.min(step.ms ?? 0, MAX_WAIT_MS)}ms`;
+}
+
+function stepPolicy(step: WorkflowChainStep): string {
+	return step.type === "typedWorkflow" ? "blocked: typed handoff only" : "safe: no bd mutation";
+}
+
+function chainContext(state: WorkflowSnapshot): Pick<WorkflowDashboardModel, "state" | "branch" | "activeBead"> {
+	return { state: state.state, branch: state.branch, activeBead: state.activeBead };
+}
+
+function workflowStepToDashboard(step: WorkflowChainStep, index: number, state: WorkflowSnapshot, status: WorkflowDashboardStatus): WorkflowDashboardStep {
+	const required = requiredStateText(step);
+	const guardBlocked = step.requiredState && !stateMatches(state.state, step.requiredState);
+	return {
+		index,
+		id: step.id ?? String(index + 1),
+		title: stepTitle(step, index),
+		type: step.type,
+		status: guardBlocked || step.type === "typedWorkflow" ? "blocked" : status,
+		operation: stepOperationText(step),
+		requiredState: guardBlocked ? `current ${state.state} not in ${required}` : required,
+		policy: stepPolicy(step),
+		handoff: step.handoff,
+		preview: step.message,
+	};
+}
+
+export function buildListDashboard(result: LoadChainsResult, state: WorkflowSnapshot): WorkflowDashboardModel {
+	const status: WorkflowDashboardStatus = result.error ? "error" : result.chains.length ? "info" : "blocked";
+	return {
+		mode: result.error ? "error" : "list",
+		title: "Available workflow chains",
+		source: result.source,
+		...chainContext(state),
+		status,
+		statusText: result.error ? "Config error; safe run is blocked" : `${result.chains.length} chains ready · safe v1 runner`,
+		warnings: [...result.warnings, ...(result.error ? [`Config error: ${result.error}`] : [])],
+		steps: result.chains.map((chain, index) => ({
+			index,
+			id: chain.id,
+			title: chain.title,
+			type: "chain",
+			status: "info",
+			operation: chain.id,
+			policy: chain.steps.some((step) => step.type === "typedWorkflow") ? "contains handoff-only step" : "safe runnable/read-only",
+			preview: chain.description,
+		})),
+		usage: ["/workflow-chain dry-run <chainId> | /workflow-chain run <chainId>", "typedWorkflow stays handoff-only: no agent spawn, no direct typed workflow execution."],
+	};
+}
+
+export function buildDryRunDashboard(chain: WorkflowChain, state: WorkflowSnapshot): WorkflowDashboardModel {
+	const steps = chain.steps.map((step, index) => workflowStepToDashboard(step, index, state, "pending"));
+	return {
+		mode: "dry-run",
+		chainId: chain.id,
+		title: chain.title,
+		description: chain.description,
+		...chainContext(state),
+		status: steps.some((step) => step.status === "blocked") ? "blocked" : "info",
+		statusText: "Dry-run preview · no mutations will be executed",
+		steps,
+		handoff: steps.find((step) => step.status === "blocked")?.handoff,
+		usage: ["Run only safe chains with: /workflow-chain run <chainId>", "Workflow-critical steps must be completed through the dedicated typed skill/tool."],
+	};
+}
+
+function buildRunDashboard(chain: WorkflowChain, state: WorkflowSnapshot, states: StepRunState[], statusText = "Running workflow chain"): WorkflowDashboardModel {
+	const failed = states.find((step) => step.status === "error");
+	const running = states.find((step) => step.status === "running");
+	return {
+		mode: "run",
+		chainId: chain.id,
+		title: chain.title,
+		description: chain.description,
+		...chainContext(state),
+		status: failed ? "error" : running ? "running" : states.every((step) => step.status === "done") ? "done" : "running",
+		statusText,
+		steps: states.map((step) => ({
+			index: step.index,
+			id: step.id,
+			title: step.title,
+			type: step.type,
+			status: step.status,
+			elapsedMs: step.elapsedMs,
+			preview: truncateWorkflowPreview(step.output),
+			error: truncateWorkflowPreview(step.error),
+			policy: step.type === "typedWorkflow" ? "blocked: typed handoff only" : "safe: no bd mutation",
+		})),
+		usage: ["Safe v1 runner: built-in read-only/message/wait steps only."],
+	};
+}
+
 function truncateOutput(value: string): string {
 	const lines = value.split(/\r?\n/).slice(0, MAX_OUTPUT_LINES);
 	let text = lines.join("\n");
@@ -348,14 +449,14 @@ function renderRunStates(states: StepRunState[]): string[] {
 
 async function runSafeChain(pi: ExtensionAPI, chain: WorkflowChain, state: WorkflowSnapshot, ctx: ExtensionContext): Promise<StepRunState[]> {
 	const states = chain.steps.map((step, index): StepRunState => ({ index, id: step.id ?? String(index + 1), title: stepTitle(step, index), type: step.type, status: "pending" }));
-	const update = () => ctx.ui.setWidget?.("workflow-chain", renderRunStates(states));
+	const update = (statusText = "Running workflow chain") => ctx.ui.setWidget?.("workflow-chain", renderWorkflowDashboard(buildRunDashboard(chain, state, states, statusText), 120, ctx.ui.theme));
 	update();
 	for (const [index, step] of chain.steps.entries()) {
 		const current = states[index];
 		if (!current) continue;
 		const started = Date.now();
 		current.status = "running";
-		update();
+		update(`Running step ${index + 1}/${states.length}: ${current.title}`);
 		try {
 			if (step.type === "message") current.output = truncateOutput(step.message ?? "");
 			else if (step.type === "wait") await new Promise((resolve) => setTimeout(resolve, Math.min(Math.max(step.ms ?? 0, 0), MAX_WAIT_MS)));
@@ -366,11 +467,11 @@ async function runSafeChain(pi: ExtensionAPI, chain: WorkflowChain, state: Workf
 			current.status = "error";
 			current.error = truncateOutput((error as Error).message);
 			current.elapsedMs = Date.now() - started;
-			update();
+			update(`Step ${index + 1}/${states.length} failed`);
 			break;
 		}
 		current.elapsedMs = Date.now() - started;
-		update();
+		update(`Completed step ${index + 1}/${states.length}: ${current.title}`);
 	}
 	return states;
 }
@@ -395,6 +496,7 @@ async function handleCommand(pi: ExtensionAPI, args: string, ctx: ExtensionConte
 	const state = await latestWorkflowState(pi, ctx);
 	ctx.ui.setStatus?.("workflow-chain", "chain");
 	if (!action || action === "list") {
+		ctx.ui.setWidget?.("workflow-chain", renderWorkflowDashboard(buildListDashboard(loaded, state), 120, ctx.ui.theme));
 		notify(ctx, renderList(loaded), loaded.error ? "error" : "info");
 		return;
 	}
@@ -407,6 +509,7 @@ async function handleCommand(pi: ExtensionAPI, args: string, ctx: ExtensionConte
 		return;
 	}
 	if (loaded.error) {
+		ctx.ui.setWidget?.("workflow-chain", renderWorkflowDashboard(buildListDashboard(loaded, state), 120, ctx.ui.theme));
 		notify(ctx, `Workflow-chain config error; run blocked. ${loaded.error}`, "error");
 		return;
 	}
@@ -417,12 +520,13 @@ async function handleCommand(pi: ExtensionAPI, args: string, ctx: ExtensionConte
 	}
 	if (action === "dry-run") {
 		const rows = dryRunRows(chain, state);
-		ctx.ui.setWidget?.("workflow-chain", rows);
+		ctx.ui.setWidget?.("workflow-chain", renderWorkflowDashboard(buildDryRunDashboard(chain, state), 120, ctx.ui.theme));
 		notify(ctx, [`Dry-run ${chain.id}: ${chain.title}`, ...rows].join("\n"), "info");
 		return;
 	}
 	const block = typedWorkflowBlockReason(chain, state);
 	if (block) {
+		ctx.ui.setWidget?.("workflow-chain", renderWorkflowDashboard({ ...buildDryRunDashboard(chain, state), mode: "error", status: "blocked", statusText: "Run blocked before mutation", handoff: block }, 120, ctx.ui.theme));
 		notify(ctx, block, "error");
 		return;
 	}

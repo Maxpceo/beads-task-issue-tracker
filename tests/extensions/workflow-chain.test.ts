@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import workflowChainExtension, {
+  buildDryRunDashboard,
+  buildListDashboard,
   dryRunRows,
   loadWorkflowChains,
   parseWorkflowChainsYaml,
@@ -11,6 +13,7 @@ import workflowChainExtension, {
   type WorkflowChain,
   type WorkflowSnapshot,
 } from '../../.pi/extensions/workflow-chain/index'
+import { renderWorkflowDashboard, truncateWorkflowPreview } from '../../.pi/extensions/workflow-chain/dashboard'
 
 function tempProject(): string {
   return mkdtempSync(join(tmpdir(), 'workflow-chain-'))
@@ -131,6 +134,8 @@ describe('workflow-chain command behavior', () => {
     expect(harness.notifications[0]?.message).toContain('Workflow chains')
     expect(harness.notifications[0]?.message).toContain('demo-status')
     expect(harness.notifications[1]?.message).toContain('supervisor-handoff')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('workflow-chain')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('Available workflow chains')
   })
 
   it('dry-run shows step guards, typed operation, and mutation policy without bd mutation', async () => {
@@ -148,6 +153,8 @@ describe('workflow-chain command behavior', () => {
     expect(harness.notifications[0]?.message).toContain('op=dispatch_supervisor')
     expect(harness.notifications[0]?.message).toContain('guard: current implementing not in plan_approved')
     expect(harness.notifications[0]?.message).toContain('blocked: typed handoff only')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('■')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('guard: current implementi')
     expect(harness.execCalls.some((call) => call.command === 'bd')).toBe(false)
   })
 
@@ -180,6 +187,8 @@ describe('workflow-chain command behavior', () => {
     expect(harness.notifications[0]?.level).toBe('error')
     expect(harness.notifications[0]?.message).toContain('Blocked before mutation')
     expect(harness.notifications[0]?.message).toContain('Use dispatch-supervisor')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('Run blocked before mutation')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('Handoff: Blocked before mutation')
     expect(harness.execCalls.some((call) => call.command === 'bd')).toBe(false)
   })
 
@@ -189,7 +198,10 @@ describe('workflow-chain command behavior', () => {
     await harness.commands.get('workflow-chain').handler('run demo-status', harness.ctx)
 
     const widgetSnapshots = Object.values(harness.widgets).flat().join('\n')
+    expect(widgetSnapshots).toContain('workflow-chain')
+    expect(widgetSnapshots).toContain('✓')
     expect(widgetSnapshots).toContain('done')
+    expect(widgetSnapshots).toContain('elapsed:')
     expect(harness.notifications.at(-1)?.level).toBe('success')
     expect(harness.notifications.at(-1)?.message).toContain('Run demo-status: done')
     expect(harness.notifications.at(-1)?.message).toContain('truncated')
@@ -199,5 +211,49 @@ describe('workflow-chain command behavior', () => {
     const chain: WorkflowChain = { id: 'demo', title: 'Demo', steps: [{ type: 'readOnlyBuiltin', operation: 'gitStatus' }] }
 
     expect(dryRunRows(chain, implementingState)[0]).toContain('safe: no bd mutation')
+  })
+
+  it('renders dashboard cards with arrows, status dots, usage, and truncated previews', () => {
+    const chain: WorkflowChain = {
+      id: 'visual',
+      title: 'Visual Chain',
+      description: 'Dashboard preview',
+      steps: [
+        { id: 'safe', type: 'message', title: 'Safe message', message: 'hello' },
+        { id: 'typed', type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredState: 'plan_approved', handoff: 'Use dispatch-supervisor' },
+      ],
+    }
+
+    const lines = renderWorkflowDashboard(buildDryRunDashboard(chain, implementingState), 100).join('\n')
+
+    expect(lines).toContain('workflow-chain')
+    expect(lines).toContain(' → ')
+    expect(lines).toContain('○')
+    expect(lines).toContain('■')
+    expect(lines).toContain('Usage:')
+    expect(lines).toContain('Workflow-critical steps')
+    expect(truncateWorkflowPreview('x'.repeat(80), 20)).toBe(`${'x'.repeat(19)}…`)
+  })
+
+  it('renders malformed config as a friendly dashboard error', async () => {
+    const cwd = tempProject()
+    write(cwd, '.pi/workflow-chains.json', '{ nope')
+    const harness = makeHarness(cwd, [{ type: 'custom', customType: 'workflow-state', data: implementingState }])
+
+    await harness.commands.get('workflow-chain').handler('', harness.ctx)
+
+    const widget = harness.widgets['workflow-chain']?.join('\n') ?? ''
+    expect(widget).toContain('Config error; safe run is blocked')
+    expect(widget).toContain('malformed JSON')
+    expect(harness.notifications[0]?.level).toBe('error')
+  })
+
+  it('builds list dashboard with safety handoff guidance', () => {
+    const model = buildListDashboard(loadWorkflowChains(tempProject()), implementingState)
+    const lines = renderWorkflowDashboard(model, 120).join('\n')
+
+    expect(lines).toContain('safe v1 runner')
+    expect(lines).toContain('typedWorkflow stays handoff-only')
+    expect(lines).toContain('supervisor-handoff')
   })
 })
