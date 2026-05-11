@@ -101,6 +101,26 @@ function findEndCommit(comments: string): string | undefined {
 	return matches.at(-1)?.[1];
 }
 
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasExactField(text: string, names: string[], value?: string): boolean {
+	if (!value) return false;
+	const escaped = escapeRegExp(value);
+	return names.some((name) => new RegExp(`(^|\\n)\\s*${name}\\s*[:=]\\s*${escaped}(\\s|$)`, "im").test(text));
+}
+
+function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; worktreePath?: string; startCommit?: string }): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const branchMatches = hasExactField(comments, branchNames, scope.branch);
+	const worktreeMatches = hasExactField(comments, worktreeNames, scope.worktreePath);
+	const startMatches = hasExactField(comments, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
+	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(comments);
+	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments));
+}
+
 function checksForFiles(files: string[]): string[][] {
 	const checks: string[][] = [];
 	if (files.some((file) => /^(app|tests|i18n)\/|\.(vue|ts)$/.test(file))) {
@@ -226,6 +246,10 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				if (!startCommit) throw new Error("No startCommit provided and no START_COMMIT found in comments.");
 				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
 				const branch = await execRequired(pi, "git", ["branch", "--show-current"]);
+				const worktreePath = await execRequired(pi, "git", ["rev-parse", "--show-toplevel"]);
+				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit })) {
+					throw new Error(`review_bead refused ${params.beadId}: no current-session branch/worktree/start ownership evidence. Run bd comments ${params.beadId} and /workflow-status; use /workflow-reset for stale foreign state or explicitly confirm takeover before reviewing.`);
+				}
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "reviewing", branch, startCommit, endCommit });
 				const changedRaw = await execRequired(pi, "git", ["diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);

@@ -410,8 +410,8 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 	if (!activeBead || TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
 	if (!NON_TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
 	if (targetBead && targetBead === activeBead) return undefined;
-	if (state === "inreview") return `Blocked: active bead ${activeBead} is inreview; next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
-	return `Blocked: active bead ${activeBead} is non-terminal (${state}). Finish it to closed, block/defer it with an explicit reason, or hand it off before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+	if (state === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
+	return `Blocked: active bead ${activeBead} is non-terminal (${state}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
 }
 
 function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -693,10 +693,13 @@ function hasExactField(text: string, names: string[], value?: string): boolean {
 }
 
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
-	const branchMatches = hasExactField(commentsText, ["BRANCH", "Branch", "branch"], scope.branch);
-	const worktreeMatches = hasExactField(commentsText, ["WORKTREE", "Worktree", "worktree", "worktreePath"], scope.worktreePath);
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const branchMatches = hasExactField(commentsText, branchNames, scope.branch);
+	const worktreeMatches = hasExactField(commentsText, worktreeNames, scope.worktreePath);
 	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
-	return branchMatches || worktreeMatches || (startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
+	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(commentsText);
+	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
 }
 
 function currentRecoveryScope(cwd: string): RecoveryScope {
@@ -854,8 +857,7 @@ export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot,
 function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
 	return Boolean(
 		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
-			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit) ||
-			(state.branch && scope.branch && state.branch === scope.branch && state.startCommit),
+			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit),
 	);
 }
 

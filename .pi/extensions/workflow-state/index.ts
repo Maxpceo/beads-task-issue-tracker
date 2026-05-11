@@ -159,21 +159,23 @@ function hasExactField(text: string, names: string[], value?: string): boolean {
 }
 
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
-	const branchMatches = hasExactField(commentsText, ["BRANCH", "Branch", "branch"], scope.branch);
-	const worktreeMatches = hasExactField(commentsText, ["WORKTREE", "Worktree", "worktree", "worktreePath"], scope.worktreePath);
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const branchMatches = hasExactField(commentsText, branchNames, scope.branch);
+	const worktreeMatches = hasExactField(commentsText, worktreeNames, scope.worktreePath);
 	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
+	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(commentsText);
 
-	// A branch/worktree match is explicit ownership.  A start commit match is
-	// accepted only when the comment is a Pi workflow comment, avoiding broad
-	// recovery of arbitrary global bd statuses.
-	return branchMatches || worktreeMatches || (startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
+	// A branch/worktree match is explicit ownership. A start commit match is
+	// accepted only when branch/worktree ownership was not recorded; otherwise a
+	// common base commit could recover a foreign parallel session.
+	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
 	return Boolean(
 		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
-			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit) ||
-			(state.branch && scope.branch && state.branch === scope.branch && state.startCommit),
+			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit),
 	);
 }
 
@@ -199,7 +201,11 @@ async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope)
 	return undefined;
 }
 
-async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<WorkflowState> {
+function staleForeignRecoveryMessage(beadId: string, reason: string): string {
+	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Use /workflow-reset to clear stale local state, or explicitly confirm takeover and run /workflow-set-bead ${beadId} <state> after verifying branch/worktree ownership.`;
+}
+
+async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<{ state: WorkflowState; warning?: string }> {
 	const currentScope = {
 		branch: await detectBranch(pi),
 		worktreePath: await detectWorktreePath(pi),
@@ -213,25 +219,50 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 
 	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
 		const hasOwnership = hasSessionOwnershipEvidence(await readBdComments(pi, state.activeBead), scope) || workflowStateHasCurrentScopeEvidence(state, scope);
+		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
 		if (!hasOwnership) {
 			return {
-				...state,
-				activeBead: undefined,
-				state: "idle",
-				branch: currentScope.branch ?? state.branch,
-				worktreePath: currentScope.worktreePath,
-				startCommit: currentScope.startCommit,
-				endCommit: undefined,
+				state: {
+					...state,
+					activeBead: undefined,
+					state: "idle",
+					branch: currentScope.branch ?? state.branch,
+					worktreePath: currentScope.worktreePath,
+					startCommit: currentScope.startCommit,
+					endCommit: undefined,
+				},
+				warning: staleForeignRecoveryMessage(state.activeBead, "stale or foreign for this branch/worktree/session"),
 			};
 		}
-		return reconcileStateWithBdStatus(state, await readBdStatus(pi, state.activeBead));
+		if (!bdState) {
+			return {
+				state: {
+					...state,
+					activeBead: undefined,
+					state: "idle",
+					branch: currentScope.branch ?? state.branch,
+					worktreePath: currentScope.worktreePath,
+					startCommit: currentScope.startCommit,
+					endCommit: undefined,
+				},
+				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a non-terminal bd status"),
+			};
+		}
+		const bdInProgressMatchesLocalPreImplementation = bdState === "implementing" && ["claimed", "planning", "plan_approved"].includes(state.state);
+		if (bdState !== state.state && !bdInProgressMatchesLocalPreImplementation) {
+			return {
+				state: { ...state, state: bdState, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit },
+				warning: `Workflow state for ${state.activeBead} reconciled from ${state.state} to bd status ${bdState}; not launching review from stale local state.`,
+			};
+		}
+		return { state };
 	}
 
 	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
-	if (!activeBead) return { ...state, branch: currentScope.branch ?? state.branch };
+	if (!activeBead) return { state: { ...state, branch: currentScope.branch ?? state.branch } };
 	const inferred = stateFromBdStatus(await readBdStatus(pi, activeBead));
-	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return state;
-	return { ...state, activeBead, state: inferred, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
+	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return { state };
+	return { state: { ...state, activeBead, state: inferred, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
@@ -354,6 +385,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					activeBead: bead,
 					state: "claimed",
 					branch: await detectBranch(pi),
+					worktreePath: await detectWorktreePath(pi),
 					startCommit: await detectStartCommit(pi),
 				},
 				ctx,
@@ -460,12 +492,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : cloneState(DEFAULT_STATE);
 		workflowState.branch = workflowState.branch ?? (await detectBranch(pi));
 		const reconciled = await reconcileActiveBeadState(pi, workflowState);
-		if (reconciled.state !== workflowState.state) {
-			workflowState = reconciled;
+		if (reconciled.state.state !== workflowState.state || reconciled.state.activeBead !== workflowState.activeBead) {
+			workflowState = reconciled.state;
 			persist(ctx);
 		} else {
+			workflowState = reconciled.state;
 			updateFooter(ctx, workflowState);
 		}
+		if (reconciled.warning) ctx.ui.notify(reconciled.warning, "warning");
 	});
 
 	pi.on("before_agent_start", async () => {

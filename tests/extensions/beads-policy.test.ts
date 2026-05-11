@@ -82,6 +82,8 @@ describe('Pi active bead lifecycle policy', () => {
     })
 
     expect(reason).toContain('review-bead / review_bead')
+    expect(reason).toContain('confirming current-session branch/worktree ownership')
+    expect(reason).toContain('/workflow-reset')
     expect(reason).toContain('bead-a')
   })
 

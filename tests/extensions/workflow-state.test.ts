@@ -12,6 +12,7 @@ function makeHarness(options: {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
   const appended: Array<{ type: string; data: unknown }> = []
+  const notifications: Array<{ message: string; level?: string }> = []
 
   const pi: any = {
     exec: async (command: string, args: string[]) => {
@@ -45,12 +46,12 @@ function makeHarness(options: {
 
   const ctx: any = {
     sessionManager: { getEntries: () => options.entries ?? [] },
-    ui: { notify: () => undefined, setStatus: () => undefined, theme: { fg: (_style: string, value: string) => value } },
+    ui: { notify: (message: string, level?: string) => notifications.push({ message, level }), setStatus: () => undefined, theme: { fg: (_style: string, value: string) => value } },
   }
 
   workflowStateExtension(pi)
 
-  return { eventHandlers, ctx, appended }
+  return { eventHandlers, ctx, appended, notifications }
 }
 
 describe('Pi workflow-state session-scoped recovery', () => {
@@ -73,7 +74,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
   })
 
   it('clears stale restored active bead when ownership does not match current worktree', async () => {
-    const { eventHandlers, ctx } = makeHarness({
+    const { eventHandlers, ctx, notifications } = makeHarness({
       branch: 'main',
       worktreePath: '/repo/main',
       startCommit: 'current-head',
@@ -94,6 +95,8 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
+    expect(notifications.at(-1)?.message).toContain('stale or foreign')
+    expect(notifications.at(-1)?.message).toContain('/workflow-reset')
   })
 
   it('keeps restored active bead when session state matches current worktree even without comments', async () => {
@@ -129,7 +132,6 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bead=bead-current')
   })
 
-
   it('reconciles restored active bead with bd inreview status for footer context', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',
@@ -162,6 +164,40 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('state=inreview')
     expect(context.message.content).toContain('bead=bead-current')
     expect(context.message.content).not.toContain('state=implementing')
+  })
+
+  it('reconciles a same-session inreview workflow state when bd status moved back to in_progress', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': { status: 'in_progress', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'inreview',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=implementing')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(notifications.at(-1)?.message).toContain('not launching review from stale local state')
   })
 
   it('does not let bd in_progress clobber restored local planning state', async () => {
