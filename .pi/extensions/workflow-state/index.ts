@@ -7,6 +7,7 @@ interface ExtensionAPI {
 }
 
 interface ExtensionContext {
+	cwd?: string;
 	sessionManager: {
 		getEntries(): Array<{ type: string; customType?: string; data?: unknown }>;
 		getSessionId?: () => string | undefined;
@@ -114,20 +115,24 @@ function hasCurrentSessionOwnership(state: WorkflowState, ctx?: ExtensionContext
 	return Boolean(key && state.sessionKey === key);
 }
 
-async function detectBranch(pi: ExtensionAPI): Promise<string | undefined> {
-	const { stdout, code } = await pi.exec("git", ["branch", "--show-current"]);
+function gitArgs(cwd: string | undefined, args: string[]): string[] {
+	return cwd ? ["-C", cwd, ...args] : args;
+}
+
+async function detectBranch(pi: ExtensionAPI, cwd?: string): Promise<string | undefined> {
+	const { stdout, code } = await pi.exec("git", gitArgs(cwd, ["branch", "--show-current"]));
 	if (code !== 0) return undefined;
 	return stdout.trim() || undefined;
 }
 
-async function detectStartCommit(pi: ExtensionAPI): Promise<string | undefined> {
-	const { stdout, code } = await pi.exec("git", ["rev-parse", "HEAD"]);
+async function detectStartCommit(pi: ExtensionAPI, cwd?: string): Promise<string | undefined> {
+	const { stdout, code } = await pi.exec("git", gitArgs(cwd, ["rev-parse", "HEAD"]));
 	if (code !== 0) return undefined;
 	return stdout.trim() || undefined;
 }
 
-async function detectWorktreePath(pi: ExtensionAPI): Promise<string | undefined> {
-	const { stdout, code } = await pi.exec("git", ["rev-parse", "--show-toplevel"]);
+async function detectWorktreePath(pi: ExtensionAPI, cwd?: string): Promise<string | undefined> {
+	const { stdout, code } = await pi.exec("git", gitArgs(cwd, ["rev-parse", "--show-toplevel"]));
 	if (code !== 0) return undefined;
 	return stdout.trim() || undefined;
 }
@@ -261,10 +266,11 @@ function staleForeignRecoveryMessage(beadId: string, reason: string): string {
 }
 
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
+	const gitCwd = ctx?.cwd;
 	const currentScope = {
-		branch: await detectBranch(pi),
-		worktreePath: await detectWorktreePath(pi),
-		startCommit: await detectStartCommit(pi),
+		branch: await detectBranch(pi, gitCwd),
+		worktreePath: await detectWorktreePath(pi, gitCwd),
+		startCommit: await detectStartCommit(pi, gitCwd),
 	};
 	const scope = {
 		branch: currentScope.branch ?? state.branch,
@@ -335,7 +341,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 	}
 
 	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
-	if (!activeBead) return { state: { ...state, branch: currentScope.branch ?? state.branch } };
+	if (!activeBead) return { state: { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
 	const inferred = stateFromBdStatus(await readBdStatus(pi, activeBead));
 	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return { state };
 	return { state: { ...state, activeBead, state: inferred, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
@@ -431,7 +437,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	pi.registerCommand("workflow-reset", {
 		description: "Reset Pi workflow state to idle",
 		handler: async (_args, ctx) => {
-			workflowState = { ...cloneState(DEFAULT_STATE), branch: await detectBranch(pi), updatedAt: new Date().toISOString() };
+			workflowState = { ...cloneState(DEFAULT_STATE), branch: await detectBranch(pi, ctx.cwd), worktreePath: await detectWorktreePath(pi, ctx.cwd), startCommit: await detectStartCommit(pi, ctx.cwd), updatedAt: new Date().toISOString() };
 			persist(ctx);
 			ctx.ui.notify("Workflow state reset to idle", "info");
 		},
@@ -450,9 +456,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				{
 					activeBead: bead,
 					state: nextState,
-					branch: workflowState.branch ?? (await detectBranch(pi)),
-					worktreePath: workflowState.worktreePath ?? (await detectWorktreePath(pi)),
-					startCommit: workflowState.startCommit ?? (await detectStartCommit(pi)),
+					branch: workflowState.branch ?? (await detectBranch(pi, ctx.cwd)),
+					worktreePath: workflowState.worktreePath ?? (await detectWorktreePath(pi, ctx.cwd)),
+					startCommit: workflowState.startCommit ?? (await detectStartCommit(pi, ctx.cwd)),
 					sessionKey: currentSessionKey(ctx),
 				},
 				ctx,
@@ -486,9 +492,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				{
 					activeBead: bead,
 					state: "claimed",
-					branch: await detectBranch(pi),
-					worktreePath: await detectWorktreePath(pi),
-					startCommit: await detectStartCommit(pi),
+					branch: await detectBranch(pi, ctx.cwd),
+					worktreePath: await detectWorktreePath(pi, ctx.cwd),
+					startCommit: await detectStartCommit(pi, ctx.cwd),
 					sessionKey: currentSessionKey(ctx),
 				},
 				ctx,
@@ -600,7 +606,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			.pop() as { data?: WorkflowState } | undefined;
 
 		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : cloneState(DEFAULT_STATE);
-		workflowState.branch = workflowState.branch ?? (await detectBranch(pi));
+		workflowState.branch = workflowState.branch ?? (await detectBranch(pi, ctx.cwd));
 		await ensureReconciled(ctx);
 	});
 
