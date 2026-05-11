@@ -23,6 +23,14 @@ import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@ear
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, loadProjectAgentTeams } from "./agents.js";
+import {
+	AgentDashboardComponent,
+	type AgentDashboardCard,
+	type AgentDashboardState,
+	createDashboardState,
+	selectDashboardAgents,
+	upsertDashboardCard,
+} from "./dashboard.js";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -193,6 +201,24 @@ function getLastPreview(messages: Message[]): string {
 
 function getToolCallCount(messages: Message[]): number {
 	return getDisplayItems(messages).filter((item) => item.type === "toolCall").length;
+}
+
+function resultToDashboardCard(result: SingleResult): AgentDashboardCard {
+	const errorMessage = Array.from(
+		new Set([result.errorMessage, result.stderr.trim()].filter((part): part is string => Boolean(part))),
+	).join("\n");
+	return {
+		agent: result.agent,
+		source: result.agentSource,
+		status: result.status === "completed" && result.exitCode !== 0 ? "failed" : result.status,
+		task: result.task,
+		startedAt: result.startedAt,
+		completedAt: result.completedAt,
+		toolCount: getToolCallCount(result.messages),
+		contextText: result.usage.contextTokens > 0 ? `ctx:${formatTokens(result.usage.contextTokens)}` : undefined,
+		lastPreview: getLastPreview(result.messages),
+		errorMessage: errorMessage || undefined,
+	};
 }
 
 type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
@@ -469,6 +495,44 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	let dashboardState: AgentDashboardState | null = null;
+
+	const renderDashboardWidget = (ctx: { ui: any }) => {
+		if (!dashboardState?.visible) return;
+		ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => dashboardState!, theme));
+	};
+
+	const updateDashboardFromResults = (results: SingleResult[], ctx: { ui: any }) => {
+		if (!dashboardState?.visible) return;
+		for (const result of results) upsertDashboardCard(dashboardState, resultToDashboardCard(result));
+		renderDashboardWidget(ctx);
+	};
+
+	pi.registerCommand("agents-dashboard", {
+		description:
+			"Show a persistent project-local agent-team grid dashboard. Optional: /agents-dashboard <team>, refresh, or clear.",
+		handler: async (args, ctx) => {
+			const requested = args.trim();
+			if (requested === "clear" || requested === "hide") {
+				dashboardState = null;
+				ctx.ui.setWidget("subagent-dashboard", undefined);
+				ctx.ui.notify("Agent dashboard hidden.", "info");
+				return;
+			}
+
+			const discovery = discoverAgents(ctx.cwd, "project");
+			const teams = loadProjectAgentTeams(ctx.cwd, discovery.agents);
+			const teamName = requested && requested !== "refresh" ? requested : dashboardState?.teamName;
+			const selection = selectDashboardAgents(discovery.agents, teams, teamName);
+			dashboardState = createDashboardState(selection);
+			renderDashboardWidget(ctx);
+			ctx.ui.notify(
+				`Agent dashboard shown for ${selection.agents.length} project-local agent(s).`,
+				selection.agents.length > 0 ? "info" : "warning",
+			);
+		},
+	});
+
 	pi.registerCommand("agents-list", {
 		description: "List project-local Pi agents from .pi/agents (no .claude/.gemini/.codex scanning). Use 'clear' to hide.",
 		handler: async (args, ctx) => {
@@ -570,6 +634,8 @@ export default function (pi: ExtensionAPI) {
 					results,
 				});
 
+			const emitDashboard = (results: SingleResult[]) => updateDashboardFromResults(results, ctx);
+
 			if (modeCount !== 1) {
 				const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
 				return {
@@ -617,19 +683,18 @@ export default function (pi: ExtensionAPI) {
 					const taskWithContext = step.task.replace(/\{previous\}/g, previousOutput);
 
 					// Create update callback that includes all previous results
-					const chainUpdate: OnUpdateCallback | undefined = onUpdate
-						? (partial) => {
-								// Combine completed results with current streaming result
-								const currentResult = partial.details?.results[0];
-								if (currentResult) {
-									const allResults = [...results, currentResult];
-									onUpdate({
-										content: partial.content,
-										details: makeDetails("chain")(allResults),
-									});
-								}
-							}
-						: undefined;
+					const chainUpdate: OnUpdateCallback | undefined = (partial) => {
+						// Combine completed results with current streaming result
+						const currentResult = partial.details?.results[0];
+						if (currentResult) {
+							const allResults = [...results, currentResult];
+							emitDashboard(allResults);
+							onUpdate?.({
+								content: partial.content,
+								details: makeDetails("chain")(allResults),
+							});
+						}
+					};
 
 					const result = await runSingleAgent(
 						ctx.cwd,
@@ -643,6 +708,7 @@ export default function (pi: ExtensionAPI) {
 						makeDetails("chain"),
 					);
 					results.push(result);
+					emitDashboard(results);
 
 					const isError =
 						result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
@@ -694,16 +760,15 @@ export default function (pi: ExtensionAPI) {
 				}
 
 				const emitParallelUpdate = () => {
-					if (onUpdate) {
-						const running = allResults.filter((r) => r.exitCode === -1).length;
-						const done = allResults.filter((r) => r.exitCode !== -1).length;
-						onUpdate({
-							content: [
-								{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
-							],
-							details: makeDetails("parallel")([...allResults]),
-						});
-					}
+					const running = allResults.filter((r) => r.exitCode === -1).length;
+					const done = allResults.filter((r) => r.exitCode !== -1).length;
+					emitDashboard([...allResults]);
+					onUpdate?.({
+						content: [
+							{ type: "text", text: `Parallel: ${done}/${allResults.length} done, ${running} running...` },
+						],
+						details: makeDetails("parallel")([...allResults]),
+					});
 				};
 
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
@@ -755,9 +820,13 @@ export default function (pi: ExtensionAPI) {
 					params.cwd,
 					undefined,
 					signal,
-					onUpdate,
+					(partial) => {
+						if (partial.details?.results[0]) emitDashboard([partial.details.results[0]]);
+						onUpdate?.(partial);
+					},
 					makeDetails("single"),
 				);
+				emitDashboard([result]);
 				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
 				if (isError) {
 					const errorMsg =
