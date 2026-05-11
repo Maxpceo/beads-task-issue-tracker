@@ -9,17 +9,31 @@ function makeHarness(options: {
   issues: Record<string, { status: string; comments: string }>
   entries?: Array<{ type: string; customType?: string; data?: unknown }>
   sessionKey?: string
+  ctxCwd?: string
+  processBranch?: string
+  processWorktreePath?: string
+  processStartCommit?: string
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
   const appended: Array<{ type: string; data: unknown }> = []
   const notifications: Array<{ message: string; level?: string }> = []
 
+  const processBranch = options.processBranch ?? options.branch
+  const processWorktreePath = options.processWorktreePath ?? options.worktreePath
+  const processStartCommit = options.processStartCommit ?? options.startCommit
+
   const pi: any = {
     exec: async (command: string, args: string[]) => {
-      if (command === 'git' && args.join(' ') === 'branch --show-current') return { stdout: `${options.branch}\n`, stderr: '', code: 0 }
-      if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return { stdout: `${options.startCommit}\n`, stderr: '', code: 0 }
-      if (command === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: `${options.worktreePath}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args[0] === '-C' && args[1] === options.ctxCwd) {
+        const scopedArgs = args.slice(2).join(' ')
+        if (scopedArgs === 'branch --show-current') return { stdout: `${options.branch}\n`, stderr: '', code: 0 }
+        if (scopedArgs === 'rev-parse HEAD') return { stdout: `${options.startCommit}\n`, stderr: '', code: 0 }
+        if (scopedArgs === 'rev-parse --show-toplevel') return { stdout: `${options.worktreePath}\n`, stderr: '', code: 0 }
+      }
+      if (command === 'git' && args.join(' ') === 'branch --show-current') return { stdout: `${processBranch}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return { stdout: `${processStartCommit}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: `${processWorktreePath}\n`, stderr: '', code: 0 }
 
       if (command === 'bd' && args[0] === 'list') {
         const status = args.find((arg) => arg.startsWith('--status='))?.slice('--status='.length)
@@ -46,6 +60,7 @@ function makeHarness(options: {
   }
 
   const ctx: any = {
+    cwd: options.ctxCwd,
     sessionManager: {
       getEntries: () => options.entries ?? [],
       getSessionId: () => options.sessionKey ?? 'session-current',
@@ -59,6 +74,27 @@ function makeHarness(options: {
 }
 
 describe('Pi workflow-state session-scoped recovery', () => {
+  it('uses ctx.cwd git scope after reload instead of process cwd primary checkout', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'task/worktree-3',
+      worktreePath: '/repo/worktrees/worktree-3',
+      startCommit: 'worktree-head',
+      processBranch: 'main',
+      processWorktreePath: '/repo/primary',
+      processStartCommit: 'main-head',
+      ctxCwd: '/repo/worktrees/worktree-3',
+      issues: {},
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('branch=task/worktree-3')
+    expect(context.message.content).toContain('worktree=/repo/worktrees/worktree-3')
+    expect(context.message.content).not.toContain('branch=main')
+    expect(context.message.content).not.toContain('worktree=-')
+  })
+
   it('keeps a clean session idle when global inreview beads have no matching ownership evidence', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'main',
