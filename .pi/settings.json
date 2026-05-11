@@ -4,6 +4,7 @@
   "extensions": [
     "extensions/plan-mode/index.ts",
     "extensions/workflow-state/index.ts",
+    "extensions/bead-purpose/index.ts",
     "extensions/beads-policy/index.ts",
     "extensions/beads-dispatch/index.ts",
     "extensions/review-workflow/index.ts",
