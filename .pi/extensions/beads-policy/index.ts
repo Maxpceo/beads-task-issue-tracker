@@ -855,8 +855,13 @@ export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot,
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
+	const hasForeignWorktree = Boolean(state.worktreePath && scope.worktreePath && state.worktreePath !== scope.worktreePath);
+	const hasForeignBranch = Boolean(state.branch && scope.branch && state.branch !== scope.branch);
+	if (hasForeignWorktree || hasForeignBranch) return false;
+
 	return Boolean(
 		(state.worktreePath && scope.worktreePath && state.worktreePath === scope.worktreePath) ||
+			(state.branch && scope.branch && state.branch === scope.branch) ||
 			(state.startCommit && scope.startCommit && state.startCommit === scope.startCommit),
 	);
 }
