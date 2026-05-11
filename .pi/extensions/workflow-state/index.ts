@@ -123,6 +123,13 @@ function stateFromBdStatus(status?: string): WorkflowStateName | undefined {
 	return undefined;
 }
 
+function reconcileStateWithBdStatus(state: WorkflowState, bdStatus?: string): WorkflowState {
+	const inferred = stateFromBdStatus(bdStatus);
+	if (!inferred || inferred === state.state) return state;
+	if (inferred === "implementing") return state;
+	return { ...state, state: inferred };
+}
+
 async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | undefined> {
 	const { stdout, code } = await pi.exec("bd", ["show", beadId, "--json"]);
 	if (code !== 0) return undefined;
@@ -217,7 +224,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 				endCommit: undefined,
 			};
 		}
-		return state;
+		return reconcileStateWithBdStatus(state, await readBdStatus(pi, state.activeBead));
 	}
 
 	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
