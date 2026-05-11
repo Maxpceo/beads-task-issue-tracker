@@ -236,7 +236,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     })
 
     await eventHandlers.get('session_start')?.({}, ctx)
-    issues['bead-closed'].status = 'closed'
+    issues['bead-closed']!.status = 'closed'
 
     await commandHandlers.get('workflow-status')?.handler('', ctx)
 
