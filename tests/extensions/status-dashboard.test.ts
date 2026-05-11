@@ -77,7 +77,15 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> = {}, width = 120): Promise<{ status: string; footer: string[]; bdCalls: string[] }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120): Promise<{ status: string; footer: string[]; bdCalls: string[] }> {
+  const runtimeOwnerKey = 'runtime:test-status-dashboard'
+  ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
+  if (!Array.isArray(workflowState) && Object.keys(workflowState).length > 0) workflowState.runtimeOwnerKey ??= runtimeOwnerKey
+  const workflowEntries = Array.isArray(workflowState)
+    ? workflowState
+    : Object.keys(workflowState).length > 0
+      ? [{ type: 'custom', customType: 'workflow-state', data: workflowState }]
+      : []
   const handlers: RegisteredHandlers = {}
   let status = ''
   let footer: { render: (width: number) => string[] } | undefined
@@ -105,7 +113,7 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
     cwd,
     hasUI: true,
     sessionManager: {
-      getEntries: () => (Object.keys(workflowState).length > 0 ? [{ type: 'custom', customType: 'workflow-state', data: workflowState }] : []),
+      getEntries: () => workflowEntries,
     },
     ui: {
       theme,
@@ -147,6 +155,20 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.footer.join('\n')).toContain('bead:-')
     expect(dashboard.footer.join('\n')).not.toContain('*')
     expect(dashboard.bdCalls).not.toContain('list --status in_progress --json')
+  })
+
+  it('keeps current runtime workflow when a later foreign runtime reset exists in the shared transcript', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, [
+      { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'implementing', activeBead: 'beads-task-issue-tracker-current', planMode: 'strict', mergeSlotHeld: true } },
+      { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:other-live-pane', state: 'idle', planMode: 'off', mergeSlotHeld: false } },
+    ])
+
+    expect(dashboard.status).toContain('bead:beads-task-issue-tracker-current')
+    expect(dashboard.footer.join('\n')).toContain('bead:current')
+    expect(dashboard.footer.join('\n')).toContain('plan:strict')
+    expect(dashboard.footer.join('\n')).toContain('slot:held')
   })
 
   it('reports the current linked worktree basename in status and footer output', async () => {

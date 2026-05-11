@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import workflowStateExtension, { hasSessionOwnershipEvidence } from '../../.pi/extensions/workflow-state/index'
+import workflowStateExtension, { currentRuntimeOwnerKey, hasSessionOwnershipEvidence } from '../../.pi/extensions/workflow-state/index'
 
 function makeHarness(options: {
   branch: string
@@ -145,7 +145,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
-    expect(notifications.at(-1)?.message).toContain('stale or foreign')
+    expect(notifications).toEqual([])
   })
 
   it('clears stale restored active bead when ownership does not match current worktree', async () => {
@@ -170,8 +170,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
-    expect(notifications.at(-1)?.message).toContain('stale or foreign')
-    expect(notifications.at(-1)?.message).toContain('/workflow-reset')
+    expect(notifications).toEqual([])
   })
 
   it('clears restored active bead with explicit foreign worktree even when start commit matches', async () => {
@@ -205,7 +204,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
-    expect(notifications.at(-1)?.message).toContain('stale or foreign')
+    expect(notifications).toEqual([])
   })
 
   it('clears restored active bead when bd status is closed even if local workflow state is non-terminal', async () => {
@@ -227,6 +226,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'off',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -264,6 +264,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             endCommit: 'old-end',
             planMode: 'off',
             mergeSlotHeld: false,
@@ -304,6 +305,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             endCommit: 'old-end',
             planMode: 'off',
             mergeSlotHeld: false,
@@ -402,6 +404,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'off',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -436,6 +439,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'off',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -483,6 +487,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'off',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -518,6 +523,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'off',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -553,6 +559,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'strict',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -589,6 +596,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             worktreePath: '/repo/current',
             startCommit: 'current-head',
             sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             planMode: 'off',
             mergeSlotHeld: false,
             updatedAt: new Date().toISOString(),
@@ -603,6 +611,54 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('state=plan_approved')
     expect(context.message.content).toContain('bead=bead-current')
     expect(notifications).toEqual([])
+  })
+
+  it('keeps current runtime state when a later foreign runtime reset exists in the shared transcript', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': { status: 'in_progress', comments: 'PI_SESSION_KEY: id:session-current' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'implementing',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            planMode: 'strict',
+            mergeSlotHeld: true,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'idle',
+            runtimeOwnerKey: 'runtime:other-live-pane',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=implementing')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(context.message.content).toContain('plan=strict')
+    expect(context.message.content).toContain('mergeSlot=held')
   })
 
   it('does not recover global inreview beads from branch/worktree comments without current-session marker', async () => {

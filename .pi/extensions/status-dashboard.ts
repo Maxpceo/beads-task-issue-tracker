@@ -9,6 +9,7 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	planMode?: string;
 	mergeSlotHeld?: boolean;
+	runtimeOwnerKey?: string;
 }
 
 interface WorktreeInfo {
@@ -42,10 +43,20 @@ function clampFooterLine(line: string, width: number): string {
 	return truncateToWidth(line, Math.max(0, width), "…");
 }
 
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
+
+function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
+
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
+	const ownerKey = currentRuntimeOwnerKey();
 	const last = entries
 		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+		.filter((entry: { data?: unknown }) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === ownerKey)
 		.pop() as { data?: WorkflowStateSnapshot } | undefined;
 	return last?.data ?? {};
 }

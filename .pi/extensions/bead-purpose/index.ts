@@ -27,6 +27,7 @@ interface WorkflowStateSnapshot {
 	activeBead?: string;
 	state?: string;
 	updatedAt?: string;
+	runtimeOwnerKey?: string;
 }
 
 interface WorkflowStateUpdateEvent {
@@ -45,10 +46,20 @@ const WIDGET_KEY = "bead-purpose";
 const STATUS_KEY = "bead-purpose";
 const ACTIVE_STATES_WITHOUT_STALE_ACTIONS = new Set(["idle", "accepted", "closed", "blocked", "deferred", "merged"]);
 
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
+
+function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
+
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
+	const ownerKey = currentRuntimeOwnerKey();
 	const last = ctx.sessionManager
 		.getEntries()
 		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+		.filter((entry: { data?: unknown }) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === ownerKey)
 		.pop() as { data?: WorkflowStateSnapshot } | undefined;
 	return last?.data ?? { state: "idle" };
 }
