@@ -23,6 +23,19 @@ export interface AgentDiscoveryResult {
 	projectAgentsDir: string | null;
 }
 
+export interface AgentTeam {
+	name: string;
+	description?: string;
+	members: string[];
+	warnings: string[];
+}
+
+export interface AgentTeamConfigResult {
+	teams: AgentTeam[];
+	filePath: string | null;
+	warnings: string[];
+}
+
 function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig[] {
 	const agents: AgentConfig[] = [];
 
@@ -123,4 +136,102 @@ export function formatAgentList(agents: AgentConfig[], maxItems: number): { text
 		text: listed.map((a) => `${a.name} (${a.source}): ${a.description}`).join("; "),
 		remaining,
 	};
+}
+
+function parseScalar(value: string): string {
+	const trimmed = value.trim();
+	if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function parseInlineList(value: string): string[] | null {
+	const trimmed = value.trim();
+	if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+	const inner = trimmed.slice(1, -1).trim();
+	if (!inner) return [];
+	return inner
+		.split(",")
+		.map((item) => parseScalar(item))
+		.filter(Boolean);
+}
+
+export function loadProjectAgentTeams(cwd: string, knownAgents: AgentConfig[]): AgentTeamConfigResult {
+	const projectAgentsDir = findNearestProjectAgentsDir(cwd);
+	const filePath = projectAgentsDir ? path.join(projectAgentsDir, "teams.yaml") : null;
+	if (!filePath || !fs.existsSync(filePath)) {
+		return { teams: [], filePath, warnings: ["No .pi/agents/teams.yaml found; showing individual agents only."] };
+	}
+
+	let content: string;
+	try {
+		content = fs.readFileSync(filePath, "utf-8");
+	} catch (error) {
+		return { teams: [], filePath, warnings: [`Could not read teams.yaml: ${(error as Error).message}`] };
+	}
+
+	const knownNames = new Set(knownAgents.map((agent) => agent.name));
+	const teams: AgentTeam[] = [];
+	const warnings: string[] = [];
+	let current: AgentTeam | null = null;
+	let readingMembers = false;
+
+	const finishTeam = () => {
+		if (!current) return;
+		current.members = Array.from(new Set(current.members));
+		for (const member of current.members) {
+			if (!knownNames.has(member)) current.warnings.push(`Unknown agent: ${member}`);
+		}
+		if (current.members.length === 0) current.warnings.push("Team has no members.");
+		teams.push(current);
+	};
+
+	for (const rawLine of content.split(/\r?\n/)) {
+		const withoutComment = rawLine.replace(/\s+#.*$/, "");
+		if (!withoutComment.trim()) continue;
+		const line = withoutComment.trimEnd();
+		const trimmed = line.trim();
+
+		const teamMatch = /^-\s*name:\s*(.+)$/.exec(trimmed);
+		if (teamMatch) {
+			finishTeam();
+			current = { name: parseScalar(teamMatch[1]), members: [], warnings: [] };
+			readingMembers = false;
+			continue;
+		}
+
+		if (!current) {
+			if (trimmed !== "teams:") warnings.push(`Ignored line before first team: ${trimmed}`);
+			continue;
+		}
+
+		const descriptionMatch = /^description:\s*(.+)$/.exec(trimmed);
+		if (descriptionMatch) {
+			current.description = parseScalar(descriptionMatch[1]);
+			readingMembers = false;
+			continue;
+		}
+
+		const membersInlineMatch = /^members:\s*(.*)$/.exec(trimmed);
+		if (membersInlineMatch) {
+			const inline = parseInlineList(membersInlineMatch[1]);
+			if (inline) current.members.push(...inline);
+			else if (membersInlineMatch[1].trim()) current.warnings.push(`Malformed members list: ${membersInlineMatch[1].trim()}`);
+			readingMembers = true;
+			continue;
+		}
+
+		const memberMatch = /^-\s*(.+)$/.exec(trimmed);
+		if (readingMembers && memberMatch) {
+			current.members.push(parseScalar(memberMatch[1]));
+			continue;
+		}
+
+		current.warnings.push(`Ignored line: ${trimmed}`);
+	}
+	finishTeam();
+
+	if (teams.length === 0) warnings.push("No teams were parsed from teams.yaml.");
+	return { teams, filePath, warnings };
 }

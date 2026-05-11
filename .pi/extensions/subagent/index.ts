@@ -22,7 +22,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import { type AgentConfig, type AgentScope, discoverAgents, loadProjectAgentTeams } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -144,6 +144,9 @@ interface SingleResult {
 	agentSource: "user" | "project" | "unknown";
 	task: string;
 	exitCode: number;
+	status: "queued" | "running" | "completed" | "failed" | "aborted";
+	startedAt: number;
+	completedAt?: number;
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
@@ -170,6 +173,26 @@ function getFinalOutput(messages: Message[]): string {
 		}
 	}
 	return "";
+}
+
+function formatElapsed(startedAt: number, completedAt?: number): string {
+	const end = completedAt ?? Date.now();
+	const seconds = Math.max(0, Math.round((end - startedAt) / 1000));
+	const mins = Math.floor(seconds / 60);
+	const secs = seconds % 60;
+	return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+}
+
+function getLastPreview(messages: Message[]): string {
+	const items = getDisplayItems(messages);
+	const last = items[items.length - 1];
+	if (!last) return "";
+	const text = last.type === "text" ? last.text : `${last.name} ${JSON.stringify(last.args)}`;
+	return text.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function getToolCallCount(messages: Message[]): number {
+	return getDisplayItems(messages).filter((item) => item.type === "toolCall").length;
 }
 
 type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
@@ -250,14 +273,20 @@ async function runSingleAgent(
 
 	if (!agent) {
 		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
+		const now = Date.now();
+		const errorMessage = `Unknown agent: "${agentName}". Available agents: ${available}.`;
 		return {
 			agent: agentName,
 			agentSource: "unknown",
 			task,
 			exitCode: 1,
+			status: "failed",
+			startedAt: now,
+			completedAt: now,
 			messages: [],
-			stderr: `Unknown agent: "${agentName}". Available agents: ${available}.`,
+			stderr: errorMessage,
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+			errorMessage,
 			step,
 		};
 	}
@@ -273,7 +302,9 @@ async function runSingleAgent(
 		agent: agentName,
 		agentSource: agent.source,
 		task,
-		exitCode: 0,
+		exitCode: -1,
+		status: "running",
+		startedAt: Date.now(),
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
@@ -300,6 +331,7 @@ async function runSingleAgent(
 
 		args.push(`Task: ${task}`);
 		let wasAborted = false;
+		emitUpdate();
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
@@ -363,7 +395,9 @@ async function runSingleAgent(
 				resolve(code ?? 0);
 			});
 
-			proc.on("error", () => {
+			proc.on("error", (error) => {
+				currentResult.stderr += `\nProcess error: ${error.message}`;
+				currentResult.errorMessage = error.message;
 				resolve(1);
 			});
 
@@ -381,7 +415,13 @@ async function runSingleAgent(
 		});
 
 		currentResult.exitCode = exitCode;
-		if (wasAborted) throw new Error("Subagent was aborted");
+		currentResult.completedAt = Date.now();
+		currentResult.status = exitCode === 0 ? "completed" : "failed";
+		if (wasAborted) {
+			currentResult.status = "aborted";
+			currentResult.stopReason = "aborted";
+			currentResult.errorMessage = "Subagent was aborted";
+		}
 		return currentResult;
 	} finally {
 		if (tmpPromptPath)
@@ -412,8 +452,8 @@ const ChainItem = Type.Object({
 });
 
 const AgentScopeSchema = StringEnum(["user", "project", "both"] as const, {
-	description: 'Which agent directories to use. Default: "user". Use "both" to include project-local agents.',
-	default: "user",
+	description: 'Which agent directories to use. Default: "project" (.pi/agents only). Use "both" to explicitly include user agents.',
+	default: "project",
 });
 
 const SubagentParams = Type.Object({
@@ -429,19 +469,89 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
+	pi.registerCommand("agents-list", {
+		description: "List project-local Pi agents from .pi/agents (no .claude/.gemini/.codex scanning). Use 'clear' to hide.",
+		handler: async (args, ctx) => {
+			if (args.trim() === "clear") {
+				ctx.ui.setWidget("subagent-agents", undefined);
+				ctx.ui.notify("Agents list cleared.", "info");
+				return;
+			}
+
+			const discovery = discoverAgents(ctx.cwd, "project");
+			const lines = ["Pi agents (.pi/agents only)"];
+			if (discovery.projectAgentsDir) lines.push(`Source: ${discovery.projectAgentsDir}`);
+			else lines.push("Source: no project .pi/agents directory found");
+			lines.push("");
+			if (discovery.agents.length === 0) {
+				lines.push("No project-local agents found.");
+			} else {
+				for (const agent of discovery.agents.sort((a, b) => a.name.localeCompare(b.name))) {
+					const model = agent.model ? ` · model: ${agent.model}` : "";
+					const tools = agent.tools?.length ? ` · tools: ${agent.tools.join(", ")}` : "";
+					lines.push(`• ${agent.name}: ${agent.description}${model}${tools}`);
+				}
+			}
+			lines.push("");
+			lines.push("Default subagent scope is project-only; use typed workflow commands for dispatch/review guards.");
+			ctx.ui.setWidget("subagent-agents", lines);
+			ctx.ui.notify(`Listed ${discovery.agents.length} project-local agent(s).`, "info");
+		},
+	});
+
+	pi.registerCommand("agents-team", {
+		description: "Show project-local teams from .pi/agents/teams.yaml. Missing or malformed config is reported without crashing.",
+		handler: async (args, ctx) => {
+			if (args.trim() === "clear") {
+				ctx.ui.setWidget("subagent-teams", undefined);
+				ctx.ui.notify("Agent teams cleared.", "info");
+				return;
+			}
+
+			const discovery = discoverAgents(ctx.cwd, "project");
+			const config = loadProjectAgentTeams(ctx.cwd, discovery.agents);
+			const selected = args.trim();
+			const teams = selected ? config.teams.filter((team) => team.name === selected) : config.teams;
+			const lines = ["Pi agent teams (.pi/agents/teams.yaml)"];
+			lines.push(`Source: ${config.filePath ?? "no project .pi/agents directory"}`);
+			for (const warning of config.warnings) lines.push(`! ${warning}`);
+			lines.push("");
+
+			if (teams.length === 0) {
+				lines.push(selected ? `No team named "${selected}" found.` : "No teams configured.");
+				if (discovery.agents.length > 0) {
+					lines.push("Available individual agents:");
+					for (const agent of discovery.agents.sort((a, b) => a.name.localeCompare(b.name))) lines.push(`• ${agent.name}`);
+				}
+			} else {
+				for (const team of teams) {
+					lines.push(`• ${team.name}${team.description ? ` — ${team.description}` : ""}`);
+					lines.push(`  members: ${team.members.join(", ") || "none"}`);
+					for (const warning of team.warnings) lines.push(`  ! ${warning}`);
+				}
+			}
+
+			lines.push("");
+			lines.push("Team view is read-only; workflow dispatch/review still goes through typed guarded tools.");
+			ctx.ui.setWidget("subagent-teams", lines);
+			ctx.ui.notify(`Displayed ${teams.length} team(s).`, teams.length > 0 ? "info" : "warning");
+		},
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			'Default agent scope is "user" (from ~/.pi/agent/agents).',
-			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
+			'Default agent scope is "project" and discovers only project-local .pi/agents.',
+			'Use agentScope: "both" or "user" only when user agents are explicitly needed.',
+			"Workflow-critical dispatch/review actions must use typed workflow tools, not generic team UI shortcuts.",
 		].join(" "),
 		parameters: SubagentParams,
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const agentScope: AgentScope = params.agentScope ?? "user";
+			const agentScope: AgentScope = params.agentScope ?? "project";
 			const discovery = discoverAgents(ctx.cwd, agentScope);
 			const agents = discovery.agents;
 			const confirmProjectAgents = params.confirmProjectAgents ?? true;
@@ -575,6 +685,8 @@ export default function (pi: ExtensionAPI) {
 						agentSource: "unknown",
 						task: params.tasks[i].task,
 						exitCode: -1, // -1 = still running
+						status: "queued",
+						startedAt: Date.now(),
 						messages: [],
 						stderr: "",
 						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
@@ -670,7 +782,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		renderCall(args, theme, _context) {
-			const scope: AgentScope = args.agentScope ?? "user";
+			const scope: AgentScope = args.agentScope ?? "project";
 			if (args.chain && args.chain.length > 0) {
 				let text =
 					theme.fg("toolTitle", theme.bold("subagent ")) +
@@ -722,6 +834,21 @@ export default function (pi: ExtensionAPI) {
 
 			const mdTheme = getMarkdownTheme();
 
+			const renderRunStats = (r: SingleResult) => {
+				const tools = getToolCallCount(r.messages);
+				const preview = getLastPreview(r.messages);
+				const parts = [
+					`status:${r.status}`,
+					`elapsed:${formatElapsed(r.startedAt, r.completedAt)}`,
+					`tools:${tools}`,
+				];
+				if (preview) parts.push(`last:${preview}`);
+				return theme.fg("dim", parts.join(" · "));
+			};
+
+			const renderErrorText = (r: SingleResult): string =>
+				Array.from(new Set([r.errorMessage, r.stderr.trim()].filter((part): part is string => Boolean(part)))).join("\n");
+
 			const renderDisplayItems = (items: DisplayItem[], limit?: number) => {
 				const toShow = limit ? items.slice(-limit) : items;
 				const skipped = limit && items.length > limit ? items.length - limit : 0;
@@ -750,8 +877,10 @@ export default function (pi: ExtensionAPI) {
 					let header = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 					if (isError && r.stopReason) header += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
 					container.addChild(new Text(header, 0, 0));
-					if (isError && r.errorMessage)
-						container.addChild(new Text(theme.fg("error", `Error: ${r.errorMessage}`), 0, 0));
+					container.addChild(new Text(renderRunStats(r), 0, 0));
+					const errorText = renderErrorText(r);
+					if (isError && errorText)
+						container.addChild(new Text(theme.fg("error", `Error: ${errorText}`), 0, 0));
 					container.addChild(new Spacer(1));
 					container.addChild(new Text(theme.fg("muted", "─── Task ───"), 0, 0));
 					container.addChild(new Text(theme.fg("dim", r.task), 0, 0));
@@ -785,7 +914,9 @@ export default function (pi: ExtensionAPI) {
 
 				let text = `${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${theme.fg("muted", ` (${r.agentSource})`)}`;
 				if (isError && r.stopReason) text += ` ${theme.fg("error", `[${r.stopReason}]`)}`;
-				if (isError && r.errorMessage) text += `\n${theme.fg("error", `Error: ${r.errorMessage}`)}`;
+				text += `\n${renderRunStats(r)}`;
+				const errorText = renderErrorText(r);
+				if (isError && errorText) text += `\n${theme.fg("error", `Error: ${errorText}`)}`;
 				else if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 				else {
 					text += `\n${renderDisplayItems(displayItems, COLLAPSED_ITEM_COUNT)}`;
@@ -830,6 +961,7 @@ export default function (pi: ExtensionAPI) {
 						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 						const displayItems = getDisplayItems(r.messages);
 						const finalOutput = getFinalOutput(r.messages);
+						const errorText = renderErrorText(r);
 
 						container.addChild(new Spacer(1));
 						container.addChild(
@@ -839,6 +971,8 @@ export default function (pi: ExtensionAPI) {
 								0,
 							),
 						);
+						container.addChild(new Text(renderRunStats(r), 0, 0));
+						if (errorText) container.addChild(new Text(theme.fg("error", `Error: ${errorText}`), 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls
@@ -881,7 +1015,10 @@ export default function (pi: ExtensionAPI) {
 				for (const r of details.results) {
 					const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
+					const errorText = renderErrorText(r);
 					text += `\n\n${theme.fg("muted", `─── Step ${r.step}: `)}${theme.fg("accent", r.agent)} ${rIcon}`;
+					text += `\n${renderRunStats(r)}`;
+					if (errorText) text += `\n${theme.fg("error", `Error: ${errorText}`)}`;
 					if (displayItems.length === 0) text += `\n${theme.fg("muted", "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;
 				}
@@ -919,11 +1056,14 @@ export default function (pi: ExtensionAPI) {
 						const rIcon = r.exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗");
 						const displayItems = getDisplayItems(r.messages);
 						const finalOutput = getFinalOutput(r.messages);
+						const errorText = renderErrorText(r);
 
 						container.addChild(new Spacer(1));
 						container.addChild(
 							new Text(`${theme.fg("muted", "─── ") + theme.fg("accent", r.agent)} ${rIcon}`, 0, 0),
 						);
+						container.addChild(new Text(renderRunStats(r), 0, 0));
+						if (errorText) container.addChild(new Text(theme.fg("error", `Error: ${errorText}`), 0, 0));
 						container.addChild(new Text(theme.fg("muted", "Task: ") + theme.fg("dim", r.task), 0, 0));
 
 						// Show tool calls
@@ -967,7 +1107,10 @@ export default function (pi: ExtensionAPI) {
 								? theme.fg("success", "✓")
 								: theme.fg("error", "✗");
 					const displayItems = getDisplayItems(r.messages);
+					const errorText = renderErrorText(r);
 					text += `\n\n${theme.fg("muted", "─── ")}${theme.fg("accent", r.agent)} ${rIcon}`;
+					text += `\n${renderRunStats(r)}`;
+					if (errorText) text += `\n${theme.fg("error", `Error: ${errorText}`)}`;
 					if (displayItems.length === 0)
 						text += `\n${theme.fg("muted", r.exitCode === -1 ? "(running...)" : "(no output)")}`;
 					else text += `\n${renderDisplayItems(displayItems, 5)}`;

@@ -33,6 +33,7 @@ interface DashboardSnapshot {
 const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
 let latestDashboard: DashboardSnapshot | undefined;
 let requestFooterRender: (() => void) | undefined;
+let pendingInstallTimers: Array<ReturnType<typeof setTimeout>> = [];
 
 function stripAnsi(text: string): string {
 	return text.replace(ANSI_PATTERN, "");
@@ -292,9 +293,16 @@ export default function statusDashboardExtension(pi: ExtensionAPI): void {
 		void updateDashboard(pi, ctx);
 	}
 
+	function clearPendingInstallTimers(): void {
+		for (const timer of pendingInstallTimers) clearTimeout(timer);
+		pendingInstallTimers = [];
+	}
+
 	function installAfterCompetingFooters(ctx: ExtensionContext): void {
+		if (!ctx.hasUI) return;
+		clearPendingInstallTimers();
 		for (const delay of [0, 50, 200, 500]) {
-			setTimeout(() => installAndRefresh(ctx), delay);
+			pendingInstallTimers.push(setTimeout(() => installAndRefresh(ctx), delay));
 		}
 	}
 
@@ -317,6 +325,7 @@ export default function statusDashboardExtension(pi: ExtensionAPI): void {
 		await updateDashboard(pi, ctx);
 	});
 	pi.on("tool_result", async (_event, ctx) => updateDashboard(pi, ctx));
+	pi.on("session_shutdown", async () => clearPendingInstallTimers());
 
 	pi.registerCommand("dashboard", {
 		description: "Refresh Pi workflow dashboard footer",
