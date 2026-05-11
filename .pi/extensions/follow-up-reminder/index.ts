@@ -230,12 +230,6 @@ function commandHasLandingIntent(text: string): boolean {
 	return /^\s*\/(?:land|landing|merge-to-main)\b/i.test(text) || /\b(?:landing the plane|пора заканчивать|сохрани работу|push всё|push все)\b/iu.test(text);
 }
 
-function commandHasDiscoveredFrom(command: string, bead?: string): boolean {
-	if (!bead) return false;
-	if (!/\bbd\s+(?:create|new)\b/.test(command)) return false;
-	return new RegExp(`(?:--deps?|--dependencies)(?:=|\\s+)['\"]?discovered-from:${bead.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i").test(command);
-}
-
 function commandResolvesId(command: string): string | undefined {
 	return command.match(/FOLLOWUP_RESOLVED:([a-z0-9-]+)/i)?.[1];
 }
@@ -275,18 +269,12 @@ export default function followUpReminderExtension(pi: ExtensionAPI): void {
 		return { action: "continue" };
 	});
 
-	pi.on("tool_result", async (event, ctx) => {
+	pi.on("tool_result", async (event, _ctx) => {
 		if (event.toolName !== "bash" || event.isError) return;
 		const command = String(event.input?.command ?? "");
-		const scope = currentScope(ctx);
 		const explicitId = commandResolvesId(command);
 		if (explicitId) {
 			appendEvent(pi, { version: 1, action: "resolve", id: explicitId, reason: "FOLLOWUP_RESOLVED marker", at: new Date().toISOString() });
-			return;
-		}
-		if (!commandHasDiscoveredFrom(command, scope.activeBead)) return;
-		for (const candidate of unresolved(ctx.sessionManager.getEntries(), scope)) {
-			appendEvent(pi, { version: 1, action: "resolve", id: candidate.id, reason: `bd create discovered-from:${scope.activeBead}`, at: new Date().toISOString() });
 		}
 	});
 

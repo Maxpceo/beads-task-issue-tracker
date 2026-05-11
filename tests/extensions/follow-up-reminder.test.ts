@@ -164,17 +164,32 @@ describe('follow-up-reminder extension commands and events', () => {
     expect(h.notify).toHaveBeenCalledWith(expect.stringContaining('Follow-up reminder before landing'), 'warning')
   })
 
-  it('auto-resolves only on successful reliable discovered-from or explicit resolved marker evidence', async () => {
+  it('does not bulk-resolve unresolved candidates after one discovered-from follow-up creation', async () => {
     const h = createHarness([
       workflow({ activeBead: 'beads-task-issue-tracker-tbc6', branch: 'task/tbc6-follow-up-reminder' }),
-      custom({ version: 1, action: 'candidate', candidate: candidate() }),
+      custom({ version: 1, action: 'candidate', candidate: candidate({ id: 'fu-1' }) }),
+      custom({ version: 1, action: 'candidate', candidate: candidate({ id: 'fu-2', snippet: 'separate follow-up bead for a second issue' }) }),
     ])
 
     await h.handlers.get('tool_result')?.({ toolName: 'bash', isError: true, input: { command: 'bd create X --deps discovered-from:beads-task-issue-tracker-tbc6' } }, h.ctx())
     await h.handlers.get('tool_result')?.({ toolName: 'bash', isError: false, input: { command: 'bd create X --deps discovered-from:beads-task-issue-tracker-tbc6' } }, h.ctx())
+
+    expect(h.appended).toEqual([])
+    expect(reduceFollowUpState(h.ctx().sessionManager.getEntries() as any).filter((item) => item.status === 'open').map((item) => item.id)).toEqual(['fu-1', 'fu-2'])
+  })
+
+  it('resolves only the explicitly marked candidate from FOLLOWUP_RESOLVED evidence', async () => {
+    const h = createHarness([
+      workflow({ activeBead: 'beads-task-issue-tracker-tbc6', branch: 'task/tbc6-follow-up-reminder' }),
+      custom({ version: 1, action: 'candidate', candidate: candidate({ id: 'fu-1' }) }),
+      custom({ version: 1, action: 'candidate', candidate: candidate({ id: 'fu-2', snippet: 'separate follow-up bead for a second issue' }) }),
+    ])
+
     await h.handlers.get('tool_result')?.({ toolName: 'bash', isError: false, input: { command: 'bd comments add X FOLLOWUP_RESOLVED:fu-1' } }, h.ctx())
 
-    expect(h.appended.map(([, data]) => (data as { action: string }).action)).toEqual(['resolve', 'resolve'])
+    const state = reduceFollowUpState(h.ctx().sessionManager.getEntries() as any)
+    expect(state.find((item) => item.id === 'fu-1')?.status).toBe('resolved')
+    expect(state.find((item) => item.id === 'fu-2')?.status).toBe('open')
   })
 
   it('emits a non-blocking shutdown reminder for unresolved candidates', async () => {
