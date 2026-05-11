@@ -200,6 +200,52 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).not.toContain('state=implementing')
   })
 
+  it('keeps restored current-scope active bead when old foreign comments are followed by current ownership evidence', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': {
+          status: 'inreview',
+          comments: [
+            'DISPATCH (test-supervisor)',
+            'BRANCH: fix/other',
+            'WORKTREE: /repo/other',
+            'START_COMMIT: old-head',
+            'REDISPATCH (test-supervisor)',
+            'BRANCH: fix/current',
+            'WORKTREE: /repo/current',
+            'START_COMMIT: current-head',
+          ].join('\n'),
+        },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'inreview',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=inreview')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(notifications).toEqual([])
+  })
+
   it('reconciles a same-session inreview workflow state when bd status moved back to in_progress', async () => {
     const { eventHandlers, ctx, notifications } = makeHarness({
       branch: 'fix/current',
@@ -289,5 +335,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
   it('treats matching workflow comments as session ownership evidence', () => {
     expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/current', { branch: 'fix/current' })).toBe(true)
     expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/other', { branch: 'fix/current' })).toBe(false)
+    expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/other\nBRANCH: fix/current', { branch: 'fix/current' })).toBe(true)
+    expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/current\nBRANCH: fix/other', { branch: 'fix/current' })).toBe(false)
   })
 })

@@ -692,11 +692,46 @@ function hasExactField(text: string, names: string[], value?: string): boolean {
 	return names.some((name) => new RegExp(`(^|\\n)\\s*${name}\\s*[:=]\\s*${escaped}(\\s|$)`, "im").test(text));
 }
 
+function readFieldValues(text: string, names: string[]): string[] {
+	const namePattern = names.map(escapeRegExp).join("|");
+	const values: string[] = [];
+	const regex = new RegExp(`(^|\\n)\\s*(${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
+	for (const match of text.matchAll(regex)) {
+		const value = match[3]?.trim();
+		if (value) values.push(value);
+	}
+	return values;
+}
+
+function latestFieldValue(text: string, names: string[]): string | undefined {
+	return readFieldValues(text, names).at(-1);
+}
+
+function latestFieldMatches(text: string, names: string[], current?: string): boolean {
+	if (!current) return false;
+	return latestFieldValue(text, names) === current;
+}
+
+function latestFieldIsForeign(text: string, names: string[], current?: string): boolean {
+	if (!current) return false;
+	const latest = latestFieldValue(text, names);
+	return Boolean(latest && latest !== current);
+}
+
+function hasForeignSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const hasCurrentEvidence = latestFieldMatches(commentsText, branchNames, scope.branch) || latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
+	if (hasCurrentEvidence) return false;
+	return latestFieldIsForeign(commentsText, branchNames, scope.branch) || latestFieldIsForeign(commentsText, worktreeNames, scope.worktreePath);
+}
+
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
 	const branchNames = ["BRANCH", "Branch", "branch"];
 	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
-	const branchMatches = hasExactField(commentsText, branchNames, scope.branch);
-	const worktreeMatches = hasExactField(commentsText, worktreeNames, scope.worktreePath);
+	if (hasForeignSessionOwnershipEvidence(commentsText, scope)) return false;
+	const branchMatches = latestFieldMatches(commentsText, branchNames, scope.branch);
+	const worktreeMatches = latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
 	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
 	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(commentsText);
 	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));

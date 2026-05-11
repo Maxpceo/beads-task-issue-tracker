@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
+import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
 describe('Pi merge-slot push policy', () => {
   const workflowState = {
@@ -152,6 +152,19 @@ describe('Pi active bead lifecycle policy', () => {
 
     expect(decision?.policy).not.toBe('blockUnmergedBranchCompletion')
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
+
+  it('prefers later current ownership evidence over old foreign workflow comments', () => {
+    const comments = [
+      'DISPATCH (test-supervisor)',
+      'BRANCH: fix/other',
+      'WORKTREE: /repo/other',
+      'REDISPATCH (test-supervisor)',
+      'BRANCH: fix/current',
+      'WORKTREE: /repo/current',
+    ].join('\n')
+
+    expect(hasSessionOwnershipEvidence(comments, { branch: 'fix/current', worktreePath: '/repo/current' })).toBe(true)
   })
 
   it('ignores restored foreign workflow-state even when start commit matches current HEAD', async () => {
