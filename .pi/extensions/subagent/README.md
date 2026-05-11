@@ -10,6 +10,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
 - **Abort support**: Ctrl+C propagates to kill subagent processes
+- **Agent dashboard**: `/agents-dashboard` shows a persistent grid of project-local agent cards
 
 ## Structure
 
@@ -18,6 +19,7 @@ subagent/
 ├── README.md            # This file
 ├── index.ts             # The extension (entry point)
 ├── agents.ts            # Agent discovery logic
+├── dashboard.ts         # Persistent agent-team grid rendering
 ├── agents/              # Sample agent definitions
 │   ├── scout.md         # Fast recon, returns compressed context
 │   ├── planner.md       # Creates implementation plans
@@ -58,9 +60,9 @@ This tool executes a separate `pi` subprocess with a delegated system prompt and
 
 **Project-local agents** (`.pi/agents/*.md`) are repo-controlled prompts that can instruct the model to read files, run bash commands, etc.
 
-**Default behavior:** Only loads **user-level agents** from `~/.pi/agent/agents`.
+**Default behavior in this project:** only loads **project-local agents** from `.pi/agents/*.md`.
 
-To enable project-local agents, pass `agentScope: "both"` (or `"project"`). Only do this for repositories you trust.
+To include user-level agents, pass `agentScope: "both"` or `"user"` explicitly. Only do this when user agents are needed.
 
 When running interactively, the tool prompts for confirmation before running project-local agents. Set `confirmProjectAgents: false` to disable.
 
@@ -87,6 +89,16 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 /scout-and-plan refactor auth to support OAuth
 /implement-and-review add input validation to API endpoints
 ```
+
+### Persistent dashboard
+```
+/agents-dashboard          # show the default team from .pi/agents/teams.yaml, or all project agents
+/agents-dashboard reviewer # show a named team when configured
+/agents-dashboard refresh  # rebuild cards from current .pi/agents and teams.yaml
+/agents-dashboard clear    # hide the dashboard
+```
+
+The dashboard is read-only: it displays idle/running/done/error cards and live subagent progress, but it does not dispatch workflow-critical supervisor/review actions.
 
 ## Tool Modes
 
