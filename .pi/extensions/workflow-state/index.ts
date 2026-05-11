@@ -356,6 +356,21 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return workflowState;
 	}
 
+	async function ensureReconciled(ctx?: ExtensionContext): Promise<void> {
+		const reconciled = await reconcileActiveBeadState(pi, workflowState);
+		const changed =
+			reconciled.state.state !== workflowState.state ||
+			reconciled.state.activeBead !== workflowState.activeBead ||
+			reconciled.state.branch !== workflowState.branch ||
+			reconciled.state.worktreePath !== workflowState.worktreePath ||
+			reconciled.state.startCommit !== workflowState.startCommit ||
+			reconciled.state.endCommit !== workflowState.endCommit;
+		workflowState = reconciled.state;
+		if (changed) persist(ctx);
+		else if (ctx) updateFooter(ctx, workflowState);
+		if (ctx && reconciled.warning) ctx.ui.notify(reconciled.warning, "warning");
+	}
+
 	function applyEventUpdate(event: WorkflowStateUpdateEvent): WorkflowState {
 		const next: Partial<WorkflowState> = {};
 		if (event.state && (!event.stateIfCurrent || event.stateIfCurrent.includes(workflowState.state))) {
@@ -371,14 +386,15 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return setState(next, event.ctx);
 	}
 
-	pi.events.on("workflow-state:update", (event: WorkflowStateUpdateEvent) => {
+	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent) => {
 		applyEventUpdate(event);
+		await ensureReconciled(event.ctx);
 	});
 
 	pi.registerCommand("workflow-status", {
 		description: "Show current Pi workflow state",
 		handler: async (_args, ctx) => {
-			updateFooter(ctx, workflowState);
+			await ensureReconciled(ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
 		},
 	});
@@ -546,18 +562,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : cloneState(DEFAULT_STATE);
 		workflowState.branch = workflowState.branch ?? (await detectBranch(pi));
-		const reconciled = await reconcileActiveBeadState(pi, workflowState);
-		if (reconciled.state.state !== workflowState.state || reconciled.state.activeBead !== workflowState.activeBead) {
-			workflowState = reconciled.state;
-			persist(ctx);
-		} else {
-			workflowState = reconciled.state;
-			updateFooter(ctx, workflowState);
-		}
-		if (reconciled.warning) ctx.ui.notify(reconciled.warning, "warning");
+		await ensureReconciled(ctx);
 	});
 
-	pi.on("before_agent_start", async () => {
+	pi.on("before_agent_start", async (_event, ctx) => {
+		if (ctx) await ensureReconciled(ctx);
 		return {
 			message: {
 				customType: "workflow-state-context",
