@@ -876,14 +876,21 @@ function workflowStateFromBdStatus(status?: string): string | undefined {
 	return undefined;
 }
 
+function bdStatusIsActiveReviewCheckpoint(status?: string): boolean {
+	return status === "inreview" || status === "simplified" || status === "reviewed";
+}
+
 export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot, bdStatus?: string): WorkflowStateSnapshot {
+	if (state.state === "reviewing" && bdStatusIsActiveReviewCheckpoint(bdStatus)) return state;
 	const bdState = workflowStateFromBdStatus(bdStatus);
 	if (!bdState || bdState === state.state) return state;
 
 	// `in_progress` is bd's broad worker status and can coexist with Pi-local
 	// planning/plan_approved state.  Later review/terminal statuses are
 	// authoritative for lifecycle guards because they may be written by raw bd
-	// commands or typed review tools during the same Pi session.
+	// commands or typed review tools during the same Pi session.  While Pi is in
+	// the local `reviewing` phase, bd review checkpoint statuses are source-order
+	// evidence and must not hide the active review-chain state from bash policy.
 	if (bdState === "implementing") return state;
 
 	return { ...state, state: bdState };
@@ -1043,12 +1050,18 @@ export function evaluateBashPolicy(
 		};
 	}
 
+	const transition = reviewCheckpointTransition(command);
 	const invalidReviewTransition = validateReviewTransitionForCommand(command, commandCwd);
-	if (commandHasReviewCheckpointTransition(command) && (workflowState.state !== "reviewing" || invalidReviewTransition)) {
+	const hasReviewWorkflowState = Boolean(
+		transition &&
+			workflowState.activeBead === transition.id &&
+			(workflowState.state === "reviewing" || workflowState.state === "inreview")
+	);
+	if (transition && (!hasReviewWorkflowState || invalidReviewTransition)) {
 		return {
 			policy: "validateReviewChain",
 			block: true,
-			reason: invalidReviewTransition ?? "Blocked: orchestrator review statuses require workflow state reviewing.",
+			reason: invalidReviewTransition ?? "Blocked: orchestrator review statuses require current same-bead reviewing workflow state.",
 		};
 	}
 

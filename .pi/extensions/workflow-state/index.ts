@@ -123,7 +123,12 @@ function stateFromBdStatus(status?: string): WorkflowStateName | undefined {
 	return undefined;
 }
 
+function bdStatusIsActiveReviewCheckpoint(status?: string): boolean {
+	return status === "inreview" || status === "simplified" || status === "reviewed";
+}
+
 function reconcileStateWithBdStatus(state: WorkflowState, bdStatus?: string): WorkflowState {
+	if (state.state === "reviewing" && bdStatusIsActiveReviewCheckpoint(bdStatus)) return state;
 	const inferred = stateFromBdStatus(bdStatus);
 	if (!inferred || inferred === state.state) return state;
 	if (inferred === "implementing") return state;

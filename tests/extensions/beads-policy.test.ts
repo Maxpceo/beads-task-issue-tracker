@@ -6,6 +6,28 @@ import { describe, expect, it } from 'vitest'
 
 import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
+function writeFakeBd(binDir: string, statuses: Record<string, string>, comments: Record<string, string> = {}) {
+  const fakeBd = join(binDir, 'bd')
+  const statusCases = Object.entries(statuses)
+    .map(([id, status]) => `  if [ "$2" = "${id}" ]; then echo '{"id":"${id}","status":"${status}"}'; exit 0; fi`)
+    .join('\n')
+  const commentCases = Object.entries(comments)
+    .map(([id, text]) => `  if [ "$2" = "${id}" ]; then cat <<'EOF'\n${text}\nEOF\n  exit 0; fi`)
+    .join('\n')
+  writeFileSync(fakeBd, `#!/bin/sh
+if [ "$1" = "show" ]; then
+${statusCases}
+  exit 1
+fi
+if [ "$1" = "comments" ]; then
+${commentCases}
+  exit 0
+fi
+exit 1
+`)
+  chmodSync(fakeBd, 0o755)
+}
+
 describe('Pi merge-slot push policy', () => {
   const workflowState = {
     activeBead: 'bead-a',
@@ -62,6 +84,192 @@ describe('Pi merge-slot push policy', () => {
 
     expect(decision?.policy).toBe('requireMergeSlotForPush')
     expect(decision?.block).toBe(true)
+  })
+})
+
+describe('Pi review-chain checkpoint policy', () => {
+  it('allows same-bead reviewing transition from inreview to simplified', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFakeBd(binDir, { 'bead-a': 'inreview' })
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --status simplified --json', {
+        activeBead: 'bead-a',
+        state: 'reviewing',
+      }, { cwd: repo })
+
+      expect(decision).toBeUndefined()
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves reviewing state while reconciling active bd review checkpoint statuses', () => {
+    expect(reconcileWorkflowStateWithBdStatus({ activeBead: 'bead-a', state: 'reviewing' }, 'inreview').state).toBe('reviewing')
+    expect(reconcileWorkflowStateWithBdStatus({ activeBead: 'bead-a', state: 'reviewing' }, 'simplified').state).toBe('reviewing')
+    expect(reconcileWorkflowStateWithBdStatus({ activeBead: 'bead-a', state: 'reviewing' }, 'reviewed').state).toBe('reviewing')
+  })
+
+  it('blocks review checkpoint transitions for a different active bead', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFakeBd(binDir, { 'bead-b': 'inreview' })
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-b --status simplified --json', {
+        activeBead: 'bead-a',
+        state: 'reviewing',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('validateReviewChain')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('current same-bead reviewing workflow state')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps review checkpoint order and evidence requirements enforced', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      writeFakeBd(binDir, { 'bead-a': 'inreview' }, { 'bead-a': 'CODE REVIEW: APPROVED' })
+      expect(evaluateBashPolicy('bd update bead-a --status reviewed', { activeBead: 'bead-a', state: 'reviewing' }, { cwd: repo })?.reason)
+        .toContain('reviewed requires source status simplified')
+
+      writeFakeBd(binDir, { 'bead-a': 'simplified' })
+      expect(evaluateBashPolicy('bd update bead-a --status reviewed', { activeBead: 'bead-a', state: 'reviewing' }, { cwd: repo })?.reason)
+        .toContain('reviewed requires CODE REVIEW APPROVED evidence')
+
+      writeFakeBd(binDir, { 'bead-a': 'reviewed' }, { 'bead-a': 'CODE REVIEW: APPROVED' })
+      expect(evaluateBashPolicy('bd update bead-a --status accepted', { activeBead: 'bead-a', state: 'reviewing' }, { cwd: repo })?.reason)
+        .toContain('accepted requires acceptance evidence')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks tool_call bash checkpoint when workflow-state ownership is foreign', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      writeFakeBd(binDir, { 'bead-a': 'inreview' }, {
+        'bead-a': `DISPATCH (test-supervisor)
+BRANCH: fix/foreign
+WORKTREE: /repo/foreign`,
+      })
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const notifications: Array<{ message: string; level: string }> = []
+      const ctx = {
+        cwd: repo,
+        sessionManager: {
+          getEntries: () => [{
+            type: 'custom',
+            customType: 'workflow-state',
+            data: { activeBead: 'bead-a', state: 'reviewing', branch: 'fix/foreign', worktreePath: '/repo/foreign', startCommit },
+          }],
+        },
+        ui: {
+          notify(message: string, level: string) { notifications.push({ message, level }) },
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const result = await toolCallHandler(
+        { toolName: 'bash', input: { command: 'bd update bead-a --status simplified --json' } },
+        ctx,
+      )
+
+      expect(result?.block).toBe(true)
+      expect(result?.reason).toContain('[validateReviewChain]')
+      expect(result?.reason).toContain('current same-bead reviewing workflow state')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows tool_call bash checkpoint when current owned workflow-state is reviewing', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      writeFakeBd(binDir, { 'bead-a': 'inreview' }, {
+        'bead-a': `DISPATCH (test-supervisor)\nBRANCH: fix/current\nWORKTREE: ${repo}`,
+      })
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const ctx = {
+        cwd: repo,
+        sessionManager: {
+          getEntries: () => [{
+            type: 'custom',
+            customType: 'workflow-state',
+            data: { activeBead: 'bead-a', state: 'reviewing', branch: 'fix/current', worktreePath: repo, startCommit },
+          }],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const result = await toolCallHandler(
+        { toolName: 'bash', input: { command: 'bd update bead-a --status simplified --json' } },
+        ctx,
+      )
+
+      expect(result).toBeUndefined()
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
   })
 })
 
