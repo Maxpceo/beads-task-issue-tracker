@@ -7,7 +7,12 @@ interface ExtensionAPI {
 }
 
 interface ExtensionContext {
-	sessionManager: { getEntries(): Array<{ type: string; customType?: string; data?: unknown }> };
+	sessionManager: {
+		getEntries(): Array<{ type: string; customType?: string; data?: unknown }>;
+		getSessionId?: () => string | undefined;
+		getSessionFile?: () => string | undefined;
+		getLeafId?: () => string | undefined;
+	};
 	ui: {
 		notify(message: string, level?: string): void;
 		setStatus(key: string, value: string | undefined): void;
@@ -41,6 +46,7 @@ interface WorkflowState {
 	worktreePath?: string;
 	startCommit?: string;
 	endCommit?: string;
+	sessionKey?: string;
 	planMode: PlanMode;
 	mergeSlotHeld: boolean;
 	updatedAt: string;
@@ -54,6 +60,7 @@ interface WorkflowStateUpdateEvent {
 	worktreePath?: string;
 	startCommit?: string;
 	endCommit?: string;
+	sessionKey?: string;
 	planMode?: PlanMode;
 	mergeSlotHeld?: boolean;
 	ctx?: ExtensionContext;
@@ -89,6 +96,22 @@ function formatState(state: WorkflowState): string {
 		`plan=${state.planMode}`,
 		`mergeSlot=${state.mergeSlotHeld ? "held" : "free"}`,
 	].join(" | ");
+}
+
+function currentSessionKey(ctx?: ExtensionContext): string | undefined {
+	const manager = ctx?.sessionManager;
+	const sessionId = manager?.getSessionId?.();
+	if (sessionId) return `id:${sessionId}`;
+	const sessionFile = manager?.getSessionFile?.();
+	if (sessionFile) return `file:${sessionFile}`;
+	const leafId = manager?.getLeafId?.();
+	if (leafId) return `leaf:${leafId}`;
+	return undefined;
+}
+
+function hasCurrentSessionOwnership(state: WorkflowState, ctx?: ExtensionContext): boolean {
+	const key = currentSessionKey(ctx);
+	return Boolean(key && state.sessionKey === key);
 }
 
 async function detectBranch(pi: ExtensionAPI): Promise<string | undefined> {
@@ -146,6 +169,7 @@ interface RecoveryScope {
 	branch?: string;
 	worktreePath?: string;
 	startCommit?: string;
+	sessionKey?: string;
 }
 
 function escapeRegExp(value: string): string {
@@ -193,18 +217,8 @@ function hasForeignSessionOwnershipEvidence(commentsText: string, scope: Recover
 }
 
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
-	const branchNames = ["BRANCH", "Branch", "branch"];
-	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
-	if (hasForeignSessionOwnershipEvidence(commentsText, scope)) return false;
-	const branchMatches = latestFieldMatches(commentsText, branchNames, scope.branch);
-	const worktreeMatches = latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
-	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
-	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(commentsText);
-
-	// A latest branch/worktree match is explicit ownership. A start commit match
-	// is accepted only when branch/worktree ownership was not recorded; otherwise
-	// a common base commit could recover a foreign parallel session.
-	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
+	if (!scope.sessionKey) return false;
+	return hasExactField(commentsText, ["PI_SESSION_KEY", "SESSION_KEY", "sessionKey", "session"], scope.sessionKey);
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
@@ -225,6 +239,7 @@ async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string>
 }
 
 async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope): Promise<string | undefined> {
+	if (!scope.sessionKey) return undefined;
 	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
 		const { stdout, code } = await pi.exec("bd", ["list", `--status=${status}`, "--json"]);
 		if (code !== 0) continue;
@@ -245,7 +260,7 @@ function staleForeignRecoveryMessage(beadId: string, reason: string): string {
 	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Use /workflow-reset to clear stale local state, or explicitly confirm takeover and run /workflow-set-bead ${beadId} <state> after verifying branch/worktree ownership.`;
 }
 
-async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState): Promise<{ state: WorkflowState; warning?: string }> {
+async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
 	const currentScope = {
 		branch: await detectBranch(pi),
 		worktreePath: await detectWorktreePath(pi),
@@ -255,6 +270,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 		branch: currentScope.branch ?? state.branch,
 		worktreePath: currentScope.worktreePath ?? state.worktreePath,
 		startCommit: currentScope.startCommit ?? state.startCommit,
+		sessionKey: currentSessionKey(ctx),
 	};
 
 	if (state.activeBead && state.state !== "idle") {
@@ -269,6 +285,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 					worktreePath: currentScope.worktreePath,
 					startCommit: currentScope.startCommit,
 					endCommit: undefined,
+					sessionKey: undefined,
 				},
 				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
 			};
@@ -276,7 +293,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 		if (isTerminalWorkflowState(state.state)) return { state };
 
 		const commentsText = await readBdComments(pi, state.activeBead);
-		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && (hasSessionOwnershipEvidence(commentsText, scope) || workflowStateHasCurrentScopeEvidence(state, scope));
+		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
 		if (!hasOwnership) {
 			return {
 				state: {
@@ -287,6 +304,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 					worktreePath: currentScope.worktreePath,
 					startCommit: currentScope.startCommit,
 					endCommit: undefined,
+					sessionKey: undefined,
 				},
 				warning: staleForeignRecoveryMessage(state.activeBead, "stale or foreign for this branch/worktree/session"),
 			};
@@ -301,6 +319,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 					worktreePath: currentScope.worktreePath,
 					startCommit: currentScope.startCommit,
 					endCommit: undefined,
+					sessionKey: undefined,
 				},
 				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a non-terminal bd status"),
 			};
@@ -364,7 +383,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	}
 
 	async function ensureReconciled(ctx?: ExtensionContext): Promise<void> {
-		const reconciled = await reconcileActiveBeadState(pi, workflowState);
+		const reconciled = await reconcileActiveBeadState(pi, workflowState, ctx);
 		const changed =
 			reconciled.state.state !== workflowState.state ||
 			reconciled.state.activeBead !== workflowState.activeBead ||
@@ -383,7 +402,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (event.state && (!event.stateIfCurrent || event.stateIfCurrent.includes(workflowState.state))) {
 			next.state = event.state;
 		}
-		if (event.activeBead !== undefined) next.activeBead = event.activeBead || undefined;
+		if (event.activeBead !== undefined) {
+			next.activeBead = event.activeBead || undefined;
+			if (event.activeBead && event.ctx) next.sessionKey = currentSessionKey(event.ctx);
+		}
 		if (event.branch !== undefined) next.branch = event.branch || undefined;
 		if (event.worktreePath !== undefined) next.worktreePath = event.worktreePath || undefined;
 		if (event.startCommit !== undefined) next.startCommit = event.startCommit || undefined;
@@ -429,7 +451,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					activeBead: bead,
 					state: nextState,
 					branch: workflowState.branch ?? (await detectBranch(pi)),
+					worktreePath: workflowState.worktreePath ?? (await detectWorktreePath(pi)),
 					startCommit: workflowState.startCommit ?? (await detectStartCommit(pi)),
+					sessionKey: currentSessionKey(ctx),
 				},
 				ctx,
 			);
@@ -465,6 +489,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					branch: await detectBranch(pi),
 					worktreePath: await detectWorktreePath(pi),
 					startCommit: await detectStartCommit(pi),
+					sessionKey: currentSessionKey(ctx),
 				},
 				ctx,
 			);
@@ -537,7 +562,13 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				}
 				next.state = kv.state;
 			}
-			if (kv.bead) next.activeBead = kv.bead;
+			if (kv.bead) {
+				next.activeBead = kv.bead;
+				next.sessionKey = currentSessionKey(ctx);
+				next.branch = workflowState.branch ?? (await detectBranch(pi));
+				next.worktreePath = workflowState.worktreePath ?? (await detectWorktreePath(pi));
+				next.startCommit = workflowState.startCommit ?? (await detectStartCommit(pi));
+			}
 			if (kv.branch) next.branch = kv.branch;
 			if (kv.worktree) next.worktreePath = kv.worktree;
 			if (kv.start) next.startCommit = kv.start;

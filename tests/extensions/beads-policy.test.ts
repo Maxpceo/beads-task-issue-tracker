@@ -230,17 +230,72 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
   })
 
-  it('prefers later current ownership evidence over old foreign workflow comments', () => {
+  it('requires current-session marker instead of branch/worktree comments for ownership evidence', () => {
     const comments = [
       'DISPATCH (test-supervisor)',
-      'BRANCH: fix/other',
-      'WORKTREE: /repo/other',
-      'REDISPATCH (test-supervisor)',
       'BRANCH: fix/current',
       'WORKTREE: /repo/current',
+      'PI_SESSION_KEY: id:session-current',
     ].join('\n')
 
-    expect(hasSessionOwnershipEvidence(comments, { branch: 'fix/current', worktreePath: '/repo/current' })).toBe(true)
+    expect(hasSessionOwnershipEvidence(comments, { branch: 'fix/current', worktreePath: '/repo/current' })).toBe(false)
+    expect(hasSessionOwnershipEvidence(comments, { sessionKey: 'id:session-current' })).toBe(true)
+    expect(hasSessionOwnershipEvidence(comments, { sessionKey: 'id:other' })).toBe(false)
+  })
+
+  it('blocks another claim for a same-session active workflow-state', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    try {
+      execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const ctx = {
+        cwd: repo,
+        sessionManager: {
+          getSessionId: () => 'session-current',
+          getEntries: () => [
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                activeBead: 'bead-active',
+                state: 'inreview',
+                branch: 'fix/current',
+                startCommit,
+                sessionKey: 'id:session-current',
+              },
+            },
+          ],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const result = await toolCallHandler(
+        { toolName: 'bash', input: { command: 'bd update bead-next --claim --json' } },
+        ctx,
+      )
+
+      expect(result.reason).toContain('enforceActiveBeadLifecycle')
+      expect(result.reason).toContain('bead-active')
+      expect(result.reason).toContain('review-bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 
   it('does not confirm active workflow-state when later bd comments show foreign ownership', async () => {
@@ -281,6 +336,7 @@ exit 1
       const ctx = {
         cwd: repo,
         sessionManager: {
+          getSessionId: () => 'session-current',
           getEntries: () => [
             {
               type: 'custom',
@@ -336,6 +392,7 @@ exit 1
       const ctx = {
         cwd: repo,
         sessionManager: {
+          getSessionId: () => 'session-current',
           getEntries: () => [
             {
               type: 'custom',
