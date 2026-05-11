@@ -51,7 +51,7 @@ function makeHarness(options: {
 
   workflowStateExtension(pi)
 
-  return { eventHandlers, ctx, appended, notifications }
+  return { eventHandlers, commandHandlers, ctx, appended, notifications }
 }
 
 describe('Pi workflow-state session-scoped recovery', () => {
@@ -165,6 +165,142 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).not.toContain('state=implementing')
+    expect(context.message.content).not.toContain('bead=bead-closed')
+    expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
+  })
+
+  it('clears restored active bead when bd status is closed even if local workflow state is already terminal', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-closed': { status: 'closed', comments: '' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'closed',
+            activeBead: 'bead-closed',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            endCommit: 'old-end',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(context.message.content).toContain('end=-')
+    expect(context.message.content).not.toContain('state=closed')
+    expect(context.message.content).not.toContain('bead=bead-closed')
+    expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
+  })
+
+  it('reconciles workflow-status/footer when active bead becomes closed after session start', async () => {
+    const issues: Record<string, { status: string; comments: string }> = {
+      'bead-closed': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
+    }
+    const { eventHandlers, commandHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues,
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'reviewing',
+            activeBead: 'bead-closed',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            endCommit: 'old-end',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    issues['bead-closed']!.status = 'closed'
+
+    await commandHandlers.get('workflow-status')?.handler('', ctx)
+
+    expect(notifications.at(-2)?.message).toContain('terminal bd status closed')
+    expect(notifications.at(-1)?.message).toContain('state=idle')
+    expect(notifications.at(-1)?.message).toContain('bead=-')
+    expect(notifications.at(-1)?.message).toContain('end=-')
+    expect(notifications.at(-1)?.message).not.toContain('state=reviewing')
+    expect(notifications.at(-1)?.message).not.toContain('bead=bead-closed')
+  })
+
+  it('reconciles /workflow-update before notifying or persisting a terminal active bead', async () => {
+    const { commandHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-closed': { status: 'closed', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
+      },
+    })
+
+    await commandHandlers.get('workflow-update')?.handler(
+      'state=reviewing bead=bead-closed branch=fix/current worktree=/repo/current start=current-head end=old-end',
+      ctx,
+    )
+
+    expect(appended).toHaveLength(1)
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
+    expect((appended.at(-1)?.data as any).endCommit).toBeUndefined()
+    expect(notifications.at(-2)?.message).toContain('terminal bd status closed')
+    expect(notifications.at(-1)?.message).toContain('state=idle')
+    expect(notifications.at(-1)?.message).toContain('bead=-')
+    expect(notifications.at(-1)?.message).toContain('end=-')
+    expect(notifications.at(-1)?.message).not.toContain('state=reviewing')
+    expect(notifications.at(-1)?.message).not.toContain('bead=bead-closed')
+  })
+
+  it('reconciles workflow-state:update before exposing a terminal active bead in context', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-closed': { status: 'closed', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
+      },
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    await eventHandlers.get('workflow-state:update')?.({
+      state: 'reviewing',
+      activeBead: 'bead-closed',
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      endCommit: 'old-end',
+      ctx,
+    }, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(context.message.content).toContain('end=-')
+    expect(context.message.content).not.toContain('state=reviewing')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
   })

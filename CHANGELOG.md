@@ -33,6 +33,7 @@
 
 ### Fixed
 
+- **Pi workflow-state terminal cleanup** (`beads-task-issue-tracker-owhf`): terminal bd statuses now clear stale active-bead state back to `idle` before persistence and policy reconciliation, preventing closed/accepted beads from blocking the next Pi workflow turn.
 - **Pi footer linked-worktree indicator** (`beads-task-issue-tracker-jy5b`): the status dashboard now detects linked worktrees via Git's absolute git-dir metadata, so the footer/status line shows `wt:<worktree>` from linked checkouts and stays hidden in the primary checkout.
 - **Pi memory capture consent and bounded parsing** (`beads-task-issue-tracker-659b`): bd `LEARNED:` comment capture now stops at the comment argument/flags instead of absorbing chained shell syntax, and writes to `.beads/memory/knowledge.jsonl` only after an explicit approval prompt that shows the proposed content and reason.
 - **Stale project data after switching projects** (`bd-606r`): fixed a race condition where in-flight `fetchIssues`, `fetchPollData`, `fetchIssue`, `searchIssues`, and `fetchStats` calls from the old project could resolve after `handlePathChange` had already loaded the new project, overwriting `issues.value` and `stats.value` with a snapshot of the previous project. The table and dashboard would display the old project's issues until the user manually re-switched. Guards now compare the active project path at call-start against the current path at resolve-time and discard stale responses; `isLoading` is cleared in a `finally` block regardless of outcome.

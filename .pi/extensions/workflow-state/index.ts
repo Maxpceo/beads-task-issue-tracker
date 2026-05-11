@@ -257,10 +257,26 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 		startCommit: currentScope.startCommit ?? state.startCommit,
 	};
 
-	if (state.activeBead && state.state !== "idle" && !isTerminalWorkflowState(state.state)) {
+	if (state.activeBead && state.state !== "idle") {
+		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
+		if (bdState && isTerminalWorkflowState(bdState)) {
+			return {
+				state: {
+					...state,
+					activeBead: undefined,
+					state: "idle",
+					branch: currentScope.branch ?? state.branch,
+					worktreePath: currentScope.worktreePath,
+					startCommit: currentScope.startCommit,
+					endCommit: undefined,
+				},
+				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
+			};
+		}
+		if (isTerminalWorkflowState(state.state)) return { state };
+
 		const commentsText = await readBdComments(pi, state.activeBead);
 		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && (hasSessionOwnershipEvidence(commentsText, scope) || workflowStateHasCurrentScopeEvidence(state, scope));
-		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
 		if (!hasOwnership) {
 			return {
 				state: {
@@ -287,20 +303,6 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 					endCommit: undefined,
 				},
 				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a non-terminal bd status"),
-			};
-		}
-		if (isTerminalWorkflowState(bdState)) {
-			return {
-				state: {
-					...state,
-					activeBead: undefined,
-					state: "idle",
-					branch: currentScope.branch ?? state.branch,
-					worktreePath: currentScope.worktreePath,
-					startCommit: currentScope.startCommit,
-					endCommit: undefined,
-				},
-				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
 			};
 		}
 		const bdInProgressMatchesLocalPreImplementation = bdState === "implementing" && ["claimed", "planning", "plan_approved"].includes(state.state);
@@ -350,10 +352,30 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (ctx) updateFooter(ctx, workflowState);
 	}
 
-	function setState(partial: Partial<WorkflowState>, ctx?: ExtensionContext): WorkflowState {
+	function assignState(partial: Partial<WorkflowState>): WorkflowState {
 		workflowState = { ...workflowState, ...partial };
+		return workflowState;
+	}
+
+	function setState(partial: Partial<WorkflowState>, ctx?: ExtensionContext): WorkflowState {
+		assignState(partial);
 		persist(ctx);
 		return workflowState;
+	}
+
+	async function ensureReconciled(ctx?: ExtensionContext): Promise<void> {
+		const reconciled = await reconcileActiveBeadState(pi, workflowState);
+		const changed =
+			reconciled.state.state !== workflowState.state ||
+			reconciled.state.activeBead !== workflowState.activeBead ||
+			reconciled.state.branch !== workflowState.branch ||
+			reconciled.state.worktreePath !== workflowState.worktreePath ||
+			reconciled.state.startCommit !== workflowState.startCommit ||
+			reconciled.state.endCommit !== workflowState.endCommit;
+		workflowState = reconciled.state;
+		if (changed) persist(ctx);
+		else if (ctx) updateFooter(ctx, workflowState);
+		if (ctx && reconciled.warning) ctx.ui.notify(reconciled.warning, "warning");
 	}
 
 	function applyEventUpdate(event: WorkflowStateUpdateEvent): WorkflowState {
@@ -371,14 +393,15 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return setState(next, event.ctx);
 	}
 
-	pi.events.on("workflow-state:update", (event: WorkflowStateUpdateEvent) => {
+	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent) => {
 		applyEventUpdate(event);
+		await ensureReconciled(event.ctx);
 	});
 
 	pi.registerCommand("workflow-status", {
 		description: "Show current Pi workflow state",
 		handler: async (_args, ctx) => {
-			updateFooter(ctx, workflowState);
+			await ensureReconciled(ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
 		},
 	});
@@ -533,7 +556,8 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				}
 				next.mergeSlotHeld = kv.slot === "held";
 			}
-			setState(next, ctx);
+			assignState(next);
+			await ensureReconciled(ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
 		},
 	});
@@ -546,18 +570,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : cloneState(DEFAULT_STATE);
 		workflowState.branch = workflowState.branch ?? (await detectBranch(pi));
-		const reconciled = await reconcileActiveBeadState(pi, workflowState);
-		if (reconciled.state.state !== workflowState.state || reconciled.state.activeBead !== workflowState.activeBead) {
-			workflowState = reconciled.state;
-			persist(ctx);
-		} else {
-			workflowState = reconciled.state;
-			updateFooter(ctx, workflowState);
-		}
-		if (reconciled.warning) ctx.ui.notify(reconciled.warning, "warning");
+		await ensureReconciled(ctx);
 	});
 
-	pi.on("before_agent_start", async () => {
+	pi.on("before_agent_start", async (_event, ctx) => {
+		if (ctx) await ensureReconciled(ctx);
 		return {
 			message: {
 				customType: "workflow-state-context",

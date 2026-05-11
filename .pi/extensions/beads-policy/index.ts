@@ -878,12 +878,21 @@ function workflowStateFromBdStatus(status?: string): string | undefined {
 
 export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot, bdStatus?: string): WorkflowStateSnapshot {
 	const bdState = workflowStateFromBdStatus(bdStatus);
-	if (!bdState || bdState === state.state) return state;
+	if (!bdState) return state;
+	if (TERMINAL_WORKFLOW_STATES.has(bdState)) {
+		return {
+			...state,
+			activeBead: undefined,
+			state: "idle",
+			endCommit: undefined,
+		};
+	}
+	if (bdState === state.state) return state;
 
 	// `in_progress` is bd's broad worker status and can coexist with Pi-local
-	// planning/plan_approved state.  Later review/terminal statuses are
-	// authoritative for lifecycle guards because they may be written by raw bd
-	// commands or typed review tools during the same Pi session.
+	// planning/plan_approved state.  Later review statuses are authoritative for
+	// lifecycle guards because they may be written by raw bd commands or typed
+	// review tools during the same Pi session.
 	if (bdState === "implementing") return state;
 
 	return { ...state, state: bdState };

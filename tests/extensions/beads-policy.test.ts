@@ -115,6 +115,24 @@ describe('Pi active bead lifecycle policy', () => {
     expect(reconciled.state).toBe('planning')
   })
 
+  it('clears active bead when bd status is terminal before lifecycle decisions', () => {
+    const reconciled = reconcileWorkflowStateWithBdStatus({
+      activeBead: 'bead-a',
+      state: 'reviewing',
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-sha',
+      endCommit: 'end-sha',
+    }, 'closed')
+
+    const decision = evaluateBashPolicy('bd update bead-b --claim --json', reconciled)
+
+    expect(reconciled.state).toBe('idle')
+    expect(reconciled.activeBead).toBeUndefined()
+    expect(reconciled.endCommit).toBeUndefined()
+    expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
+  })
+
   it('allows next claim after active bead reaches closed terminal state', () => {
     const decision = evaluateBashPolicy('bd update bead-b --claim --json', {
       activeBead: 'bead-a',
