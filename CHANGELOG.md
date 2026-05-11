@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- **Pi agents dashboard Unicode width crash** (`beads-task-issue-tracker-roo6`): `/agents-dashboard` now uses Pi TUI display-width helpers for truncation and padding, preventing double-width running icons such as `⏳` from rendering one column wider than the terminal and crashing the TUI.
 - **Pi workflow-state terminal cleanup** (`beads-task-issue-tracker-owhf`): terminal bd statuses now clear stale active-bead state back to `idle` before persistence and policy reconciliation, preventing closed/accepted beads from blocking the next Pi workflow turn.
 - **Pi footer linked-worktree indicator** (`beads-task-issue-tracker-jy5b`): the status dashboard now detects linked worktrees via Git's absolute git-dir metadata, so the footer/status line shows `wt:<worktree>` from linked checkouts and stays hidden in the primary checkout.
 - **Pi memory capture consent and bounded parsing** (`beads-task-issue-tracker-659b`): bd `LEARNED:` comment capture now stops at the comment argument/flags instead of absorbing chained shell syntax, and writes to `.beads/memory/knowledge.jsonl` only after an explicit approval prompt that shows the proposed content and reason.

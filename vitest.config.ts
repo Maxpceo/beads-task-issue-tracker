@@ -26,6 +26,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '~': resolve(__dirname, 'app'),
+      '@earendil-works/pi-tui': resolve(__dirname, 'tests/mocks/pi-tui.ts'),
     },
   },
 })

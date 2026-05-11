@@ -1,3 +1,5 @@
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+
 export interface DashboardAgentConfig {
 	name: string;
 	description: string;
@@ -44,24 +46,15 @@ export interface DashboardTheme {
 	bold?(text: string): string;
 }
 
-const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const CARD_PADDING_X = 2;
 
-function visibleLength(text: string): number {
-	return text.replace(ANSI_RE, "").length;
-}
-
 function truncate(text: string, width: number): string {
-	if (width <= 0) return "";
-	if (visibleLength(text) <= width) return text;
-	const plain = text.replace(ANSI_RE, "");
-	if (width === 1) return "…";
-	return `${plain.slice(0, width - 1)}…`;
+	return truncateToWidth(text, Math.max(0, width), "…");
 }
 
 function padRight(text: string, width: number): string {
 	const clipped = truncate(text, width);
-	return clipped + " ".repeat(Math.max(0, width - visibleLength(clipped)));
+	return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 }
 
 function statusIcon(status: AgentDashboardStatus): string {
