@@ -77,7 +77,7 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string): Promise<{ status: string; footer: string[] }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> = {}): Promise<{ status: string; footer: string[] }> {
   const handlers: RegisteredHandlers = {}
   let status = ''
   let footer: { render: (width: number) => string[] } | undefined
@@ -99,7 +99,9 @@ async function renderDashboard(cwd: string): Promise<{ status: string; footer: s
   const ctx: MockContext = {
     cwd,
     hasUI: true,
-    sessionManager: { getEntries: () => [] },
+    sessionManager: {
+      getEntries: () => (Object.keys(workflowState).length > 0 ? [{ type: 'custom', customType: 'workflow-state', data: workflowState }] : []),
+    },
     ui: {
       theme,
       setStatus(key: string, text: string) {
@@ -148,5 +150,24 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.status).not.toContain(`wt:${linkedName}`)
     expect(dashboard.status).not.toContain('wt:')
     expect(dashboard.footer.join('\n')).not.toContain(`wt:${linkedName}`)
+  })
+
+  it('uses a git-validated workflow-state linked worktree path when runtime cwd is primary', async () => {
+    const { primary, linked, linkedName } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, { worktreePath: linked })
+
+    expect(dashboard.status).toContain(`wt:${linkedName}`)
+    expect(dashboard.footer.join('\n')).toContain(`wt:${linkedName}`)
+  })
+
+  it('does not treat a workflow-state primary checkout path as a linked worktree', async () => {
+    const { primary, linkedName } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, { worktreePath: primary })
+
+    expect(dashboard.status).not.toContain(`wt:${linkedName}`)
+    expect(dashboard.status).not.toContain('wt:')
+    expect(dashboard.footer.join('\n')).not.toContain('wt:')
   })
 })
