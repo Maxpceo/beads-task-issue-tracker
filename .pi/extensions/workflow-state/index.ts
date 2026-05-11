@@ -289,6 +289,20 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState):
 				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a non-terminal bd status"),
 			};
 		}
+		if (isTerminalWorkflowState(bdState)) {
+			return {
+				state: {
+					...state,
+					activeBead: undefined,
+					state: "idle",
+					branch: currentScope.branch ?? state.branch,
+					worktreePath: currentScope.worktreePath,
+					startCommit: currentScope.startCommit,
+					endCommit: undefined,
+				},
+				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
+			};
+		}
 		const bdInProgressMatchesLocalPreImplementation = bdState === "implementing" && ["claimed", "planning", "plan_approved"].includes(state.state);
 		if (bdState !== state.state && !bdInProgressMatchesLocalPreImplementation) {
 			return {
