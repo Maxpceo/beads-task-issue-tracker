@@ -27,5 +27,6 @@ These are Pi-native project rules distilled from Claude reference files. Do not 
 
 - Backend must support both legacy JSONL and Dolt-backed bd projects; use version-gated helpers before relying on bd features.
 - bd 0.57+ self-manages Dolt server and auto-flush/import; do not assume manual server lifecycle.
+- Do not run or document `bd sync`; that command no longer exists in bd 0.57+. Use `bd dolt pull` / `bd dolt push` for Dolt-backed projects, or explicit named `.beads/` git paths for legacy JSONL projects.
 - File watcher logic intentionally coalesces `.beads/` events before frontend refetches; preserve debounce/min-emit semantics when editing watcher code.
 - Recommended dev startup is `./start-dev.sh`; it handles port 3133 and stale dev binaries safely.

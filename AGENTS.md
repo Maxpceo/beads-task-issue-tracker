@@ -32,7 +32,9 @@ bd ready              # Find available work
 bd show <id>          # View issue details
 bd update <id> --status in_progress  # Claim work
 bd close <id>         # Complete work
-bd sync               # Sync with git
+bd dolt status        # Inspect Dolt-backed bead state when needed
+bd dolt pull          # Pull bd/Dolt state when needed
+bd dolt push          # Push bd/Dolt state when needed
 ```
 
 ## Landing the Plane (Session Completion)
@@ -48,8 +50,11 @@ bd sync               # Sync with git
 
    ```bash
    git pull --rebase
-   bd sync
+   bd dolt pull || true   # bd 0.57+ has no bd sync; Dolt projects sync with bd dolt
+   bd dolt push || true   # for legacy JSONL projects, commit named .beads/ paths instead
+   bd merge-slot acquire
    git push
+   bd merge-slot release
    git status  # MUST show "up to date with origin"
    ```
 
@@ -204,13 +209,14 @@ bd close bd-42 --reason "Completed" --json
    - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
 5. **Complete**: `bd close <id> --reason "Done"`
 
-### Auto-Sync
+### bd 0.57+ Dolt sync
 
-bd automatically syncs via Dolt:
+bd 0.57+ uses a self-managing Dolt server with auto-flush/auto-import. The old `bd sync` command no longer exists.
 
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
+- Each write auto-commits to Dolt history.
+- Use `bd dolt pull` / `bd dolt push` for remote Dolt sync when needed.
+- For legacy JSONL projects, commit named `.beads/` paths explicitly instead of relying on Dolt commands.
+- No manual `bd sync` step is required or available.
 
 ### Important Rules
 
