@@ -1055,7 +1055,7 @@ export function evaluateBashPolicy(
 	const hasReviewWorkflowState = Boolean(
 		transition &&
 			workflowState.activeBead === transition.id &&
-			(workflowState.state === "reviewing" || workflowState.state === "inreview")
+			workflowState.state === "reviewing"
 	);
 	if (transition && (!hasReviewWorkflowState || invalidReviewTransition)) {
 		return {

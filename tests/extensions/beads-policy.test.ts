@@ -109,6 +109,29 @@ describe('Pi review-chain checkpoint policy', () => {
     }
   })
 
+  it('blocks same-bead checkpoint transitions before entering reviewing workflow state', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFakeBd(binDir, { 'bead-a': 'inreview' })
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --status simplified --json', {
+        activeBead: 'bead-a',
+        state: 'inreview',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('validateReviewChain')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('current same-bead reviewing workflow state')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
   it('preserves reviewing state while reconciling active bd review checkpoint statuses', () => {
     expect(reconcileWorkflowStateWithBdStatus({ activeBead: 'bead-a', state: 'reviewing' }, 'inreview').state).toBe('reviewing')
     expect(reconcileWorkflowStateWithBdStatus({ activeBead: 'bead-a', state: 'reviewing' }, 'simplified').state).toBe('reviewing')
