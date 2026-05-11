@@ -300,7 +300,8 @@ class ReplayOverlay {
 	}
 
 	private row(content: string, width: number): string {
-		const innerWidth = Math.max(1, width - 2);
+		if (width <= 1) return "";
+		const innerWidth = Math.max(0, width - 2);
 		const safeContent = truncateToWidth(content, innerWidth, "…");
 		return `${this.theme.fg("border", "│")}${this.pad(safeContent, innerWidth)}${this.theme.fg("border", "│")}`;
 	}
@@ -317,8 +318,9 @@ class ReplayOverlay {
 	}
 
 	render(width: number): string[] {
-		const safeWidth = Math.max(32, width);
-		const innerWidth = Math.max(1, safeWidth - 2);
+		if (width <= 1) return [""];
+		const safeWidth = width;
+		const innerWidth = Math.max(0, safeWidth - 2);
 		const lines: string[] = [];
 		const border = "─".repeat(innerWidth);
 		lines.push(this.theme.fg("border", `╭${border}╮`));
