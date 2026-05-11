@@ -1,3 +1,4 @@
+import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it } from 'vitest'
 import {
   createDashboardState,
@@ -121,6 +122,42 @@ describe('subagent dashboard helpers', () => {
     expect(colors).toContain('warning')
     expect(colors).toContain('error')
     expect(colors).toContain('borderMuted')
-    expect(lines.every((line) => line.length <= 52)).toBe(true)
+    expect(lines.every((line) => visibleWidth(line) <= 52)).toBe(true)
+  })
+
+  it('keeps two-column running cards within the terminal width when status icons are double-width', () => {
+    const state = createDashboardState(
+      selectDashboardAgents(
+        [
+          {
+            name: 'code-reviewer',
+            description: 'Pi-native adversarial code reviewer for spec compliance, automated checks, and handoff quality.',
+            source: 'project',
+          },
+          {
+            name: 'documentation-expert',
+            description: 'Pi-native documentation updater for CHANGELOG, README and docs during accepted changes.',
+            source: 'project',
+          },
+        ],
+        noTeams,
+      ),
+    )
+    upsertDashboardCard(state, {
+      agent: 'code-reviewer',
+      source: 'project',
+      status: 'running',
+      task: 'Повтори полный вывод архитектурной проверки плана beads-task-issue-tracker-tbc6',
+      startedAt: 1_000,
+      toolCount: 3,
+      contextText: 'ctx:10k',
+      lastPreview: 'bash {"command":"rg -n \\"tbc6|follow-up reminder|followup|NEEDS_CHANGES\\""}',
+    })
+
+    const { theme } = createTheme()
+    const lines = renderDashboardLines(state, 138, theme, 17_000)
+
+    expect(lines.some((line) => line.includes('⏳'))).toBe(true)
+    expect(lines.every((line) => visibleWidth(line) <= 138)).toBe(true)
   })
 })
