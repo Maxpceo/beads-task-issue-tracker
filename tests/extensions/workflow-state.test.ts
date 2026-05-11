@@ -1,0 +1,97 @@
+import { describe, expect, it } from 'vitest'
+
+import workflowStateExtension, { hasSessionOwnershipEvidence } from '../../.pi/extensions/workflow-state/index'
+
+function makeHarness(options: {
+  branch: string
+  worktreePath: string
+  startCommit: string
+  issues: Record<string, { status: string; comments: string }>
+}) {
+  const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
+  const commandHandlers = new Map<string, any>()
+  const appended: Array<{ type: string; data: unknown }> = []
+
+  const pi: any = {
+    exec: async (command: string, args: string[]) => {
+      if (command === 'git' && args.join(' ') === 'branch --show-current') return { stdout: `${options.branch}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return { stdout: `${options.startCommit}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: `${options.worktreePath}\n`, stderr: '', code: 0 }
+
+      if (command === 'bd' && args[0] === 'list') {
+        const status = args.find((arg) => arg.startsWith('--status='))?.slice('--status='.length)
+        const issues = Object.entries(options.issues)
+          .filter(([, issue]) => issue.status === status)
+          .map(([id]) => ({ id }))
+        return { stdout: JSON.stringify(issues), stderr: '', code: 0 }
+      }
+      if (command === 'bd' && args[0] === 'comments') {
+        const id = args[1] ?? ''
+        return { stdout: options.issues[id]?.comments ?? '', stderr: '', code: options.issues[id] ? 0 : 1 }
+      }
+      if (command === 'bd' && args[0] === 'show') {
+        const id = args[1] ?? ''
+        const issue = options.issues[id]
+        return { stdout: JSON.stringify(issue ? { id, status: issue.status } : {}), stderr: '', code: issue ? 0 : 1 }
+      }
+      return { stdout: '', stderr: `unexpected ${command} ${args.join(' ')}`, code: 1 }
+    },
+    appendEntry: (type: string, data: unknown) => appended.push({ type, data }),
+    events: { on: (name: string, handler: (event: unknown, ctx: any) => unknown) => eventHandlers.set(name, handler) },
+    on: (name: string, handler: (event: unknown, ctx: any) => unknown) => eventHandlers.set(name, handler),
+    registerCommand: (name: string, config: any) => commandHandlers.set(name, config),
+  }
+
+  const ctx: any = {
+    sessionManager: { getEntries: () => [] },
+    ui: { notify: () => undefined, setStatus: () => undefined, theme: { fg: (_style: string, value: string) => value } },
+  }
+
+  workflowStateExtension(pi)
+
+  return { eventHandlers, ctx, appended }
+}
+
+describe('Pi workflow-state session-scoped recovery', () => {
+  it('keeps a clean session idle when global inreview beads have no matching ownership evidence', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo',
+      startCommit: 'current-head',
+      issues: {
+        'bead-tf9p': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: old-branch\nSTART_COMMIT: old-head' },
+        'bead-15tu': { status: 'inreview', comments: 'CODE REVIEW: pending from another session' },
+      },
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+  })
+
+  it('recovers only the inreview bead whose comments match the current branch/worktree', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-foreign': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/other\nWORKTREE: /repo/other\nSTART_COMMIT: old-head' },
+        'bead-current': { status: 'inreview', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: fix/current\nWORKTREE: /repo/current\nSTART_COMMIT: current-head' },
+      },
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=inreview')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(context.message.content).not.toContain('bead=bead-foreign')
+  })
+
+  it('treats matching workflow comments as session ownership evidence', () => {
+    expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/current', { branch: 'fix/current' })).toBe(true)
+    expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/other', { branch: 'fix/current' })).toBe(false)
+  })
+})

@@ -644,17 +644,49 @@ function isSupervisorPathActive(workflowState: WorkflowStateSnapshot): boolean {
 	return hasActiveBead(workflowState) && SUPERVISOR_READY_STATES.has(workflowState.state ?? "");
 }
 
-function hasApprovedPlanComment(cwd: string, beadId: string): boolean {
-	return /PLAN APPROVED/i.test(getBdCommentsText(cwd, beadId));
+interface RecoveryScope {
+	branch?: string;
+	worktreePath?: string;
+	startCommit?: string;
 }
 
-function recoverableApprovedWorkflowBead(cwd: string): string | undefined {
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasExactField(text: string, names: string[], value?: string): boolean {
+	if (!value) return false;
+	const escaped = escapeRegExp(value);
+	return names.some((name) => new RegExp(`(^|\\n)\\s*${name}\\s*[:=]\\s*${escaped}(\\s|$)`, "im").test(text));
+}
+
+export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchMatches = hasExactField(commentsText, ["BRANCH", "Branch", "branch"], scope.branch);
+	const worktreeMatches = hasExactField(commentsText, ["WORKTREE", "Worktree", "worktree", "worktreePath"], scope.worktreePath);
+	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
+	return branchMatches || worktreeMatches || (startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(commentsText));
+}
+
+function currentRecoveryScope(cwd: string): RecoveryScope {
+	return {
+		branch: getCurrentBranch(cwd),
+		worktreePath: getRepoRoot(cwd),
+		startCommit: runGit(cwd, ["rev-parse", "HEAD"]),
+	};
+}
+
+function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
+	const comments = getBdCommentsText(cwd, beadId);
+	return /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
+}
+
+function recoverableApprovedWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
 	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
 		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
 		if (!raw) continue;
 		try {
 			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && hasApprovedPlanComment(cwd, issue.id));
+			const bead = issues.find((issue) => issue.id && hasScopedApprovedWorkflowComment(cwd, issue.id, scope));
 			if (bead?.id) return bead.id;
 		} catch {
 			continue;
