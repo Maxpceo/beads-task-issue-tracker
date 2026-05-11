@@ -241,12 +241,45 @@ export function loadWorkflowChains(cwd: string): LoadChainsResult {
 	return { chains: BUILTIN_CHAINS, source: "built-in", warnings };
 }
 
-function latestWorkflowState(ctx: ExtensionContext): WorkflowSnapshot {
+function workflowStateFromBdStatus(status: string | undefined): WorkflowStateName | undefined {
+	switch (status) {
+		case "open": return "claimed";
+		case "in_progress": return "implementing";
+		case "inreview": return "inreview";
+		case "simplified":
+		case "reviewed": return "reviewing";
+		case "accepted": return "accepted";
+		case "closed": return "closed";
+		case "blocked": return "blocked";
+		case "deferred": return "deferred";
+		default: return undefined;
+	}
+}
+
+function extractBdStatus(raw: unknown): string | undefined {
+	if (Array.isArray(raw)) return extractBdStatus(raw[0]);
+	if (!isRecord(raw)) return undefined;
+	return asString(raw.status);
+}
+
+async function bdStatusWorkflowState(pi: ExtensionAPI, beadId: string): Promise<WorkflowStateName | undefined> {
+	const result = await pi.exec("bd", ["show", beadId, "--json"]);
+	if (result.code !== 0) return undefined;
+	try {
+		return workflowStateFromBdStatus(extractBdStatus(JSON.parse(result.stdout)));
+	} catch {
+		return undefined;
+	}
+}
+
+async function latestWorkflowState(pi: ExtensionAPI, ctx: ExtensionContext): Promise<WorkflowSnapshot> {
 	const entry = ctx.sessionManager.getEntries().filter((item) => item.type === "custom" && item.customType === "workflow-state").pop();
 	const data = isRecord(entry?.data) ? entry.data : {};
+	const activeBead = asString(data.activeBead);
+	const explicitState = asString(data.state) as WorkflowStateName | undefined;
 	return {
-		activeBead: asString(data.activeBead),
-		state: (asString(data.state) as WorkflowStateName | undefined) ?? "idle",
+		activeBead,
+		state: explicitState ?? (activeBead ? await bdStatusWorkflowState(pi, activeBead) : undefined) ?? "idle",
 		branch: asString(data.branch),
 		worktreePath: asString(data.worktreePath),
 		startCommit: asString(data.startCommit),
@@ -359,7 +392,7 @@ function renderList(result: LoadChainsResult): string {
 async function handleCommand(pi: ExtensionAPI, args: string, ctx: ExtensionContext): Promise<void> {
 	const [action, chainId] = args.trim().split(/\s+/).filter(Boolean);
 	const loaded = loadWorkflowChains(ctx.cwd);
-	const state = latestWorkflowState(ctx);
+	const state = await latestWorkflowState(pi, ctx);
 	ctx.ui.setStatus?.("workflow-chain", "chain");
 	if (!action || action === "list") {
 		notify(ctx, renderList(loaded), loaded.error ? "error" : "info");

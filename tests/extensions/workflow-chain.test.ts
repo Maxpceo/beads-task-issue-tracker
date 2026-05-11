@@ -22,7 +22,7 @@ function write(cwd: string, relativePath: string, content: string): void {
   writeFileSync(absolute, content)
 }
 
-function makeHarness(cwd: string, entries: any[] = []) {
+function makeHarness(cwd: string, entries: any[] = [], bdStatus = 'in_progress') {
   const commands = new Map<string, any>()
   const notifications: Array<{ message: string; level?: string }> = []
   const widgets: Record<string, string[] | undefined> = {}
@@ -33,6 +33,7 @@ function makeHarness(cwd: string, entries: any[] = []) {
       execCalls.push({ command, args })
       if (command === 'git' && args.join(' ') === 'branch --show-current') return { stdout: 'task/demo\n', stderr: '', code: 0 }
       if (command === 'git' && args.join(' ') === 'status --short') return { stdout: '', stderr: '', code: 0 }
+      if (command === 'bd' && args[0] === 'show' && args[2] === '--json') return { stdout: JSON.stringify({ id: args[1], status: bdStatus }), stderr: '', code: 0 }
       return { stdout: '', stderr: `unexpected ${command} ${args.join(' ')}`, code: 1 }
     },
     registerCommand: (name: string, config: any) => commands.set(name, config),
@@ -148,6 +149,21 @@ describe('workflow-chain command behavior', () => {
     expect(harness.notifications[0]?.message).toContain('guard: current implementing not in plan_approved')
     expect(harness.notifications[0]?.message).toContain('blocked: typed handoff only')
     expect(harness.execCalls.some((call) => call.command === 'bd')).toBe(false)
+  })
+
+  it('falls back from active bead to bd show status when workflow-state state is missing', async () => {
+    const cwd = tempProject()
+    write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [{
+      id: 'handoff',
+      title: 'Handoff',
+      steps: [{ type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredState: 'plan_approved', handoff: 'Use dispatch-supervisor' }],
+    }] }))
+    const harness = makeHarness(cwd, [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-1', branch: 'task/demo' } }], 'in_progress')
+
+    await harness.commands.get('workflow-chain').handler('dry-run handoff', harness.ctx)
+
+    expect(harness.execCalls).toContainEqual({ command: 'bd', args: ['show', 'bead-1', '--json'] })
+    expect(harness.notifications[0]?.message).toContain('guard: current implementing not in plan_approved')
   })
 
   it('blocks invalid-state workflow-critical run before mutation with handoff text', async () => {
