@@ -909,7 +909,11 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const state = last?.data ?? {};
 	const scope = currentRecoveryScope(ctx.cwd);
 	if (state.activeBead && state.state && state.state !== "idle") {
-		const hasCommentEvidence = hasSessionOwnershipEvidence(getBdCommentsText(ctx.cwd, state.activeBead), scope);
+		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
+		if (hasForeignSessionOwnershipEvidence(commentsText, scope)) {
+			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+		}
+		const hasCommentEvidence = hasSessionOwnershipEvidence(commentsText, scope);
 		if (hasCommentEvidence || workflowStateHasCurrentScopeEvidence(state, scope)) {
 			return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
 		}
