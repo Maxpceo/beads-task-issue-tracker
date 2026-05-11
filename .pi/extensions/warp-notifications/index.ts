@@ -1,8 +1,11 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 type NotifyKind = "complete" | "needs-input" | "error" | "test";
+type SoundKind = "complete" | "attention";
 
 interface TurnState {
 	startedAt: number;
@@ -13,12 +16,33 @@ interface TurnState {
 	needsInputNotified: boolean;
 }
 
+interface WarpNotifyConfig {
+	notificationsEnabled: boolean;
+	soundEnabled: boolean;
+	completeSoundEnabled: boolean;
+	attentionSoundEnabled: boolean;
+	completeSoundPath: string;
+	attentionSoundPath: string;
+}
+
 const OSC_BEL = "\x07";
 const OSC_777_PREFIX = "\x1b]777;notify;";
 const DEFAULT_COMPLETE_SOUND = "/System/Library/Sounds/Pop.aiff";
 const DEFAULT_INPUT_SOUND = "/System/Library/Sounds/Glass.aiff";
+const SYSTEM_SOUNDS_DIR = "/System/Library/Sounds";
 const MAX_SNIPPET_LENGTH = 180;
 const MAX_ACTION_LENGTH = 48;
+const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CONFIG_PATH = path.join(EXTENSION_DIR, "config.json");
+
+const DEFAULT_CONFIG: WarpNotifyConfig = {
+	notificationsEnabled: true,
+	soundEnabled: true,
+	completeSoundEnabled: true,
+	attentionSoundEnabled: true,
+	completeSoundPath: DEFAULT_COMPLETE_SOUND,
+	attentionSoundPath: DEFAULT_INPUT_SOUND,
+};
 
 function sanitizeOscPart(value: string): string {
 	return value
@@ -34,14 +58,71 @@ function truncate(value: string, maxLength: number): string {
 	return `${clean.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
-function envFlag(name: string, fallback: boolean): boolean {
+function envFlagValue(name: string): boolean | undefined {
 	const value = process.env[name];
-	if (value === undefined) return fallback;
+	if (value === undefined) return undefined;
 	return !["0", "false", "no", "off"].includes(value.toLowerCase());
 }
 
+function envFlag(name: string, fallback: boolean): boolean {
+	return envFlagValue(name) ?? fallback;
+}
+
+function isConfig(value: unknown): value is Partial<WarpNotifyConfig> {
+	return Boolean(value) && typeof value === "object";
+}
+
+function readConfig(): WarpNotifyConfig {
+	if (!existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
+	try {
+		const parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as unknown;
+		if (!isConfig(parsed)) return { ...DEFAULT_CONFIG };
+		const config = { ...DEFAULT_CONFIG };
+		if (typeof parsed.notificationsEnabled === "boolean") config.notificationsEnabled = parsed.notificationsEnabled;
+		if (typeof parsed.soundEnabled === "boolean") config.soundEnabled = parsed.soundEnabled;
+		if (typeof parsed.completeSoundEnabled === "boolean") config.completeSoundEnabled = parsed.completeSoundEnabled;
+		if (typeof parsed.attentionSoundEnabled === "boolean") config.attentionSoundEnabled = parsed.attentionSoundEnabled;
+		if (typeof parsed.completeSoundPath === "string") config.completeSoundPath = parsed.completeSoundPath;
+		if (typeof parsed.attentionSoundPath === "string") config.attentionSoundPath = parsed.attentionSoundPath;
+		return config;
+	} catch {
+		return { ...DEFAULT_CONFIG };
+	}
+}
+
+function writeConfig(config: WarpNotifyConfig): void {
+	mkdirSync(EXTENSION_DIR, { recursive: true });
+	writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+function resetConfig(): WarpNotifyConfig {
+	const config = { ...DEFAULT_CONFIG };
+	writeConfig(config);
+	return config;
+}
+
+function effectiveConfig(): WarpNotifyConfig {
+	const config = readConfig();
+	return {
+		notificationsEnabled: envFlag("PI_WARP_NOTIFICATIONS", config.notificationsEnabled),
+		soundEnabled: envFlag("PI_WARP_NOTIFICATIONS_SOUND", config.soundEnabled),
+		completeSoundEnabled: envFlag("PI_WARP_NOTIFICATIONS_COMPLETE_SOUND", config.completeSoundEnabled),
+		attentionSoundEnabled: envFlag("PI_WARP_NOTIFICATIONS_ATTENTION_SOUND", config.attentionSoundEnabled),
+		completeSoundPath: process.env.PI_WARP_NOTIFICATIONS_COMPLETE_SOUND_PATH || config.completeSoundPath,
+		attentionSoundPath: process.env.PI_WARP_NOTIFICATIONS_ATTENTION_SOUND_PATH || config.attentionSoundPath,
+	};
+}
+
+function status(value: boolean): string {
+	return value ? "on" : "off";
+}
+
+function soundName(soundPath: string): string {
+	return path.basename(soundPath).replace(/\.aiff$/i, "") || soundPath;
+}
+
 function notify(title: string, body: string): void {
-	if (!envFlag("PI_WARP_NOTIFICATIONS", true)) return;
+	if (!effectiveConfig().notificationsEnabled) return;
 
 	const payload = `${OSC_777_PREFIX}${sanitizeOscPart(title)};${sanitizeOscPart(body)}${OSC_BEL}`;
 	try {
@@ -55,17 +136,18 @@ function notify(title: string, body: string): void {
 	}
 }
 
-function playSound(kind: NotifyKind): void {
-	if (process.platform !== "darwin") return;
-	if (!envFlag("PI_WARP_NOTIFICATIONS_SOUND", true)) return;
-	if (kind === "complete" && !envFlag("PI_WARP_NOTIFICATIONS_COMPLETE_SOUND", true)) return;
-	if ((kind === "needs-input" || kind === "error") && !envFlag("PI_WARP_NOTIFICATIONS_ATTENTION_SOUND", true)) return;
+function soundPathFor(kind: NotifyKind, config = effectiveConfig()): string {
+	return kind === "complete" || kind === "test" ? config.completeSoundPath : config.attentionSoundPath;
+}
 
-	const configuredPath =
-		kind === "complete" || kind === "test"
-			? process.env.PI_WARP_NOTIFICATIONS_COMPLETE_SOUND_PATH
-			: process.env.PI_WARP_NOTIFICATIONS_ATTENTION_SOUND_PATH;
-	const soundPath = configuredPath || (kind === "complete" || kind === "test" ? DEFAULT_COMPLETE_SOUND : DEFAULT_INPUT_SOUND);
+function playSound(kind: NotifyKind): void {
+	const config = effectiveConfig();
+	if (process.platform !== "darwin") return;
+	if (!config.soundEnabled) return;
+	if ((kind === "complete" || kind === "test") && !config.completeSoundEnabled) return;
+	if ((kind === "needs-input" || kind === "error") && !config.attentionSoundEnabled) return;
+
+	const soundPath = soundPathFor(kind, config);
 	if (!existsSync(soundPath)) return;
 
 	try {
@@ -101,8 +183,8 @@ function commandPreview(command: string): string {
 	return `💻 ${truncate(firstLine, MAX_ACTION_LENGTH)}`;
 }
 
-function pathPreview(path: string): string {
-	const name = path.split("/").filter(Boolean).pop() ?? path;
+function pathPreview(pathValue: string): string {
+	const name = pathValue.split("/").filter(Boolean).pop() ?? pathValue;
 	return `📝 ${truncate(name, MAX_ACTION_LENGTH)}`;
 }
 
@@ -157,6 +239,149 @@ function inputSummary(input: unknown): string {
 	const question = typeof input.question === "string" ? input.question : undefined;
 	const context = typeof input.context === "string" ? input.context : undefined;
 	return truncate(question || context || "Pi needs your answer", MAX_SNIPPET_LENGTH);
+}
+
+function availableSystemSounds(): string[] {
+	try {
+		if (!existsSync(SYSTEM_SOUNDS_DIR)) return [];
+		return readdirSync(SYSTEM_SOUNDS_DIR)
+			.filter((entry) => entry.toLowerCase().endsWith(".aiff"))
+			.sort((a, b) => a.localeCompare(b))
+			.map((entry) => path.join(SYSTEM_SOUNDS_DIR, entry));
+	} catch {
+		return [];
+	}
+}
+
+function menuSummary(config: WarpNotifyConfig): string {
+	return [
+		`Notifications: ${status(config.notificationsEnabled)}`,
+		`Sounds: ${status(config.soundEnabled)}`,
+		`Complete sound: ${status(config.completeSoundEnabled)} (${soundName(config.completeSoundPath)})`,
+		`Attention sound: ${status(config.attentionSoundEnabled)} (${soundName(config.attentionSoundPath)})`,
+		`Config: ${CONFIG_PATH}`,
+	].join("\n");
+}
+
+async function chooseSound(ctx: ExtensionCommandContext, kind: SoundKind): Promise<void> {
+	let config = readConfig();
+	const sounds = availableSystemSounds();
+	const currentPath = kind === "complete" ? config.completeSoundPath : config.attentionSoundPath;
+	const title = kind === "complete" ? "Choose completion sound" : "Choose attention sound";
+	const options = [
+		...sounds.map((soundPath) => `${soundName(soundPath)} ${soundPath === currentPath ? "✓" : ""}`.trim()),
+		"Custom path…",
+		"Back",
+	];
+	const choice = await ctx.ui.select(`${title}\nCurrent: ${currentPath}`, options);
+	if (!choice || choice === "Back") return;
+
+	let selectedPath: string | undefined;
+	if (choice === "Custom path…") {
+		const input = await ctx.ui.input("Custom sound path", currentPath);
+		if (!input) return;
+		selectedPath = input.trim();
+	} else {
+		const selectedName = choice.replace(/\s+✓$/, "");
+		selectedPath = sounds.find((soundPath) => soundName(soundPath) === selectedName);
+	}
+
+	if (!selectedPath) {
+		ctx.ui.notify("Sound was not changed", "warning");
+		return;
+	}
+	if (!existsSync(selectedPath)) {
+		const ok = await ctx.ui.confirm("Sound file not found", `Save this path anyway?\n${selectedPath}`);
+		if (!ok) return;
+	}
+
+	config = readConfig();
+	if (kind === "complete") config.completeSoundPath = selectedPath;
+	else config.attentionSoundPath = selectedPath;
+	writeConfig(config);
+	ctx.ui.notify(`${kind === "complete" ? "Completion" : "Attention"} sound set to ${soundName(selectedPath)}`, "success");
+}
+
+async function openSettingsMenu(ctx: ExtensionCommandContext): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify(menuSummary(effectiveConfig()), "info");
+		return;
+	}
+
+	while (true) {
+		const config = readConfig();
+		const effective = effectiveConfig();
+		const choice = await ctx.ui.select(`Warp notification settings\n\n${menuSummary(effective)}`, [
+			`${config.notificationsEnabled ? "Disable" : "Enable"} notifications`,
+			`${config.soundEnabled ? "Disable" : "Enable"} all sounds`,
+			`${config.completeSoundEnabled ? "Disable" : "Enable"} completion sound`,
+			`${config.attentionSoundEnabled ? "Disable" : "Enable"} attention sound`,
+			"Choose completion sound…",
+			"Choose attention sound…",
+			"Play completion sound",
+			"Play attention sound",
+			"Send test notification",
+			"Reset to defaults…",
+			"Close",
+		]);
+
+		if (!choice || choice === "Close") return;
+
+		if (choice === "Choose completion sound…") {
+			await chooseSound(ctx, "complete");
+			continue;
+		}
+		if (choice === "Choose attention sound…") {
+			await chooseSound(ctx, "attention");
+			continue;
+		}
+		if (choice === "Play completion sound") {
+			playSound("test");
+			ctx.ui.notify(`Played ${soundName(effectiveConfig().completeSoundPath)}`, "info");
+			continue;
+		}
+		if (choice === "Play attention sound") {
+			playSound("needs-input");
+			ctx.ui.notify(`Played ${soundName(effectiveConfig().attentionSoundPath)}`, "info");
+			continue;
+		}
+		if (choice === "Send test notification") {
+			notify("🔔 Pi Warp notification test", `Settings menu test · ${new Date().toLocaleTimeString()}`);
+			ctx.ui.notify("Sent test Warp notification", "info");
+			continue;
+		}
+		if (choice === "Reset to defaults…") {
+			const ok = await ctx.ui.confirm("Reset Warp notification settings?", `This will overwrite ${CONFIG_PATH}`);
+			if (ok) {
+				resetConfig();
+				ctx.ui.notify("Warp notification settings reset", "success");
+			}
+			continue;
+		}
+		if (choice.endsWith("notifications")) {
+			const next = readConfig();
+			next.notificationsEnabled = !next.notificationsEnabled;
+			writeConfig(next);
+			continue;
+		}
+		if (choice.endsWith("all sounds")) {
+			const next = readConfig();
+			next.soundEnabled = !next.soundEnabled;
+			writeConfig(next);
+			continue;
+		}
+		if (choice.endsWith("completion sound")) {
+			const next = readConfig();
+			next.completeSoundEnabled = !next.completeSoundEnabled;
+			writeConfig(next);
+			continue;
+		}
+		if (choice.endsWith("attention sound")) {
+			const next = readConfig();
+			next.attentionSoundEnabled = !next.attentionSoundEnabled;
+			writeConfig(next);
+		}
+	}
 }
 
 export default function (pi: ExtensionAPI) {
@@ -221,6 +446,13 @@ export default function (pi: ExtensionAPI) {
 			notify("🔔 Pi Warp notification test", `cwd: ${ctx.cwd}`);
 			playSound("test");
 			ctx.ui.notify("Sent test Warp notification", "info");
+		},
+	});
+
+	pi.registerCommand("warp-notify-settings", {
+		description: "Open Warp notification settings menu",
+		handler: async (_args, ctx) => {
+			await openSettingsMenu(ctx);
 		},
 	});
 }
