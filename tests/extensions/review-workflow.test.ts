@@ -78,4 +78,37 @@ describe('review_workflow scoped review', () => {
     expect(result.content[0].text).toContain('no current-session branch/worktree/start ownership evidence')
     expect(result.content[0].text).toContain('/workflow-reset')
   })
+
+  it('refuses dryRun review when old current ownership is followed by later foreign takeover evidence', async () => {
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const pi = {
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') {
+          return {
+            stdout: 'DISPATCH\n\nBRANCH: feature/test\nWORKTREE: /repo/current\nSTART_COMMIT: aaa1111\n\nREDISPATCH\n\nBRANCH: feature/other\nWORKTREE: /repo/other',
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'git' && args[0] === 'branch') return { stdout: 'feature/test\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === 'rev-parse --show-toplevel') return { stdout: '/repo/current\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    reviewWorkflowExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, { cwd: process.cwd() })
+
+    expect(result.content[0].text).toContain('no current-session branch/worktree/start ownership evidence')
+    expect(result.content[0].text).toContain('/workflow-reset')
+    expect(result.content[0].text).toContain('confirm takeover')
+    expect(execCalls).not.toContainEqual({ command: 'git', args: ['diff', '--name-only', 'aaa1111..HEAD'] })
+  })
 })
