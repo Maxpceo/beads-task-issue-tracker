@@ -23,6 +23,7 @@ import {
 	validateAutoExecutePlan,
 	type TodoItem,
 } from "./utils.js";
+import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
@@ -120,6 +121,36 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		});
 	}
 
+	async function detectGitValue(ctx: ExtensionContext, args: string[]): Promise<string | undefined> {
+		const fullArgs = ctx.cwd ? ["-C", ctx.cwd, ...args] : args;
+		const result = await pi.exec("git", fullArgs);
+		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
+	}
+
+	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
+		const showResult = await pi.exec("bd", ["show", bead, "--json"]);
+		if (showResult.code !== 0) {
+			if (ctx.hasUI) ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
+			return false;
+		}
+
+		const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
+		if (claimResult.code !== 0) {
+			if (ctx.hasUI) ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
+			return false;
+		}
+
+		pi.events.emit("workflow-state:update", {
+			ctx,
+			activeBead: bead,
+			state: "claimed",
+			branch: await detectGitValue(ctx, ["branch", "--show-current"]),
+			worktreePath: await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]),
+			startCommit: await detectGitValue(ctx, ["rev-parse", "HEAD"]),
+		});
+		return true;
+	}
+
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean): void {
 		planModeEnabled = true;
 		autoExecuteEnabled = autoExecute;
@@ -194,9 +225,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
-	// Natural-language activation for clear enter-plan-mode requests.
+	// Natural-language activation for explicit claim+plan requests and clear enter-plan-mode requests.
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return;
+		const workflowIntent = parseWorkflowIntent(event.text);
+		if (shouldAutoClaimAndPlan(workflowIntent)) {
+			const claimed = await claimWorkflowBead(workflowIntent.beadId, ctx);
+			if (claimed) enterPlanMode(ctx, false);
+			return { action: "handled" };
+		}
 		if (!isNaturalLanguagePlanModeActivation(event.text)) return;
 
 		enterPlanMode(ctx, false);

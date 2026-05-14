@@ -30,7 +30,13 @@ Clear requests to enter plan mode are handled like `/plan` and activate strict p
 - Russian: `перейди в режим планирования`, `введи в режим планирования`, `переведи меня в режим планирования`, `включи режим планирования`, `активируй режим планирования`, `сделай в режиме планирования`.
 - English: `enter plan mode`, `switch to plan mode`, `go to plan mode`, `enable plan mode`, `activate plan mode`, `put me into plan mode`.
 
-Informational or ambiguous prompts are not handled and continue as normal user input, for example: `что такое режим планирования?`, `объясни режим планирования`, `what is plan mode?`.
+Combined workflow requests with an explicit bead id are parsed by intent signals rather than exact full phrases. If a message contains one bead id, a claim/start verb, and a plan intent, Pi claims the bead and then enters strict plan mode before the agent sees the prompt. Examples:
+
+- `beads-task-issue-tracker-zzkb возьми эту задачу в работу, выполняй в режиме планирования`
+- `заклейми beads-task-issue-tracker-zzkb, делай в режиме планирования`
+- `claim beads-task-issue-tracker-zzkb and plan first`
+
+Safety guards intentionally do not auto-run workflow mutations for questions, negated commands, multiple bead ids, missing bead ids, or examples inside fenced code blocks. Informational or ambiguous prompts continue as normal user input, for example: `что такое режим планирования?`, `можно ли взять beads-task-issue-tracker-zzkb в режим планирования?`, `what is plan mode?`.
 
 ## Auto-execute quality gate
 

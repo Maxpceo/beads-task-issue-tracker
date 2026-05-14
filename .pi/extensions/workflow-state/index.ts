@@ -1,3 +1,5 @@
+import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
+
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	appendEntry(type: string, data: unknown): void;
@@ -494,6 +496,34 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
+		const showResult = await pi.exec("bd", ["show", bead, "--json"]);
+		if (showResult.code !== 0) {
+			ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
+			return false;
+		}
+
+		const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
+		if (claimResult.code !== 0) {
+			ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
+			return false;
+		}
+
+		setState(
+			{
+				activeBead: bead,
+				state: "claimed",
+				branch: await detectBranch(pi, ctx.cwd),
+				worktreePath: await detectWorktreePath(pi, ctx.cwd),
+				startCommit: await detectStartCommit(pi, ctx.cwd),
+				sessionKey: currentSessionKey(ctx),
+			},
+			ctx,
+		);
+		ctx.ui.notify(`Claimed ${bead}; ${formatState(workflowState)}`, "success");
+		return true;
+	}
+
 	pi.registerCommand("workflow-claim", {
 		description: "Claim a bead and set this Pi session's active workflow bead. Usage: /workflow-claim <bead-id>",
 		handler: async (args, ctx) => {
@@ -502,32 +532,16 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				ctx.ui.notify("Usage: /workflow-claim <bead-id>", "error");
 				return;
 			}
-
-			const showResult = await pi.exec("bd", ["show", bead, "--json"]);
-			if (showResult.code !== 0) {
-				ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
-				return;
-			}
-
-			const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
-			if (claimResult.code !== 0) {
-				ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
-				return;
-			}
-
-			setState(
-				{
-					activeBead: bead,
-					state: "claimed",
-					branch: await detectBranch(pi, ctx.cwd),
-					worktreePath: await detectWorktreePath(pi, ctx.cwd),
-					startCommit: await detectStartCommit(pi, ctx.cwd),
-					sessionKey: currentSessionKey(ctx),
-				},
-				ctx,
-			);
-			ctx.ui.notify(`Claimed ${bead}; ${formatState(workflowState)}`, "success");
+			await claimWorkflowBead(bead, ctx);
 		},
+	});
+
+	pi.on("input", async (event: any, ctx) => {
+		if (event.source === "extension") return;
+		const intent = parseWorkflowIntent(String(event.text ?? ""));
+		if (!shouldAutoClaim(intent) || intent.wantsPlan) return;
+		await claimWorkflowBead(intent.beadId, ctx);
+		return { action: "handled" };
 	});
 
 	pi.registerCommand("workflow-set-state", {
