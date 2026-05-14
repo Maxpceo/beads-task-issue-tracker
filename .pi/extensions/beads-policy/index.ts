@@ -868,10 +868,10 @@ function hasActiveBead(workflowState: WorkflowStateSnapshot): boolean {
 	return Boolean(workflowState.activeBead);
 }
 
-function isSupervisorPathActive(workflowState: WorkflowStateSnapshot): boolean {
+function isSupervisorPathActive(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
 	if (!hasActiveBead(workflowState)) return false;
 	if (workflowState.planApproved) return true;
-	if (workflowState.bdStatus && !TERMINAL_BD_STATUSES.has(workflowState.bdStatus)) return true;
+	if (cwd && workflowState.activeBead && hasScopedApprovedWorkflowComment(cwd, workflowState.activeBead, currentRecoveryScope(cwd, workflowState.sessionKey))) return true;
 	return LEGACY_SUPERVISOR_READY_STATES.has(workflowState.state ?? "");
 }
 
@@ -1011,7 +1011,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 	const addedLines = getAddedLines(cwd, changedCodeFiles);
 	const thresholdExceeded = changedCodeFiles.length > FAST_PATH_FILE_THRESHOLD || addedLines > FAST_PATH_ADDED_LINE_THRESHOLD;
 	const risky = hasRiskyScope(changedCodeFiles) || hasCrossDomainScope(changedCodeFiles);
-	const supervisorPath = isSupervisorPathActive(workflowState);
+	const supervisorPath = isSupervisorPathActive(workflowState, cwd);
 	const activeBead = hasActiveBead(workflowState);
 	const rationale = hasFastPathRationale(command) || hasMechanicalBatchMarker(command);
 

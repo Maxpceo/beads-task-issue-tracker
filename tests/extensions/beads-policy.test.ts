@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -196,6 +196,101 @@ describe('Pi terminal close policy', () => {
 
     expect(decision?.policy).toBe('blockBdCloseWithoutReview')
     expect(decision?.block).toBe(true)
+  })
+})
+
+describe('Pi Fast Path bd-first supervisor readiness policy', () => {
+  function createRepoWithRiskyPolicyDiff(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-fastpath-'))
+    execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    mkdirSync(join(repo, '.pi/extensions/beads-policy'), { recursive: true })
+    writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const before = true\n')
+    execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+    writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const after = true\n')
+    return repo
+  }
+
+  it('blocks risky mutation when only bd in_progress exists without approved plan evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('allows risky mutation when session state has approved plan evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        planApproved: true,
+      }, { cwd: repo })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('allows risky mutation when bd comments have same-session approved plan evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFileSync(join(binDir, 'bd'), '#!/usr/bin/env bash\nif [[ "$1" == "comments" ]]; then printf "PLAN APPROVED\\nPI_SESSION_KEY: id:session-current\\n"; exit 0; fi\nexit 1\n')
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        sessionKey: 'id:session-current',
+      }, { cwd: repo })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('preserves planning and merge-slot session-field guards', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const planningDecision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        planApproved: true,
+        planMode: 'strict',
+      }, { cwd: repo })
+      const pushDecision = evaluateBashPolicy('git push', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        planApproved: true,
+        mergeSlotHeld: false,
+      }, { cwd: repo, bdMergeSlotIssue: null })
+
+      expect(planningDecision?.policy).toBe('blockMutationsInPlanning')
+      expect(pushDecision?.policy).toBe('requireMergeSlotForPush')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 })
 
