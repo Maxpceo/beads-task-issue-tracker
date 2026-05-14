@@ -962,9 +962,16 @@ function hasCurrentSessionOwnership(state: WorkflowStateSnapshot, ctx?: Extensio
 	return Boolean(key && state.sessionKey === key);
 }
 
+function commentEvidenceBlocks(text: string): string[] {
+	return text
+		.split(/\n\s*\n+/)
+		.map((block) => block.trim())
+		.filter(Boolean);
+}
+
 function hasScopedApprovedPlanComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
 	const comments = getBdCommentsText(cwd, beadId);
-	return /PLAN APPROVED/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
+	return commentEvidenceBlocks(comments).some((block) => /PLAN APPROVED/i.test(block) && hasSessionOwnershipEvidence(block, scope));
 }
 
 function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
