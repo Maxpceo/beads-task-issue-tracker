@@ -61,8 +61,8 @@ Lifecycle decisions read bd status and structured bd comments/evidence. Session 
 
 | Component | Current producer/consumer behavior | Bd-first behavior |
 |---|---|---|
-| `.pi/extensions/workflow-state/index.ts` | Produces Pi lifecycle state, persists active bead/session fields, reconciles via `stateFromBdStatus`. | Produces session context only. Reads bd status for display/recovery, but does not coerce bd lifecycle into Pi lifecycle. Keeps ownership/stale/foreign detection. |
-| `.pi/extensions/beads-policy/index.ts` | Consumes Pi lifecycle state for active bead blocking, Fast Path supervisor readiness, close allowance, review checkpoint gating, planning, merge-slot. Has separate `workflowStateFromBdStatus`. | Lifecycle guards query bd status + comments. Session guards use active bead/session fields. Planning and merge-slot remain session fields. Remove duplicate lifecycle mapping or make it display-only. |
+| `.pi/extensions/workflow-state/index.ts` | Former model produced Pi lifecycle state, persisted active bead/session fields, and reconciled via `stateFromBdStatus`. | Produces session context only. Reads bd status for display/recovery, but does not coerce bd lifecycle into Pi lifecycle. Keeps ownership/stale/foreign detection. |
+| `.pi/extensions/beads-policy/index.ts` | Former model consumed Pi lifecycle state for active bead blocking, Fast Path supervisor readiness, close allowance, review checkpoint gating, planning, merge-slot. It had separate `workflowStateFromBdStatus`. | Lifecycle guards query bd status + comments. Session guards use active bead/session fields. Planning and merge-slot remain session fields. Remove duplicate lifecycle mapping or make it display-only. |
 | `.pi/extensions/plan-mode/index.ts` | Emits `planning`; `/plan-cancel` may emit `idle`; auto approval uses plan mode state. | Emits `planMode` and `planApproved`; optional `sessionMode=planning`. Does not imply issue lifecycle. Bd remains `in_progress` after claim. |
 | `.pi/extensions/beads-dispatch/index.ts` | Emits `implementing`/`reviewing`, then reconciles based on bd status after supervisor/reviewer. | Emits session mode/scope only. Supervisor path is allowed by bd active bead + approved plan evidence. Reviewer dispatch remains typed. |
 | `.pi/extensions/review-workflow/index.ts` | Requires bd `inreview`, emits Pi `reviewing`/`closed`, drives bd review statuses. | Keeps bd status as hard lifecycle guard. Emits `sessionMode=reviewing` and scope fields. Terminal completion is bd close plus session clear. |
@@ -73,17 +73,13 @@ Lifecycle decisions read bd status and structured bd comments/evidence. Session 
 | `.pi/extensions/follow-up-reminder/index.ts` | Uses workflow/session state for reminders. | Uses active session bead plus bd status to avoid reminders for terminal/foreign work. |
 | Skills | Document Pi lifecycle `claimed -> ... -> closed`. | Document bd lifecycle authority and Pi session context/ownership checks. |
 | Agents | Depend on workflow prompts for allowed lifecycle transitions. | Agents must report bd status evidence and must not mutate orchestrator-only states unless their contract allows it. |
-| Tests | Encode old Pi lifecycle states. | Cover bd statuses, custom statuses, session ownership, plan mode, merge-slot, review evidence, and dashboard display. |
+| Tests | Former coverage encoded Pi lifecycle states as authority. | Cover bd statuses, custom statuses, session ownership, plan mode, merge-slot, review evidence, and dashboard display. |
 
-## Current lifecycle / transition scheme
+## Legacy mapping being replaced
 
-Current intended Pi lifecycle:
+Former Pi session-state sequence (kept here only as historical migration input, not authoritative lifecycle): `claimed`, `planning`, `plan_approved`, `implementing`, `inreview`, `reviewing`, `accepted`, `closed`.
 
-```text
-idle -> claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed -> idle/next task
-```
-
-Current durable review chain in bd:
+Durable review chain in bd:
 
 ```text
 inreview -> simplified -> reviewed -> accepted -> closed

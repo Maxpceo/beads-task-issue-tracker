@@ -178,7 +178,7 @@ describe('workflow-chain command behavior', () => {
     expect(harness.widgets['workflow-chain']?.join('\n')).toContain('planApproved:true')
   })
 
-  it('falls back from active bead to bd show status when workflow-state state is missing', async () => {
+  it('falls back from active bead to bd show status when session state is missing', async () => {
     const cwd = tempProject()
     write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [{
       id: 'handoff',

@@ -213,7 +213,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications).toEqual([])
   })
 
-  it('clears restored active bead when bd status is closed even if local workflow state is non-terminal', async () => {
+  it('clears restored active bead when bd status is closed even if session mode is non-terminal', async () => {
     const { eventHandlers, ctx, notifications } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -251,7 +251,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
   })
 
-  it('clears restored active bead when bd status is closed even if local workflow state is already terminal', async () => {
+  it('clears restored active bead when bd status is closed even if session mode is already terminal', async () => {
     const { eventHandlers, ctx, notifications } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -426,7 +426,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bead=bead-current')
   })
 
-  it('keeps restored active bead state and displays live bd inreview status for footer context', async () => {
+  it('keeps restored session context and displays live bd inreview status for footer context', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -628,7 +628,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     'reviewed',
     'accepted',
     'custom_status',
-  ])('keeps session state and displays non-terminal bd status %s without lifecycle coercion', async (bdStatus) => {
+  ])('keeps session mode and displays non-terminal bd status %s without lifecycle coercion', async (bdStatus) => {
     const { eventHandlers, ctx, statuses } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',

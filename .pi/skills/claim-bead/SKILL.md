@@ -11,11 +11,11 @@ Claim first, then plan. Do not investigate deeply before claiming.
 
 ## Workflow
 
-1. Lifecycle guard:
+1. Session/bd guard:
    ```text
    /workflow-status
    ```
-   If another active bead is non-terminal (`claimed`, `planning`, `plan_approved`, `implementing`, `inreview`, `reviewing`, or `accepted`), stop. First verify it belongs to this current session by matching branch/worktree/start-commit evidence. If ownership is stale, foreign, or ambiguous, do not review or mutate it automatically: run `/workflow-reset` or ask for explicit takeover confirmation. If it is a confirmed current-session `inreview` bead, run `review-bead` next.
+   Treat bd status as lifecycle authority and Pi workflow-state as session-local context. If another current-session active bead has a non-terminal bd status, stop. First verify it belongs to this current session by matching branch/worktree/start-commit evidence. If ownership is stale, foreign, or ambiguous, do not review or mutate it automatically: run `/workflow-reset` or ask for explicit takeover confirmation. If it is a confirmed current-session bead with bd status `inreview`, run `review-bead` next.
 2. Read-only guard:
    ```bash
    bd show <ID> --json
@@ -26,7 +26,7 @@ Claim first, then plan. Do not investigate deeply before claiming.
    ```text
    /workflow-claim <ID>
    ```
-   This runs `bd update <ID> --claim` and records session-local workflow state (`bead`, `state=claimed`, current branch, start commit), so each Pi instance can show its own active bead in the footer.
+   This runs `bd update <ID> --claim` and records session-local context (`bead`, `sessionMode=claimed`, current branch, start commit), so each Pi instance can show its own active bead in the footer without replacing bd status as lifecycle authority.
 6. If the user requested a worktree, create it with an absolute external path and run setup.
 7. Enter planning:
    - strict/default: `/plan`
@@ -35,7 +35,7 @@ Claim first, then plan. Do not investigate deeply before claiming.
 
 ## Rules
 
-- First non-readonly action is `/workflow-claim <ID>` (or, only if the command is unavailable, `bd update <ID> --claim` followed immediately by `/workflow-update bead=<ID> state=claimed branch=<current-branch> start=<HEAD>`).
+- First non-readonly action is `/workflow-claim <ID>` (or, only if the command is unavailable, `bd update <ID> --claim` followed immediately by `/workflow-update bead=<ID> session=claimed branch=<current-branch> start=<HEAD>`).
 - Do not edit files before plan approval/auto gate.
 - `land` and `merge-to-main` are explicit session workflows, not prerequisites for claiming the next bead after the previous bead reaches `closed`.
 - Fast Path intentionally differs from the older Claude one-file/<20-line shortcut: Pi uses `AGENTS.md` risk-aware limits (low-risk direct work up to 3 code files / 80 added lines, with hard supervisor path for workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work unless explicitly justified as tiny docs-only/mechanical work).

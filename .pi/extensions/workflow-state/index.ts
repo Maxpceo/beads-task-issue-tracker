@@ -445,7 +445,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("workflow-status", {
-		description: "Show current Pi workflow state",
+		description: "Show current Pi session context and live bd status",
 		handler: async (_args, ctx) => {
 			await ensureReconciled(ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
@@ -453,7 +453,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("workflow-reset", {
-		description: "Reset Pi workflow state to idle",
+		description: "Reset Pi session context to idle",
 		handler: async (_args, ctx) => {
 			workflowState = {
 				...cloneState(DEFAULT_STATE),
@@ -541,7 +541,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("workflow-set-state", {
-		description: `Set workflow state. Values: ${WORKFLOW_STATES.join(", ")}`,
+		description: `Set legacy session state. Prefer session=<mode>; values: ${WORKFLOW_STATES.join(", ")}`,
 		handler: async (args, ctx) => {
 			const nextState = args.trim();
 			if (!isWorkflowStateName(nextState)) {
@@ -594,7 +594,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("workflow-update", {
 		description:
-			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> end=<sha> plan=off|strict|auto approved=true|false session=<mode> slot=held|free",
+			"Update session context fields. Usage: /workflow-update bead=<id> session=<mode> branch=<name> worktree=<path> start=<sha> end=<sha> plan=off|strict|auto approved=true|false slot=held|free (legacy state=<value> is still accepted)",
 		handler: async (args, ctx) => {
 			const kv = parseKeyValueArgs(args);
 			const next: Partial<WorkflowState> = {};

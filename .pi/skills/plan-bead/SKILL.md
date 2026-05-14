@@ -7,11 +7,11 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 
 ## Workflow
 
-1. Ensure workflow state has `activeBead` and state `claimed` or `planning`:
+1. Ensure session context has this `activeBead` and bd status is non-terminal (`in_progress` after claim):
    ```text
    /workflow-status
    ```
-   If workflow state shows another non-terminal bead, stop and continue that bead. If it is `inreview`, switch to `review-bead` instead of planning unrelated work.
+   Treat `sessionMode`/`state` as a session hint only. If context shows another current-session active bead with a non-terminal bd status, stop and continue that bead. If bd status is `inreview`, switch to `review-bead` instead of planning unrelated work.
 2. Enter plan mode if not already active:
    - `/plan` for strict approval.
    - `/plan-auto` only when the user explicitly authorized automatic execution.
@@ -35,13 +35,13 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
    ```
 8. Update state:
    ```text
-   /workflow-update state=plan_approved plan=off
+   /workflow-update session=plan_approved approved=true plan=off
    ```
 
 ## Rules
 
 - Planning mode is read-only.
-- The per-task lifecycle is `claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed`; do not plan another bead before the active bead is terminal (`closed`, `blocked`, or explicit `deferred`/handoff).
+- bd status is the lifecycle authority. Do not plan another bead before the current-session active bead has terminal bd status (`closed`, `blocked`, or explicit `deferred`/handoff). `sessionMode` values such as `planning` or `plan_approved` only describe this Pi session's phase.
 - If requirements or acceptance are ambiguous, ask a single batched question with 2-4 concrete options and stop until answered.
 - Plans must preserve self-contained handoff context: problem, approach, rejected alternatives, files, acceptance, and verification evidence.
 - New or follow-up beads created during planning must use the full template from `AGENTS.md`, include labels, and link `parent-child`, `discovered-from`, or blocker dependencies when known.

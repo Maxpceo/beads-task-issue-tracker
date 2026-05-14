@@ -129,7 +129,7 @@ describe('Pi merge-slot push policy', () => {
 describe('Pi terminal close policy', () => {
   const policyOnlyOptions = { cwd: tmpdir() }
 
-  it('blocks standard bd close when workflow state is idle', () => {
+  it('blocks standard bd close when session context is idle and bd evidence is missing', () => {
     const decision = evaluateBashPolicy('bd close bead-a --reason done', {
       state: 'idle',
     }, policyOnlyOptions)
@@ -143,7 +143,7 @@ describe('Pi terminal close policy', () => {
     'bd update bead-a --status=closed --json',
     'bd update bead-a -s=closed --json',
     'bd update bead-a --status "closed" --json',
-  ])('blocks direct terminal status update without accepted workflow state: %s', (command) => {
+  ])('blocks direct terminal status update without accepted session/review evidence: %s', (command) => {
     const decision = evaluateBashPolicy(command, {
       state: 'idle',
     }, policyOnlyOptions)
@@ -178,7 +178,7 @@ describe('Pi terminal close policy', () => {
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
   })
 
-  it.each(['accepted', 'reviewing'])('does not allow terminal close from stale workflow state %s without bd evidence', (state) => {
+  it.each(['accepted', 'reviewing'])('does not allow terminal close from stale session context %s without bd evidence', (state) => {
     const decision = evaluateBashPolicy('bd update bead-a --status closed --json', {
       activeBead: 'bead-a',
       state,
@@ -188,7 +188,7 @@ describe('Pi terminal close policy', () => {
     expect(decision?.block).toBe(true)
   })
 
-  it('blocks terminal close when accepted workflow state belongs to a different active bead', () => {
+  it('blocks terminal close when accepted session context belongs to a different active bead', () => {
     const decision = evaluateBashPolicy('bd update bead-b --status closed --json', {
       activeBead: 'bead-a',
       state: 'accepted',
@@ -321,7 +321,7 @@ describe('Pi Fast Path bd-first supervisor readiness policy', () => {
   })
 
   it.each(['plan_approved', 'implementing', 'accepted'])(
-    'blocks risky mutation when only legacy workflow state %s exists without approved plan evidence',
+    'blocks risky mutation when only legacy session state %s exists without approved plan evidence',
     (state) => {
       const repo = createRepoWithRiskyPolicyDiff()
       try {
@@ -363,7 +363,7 @@ describe('Pi Fast Path bd-first supervisor readiness policy', () => {
   })
 })
 
-describe('Pi active bead lifecycle policy', () => {
+describe('Pi bd-first active bead policy', () => {
   it.each(['in_progress', 'inreview', 'simplified', 'reviewed', 'accepted'])(
     'blocks claiming another bead while active bead bd status is %s',
     (bdStatus) => {
@@ -427,7 +427,7 @@ describe('Pi active bead lifecycle policy', () => {
     expect(reconciled.state).toBe('planning')
   })
 
-  it('clears active bead when bd status is terminal before lifecycle decisions', () => {
+  it('clears active bead when bd status is terminal before session decisions', () => {
     const reconciled = reconcileWorkflowStateWithBdStatus({
       activeBead: 'bead-a',
       state: 'reviewing',
