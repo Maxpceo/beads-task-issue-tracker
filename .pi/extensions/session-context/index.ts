@@ -1,6 +1,17 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+interface ExtensionAPI {
+	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
+	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
+	registerCommand(name: string, config: { description: string; handler: (args: string, ctx: ExtensionContext) => unknown }): void;
+}
+
+interface ExtensionContext {
+	cwd: string;
+	sessionManager: { getEntries(): Array<{ type: string; customType?: string; data?: unknown }> };
+	ui: { notify(message: string, level: string): void };
+}
 
 interface WorkflowStateSnapshot {
 	activeBead?: string;
@@ -138,6 +149,7 @@ export default function sessionContextExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		const mergedWorktreeScript = `repo=$(git rev-parse --show-toplevel 2>/dev/null || pwd); git worktree list --porcelain 2>/dev/null | awk '/^worktree .*\\/Projects\\/worktrees\\/beads-task-issue-tracker\\// {print $2}' | while read -r wt; do branch=$(git -C "$wt" branch --show-current 2>/dev/null); [ -z "$branch" ] && continue; if git -C "$repo" branch --merged main --format='%(refname:short)' 2>/dev/null | grep -Fxq "$branch"; then echo "✓ $branch merged; cleanup: bd worktree remove $wt"; fi; done`;
 		snapshot = {
+			workflowContext: renderWorkflowContext(latestWorkflowState(ctx.sessionManager.getEntries())),
 			branch: await run(pi, "git", ["branch", "--show-current"]),
 			gitStatus: await run(pi, "git", ["status", "--short"]),
 			dirtyWarning: await runShell(pi, "if [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then echo '⚠️ Uncommitted changes detected. Commit/stash before starting unrelated work.'; else echo '-'; fi"),
