@@ -77,16 +77,17 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120): Promise<{ status: string; footer: string[]; bdCalls: string[] }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120): Promise<{ status: string; footer: string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
   const runtimeOwnerKey = 'runtime:test-status-dashboard'
   ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
   if (!Array.isArray(workflowState) && Object.keys(workflowState).length > 0) workflowState.runtimeOwnerKey ??= runtimeOwnerKey
   const workflowEntries = Array.isArray(workflowState)
-    ? workflowState
+    ? [...workflowState]
     : Object.keys(workflowState).length > 0
       ? [{ type: 'custom', customType: 'workflow-state', data: workflowState }]
       : []
   const handlers: RegisteredHandlers = {}
+  const eventHandlers = new Map<string, (event: any) => Promise<void> | void>()
   let status = ''
   let footer: { render: (width: number) => string[] } | undefined
   const theme = { fg: (_color: string, text: string) => text }
@@ -94,6 +95,9 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
   const pi = {
     on(event: keyof RegisteredHandlers, handler: RegisteredHandlers[typeof event]) {
       handlers[event] = handler
+    },
+    events: {
+      on: (name: string, handler: (event: any) => Promise<void> | void) => eventHandlers.set(name, handler),
     },
     registerCommand() {},
     async exec(command: string, args: string[]) {
@@ -131,7 +135,15 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
   statusDashboardExtension(pi)
   await handlers.turn_start?.({}, ctx)
 
-  return { status, footer: footer?.render(width) ?? [], bdCalls }
+  return {
+    get status() { return status },
+    get footer() { return footer?.render(width) ?? [] },
+    bdCalls,
+    emitWorkflowUpdate: async (entries) => {
+      workflowEntries.splice(0, workflowEntries.length, ...entries)
+      await eventHandlers.get('workflow-state:update')?.({ ctx })
+    },
+  }
 }
 
 describe('Pi status-dashboard worktree display', () => {
@@ -186,6 +198,26 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.footer.join('\n')).toContain('slot:free')
     expect(dashboard.footer.join('\n')).not.toContain('plan:strict')
     expect(dashboard.footer.join('\n')).not.toContain('slot:held')
+  })
+
+  it('refreshes status and footer immediately after workflow-state update event', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+    const dashboard = await renderDashboard(primary, [
+      { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'idle', planMode: 'off', mergeSlotHeld: false } },
+    ])
+
+    expect(dashboard.status).toContain('plan:off')
+    expect(dashboard.footer.join('\n')).toContain('plan:off')
+
+    await dashboard.emitWorkflowUpdate([
+      { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'planning', planMode: 'strict', mergeSlotHeld: false } },
+    ])
+
+    expect(dashboard.status).toContain('state:planning')
+    expect(dashboard.status).toContain('plan:strict')
+    expect(dashboard.footer.join('\n')).toContain('wf:planning')
+    expect(dashboard.footer.join('\n')).toContain('plan:strict')
+    expect(dashboard.footer.join('\n')).not.toContain('plan:off')
   })
 
   it('reports the current linked worktree basename in status and footer output', async () => {

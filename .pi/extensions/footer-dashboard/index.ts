@@ -237,6 +237,11 @@ export default function footerDashboardExtension(pi: ExtensionAPI): void {
 	pi.on("turn_end", async (_event, ctx) => refresh(ctx, true));
 	pi.on("tool_result", async (_event, ctx) => refresh(ctx));
 
+	const eventBus = (pi as unknown as { events?: { on(name: "workflow-state:update", handler: (event: { ctx?: ExtensionContext }) => unknown): void } }).events;
+	eventBus?.on("workflow-state:update", async (event) => {
+		if (event.ctx) await refresh(event.ctx, true);
+	});
+
 	pi.registerCommand("footer-dashboard", {
 		description: "Refresh structured Pi footer dashboard",
 		handler: async (_args, ctx) => {
