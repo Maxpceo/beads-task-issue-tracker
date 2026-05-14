@@ -33,6 +33,9 @@ export interface WorkflowChainStep {
 	message?: string;
 	operation?: string;
 	requiredState?: WorkflowStateName | WorkflowStateName[];
+	requiredBdStatus?: string | string[];
+	requiredSessionMode?: string | string[];
+	requiredPlanApproved?: boolean;
 	handoff?: string;
 	ms?: number;
 }
@@ -57,6 +60,9 @@ export interface WorkflowSnapshot {
 	branch?: string;
 	worktreePath?: string;
 	startCommit?: string;
+	bdStatus?: string;
+	sessionMode?: string;
+	planApproved?: boolean;
 }
 
 export interface StepRunState {
@@ -98,7 +104,7 @@ const BUILTIN_CHAINS: WorkflowChain[] = [
 		title: "Supervisor handoff preview",
 		description: "Read-only preview of the typed supervisor dispatch handoff; run is blocked in v1.",
 		steps: [
-			{ id: "preflight", type: "typedWorkflow", title: "Dispatch supervisor", operation: "dispatch_supervisor", requiredState: "plan_approved", handoff: "Use the typed dispatch-supervisor skill/tool instead of workflow-chain run." },
+			{ id: "preflight", type: "typedWorkflow", title: "Dispatch supervisor", operation: "dispatch_supervisor", requiredBdStatus: "in_progress", requiredPlanApproved: true, handoff: "Use the typed dispatch-supervisor skill/tool after bd status is in_progress and planApproved=true." },
 		],
 	},
 ];
@@ -139,6 +145,11 @@ function validateChain(raw: unknown, source: string, index: number): WorkflowCha
 		};
 		if (typeof stepRaw.requiredState === "string") step.requiredState = stepRaw.requiredState as WorkflowStateName;
 		else if (Array.isArray(stepRaw.requiredState)) step.requiredState = stepRaw.requiredState.filter((item): item is WorkflowStateName => typeof item === "string") as WorkflowStateName[];
+		if (typeof stepRaw.requiredBdStatus === "string") step.requiredBdStatus = stepRaw.requiredBdStatus;
+		else if (Array.isArray(stepRaw.requiredBdStatus)) step.requiredBdStatus = stepRaw.requiredBdStatus.filter((item): item is string => typeof item === "string");
+		if (typeof stepRaw.requiredSessionMode === "string") step.requiredSessionMode = stepRaw.requiredSessionMode;
+		else if (Array.isArray(stepRaw.requiredSessionMode)) step.requiredSessionMode = stepRaw.requiredSessionMode.filter((item): item is string => typeof item === "string");
+		if (typeof stepRaw.requiredPlanApproved === "boolean") step.requiredPlanApproved = stepRaw.requiredPlanApproved;
 		if (step.type === "message" && !step.message) throw new Error(`${source}: chain ${id} message step requires message`);
 		if ((step.type === "readOnlyBuiltin" || step.type === "typedWorkflow") && !step.operation) throw new Error(`${source}: chain ${id} ${step.type} step requires operation`);
 		return step;
@@ -157,9 +168,11 @@ function parseJsonConfig(text: string, source: string): WorkflowChain[] {
 	return parsed.chains.map((chain, index) => validateChain(chain, source, index));
 }
 
-function parseScalar(value: string): string | number | string[] {
+function parseScalar(value: string): string | number | boolean | string[] {
 	const trimmed = value.trim();
 	if (/^['"].*['"]$/.test(trimmed)) return trimmed.slice(1, -1);
+	if (trimmed === "true") return true;
+	if (trimmed === "false") return false;
 	if (/^\d+$/.test(trimmed)) return Number(trimmed);
 	if (/^\[.*\]$/.test(trimmed)) return trimmed.slice(1, -1).split(",").map((item) => String(parseScalar(item.trim()))).filter(Boolean);
 	return trimmed;
@@ -264,11 +277,11 @@ function extractBdStatus(raw: unknown): string | undefined {
 	return asString(raw.status);
 }
 
-async function bdStatusWorkflowState(pi: ExtensionAPI, beadId: string): Promise<WorkflowStateName | undefined> {
+async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | undefined> {
 	const result = await pi.exec("bd", ["show", beadId, "--json"]);
 	if (result.code !== 0) return undefined;
 	try {
-		return workflowStateFromBdStatus(extractBdStatus(JSON.parse(result.stdout)));
+		return extractBdStatus(JSON.parse(result.stdout));
 	} catch {
 		return undefined;
 	}
@@ -279,12 +292,16 @@ async function latestWorkflowState(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 	const data = isRecord(entry?.data) ? entry.data : {};
 	const activeBead = asString(data.activeBead);
 	const explicitState = asString(data.state) as WorkflowStateName | undefined;
+	const bdStatus = asString(data.bdStatus) ?? (activeBead ? await readBdStatus(pi, activeBead) : undefined);
 	return {
 		activeBead,
-		state: explicitState ?? (activeBead ? await bdStatusWorkflowState(pi, activeBead) : undefined) ?? "idle",
+		state: explicitState ?? (bdStatus ? workflowStateFromBdStatus(bdStatus) : undefined) ?? "idle",
 		branch: asString(data.branch),
 		worktreePath: asString(data.worktreePath),
 		startCommit: asString(data.startCommit),
+		bdStatus,
+		sessionMode: asString(data.sessionMode),
+		planApproved: data.planApproved === true || data.planApproved === "true",
 	};
 }
 
@@ -292,32 +309,74 @@ function stepTitle(step: WorkflowChainStep, index: number): string {
 	return step.title ?? step.id ?? `${step.type} ${index + 1}`;
 }
 
-export function dryRunRows(chain: WorkflowChain, state: WorkflowSnapshot): string[] {
-	return chain.steps.map((step, index) => {
-		const required = Array.isArray(step.requiredState) ? step.requiredState.join("|") : step.requiredState ?? "-";
-		const policy = step.type === "typedWorkflow" ? "blocked: typed handoff only" : "safe: no bd mutation";
-		const operation = step.operation ?? step.message ?? `${Math.min(step.ms ?? 0, MAX_WAIT_MS)}ms`;
-		const guard = step.requiredState && !stateMatches(state.state, step.requiredState) ? `guard: current ${state.state} not in ${required}` : `guard: ${required}`;
-		return `${index + 1}. ${stepTitle(step, index)} | type=${step.type} | op=${operation} | ${guard} | ${policy}`;
-	});
+function valueMatches(current: string | undefined, required: string | string[]): boolean {
+	return Array.isArray(required) ? required.includes(current ?? "") : current === required;
 }
 
 function stateMatches(current: WorkflowStateName, required: WorkflowStateName | WorkflowStateName[]): boolean {
 	return Array.isArray(required) ? required.includes(current) : current === required;
 }
 
+function requiredValuesText(required: string | string[] | undefined): string | undefined {
+	return Array.isArray(required) ? required.join("|") : required;
+}
+
+function guardDescriptions(step: WorkflowChainStep, state: WorkflowSnapshot): string[] {
+	const guards: string[] = [];
+	if (step.requiredBdStatus) {
+		const required = requiredValuesText(step.requiredBdStatus);
+		guards.push(valueMatches(state.bdStatus, step.requiredBdStatus) ? `bd:${required}` : `current bd:${state.bdStatus ?? "-"} not in ${required}`);
+	}
+	if (step.requiredPlanApproved !== undefined) {
+		guards.push(state.planApproved === step.requiredPlanApproved ? `planApproved=${step.requiredPlanApproved}` : `planApproved=${state.planApproved ?? false} not ${step.requiredPlanApproved}`);
+	}
+	if (step.requiredSessionMode) {
+		const required = requiredValuesText(step.requiredSessionMode);
+		guards.push(valueMatches(state.sessionMode, step.requiredSessionMode) ? `session:${required}` : `current session:${state.sessionMode ?? "-"} not in ${required}`);
+	}
+	if (step.requiredState) {
+		const required = Array.isArray(step.requiredState) ? step.requiredState.join("|") : step.requiredState;
+		guards.push(stateMatches(state.state, step.requiredState) ? `legacy-state:${required}` : `current legacy-state:${state.state} not in ${required}`);
+	}
+	return guards;
+}
+
+function guardBlocked(step: WorkflowChainStep, state: WorkflowSnapshot): boolean {
+	return Boolean(
+		(step.requiredBdStatus && !valueMatches(state.bdStatus, step.requiredBdStatus)) ||
+		(step.requiredPlanApproved !== undefined && state.planApproved !== step.requiredPlanApproved) ||
+		(step.requiredSessionMode && !valueMatches(state.sessionMode, step.requiredSessionMode)) ||
+		(step.requiredState && !stateMatches(state.state, step.requiredState)),
+	);
+}
+
+export function dryRunRows(chain: WorkflowChain, state: WorkflowSnapshot): string[] {
+	return chain.steps.map((step, index) => {
+		const policy = step.type === "typedWorkflow" ? "blocked: typed handoff only" : "safe: no bd mutation";
+		const operation = step.operation ?? step.message ?? `${Math.min(step.ms ?? 0, MAX_WAIT_MS)}ms`;
+		const guard = guardDescriptions(step, state).join("; ") || "-";
+		return `${index + 1}. ${stepTitle(step, index)} | type=${step.type} | op=${operation} | guard: ${guard} | ${policy}`;
+	});
+}
+
 export function typedWorkflowBlockReason(chain: WorkflowChain, state: WorkflowSnapshot): string | undefined {
 	const step = chain.steps.find((item) => item.type === "typedWorkflow");
 	if (!step) return undefined;
-	if (step.requiredState && !stateMatches(state.state, step.requiredState)) {
-		const required = Array.isArray(step.requiredState) ? step.requiredState.join("|") : step.requiredState;
-		return `Blocked before mutation: ${stepTitle(step, chain.steps.indexOf(step))} requires workflow state ${required}, current state is ${state.state}. Handoff: ${step.handoff ?? step.operation}.`;
+	if (guardBlocked(step, state)) {
+		return `Blocked before mutation: ${stepTitle(step, chain.steps.indexOf(step))} requires ${guardDescriptions(step, state).join("; ")}. Handoff: ${step.handoff ?? step.operation}.`;
 	}
 	return `Blocked before mutation: workflow-critical typed step ${step.operation} is handoff-only in workflow-chain v1. Use ${step.handoff ?? step.operation} instead.`;
 }
 
-function requiredStateText(step: WorkflowChainStep): string | undefined {
-	return Array.isArray(step.requiredState) ? step.requiredState.join("|") : step.requiredState;
+function requiredStateText(step: WorkflowChainStep, state?: WorkflowSnapshot): string | undefined {
+	if (state) return guardDescriptions(step, state).join("; ") || undefined;
+	const parts = [
+		step.requiredBdStatus ? `bd:${requiredValuesText(step.requiredBdStatus)}` : undefined,
+		step.requiredPlanApproved !== undefined ? `planApproved=${step.requiredPlanApproved}` : undefined,
+		step.requiredSessionMode ? `session:${requiredValuesText(step.requiredSessionMode)}` : undefined,
+		step.requiredState ? `legacy-state:${Array.isArray(step.requiredState) ? step.requiredState.join("|") : step.requiredState}` : undefined,
+	].filter(Boolean);
+	return parts.join("; ") || undefined;
 }
 
 function stepOperationText(step: WorkflowChainStep): string {
@@ -329,20 +388,21 @@ function stepPolicy(step: WorkflowChainStep): string {
 }
 
 function chainContext(state: WorkflowSnapshot): Pick<WorkflowDashboardModel, "state" | "branch" | "activeBead"> {
-	return { state: state.state, branch: state.branch, activeBead: state.activeBead };
+	const suffix = [`bd:${state.bdStatus ?? "-"}`, `session:${state.sessionMode ?? "-"}`, `planApproved:${state.planApproved ? "true" : "false"}`].join(" · ");
+	return { state: `${state.state} (${suffix})`, branch: state.branch, activeBead: state.activeBead };
 }
 
 function workflowStepToDashboard(step: WorkflowChainStep, index: number, state: WorkflowSnapshot, status: WorkflowDashboardStatus): WorkflowDashboardStep {
-	const required = requiredStateText(step);
-	const guardBlocked = step.requiredState && !stateMatches(state.state, step.requiredState);
+	const required = requiredStateText(step, state);
+	const blockedByGuard = guardBlocked(step, state);
 	return {
 		index,
 		id: step.id ?? String(index + 1),
 		title: stepTitle(step, index),
 		type: step.type,
-		status: guardBlocked || step.type === "typedWorkflow" ? "blocked" : status,
+		status: blockedByGuard || step.type === "typedWorkflow" ? "blocked" : status,
 		operation: stepOperationText(step),
-		requiredState: guardBlocked ? `current ${state.state} not in ${required}` : required,
+		requiredState: required,
 		policy: stepPolicy(step),
 		handoff: step.handoff,
 		preview: step.message,

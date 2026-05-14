@@ -55,7 +55,7 @@ function makeHarness(cwd: string, entries: any[] = [], bdStatus = 'in_progress')
   return { commands, notifications, widgets, statuses, execCalls, ctx }
 }
 
-const implementingState: WorkflowSnapshot = { state: 'implementing', activeBead: 'bead-1', branch: 'task/demo' }
+const implementingState: WorkflowSnapshot = { state: 'implementing', activeBead: 'bead-1', branch: 'task/demo', bdStatus: 'in_progress', sessionMode: 'implementing', planApproved: false }
 
 describe('workflow-chain config loading', () => {
   it('shows built-in safe chains when project config is missing', () => {
@@ -143,7 +143,7 @@ describe('workflow-chain command behavior', () => {
     write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [{
       id: 'handoff',
       title: 'Handoff',
-      steps: [{ type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredState: 'plan_approved', handoff: 'Use dispatch-supervisor' }],
+      steps: [{ type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredBdStatus: 'in_progress', requiredPlanApproved: true, handoff: 'Use dispatch-supervisor' }],
     }] }))
     const harness = makeHarness(cwd, [{ type: 'custom', customType: 'workflow-state', data: implementingState }])
 
@@ -151,10 +151,10 @@ describe('workflow-chain command behavior', () => {
 
     expect(harness.notifications[0]?.message).toContain('type=typedWorkflow')
     expect(harness.notifications[0]?.message).toContain('op=dispatch_supervisor')
-    expect(harness.notifications[0]?.message).toContain('guard: current implementing not in plan_approved')
+    expect(harness.notifications[0]?.message).toContain('guard: bd:in_progress; planApproved=false not true')
     expect(harness.notifications[0]?.message).toContain('blocked: typed handoff only')
     expect(harness.widgets['workflow-chain']?.join('\n')).toContain('■')
-    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('guard: current implementi')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('guard: bd:in_progress')
     expect(harness.execCalls.some((call) => call.command === 'bd')).toBe(false)
   })
 
@@ -163,20 +163,20 @@ describe('workflow-chain command behavior', () => {
     write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [{
       id: 'handoff',
       title: 'Handoff',
-      steps: [{ type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredState: 'plan_approved', handoff: 'Use dispatch-supervisor' }],
+      steps: [{ type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredBdStatus: 'in_progress', requiredPlanApproved: true, handoff: 'Use dispatch-supervisor' }],
     }] }))
     const harness = makeHarness(cwd, [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-1', branch: 'task/demo' } }], 'in_progress')
 
     await harness.commands.get('workflow-chain').handler('dry-run handoff', harness.ctx)
 
     expect(harness.execCalls).toContainEqual({ command: 'bd', args: ['show', 'bead-1', '--json'] })
-    expect(harness.notifications[0]?.message).toContain('guard: current implementing not in plan_approved')
+    expect(harness.notifications[0]?.message).toContain('guard: bd:in_progress; planApproved=false not true')
   })
 
   it('blocks invalid-state workflow-critical run before mutation with handoff text', async () => {
-    const chain: WorkflowChain = { id: 'handoff', title: 'Handoff', steps: [{ type: 'typedWorkflow', operation: 'dispatch_supervisor', requiredState: 'plan_approved', handoff: 'Use dispatch-supervisor' }] }
+    const chain: WorkflowChain = { id: 'handoff', title: 'Handoff', steps: [{ type: 'typedWorkflow', operation: 'dispatch_supervisor', requiredBdStatus: 'in_progress', requiredPlanApproved: true, handoff: 'Use dispatch-supervisor' }] }
 
-    expect(typedWorkflowBlockReason(chain, implementingState)).toContain('requires workflow state plan_approved')
+    expect(typedWorkflowBlockReason(chain, implementingState)).toContain('requires bd:in_progress; planApproved=false not true')
 
     const cwd = tempProject()
     write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [chain] }))
@@ -220,7 +220,7 @@ describe('workflow-chain command behavior', () => {
       description: 'Dashboard preview',
       steps: [
         { id: 'safe', type: 'message', title: 'Safe message', message: 'hello' },
-        { id: 'typed', type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredState: 'plan_approved', handoff: 'Use dispatch-supervisor' },
+        { id: 'typed', type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredBdStatus: 'in_progress', requiredPlanApproved: true, handoff: 'Use dispatch-supervisor' },
       ],
     }
 

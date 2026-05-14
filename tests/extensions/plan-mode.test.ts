@@ -88,8 +88,8 @@ describe('Pi plan-mode workflow synchronization', () => {
     await commandHandlers.get('plan')?.handler('', ctx)
     await commandHandlers.get('plan-cancel')?.handler('', ctx)
 
-    expect(workflowUpdates.at(-2)).toMatchObject({ planMode: 'strict', state: 'planning' })
-    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', state: 'idle', stateIfCurrent: ['planning'] })
+    expect(workflowUpdates.at(-2)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
     expect(statuses['plan-mode']).toBeUndefined()
     expect(widgets['plan-todos']).toBeUndefined()
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
@@ -128,8 +128,8 @@ describe('Pi plan-mode workflow synchronization', () => {
       { command: 'bd', args: ['show', 'beads-task-issue-tracker-zzkb', '--json'] },
       { command: 'bd', args: ['update', 'beads-task-issue-tracker-zzkb', '--claim', '--json'] },
     ]))
-    expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', state: 'claimed' })
-    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', state: 'planning' })
+    expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
   })
 })
