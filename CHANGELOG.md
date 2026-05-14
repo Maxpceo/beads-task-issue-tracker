@@ -16,6 +16,7 @@
 
 ### Changed
 
+- **Pi workflow-state session context** (`beads-task-issue-tracker-v495`): `.pi/extensions/workflow-state` now treats bd status as live read-only issue lifecycle data instead of coercing it into Pi session state, shows `bdStatus` in injected session context/footer output, and clears active session bindings only for terminal bd statuses.
 - **Pi bead locale policy** (`beads-task-issue-tracker-7xou`): Pi `beads-policy` now blocks clearly English `bd create`/`bd update` titles and descriptions so agent-authored bead content stays in Russian for Maxim while preserving technical identifiers and required handoff headings.
 - **Pi agents dashboard close hint** (`beads-task-issue-tracker-hnqx`): `/agents-dashboard` now shows a dedicated close hint that documents `/agents-dashboard hide`, while wide terminals also mention `clear`; command help now lists both `hide` and `clear`.
 - **Pi subagent dashboard card polish** (`beads-task-issue-tracker-cff1`): `/agents-dashboard` cards now use status-colored borders and agent titles, add consistent horizontal padding, and show expanded usage stats (`ctx`, `in`, `out`, `cache`, `write`) instead of context-only usage text.
