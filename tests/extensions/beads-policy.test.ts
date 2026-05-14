@@ -310,6 +310,50 @@ describe('Pi active bead lifecycle policy', () => {
     }
   })
 
+  it('does not block allowed bd mutation after current-runtime plan changes from strict to off', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    try {
+      execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const ctx = {
+        cwd: repo,
+        sessionManager: {
+          getSessionId: () => 'session-current',
+          getEntries: () => [
+            { type: 'custom', customType: 'workflow-state', data: { state: 'planning', planMode: 'strict', mergeSlotHeld: true, runtimeOwnerKey } },
+            { type: 'custom', customType: 'workflow-state', data: { state: 'planning', planMode: 'off', mergeSlotHeld: true, runtimeOwnerKey } },
+            { type: 'custom', customType: 'workflow-state', data: { state: 'planning', planMode: 'strict', mergeSlotHeld: true, runtimeOwnerKey: 'runtime:foreign' } },
+          ],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const result = await toolCallHandler(
+        { toolName: 'bash', input: { command: 'bd update bead-current --priority 2 --json' } },
+        ctx,
+      )
+
+      expect(result?.reason ?? '').not.toContain('blockMutationsInPlanning')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
   it('does not confirm active workflow-state when later bd comments show foreign ownership', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))

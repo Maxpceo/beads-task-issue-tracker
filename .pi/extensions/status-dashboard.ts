@@ -276,7 +276,7 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const state = wf.state ?? "idle";
 	const bead = wf.activeBead ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
-	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`];
+	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`, `plan:${wf.planMode ?? "off"}`];
 	const statusWorktree = formatWorktree(worktree);
 	if (statusWorktree) statusParts.push(`wt:${statusWorktree}`);
 	statusParts.push(`dirty:${dirty ?? "?"}`, `slot:${slot}`);
@@ -292,6 +292,11 @@ export default function statusDashboardExtension(pi: ExtensionAPI): void {
 		installWorkflowFooter(ctx);
 		void updateDashboard(pi, ctx);
 	}
+
+	const eventBus = (pi as unknown as { events?: { on(name: "workflow-state:update", handler: (event: { ctx?: ExtensionContext }) => unknown): void } }).events;
+	eventBus?.on("workflow-state:update", async (event) => {
+		if (event.ctx) await updateDashboard(pi, event.ctx);
+	});
 
 	function clearPendingInstallTimers(): void {
 		for (const timer of pendingInstallTimers) clearTimeout(timer);

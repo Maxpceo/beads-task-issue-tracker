@@ -11,6 +11,7 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	planMode?: string;
 	mergeSlotHeld?: boolean;
+	runtimeOwnerKey?: string;
 }
 
 interface WorktreeInfo {
@@ -26,11 +27,20 @@ interface FooterCache {
 
 const STATUS_KEYS_TO_HIDE = new Set(["pi-workflow-dashboard", "workflow-state"]);
 const REFRESH_THROTTLE_MS = 2_000;
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
+
+function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
 
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
+	const ownerKey = currentRuntimeOwnerKey();
 	const last = entries
 		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+		.filter((entry: { data?: unknown }) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === ownerKey)
 		.pop() as { data?: WorkflowStateSnapshot } | undefined;
 	return last?.data ?? {};
 }
@@ -226,6 +236,11 @@ export default function footerDashboardExtension(pi: ExtensionAPI): void {
 	pi.on("turn_start", async (_event, ctx) => refresh(ctx));
 	pi.on("turn_end", async (_event, ctx) => refresh(ctx, true));
 	pi.on("tool_result", async (_event, ctx) => refresh(ctx));
+
+	const eventBus = (pi as unknown as { events?: { on(name: "workflow-state:update", handler: (event: { ctx?: ExtensionContext }) => unknown): void } }).events;
+	eventBus?.on("workflow-state:update", async (event) => {
+		if (event.ctx) await refresh(event.ctx, true);
+	});
 
 	pi.registerCommand("footer-dashboard", {
 		description: "Refresh structured Pi footer dashboard",

@@ -365,10 +365,11 @@ function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
 	const bead = state.activeBead ?? "-";
 	const branch = state.branch ?? "-";
 	const worktree = state.worktreePath ? "wt:yes" : "wt:no";
+	const plan = `plan:${state.planMode}`;
 	const slot = state.mergeSlotHeld ? "slot:held" : "slot:free";
 	ctx.ui.setStatus(
 		"workflow-state",
-		ctx.ui.theme.fg("dim", `wf:${state.state} bead:${bead} br:${branch} ${worktree} ${slot}`),
+		ctx.ui.theme.fg("dim", `wf:${state.state} bead:${bead} br:${branch} ${worktree} ${plan} ${slot}`),
 	);
 }
 
@@ -403,7 +404,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return workflowState;
 	}
 
-	async function ensureReconciled(ctx?: ExtensionContext): Promise<void> {
+	async function ensureReconciled(ctx?: ExtensionContext): Promise<boolean> {
 		const reconciled = await reconcileActiveBeadState(pi, workflowState, ctx);
 		const changed =
 			reconciled.state.state !== workflowState.state ||
@@ -413,9 +414,13 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			reconciled.state.startCommit !== workflowState.startCommit ||
 			reconciled.state.endCommit !== workflowState.endCommit;
 		workflowState = reconciled.state;
-		if (changed) persist(ctx);
-		else if (ctx) updateFooter(ctx, workflowState);
+		if (changed) {
+			persist(ctx);
+		} else if (ctx) {
+			updateFooter(ctx, workflowState);
+		}
 		if (ctx && reconciled.warning) ctx.ui.notify(reconciled.warning, "warning");
+		return changed;
 	}
 
 	function applyEventUpdate(event: WorkflowStateUpdateEvent): WorkflowState {
@@ -615,8 +620,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				}
 				next.mergeSlotHeld = kv.slot === "held";
 			}
+			const changed = Object.keys(next).length > 0;
 			assignState(next);
-			await ensureReconciled(ctx);
+			const persistedByReconcile = await ensureReconciled(ctx);
+			if (changed && !persistedByReconcile) persist(ctx);
 			ctx.ui.notify(formatState(workflowState), "info");
 		},
 	});
