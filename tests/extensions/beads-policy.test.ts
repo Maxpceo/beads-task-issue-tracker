@@ -126,6 +126,68 @@ describe('Pi merge-slot push policy', () => {
   })
 })
 
+describe('Pi terminal close policy', () => {
+  const policyOnlyOptions = { cwd: tmpdir() }
+
+  it('blocks standard bd close when workflow state is idle', () => {
+    const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+    expect(decision?.block).toBe(true)
+  })
+
+  it.each([
+    'bd update bead-a --status closed --json',
+    'bd update bead-a --status=closed --json',
+    'bd update bead-a -s=closed --json',
+    'bd update bead-a --status "closed" --json',
+  ])('blocks direct terminal status update without accepted workflow state: %s', (command) => {
+    const decision = evaluateBashPolicy(command, {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('does not treat non-terminal status updates as terminal close attempts', () => {
+    const decision = evaluateBashPolicy('bd update bead-a --status inreview --json', {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
+
+  it('does not block comments that mention the standard close command as documentation text', () => {
+    const decision = evaluateBashPolicy('bd comments add bead-a "use bd close after acceptance"', {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
+
+  it.each(['accepted', 'reviewing'])('allows active bead terminal close in workflow state %s', (state) => {
+    const decision = evaluateBashPolicy('bd update bead-a --status closed --json', {
+      activeBead: 'bead-a',
+      state,
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
+
+  it('blocks terminal close when accepted workflow state belongs to a different active bead', () => {
+    const decision = evaluateBashPolicy('bd update bead-b --status closed --json', {
+      activeBead: 'bead-a',
+      state: 'accepted',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+    expect(decision?.block).toBe(true)
+  })
+})
+
 describe('Pi active bead lifecycle policy', () => {
   it.each(['claimed', 'planning', 'implementing', 'inreview', 'reviewing'])(
     'blocks claiming another bead while active bead is %s',

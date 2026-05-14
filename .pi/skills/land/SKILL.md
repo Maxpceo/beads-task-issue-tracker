@@ -19,9 +19,10 @@ description: Pi-native landing workflow. Use when user says “пора зака
 2. File follow-up beads for remaining work using the full `AGENTS.md` template. Track every follow-up bead created in this session for the final report.
 3. Resolve session beads before push:
    - `inreview` with `CODE REVIEW: APPROVED` and acceptance evidence may be closed by the orchestrator;
-   - `inreview` without approval remains open and must be listed;
+   - if the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat it as human acceptance: record acceptance evidence/comment when needed, run `/workflow-update bead=<ID> state=accepted`, close via standard `bd close`, then run `/workflow-update state=closed` or reset to idle;
+   - `inreview` without approval or human acceptance remains open and must be listed;
    - `in_progress` remains open unless the work is explicitly accepted/closed by an allowed fast-path route.
-   - Do not use `land` to skip the lifecycle controller: active `inreview` beads still need `review-bead`, and active non-terminal beads block unrelated next work unless explicitly handed off/deferred with reason.
+   - Do not use `land` to skip the lifecycle controller: active `inreview` beads still need `review-bead` or explicit human acceptance, and active non-terminal beads block unrelated next work unless explicitly handed off/deferred with reason.
 4. Run quality gates if code changed:
    ```bash
    pnpm test && npx vue-tsc --noEmit
@@ -32,7 +33,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
    git add <files>
    git commit -m "<message>"
    ```
-6. Commit/sync beads if needed:
+6. Commit/sync beads if needed. After a human-accepted bead close, run `bd dolt push` so the close state is not stranded locally:
    ```bash
    bd dolt pull || true
    bd dolt push || true
