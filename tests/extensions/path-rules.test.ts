@@ -10,10 +10,13 @@ describe('path-rules loader', () => {
 
     expect(result.rules.map((rule) => rule.path)).toContain('AGENTS.md')
     expect(result.rules.map((rule) => rule.path)).toContain('.pi/rules/domain.md')
+    expect(result.rules.map((rule) => rule.path)).toContain('.pi/rules/codebase.md')
     expect(result.rules.map((rule) => rule.path)).toContain('src-tauri/CLAUDE.md')
 
     const rendered = await renderPathRulesLoaded(process.cwd(), ['src-tauri/src/lib.rs'])
     expect(rendered).toContain('PATH_RULES_LOADED:')
+    expect(rendered).toContain('--- .pi/rules/codebase.md')
+    expect(rendered).toContain('# Pi Codebase Rules')
     expect(rendered).toContain('--- src-tauri/CLAUDE.md')
     expect(rendered).toContain('# src-tauri/ — Rust backend')
   })
