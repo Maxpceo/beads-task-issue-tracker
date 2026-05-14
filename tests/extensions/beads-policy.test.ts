@@ -168,13 +168,24 @@ describe('Pi terminal close policy', () => {
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
   })
 
-  it.each(['accepted', 'reviewing'])('allows active bead terminal close in workflow state %s', (state) => {
+  it('allows active bead terminal close when live bd status is accepted', () => {
+    const decision = evaluateBashPolicy('bd update bead-a --status closed --json', {
+      activeBead: 'bead-a',
+      state: 'reviewing',
+      bdStatus: 'accepted',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+  })
+
+  it.each(['accepted', 'reviewing'])('does not allow terminal close from stale workflow state %s without bd evidence', (state) => {
     const decision = evaluateBashPolicy('bd update bead-a --status closed --json', {
       activeBead: 'bead-a',
       state,
     }, policyOnlyOptions)
 
-    expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+    expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+    expect(decision?.block).toBe(true)
   })
 
   it('blocks terminal close when accepted workflow state belongs to a different active bead', () => {
@@ -189,18 +200,31 @@ describe('Pi terminal close policy', () => {
 })
 
 describe('Pi active bead lifecycle policy', () => {
-  it.each(['claimed', 'planning', 'implementing', 'inreview', 'reviewing'])(
-    'blocks claiming another bead while active bead is %s',
-    (state) => {
+  it.each(['in_progress', 'inreview', 'simplified', 'reviewed', 'accepted'])(
+    'blocks claiming another bead while active bead bd status is %s',
+    (bdStatus) => {
       const decision = evaluateBashPolicy('bd update bead-b --claim --json', {
         activeBead: 'bead-a',
-        state,
+        state: 'idle',
+        bdStatus,
       })
 
       expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
       expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain(`bd:${bdStatus}`)
     },
   )
+
+  it('treats unknown active bd status as non-terminal for lifecycle-sensitive actions', () => {
+    const decision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, {
+      activeBead: 'bead-a',
+      state: 'idle',
+      bdStatus: 'custom_review_hold',
+    })
+
+    expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(decision?.reason).toContain('unknown bd status custom_review_hold')
+  })
 
   it('redirects active inreview bead to review-bead next action', () => {
     const reason = activeBeadLifecycleReason('bead-b', 'start/claim another bead', {
@@ -215,7 +239,7 @@ describe('Pi active bead lifecycle policy', () => {
   })
 
 
-  it('reconciles stale implementing state to bd inreview for redirect decisions', () => {
+  it('records bd inreview without coercing session state for redirect decisions', () => {
     const reconciled = reconcileWorkflowStateWithBdStatus({
       activeBead: 'bead-a',
       state: 'implementing',
@@ -223,7 +247,8 @@ describe('Pi active bead lifecycle policy', () => {
 
     const decision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, reconciled)
 
-    expect(reconciled.state).toBe('inreview')
+    expect(reconciled.state).toBe('implementing')
+    expect(reconciled.bdStatus).toBe('inreview')
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.reason).toContain('review-bead / review_bead')
     expect(decision?.reason).not.toContain('implementing')
@@ -256,10 +281,11 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
   })
 
-  it('allows next workflow claim after active bead reaches closed terminal state', () => {
+  it('allows next workflow claim after active bead reaches closed terminal bd status', () => {
     const decision = evaluateBashPolicy('/workflow-claim bead-b', {
       activeBead: 'bead-a',
-      state: 'closed',
+      state: 'implementing',
+      bdStatus: 'closed',
     })
 
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
@@ -295,10 +321,11 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.block).toBe(true)
   })
 
-  it('allows accepted bead close before explicit merge-to-main', () => {
+  it('allows accepted bead close before explicit merge-to-main when bd evidence is accepted', () => {
     const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
       activeBead: 'bead-a',
-      state: 'accepted',
+      state: 'implementing',
+      bdStatus: 'accepted',
     })
 
     expect(decision?.policy).not.toBe('blockUnmergedBranchCompletion')
