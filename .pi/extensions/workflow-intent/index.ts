@@ -1,3 +1,11 @@
+interface ExtensionAPI {
+	log?: { debug?: (message: string) => void };
+}
+
+export default function workflowIntentExtension(_pi: ExtensionAPI): { name: string } {
+	return { name: "workflow-intent" };
+}
+
 export interface WorkflowIntent {
 	beadId?: string;
 	beadIds: string[];
