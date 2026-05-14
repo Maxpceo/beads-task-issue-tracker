@@ -426,7 +426,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bead=bead-current')
   })
 
-  it('reconciles restored active bead with bd inreview status for footer context', async () => {
+  it('keeps restored active bead state and displays live bd inreview status for footer context', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -457,9 +457,9 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=inreview')
+    expect(context.message.content).toContain('state=implementing')
     expect(context.message.content).toContain('bead=bead-current')
-    expect(context.message.content).not.toContain('state=implementing')
+    expect(context.message.content).toContain('bdStatus=inreview')
   })
 
   it('keeps restored current-scope active bead when old foreign comments are followed by current ownership evidence', async () => {
@@ -510,7 +510,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications).toEqual([])
   })
 
-  it('reconciles a same-session inreview workflow state when bd status moved back to in_progress', async () => {
+  it('keeps same-session inreview state when bd status moved back to in_progress and displays bd status', async () => {
     const { eventHandlers, ctx, notifications } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -541,9 +541,10 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=implementing')
+    expect(context.message.content).toContain('state=inreview')
     expect(context.message.content).toContain('bead=bead-current')
-    expect(notifications.at(-1)?.message).toContain('not launching review from stale local state')
+    expect(context.message.content).toContain('bdStatus=in_progress')
+    expect(notifications).toEqual([])
   })
 
   it('keeps same-session planning state when bd status is still broad in_progress', async () => {
@@ -617,6 +618,89 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('state=plan_approved')
     expect(context.message.content).toContain('bead=bead-current')
     expect(notifications).toEqual([])
+  })
+
+
+  it.each([
+    'in_progress',
+    'inreview',
+    'simplified',
+    'reviewed',
+    'accepted',
+    'custom_status',
+  ])('keeps session state and displays non-terminal bd status %s without lifecycle coercion', async (bdStatus) => {
+    const { eventHandlers, ctx, statuses } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-current': { status: bdStatus, comments: 'PI_SESSION_KEY: id:session-current' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'planning',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            planMode: 'strict',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=planning')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(context.message.content).toContain(`bdStatus=${bdStatus}`)
+    expect(statuses['workflow-state']).toContain('session:planning')
+    expect(statuses['workflow-state']).toContain(`bd:${bdStatus}`)
+  })
+
+  it.each(['closed', 'blocked', 'deferred'])('clears active session binding for terminal bd status %s', async (bdStatus) => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'bead-terminal': { status: bdStatus, comments: 'PI_SESSION_KEY: id:session-current' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'planning',
+            activeBead: 'bead-terminal',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            planMode: 'strict',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(context.message.content).toContain('bdStatus=-')
+    expect(notifications.at(-1)?.message).toContain(`terminal bd status ${bdStatus}`)
   })
 
   it('keeps current runtime state when a later foreign runtime reset exists in the shared transcript', async () => {
@@ -737,7 +821,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     expect(result).toEqual({ action: 'handled' })
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', state: 'claimed', planMode: 'off' })
-    expect(statuses['workflow-state']).toContain('wf:claimed')
+    expect(statuses['workflow-state']).toContain('session:claimed')
     expect(statuses['workflow-state']).toContain('bead:beads-task-issue-tracker-zzkb')
     expect(notifications.at(-1)?.message).toContain('Claimed beads-task-issue-tracker-zzkb')
   })

@@ -53,6 +53,7 @@ interface WorkflowState {
 	runtimeOwnerKey?: string;
 	planMode: PlanMode;
 	mergeSlotHeld: boolean;
+	bdStatus?: string;
 	updatedAt: string;
 }
 
@@ -99,6 +100,7 @@ function formatState(state: WorkflowState): string {
 		`end=${state.endCommit ?? "-"}`,
 		`plan=${state.planMode}`,
 		`mergeSlot=${state.mergeSlotHeld ? "held" : "free"}`,
+		`bdStatus=${state.bdStatus ?? "-"}`,
 	].join(" | ");
 }
 
@@ -157,21 +159,8 @@ function isTerminalWorkflowState(state: WorkflowStateName): boolean {
 	return state === "closed" || state === "blocked" || state === "deferred" || state === "merged";
 }
 
-function stateFromBdStatus(status?: string): WorkflowStateName | undefined {
-	if (status === "in_progress") return "implementing";
-	if (status === "inreview") return "inreview";
-	if (status === "reviewed" || status === "accepted") return "accepted";
-	if (status === "closed") return "closed";
-	if (status === "blocked") return "blocked";
-	if (status === "deferred") return "deferred";
-	return undefined;
-}
-
-function reconcileStateWithBdStatus(state: WorkflowState, bdStatus?: string): WorkflowState {
-	const inferred = stateFromBdStatus(bdStatus);
-	if (!inferred || inferred === state.state) return state;
-	if (inferred === "implementing") return state;
-	return { ...state, state: inferred };
+function isTerminalBdStatus(status?: string): boolean {
+	return status === "closed" || status === "blocked" || status === "deferred";
 }
 
 async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | undefined> {
@@ -261,7 +250,7 @@ async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string>
 
 async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope): Promise<string | undefined> {
 	if (!scope.sessionKey) return undefined;
-	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
+	for (const status of ["in_progress", "inreview", "simplified", "reviewed", "accepted"]) {
 		const { stdout, code } = await pi.exec("bd", ["list", `--status=${status}`, "--json"]);
 		if (code !== 0) continue;
 		try {
@@ -296,8 +285,8 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 	};
 
 	if (state.activeBead && state.state !== "idle") {
-		const bdState = stateFromBdStatus(await readBdStatus(pi, state.activeBead));
-		if (bdState && isTerminalWorkflowState(bdState)) {
+		const bdStatus = await readBdStatus(pi, state.activeBead);
+		if (isTerminalBdStatus(bdStatus)) {
 			return {
 				state: {
 					...state,
@@ -308,11 +297,12 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 					startCommit: currentScope.startCommit,
 					endCommit: undefined,
 					sessionKey: undefined,
+					bdStatus: undefined,
 				},
-				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdState}`),
+				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`),
 			};
 		}
-		if (isTerminalWorkflowState(state.state)) return { state };
+		if (isTerminalWorkflowState(state.state)) return { state: { ...state, bdStatus } };
 
 		const commentsText = await readBdComments(pi, state.activeBead);
 		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
@@ -327,11 +317,12 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 					startCommit: currentScope.startCommit,
 					endCommit: undefined,
 					sessionKey: undefined,
+					bdStatus: undefined,
 				},
 				warning: staleForeignRecoveryMessage(state.activeBead, "stale or foreign for this branch/worktree/session"),
 			};
 		}
-		if (!bdState) {
+		if (!bdStatus) {
 			return {
 				state: {
 					...state,
@@ -342,25 +333,20 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 					startCommit: currentScope.startCommit,
 					endCommit: undefined,
 					sessionKey: undefined,
+					bdStatus: undefined,
 				},
-				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a non-terminal bd status"),
+				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a readable bd status"),
 			};
 		}
-		const bdInProgressMatchesLocalPreImplementation = bdState === "implementing" && ["claimed", "planning", "plan_approved"].includes(state.state);
-		if (bdState !== state.state && !bdInProgressMatchesLocalPreImplementation) {
-			return {
-				state: { ...state, state: bdState, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit },
-				warning: `Workflow state for ${state.activeBead} reconciled from ${state.state} to bd status ${bdState}; not launching review from stale local state.`,
-			};
-		}
-		return { state };
+		return { state: { ...state, bdStatus, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
 	}
 
+	const baseState = { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
 	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
-	if (!activeBead) return { state: { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
-	const inferred = stateFromBdStatus(await readBdStatus(pi, activeBead));
-	if (!inferred || (activeBead === state.activeBead && inferred === state.state)) return { state };
-	return { state: { ...state, activeBead, state: inferred, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
+	if (!activeBead) return { state: baseState };
+	const bdStatus = await readBdStatus(pi, activeBead);
+	if (!bdStatus || isTerminalBdStatus(bdStatus)) return { state: baseState };
+	return { state: { ...baseState, activeBead, bdStatus } };
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
@@ -369,9 +355,10 @@ function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
 	const worktree = state.worktreePath ? "wt:yes" : "wt:no";
 	const plan = `plan:${state.planMode}`;
 	const slot = state.mergeSlotHeld ? "slot:held" : "slot:free";
+	const bd = `bd:${state.bdStatus ?? "-"}`;
 	ctx.ui.setStatus(
 		"workflow-state",
-		ctx.ui.theme.fg("dim", `wf:${state.state} bead:${bead} br:${branch} ${worktree} ${plan} ${slot}`),
+		ctx.ui.theme.fg("dim", `session:${state.state} bead:${bead} br:${branch} ${worktree} ${plan} ${slot} ${bd}`),
 	);
 }
 
@@ -414,7 +401,8 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			reconciled.state.branch !== workflowState.branch ||
 			reconciled.state.worktreePath !== workflowState.worktreePath ||
 			reconciled.state.startCommit !== workflowState.startCommit ||
-			reconciled.state.endCommit !== workflowState.endCommit;
+			reconciled.state.endCommit !== workflowState.endCommit ||
+			reconciled.state.bdStatus !== workflowState.bdStatus;
 		workflowState = reconciled.state;
 		if (changed) {
 			persist(ctx);
@@ -468,7 +456,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				updatedAt: new Date().toISOString(),
 			};
 			persist(ctx);
-			ctx.ui.notify("Workflow state reset to idle", "info");
+			ctx.ui.notify("Workflow session context reset to idle", "info");
 		},
 	});
 
@@ -662,7 +650,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return {
 			message: {
 				customType: "workflow-state-context",
-				content: `[PI WORKFLOW STATE]\n${formatState(workflowState)}\n\nUse /workflow-status to inspect state. Use /workflow-update for explicit state transitions when a workflow phase changes.`,
+				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nUse /workflow-status to inspect session context. Use /workflow-update for explicit session context changes; bdStatus is live read-only issue status.`,
 				display: false,
 			},
 		};
