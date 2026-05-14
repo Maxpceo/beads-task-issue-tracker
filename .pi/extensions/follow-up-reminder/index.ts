@@ -45,6 +45,8 @@ interface WorkflowStateSnapshot {
 	branch?: string;
 	worktreePath?: string;
 	state?: string;
+	sessionMode?: string;
+	runtimeOwnerKey?: string;
 }
 
 type FollowUpReminderEvent =
@@ -72,6 +74,7 @@ const MARKERS: Array<{ type: string; pattern: RegExp }> = [
 ];
 
 const LOW_CONFIDENCE_ONLY = /\b(?:later|todo|eventually|maybe|nice to have|потом|когда-нибудь)\b/iu;
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
 
 function sha(value: string): string {
 	return createHash("sha1").update(value).digest("hex").slice(0, 12);
@@ -162,9 +165,21 @@ function isFollowUpEvent(value: unknown): value is FollowUpReminderEvent {
 	return false;
 }
 
+function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
+
 function latestWorkflowState(entries: SessionEntry[]): WorkflowStateSnapshot {
-	const last = entries.filter((entry) => entry.type === "custom" && entry.customType === "workflow-state").pop();
-	return last?.data && typeof last.data === "object" ? (last.data as WorkflowStateSnapshot) : {};
+	const workflowEntries = entries.filter((entry) => entry.type === "custom" && entry.customType === "workflow-state");
+	const ownerKey = currentRuntimeOwnerKey();
+	const current = workflowEntries.filter((entry) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === ownerKey).pop();
+	if (current?.data && typeof current.data === "object") return current.data as WorkflowStateSnapshot;
+	const fallback = workflowEntries.filter((entry) => (entry.data as WorkflowStateSnapshot | undefined)?.activeBead).pop();
+	if (!fallback?.data || typeof fallback.data !== "object") return {};
+	const data = fallback.data as WorkflowStateSnapshot;
+	return { ...data, activeBead: data.activeBead?.endsWith("*") ? data.activeBead : `${data.activeBead}*` };
 }
 
 function sameScope(candidate: FollowUpCandidate, scope?: FollowUpScope): boolean {

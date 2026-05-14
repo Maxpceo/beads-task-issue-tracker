@@ -9,6 +9,9 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	planMode?: string;
 	mergeSlotHeld?: boolean;
+	planApproved?: boolean | string;
+	sessionMode?: string;
+	bdStatus?: string;
 	runtimeOwnerKey?: string;
 }
 
@@ -232,11 +235,14 @@ function renderWorkflowFooter(
 		.slice(0, 4)
 		.join(" · ");
 
-	const workflowParts: Array<readonly [string, string, string]> = [["wf", wf.state ?? "idle", wf.state === "idle" ? "text" : "accent"]];
+	const sessionMode = wf.sessionMode ?? wf.state ?? "idle";
+	const planValue = `${wf.planMode ?? "off"}/${wf.planApproved ? "approved" : "pending"}`;
+	const workflowParts: Array<readonly [string, string, string]> = [["session", sessionMode, sessionMode === "idle" ? "text" : "accent"]];
 	if (worktree) workflowParts.push(["wt", worktree, "warning"]);
 	workflowParts.push(
 		["bead", displayBead, activeBead ? "accent" : "text"],
-		["plan", wf.planMode ?? "off", wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
+		["bd", wf.bdStatus ?? "-", wf.bdStatus ? "accent" : "text"],
+		["plan", planValue, wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
 	);
 	workflowParts.push(["", gitState, gitStateColor], ["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"]);
 	const statsParts = [
@@ -273,10 +279,11 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const branch = (await gitValue(pi, ["branch", "--show-current"], ctx.cwd)) ?? wf.branch ?? "-";
 	const dirty = await dirtyCount(pi, ctx.cwd);
 	const worktree = await currentWorktree(pi, [ctx.cwd, wf.worktreePath]);
-	const state = wf.state ?? "idle";
+	const sessionMode = wf.sessionMode ?? wf.state ?? "idle";
 	const bead = wf.activeBead ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
-	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`, `plan:${wf.planMode ?? "off"}`];
+	const plan = `${wf.planMode ?? "off"}/${wf.planApproved ? "approved" : "pending"}`;
+	const statusParts = [`session:${sessionMode}`, `bead:${bead}`, `bd:${wf.bdStatus ?? "-"}`, `br:${branch}`, `plan:${plan}`];
 	const statusWorktree = formatWorktree(worktree);
 	if (statusWorktree) statusParts.push(`wt:${statusWorktree}`);
 	statusParts.push(`dirty:${dirty ?? "?"}`, `slot:${slot}`);

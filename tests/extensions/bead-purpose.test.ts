@@ -81,10 +81,20 @@ describe('bead-purpose extension', () => {
 
     await h.handlers.session_start?.({}, h.ctx({ activeBead: 'beads-task-issue-tracker-cqbx', state: 'inreview' }))
 
-    expect(h.statuses.at(-1)?.[1]).toContain('beads-task-issue-tracker-cqbx · inreview')
+    expect(h.statuses.at(-1)?.[1]).toContain('beads-task-issue-tracker-cqbx · session:inreview')
     expect(h.statuses.at(-1)?.[1]).toContain('Next: review-bead')
-    expect(h.widgets.at(-1)?.[1]).toMatch(/^purpose: cqbx · inreview/)
+    expect(h.widgets.at(-1)?.[1]).toMatch(/^purpose: cqbx · session:inreview/)
     expect((h.widgets.at(-1)?.[1] ?? '').length).toBeLessThanOrEqual(34)
+  })
+
+  it('renders session mode and unknown bd status without coercion', async () => {
+    const h = createHarness({ title: 'Custom status bead' })
+
+    await h.handlers.session_start?.({}, h.ctx({ activeBead: 'beads-task-issue-tracker-cqbx', state: 'claimed', sessionMode: 'implementing', bdStatus: 'custom_review_hold' }))
+
+    expect(h.statuses.at(-1)?.[1]).toContain('session:implementing')
+    expect(h.statuses.at(-1)?.[1]).toContain('bd:custom_review_hold')
+    expect(h.widgets.at(-1)?.[1]).toContain('session:implement')
   })
 
   it('falls back to bead/state when bd lookup fails', async () => {
@@ -92,7 +102,7 @@ describe('bead-purpose extension', () => {
 
     await h.handlers.session_start?.({}, h.ctx({ activeBead: 'beads-task-issue-tracker-cqbx', state: 'implementing' }))
 
-    expect(h.statuses.at(-1)?.[1]).toContain('beads-task-issue-tracker-cqbx · implementing')
+    expect(h.statuses.at(-1)?.[1]).toContain('beads-task-issue-tracker-cqbx · session:implementing')
     expect(h.statuses.at(-1)?.[1]).toContain('title unavailable')
   })
 

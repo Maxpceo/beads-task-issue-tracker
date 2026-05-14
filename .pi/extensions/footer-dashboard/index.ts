@@ -11,6 +11,9 @@ interface WorkflowStateSnapshot {
 	startCommit?: string;
 	planMode?: string;
 	mergeSlotHeld?: boolean;
+	planApproved?: boolean | string;
+	sessionMode?: string;
+	bdStatus?: string;
 	runtimeOwnerKey?: string;
 }
 
@@ -144,10 +147,11 @@ function workflowParts(ctx: ExtensionContext, footerData: ReadonlyFooterDataProv
 		.filter(Boolean);
 
 	const parts = [
-		`state ${workflow.state ?? "idle"}`,
+		`session ${workflow.sessionMode ?? workflow.state ?? "idle"}`,
 		`bead ${workflow.activeBead ?? "-"}`,
-		`plan ${workflow.planMode ?? "off"}`,
-		`merge ${workflow.mergeSlotHeld ? "held" : "free"}`,
+		`bd ${workflow.bdStatus ?? "-"}`,
+		`plan ${workflow.planMode ?? "off"}/${workflow.planApproved ? "approved" : "pending"}`,
+		`slot ${workflow.mergeSlotHeld ? "held" : "free"}`,
 	];
 
 	if (statusParts.length > 0) parts.push(...statusParts);
@@ -221,7 +225,7 @@ export default function footerDashboardExtension(pi: ExtensionAPI): void {
 							`wt ${formatWorktree(cache.worktree)}`,
 						]),
 						sectionLine(width, theme, "model", modelParts(pi, ctx), { dimParts: true }),
-						sectionLine(width, theme, "workflow", workflowParts(ctx, footerData)),
+						sectionLine(width, theme, "session", workflowParts(ctx, footerData)),
 					];
 				},
 			} satisfies Component & { dispose(): void };

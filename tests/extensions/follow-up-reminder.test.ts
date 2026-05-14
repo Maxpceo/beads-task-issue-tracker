@@ -116,6 +116,25 @@ describe('follow-up-reminder state reduction', () => {
 })
 
 describe('follow-up-reminder extension commands and events', () => {
+  it('scopes candidates to current runtime workflow state and marks global fallback bead distinctly', async () => {
+    ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = 'runtime:follow-up-current'
+    const h = createHarness([
+      workflow({ runtimeOwnerKey: 'runtime:follow-up-current', activeBead: 'beads-task-issue-tracker-current', branch: 'task/current' }),
+      workflow({ runtimeOwnerKey: 'runtime:foreign', activeBead: 'beads-task-issue-tracker-foreign', branch: 'task/foreign' }),
+    ])
+
+    await h.handlers.get('message_end')?.({ message: { role: 'assistant', content: [{ type: 'text', text: 'Follow-up bead: add current docs.' }] } }, h.ctx())
+
+    expect((h.appended.at(-1)?.[1] as any).candidate.activeBead).toBe('beads-task-issue-tracker-current')
+
+    const fallback = createHarness([
+      workflow({ runtimeOwnerKey: 'runtime:foreign', activeBead: 'beads-task-issue-tracker-foreign', branch: 'task/foreign' }),
+    ])
+    await fallback.handlers.get('message_end')?.({ message: { role: 'assistant', content: [{ type: 'text', text: 'Follow-up bead: add fallback docs.' }] } }, fallback.ctx())
+
+    expect((fallback.appended.at(-1)?.[1] as any).candidate.activeBead).toBe('beads-task-issue-tracker-foreign*')
+  })
+
   it('persists candidates from assistant messages and avoids duplicates across session entries', async () => {
     const h = createHarness([
       workflow({ activeBead: 'beads-task-issue-tracker-tbc6', branch: 'task/tbc6-follow-up-reminder' }),

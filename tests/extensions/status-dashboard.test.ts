@@ -179,10 +179,32 @@ describe('Pi status-dashboard worktree display', () => {
 
     expect(dashboard.status).toContain('bead:beads-task-issue-tracker-current')
     expect(dashboard.footer.join('\n')).toContain('bead:current')
-    expect(dashboard.footer.join('\n')).toContain('plan:strict')
+    expect(dashboard.footer.join('\n')).toContain('plan:strict/pending')
     expect(dashboard.footer.join('\n')).toContain('slot:held')
   })
 
+  it('displays bd-first session, bd status, approved plan, and slot without wf lifecycle token', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, {
+      sessionMode: 'implementing',
+      state: 'claimed',
+      activeBead: 'beads-task-issue-tracker-current*',
+      bdStatus: 'custom_review_hold',
+      planMode: 'strict',
+      planApproved: true,
+      mergeSlotHeld: true,
+    })
+    const rendered = `${dashboard.status}\n${dashboard.footer.join('\n')}`
+
+    expect(rendered).toContain('session:implementing')
+    expect(rendered).toContain('bead:current*')
+    expect(rendered).toContain('bd:custom_review_hold')
+    expect(rendered).toContain('plan:strict/approved')
+    expect(rendered).toContain('slot:held')
+    expect(rendered).not.toContain('wf:')
+    expect(rendered).not.toContain('state:claimed')
+  })
 
   it('uses latest current-runtime plan and slot after strict to off update', async () => {
     const { primary } = createRepoWithLinkedWorktree()
@@ -192,11 +214,11 @@ describe('Pi status-dashboard worktree display', () => {
       { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'planning', planMode: 'off', mergeSlotHeld: false } },
     ])
 
-    expect(dashboard.status).toContain('plan:off')
+    expect(dashboard.status).toContain('plan:off/pending')
     expect(dashboard.status).toContain('slot:free')
-    expect(dashboard.footer.join('\n')).toContain('plan:off')
+    expect(dashboard.footer.join('\n')).toContain('plan:off/pending')
     expect(dashboard.footer.join('\n')).toContain('slot:free')
-    expect(dashboard.footer.join('\n')).not.toContain('plan:strict')
+    expect(dashboard.footer.join('\n')).not.toContain('plan:strict/')
     expect(dashboard.footer.join('\n')).not.toContain('slot:held')
   })
 
@@ -206,18 +228,18 @@ describe('Pi status-dashboard worktree display', () => {
       { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'idle', planMode: 'off', mergeSlotHeld: false } },
     ])
 
-    expect(dashboard.status).toContain('plan:off')
-    expect(dashboard.footer.join('\n')).toContain('plan:off')
+    expect(dashboard.status).toContain('plan:off/pending')
+    expect(dashboard.footer.join('\n')).toContain('plan:off/pending')
 
     await dashboard.emitWorkflowUpdate([
       { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'planning', planMode: 'strict', mergeSlotHeld: false } },
     ])
 
-    expect(dashboard.status).toContain('state:planning')
-    expect(dashboard.status).toContain('plan:strict')
-    expect(dashboard.footer.join('\n')).toContain('wf:planning')
-    expect(dashboard.footer.join('\n')).toContain('plan:strict')
-    expect(dashboard.footer.join('\n')).not.toContain('plan:off')
+    expect(dashboard.status).toContain('session:planning')
+    expect(dashboard.status).toContain('plan:strict/pending')
+    expect(dashboard.footer.join('\n')).toContain('session:planning')
+    expect(dashboard.footer.join('\n')).toContain('plan:strict/pending')
+    expect(dashboard.footer.join('\n')).not.toContain('plan:off/')
   })
 
   it('reports the current linked worktree basename in status and footer output', async () => {

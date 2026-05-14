@@ -2,7 +2,19 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+interface WorkflowStateSnapshot {
+	activeBead?: string;
+	state?: string;
+	sessionMode?: string;
+	planMode?: string;
+	planApproved?: boolean | string;
+	mergeSlotHeld?: boolean;
+	bdStatus?: string;
+	runtimeOwnerKey?: string;
+}
+
 interface Snapshot {
+	workflowContext: string;
 	branch: string;
 	gitStatus: string;
 	dirtyWarning: string;
@@ -34,6 +46,29 @@ function truncate(text: string, maxLines = 40): string {
 	return [...lines.slice(0, maxLines), `... truncated ${lines.length - maxLines} lines`].join("\n");
 }
 
+const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
+
+function currentRuntimeOwnerKey(): string {
+	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
+	root[RUNTIME_OWNER_GLOBAL_KEY] ??= `runtime:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+	return root[RUNTIME_OWNER_GLOBAL_KEY];
+}
+
+function latestWorkflowState(entries: Array<{ type: string; customType?: string; data?: unknown }>): WorkflowStateSnapshot {
+	const ownerKey = currentRuntimeOwnerKey();
+	const current = entries
+		.filter((entry) => entry.type === "custom" && entry.customType === "workflow-state")
+		.filter((entry) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === ownerKey)
+		.pop() as { data?: WorkflowStateSnapshot } | undefined;
+	return current?.data ?? {};
+}
+
+function renderWorkflowContext(workflow: WorkflowStateSnapshot): string {
+	const session = workflow.sessionMode ?? workflow.state ?? "idle";
+	const plan = `${workflow.planMode ?? "off"}/${workflow.planApproved ? "approved" : "pending"}`;
+	return [`session:${session}`, `bead:${workflow.activeBead ?? "-"}`, `bd:${workflow.bdStatus ?? "-"}`, `plan:${plan}`, `slot:${workflow.mergeSlotHeld ? "held" : "free"}`].join(" | ");
+}
+
 function recentKnowledge(cwd: string): string {
 	const file = path.join(cwd, ".beads", "memory", "knowledge.jsonl");
 	if (!fs.existsSync(file)) return "-";
@@ -54,6 +89,9 @@ function recentKnowledge(cwd: string): string {
 function renderSnapshot(snapshot: Snapshot): string {
 	return `[PI SESSION START CONTEXT]
 Created: ${snapshot.createdAt}
+
+Workflow context:
+${snapshot.workflowContext}
 
 Branch:
 ${snapshot.branch}
