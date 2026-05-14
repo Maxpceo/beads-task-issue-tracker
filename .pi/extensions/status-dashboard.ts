@@ -276,7 +276,7 @@ async function updateDashboard(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 	const state = wf.state ?? "idle";
 	const bead = wf.activeBead ?? "-";
 	const slot = wf.mergeSlotHeld ? "held" : "free";
-	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`];
+	const statusParts = [`bead:${bead}`, `state:${state}`, `br:${branch}`, `plan:${wf.planMode ?? "off"}`];
 	const statusWorktree = formatWorktree(worktree);
 	if (statusWorktree) statusParts.push(`wt:${statusWorktree}`);
 	statusParts.push(`dirty:${dirty ?? "?"}`, `slot:${slot}`);

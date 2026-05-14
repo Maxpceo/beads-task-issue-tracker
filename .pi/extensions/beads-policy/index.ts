@@ -1160,7 +1160,7 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	const isPlanning = workflowState.state === "planning" || workflowState.planMode === "strict" || workflowState.planMode === "auto";
+	const isPlanning = workflowState.planMode === "strict" || workflowState.planMode === "auto";
 	if (isPlanning && (commandHasMutatingBd(command) || commandHasMutatingGitOrFs(command))) {
 		return {
 			policy: "blockMutationsInPlanning",
@@ -1280,7 +1280,7 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 		};
 	}
 
-	const isPlanning = workflowState.state === "planning" || workflowState.planMode === "strict" || workflowState.planMode === "auto";
+	const isPlanning = workflowState.planMode === "strict" || workflowState.planMode === "auto";
 	if (isPlanning && (toolName === "edit" || toolName === "write")) {
 		return {
 			policy: "blockMutationsInPlanning",

@@ -18,6 +18,7 @@ function makeHarness(options: {
   const commandHandlers = new Map<string, any>()
   const appended: Array<{ type: string; data: unknown }> = []
   const notifications: Array<{ message: string; level?: string }> = []
+  const statuses: Record<string, string | undefined> = {}
 
   const processBranch = options.processBranch ?? options.branch
   const processWorktreePath = options.processWorktreePath ?? options.worktreePath
@@ -65,12 +66,12 @@ function makeHarness(options: {
       getEntries: () => options.entries ?? [],
       getSessionId: () => options.sessionKey ?? 'session-current',
     },
-    ui: { notify: (message: string, level?: string) => notifications.push({ message, level }), setStatus: () => undefined, theme: { fg: (_style: string, value: string) => value } },
+    ui: { notify: (message: string, level?: string) => notifications.push({ message, level }), setStatus: (key: string, value: string | undefined) => { statuses[key] = value }, theme: { fg: (_style: string, value: string) => value } },
   }
 
   workflowStateExtension(pi)
 
-  return { eventHandlers, commandHandlers, ctx, appended, notifications }
+  return { eventHandlers, commandHandlers, ctx, appended, notifications, statuses }
 }
 
 describe('Pi workflow-state session-scoped recovery', () => {
@@ -679,6 +680,42 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).not.toContain('bead=bead-current')
     expect(context.message.content).not.toContain('bead=bead-foreign')
+  })
+
+
+  it('persists current runtime plan and slot changes from workflow-update without stale strict entries', async () => {
+    const { eventHandlers, commandHandlers, ctx, appended, notifications, statuses } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {},
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'planning',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            planMode: 'strict',
+            mergeSlotHeld: true,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    await commandHandlers.get('workflow-update')?.handler('plan=off slot=free', ctx)
+
+    expect(appended.at(-2)?.data).toMatchObject({ planMode: 'strict', mergeSlotHeld: true })
+    expect(appended.at(-1)?.data).toMatchObject({ planMode: 'off', mergeSlotHeld: false })
+    expect(notifications.at(-1)?.message).toContain('plan=off')
+    expect(notifications.at(-1)?.message).toContain('mergeSlot=free')
+    expect(statuses['workflow-state']).toContain('plan:off')
+    expect(statuses['workflow-state']).toContain('slot:free')
   })
 
   it('requires explicit current-session marker in comments for session ownership evidence', () => {
