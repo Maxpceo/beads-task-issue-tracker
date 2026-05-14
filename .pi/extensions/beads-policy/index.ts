@@ -33,6 +33,7 @@ type PolicyName =
 	| "enforceBeadEnrichment"
 	| "enforceBeadRussianLocale"
 	| "blockMutationsInPlanning"
+	| "blockRawBdClaim"
 	| "blockSupervisorClose"
 	| "blockWorktreeInsideRepo"
 	| "blockMainMutation"
@@ -1151,6 +1152,15 @@ export function evaluateBashPolicy(
 				? activeBeadLifecycleDecision(reviewBead, "review", workflowState)
 				: undefined;
 	if (lifecycleDecision) return lifecycleDecision;
+
+	const rawClaimId = parseBdClaimId(command);
+	if (rawClaimId && !parseWorkflowCommandBead(command)) {
+		return {
+			policy: "blockRawBdClaim",
+			block: true,
+			reason: `Blocked: use /workflow-claim ${rawClaimId} instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
+		};
+	}
 
 	if (/\bgit\s+add\s+(-A\b|--all\b|\.(\s|$))/.test(command)) {
 		return {

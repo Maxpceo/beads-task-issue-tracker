@@ -186,7 +186,7 @@ describe('Pi active bead lifecycle policy', () => {
       endCommit: 'end-sha',
     }, 'closed')
 
-    const decision = evaluateBashPolicy('bd update bead-b --claim --json', reconciled)
+    const decision = evaluateBashPolicy('/workflow-claim bead-b', reconciled)
 
     expect(reconciled.state).toBe('idle')
     expect(reconciled.activeBead).toBeUndefined()
@@ -194,13 +194,23 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
   })
 
-  it('allows next claim after active bead reaches closed terminal state', () => {
-    const decision = evaluateBashPolicy('bd update bead-b --claim --json', {
+  it('allows next workflow claim after active bead reaches closed terminal state', () => {
+    const decision = evaluateBashPolicy('/workflow-claim bead-b', {
       activeBead: 'bead-a',
       state: 'closed',
     })
 
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
+  })
+
+  it('blocks raw bd claim so workflow-state and footer stay synchronized', () => {
+    const decision = evaluateBashPolicy('bd update bead-b --claim --json', {
+      state: 'idle',
+    })
+
+    expect(decision?.policy).toBe('blockRawBdClaim')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('/workflow-claim bead-b')
   })
 
   it('keeps merge-to-main explicit by not treating land as terminal workflow requirement', () => {
@@ -416,7 +426,7 @@ exit 1
 
       beadsPolicyExtension(pi as any)
       const result = await toolCallHandler(
-        { toolName: 'bash', input: { command: 'bd update bead-next --claim --json' } },
+        { toolName: 'bash', input: { command: 'bd update bead-next --priority 2 --json' } },
         ctx,
       )
 
@@ -474,7 +484,7 @@ exit 1
 
       beadsPolicyExtension(pi as any)
       const result = await toolCallHandler(
-        { toolName: 'bash', input: { command: 'bd update bead-current --claim --json' } },
+        { toolName: 'bash', input: { command: 'bd update bead-current --priority 2 --json' } },
         ctx,
       )
 

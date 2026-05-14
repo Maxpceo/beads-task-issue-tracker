@@ -52,6 +52,11 @@ function makeHarness(options: {
         const issue = options.issues[id]
         return { stdout: JSON.stringify(issue ? { id, status: issue.status } : {}), stderr: '', code: issue ? 0 : 1 }
       }
+      if (command === 'bd' && args[0] === 'update' && args.includes('--claim')) {
+        const id = args[1] ?? ''
+        const issue = options.issues[id]
+        return { stdout: JSON.stringify(issue ? { id, status: 'in_progress' } : {}), stderr: '', code: issue ? 0 : 1 }
+      }
       return { stdout: '', stderr: `unexpected ${command} ${args.join(' ')}`, code: 1 }
     },
     appendEntry: (type: string, data: unknown) => appended.push({ type, data }),
@@ -716,6 +721,25 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications.at(-1)?.message).toContain('mergeSlot=free')
     expect(statuses['workflow-state']).toContain('plan:off')
     expect(statuses['workflow-state']).toContain('slot:free')
+  })
+
+  it('handles natural-language claim-only intent with an explicit bead id', async () => {
+    const { eventHandlers, ctx, appended, statuses, notifications } = makeHarness({
+      branch: 'task/test',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {
+        'beads-task-issue-tracker-zzkb': { status: 'open', comments: '' },
+      },
+    })
+
+    const result = await eventHandlers.get('input')?.({ source: 'user', text: 'заклейми beads-task-issue-tracker-zzkb' }, ctx)
+
+    expect(result).toEqual({ action: 'handled' })
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', state: 'claimed', planMode: 'off' })
+    expect(statuses['workflow-state']).toContain('wf:claimed')
+    expect(statuses['workflow-state']).toContain('bead:beads-task-issue-tracker-zzkb')
+    expect(notifications.at(-1)?.message).toContain('Claimed beads-task-issue-tracker-zzkb')
   })
 
   it('requires explicit current-session marker in comments for session ownership evidence', () => {
