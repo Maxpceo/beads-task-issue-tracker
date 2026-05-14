@@ -171,6 +171,23 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.footer.join('\n')).toContain('slot:held')
   })
 
+
+  it('uses latest current-runtime plan and slot after strict to off update', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, [
+      { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'planning', planMode: 'strict', mergeSlotHeld: true } },
+      { type: 'custom', customType: 'workflow-state', data: { runtimeOwnerKey: 'runtime:test-status-dashboard', state: 'planning', planMode: 'off', mergeSlotHeld: false } },
+    ])
+
+    expect(dashboard.status).toContain('plan:off')
+    expect(dashboard.status).toContain('slot:free')
+    expect(dashboard.footer.join('\n')).toContain('plan:off')
+    expect(dashboard.footer.join('\n')).toContain('slot:free')
+    expect(dashboard.footer.join('\n')).not.toContain('plan:strict')
+    expect(dashboard.footer.join('\n')).not.toContain('slot:held')
+  })
+
   it('reports the current linked worktree basename in status and footer output', async () => {
     const { linked, linkedName } = createRepoWithLinkedWorktree()
 
