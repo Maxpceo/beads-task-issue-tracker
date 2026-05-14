@@ -53,6 +53,8 @@ interface WorkflowState {
 	runtimeOwnerKey?: string;
 	planMode: PlanMode;
 	mergeSlotHeld: boolean;
+	planApproved?: boolean | string;
+	sessionMode?: string;
 	bdStatus?: string;
 	updatedAt: string;
 }
@@ -68,6 +70,8 @@ interface WorkflowStateUpdateEvent {
 	sessionKey?: string;
 	planMode?: PlanMode;
 	mergeSlotHeld?: boolean;
+	planApproved?: boolean | string;
+	sessionMode?: string;
 	ctx?: ExtensionContext;
 }
 
@@ -99,6 +103,8 @@ function formatState(state: WorkflowState): string {
 		`start=${state.startCommit ?? "-"}`,
 		`end=${state.endCommit ?? "-"}`,
 		`plan=${state.planMode}`,
+		`planApproved=${state.planApproved ? "true" : "false"}`,
+		`sessionMode=${state.sessionMode ?? "-"}`,
 		`mergeSlot=${state.mergeSlotHeld ? "held" : "free"}`,
 		`bdStatus=${state.bdStatus ?? "-"}`,
 	].join(" | ");
@@ -427,6 +433,8 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (event.startCommit !== undefined) next.startCommit = event.startCommit || undefined;
 		if (event.endCommit !== undefined) next.endCommit = event.endCommit || undefined;
 		if (event.planMode !== undefined) next.planMode = event.planMode;
+		if (event.planApproved !== undefined) next.planApproved = event.planApproved;
+		if (event.sessionMode !== undefined) next.sessionMode = event.sessionMode || undefined;
 		if (event.mergeSlotHeld !== undefined) next.mergeSlotHeld = event.mergeSlotHeld;
 		return setState(next, event.ctx);
 	}
@@ -586,7 +594,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("workflow-update", {
 		description:
-			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> end=<sha> plan=off|strict|auto slot=held|free",
+			"Update workflow fields. Usage: /workflow-update state=claimed bead=<id> branch=<name> worktree=<path> start=<sha> end=<sha> plan=off|strict|auto approved=true|false session=<mode> slot=held|free",
 		handler: async (args, ctx) => {
 			const kv = parseKeyValueArgs(args);
 			const next: Partial<WorkflowState> = {};
@@ -615,6 +623,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				}
 				next.planMode = kv.plan;
 			}
+			if (kv.approved) {
+				if (kv.approved !== "true" && kv.approved !== "false") {
+					ctx.ui.notify(`Invalid approved value: ${kv.approved}`, "error");
+					return;
+				}
+				next.planApproved = kv.approved === "true";
+			}
+			if (kv.session) next.sessionMode = kv.session;
 			if (kv.slot) {
 				if (kv.slot !== "held" && kv.slot !== "free") {
 					ctx.ui.notify(`Invalid slot value: ${kv.slot}`, "error");

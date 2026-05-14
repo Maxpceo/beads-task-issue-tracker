@@ -807,6 +807,50 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(statuses['workflow-state']).toContain('slot:free')
   })
 
+  it('persists sessionMode and planApproved from workflow-state:update events', async () => {
+    const { eventHandlers, ctx, appended, statuses } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {},
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    await eventHandlers.get('workflow-state:update')?.({
+      ctx,
+      activeBead: 'bead-plan',
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      planMode: 'off',
+      planApproved: true,
+      sessionMode: 'implementing',
+    }, ctx)
+
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-plan',
+      planMode: 'off',
+      planApproved: true,
+      sessionMode: 'implementing',
+    })
+    expect(statuses['workflow-state']).toContain('plan:off')
+  })
+
+  it('updates planApproved and session mode through workflow-update command', async () => {
+    const { commandHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      issues: {},
+    })
+
+    await commandHandlers.get('workflow-update')?.handler('approved=true session=implementing', ctx)
+
+    expect(appended.at(-1)?.data).toMatchObject({ planApproved: true, sessionMode: 'implementing' })
+    expect(notifications.at(-1)?.message).toContain('planApproved=true')
+    expect(notifications.at(-1)?.message).toContain('sessionMode=implementing')
+  })
+
   it('handles natural-language claim-only intent with an explicit bead id', async () => {
     const { eventHandlers, ctx, appended, statuses, notifications } = makeHarness({
       branch: 'task/test',

@@ -158,6 +158,26 @@ describe('workflow-chain command behavior', () => {
     expect(harness.execCalls.some((call) => call.command === 'bd')).toBe(false)
   })
 
+  it('dry-run accepts persisted planApproved session context from workflow-state', async () => {
+    const cwd = tempProject()
+    write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [{
+      id: 'handoff',
+      title: 'Handoff',
+      steps: [{ type: 'typedWorkflow', title: 'Dispatch', operation: 'dispatch_supervisor', requiredBdStatus: 'in_progress', requiredPlanApproved: true, requiredSessionMode: 'implementing', handoff: 'Use dispatch-supervisor' }],
+    }] }))
+    const harness = makeHarness(cwd, [{
+      type: 'custom',
+      customType: 'workflow-state',
+      data: { ...implementingState, planApproved: true, sessionMode: 'implementing' },
+    }])
+
+    await harness.commands.get('workflow-chain').handler('dry-run handoff', harness.ctx)
+
+    expect(harness.notifications[0]?.message).toContain('guard: bd:in_progress; planApproved=true; session:implementing')
+    expect(harness.notifications[0]?.message).not.toContain('planApproved=false not true')
+    expect(harness.widgets['workflow-chain']?.join('\n')).toContain('planApproved:true')
+  })
+
   it('falls back from active bead to bd show status when workflow-state state is missing', async () => {
     const cwd = tempProject()
     write(cwd, '.pi/workflow-chains.json', JSON.stringify({ chains: [{
