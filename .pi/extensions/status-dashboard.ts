@@ -293,6 +293,11 @@ export default function statusDashboardExtension(pi: ExtensionAPI): void {
 		void updateDashboard(pi, ctx);
 	}
 
+	const eventBus = (pi as unknown as { events?: { on(name: "workflow-state:update", handler: (event: { ctx?: ExtensionContext }) => unknown): void } }).events;
+	eventBus?.on("workflow-state:update", async (event) => {
+		if (event.ctx) await updateDashboard(pi, event.ctx);
+	});
+
 	function clearPendingInstallTimers(): void {
 		for (const timer of pendingInstallTimers) clearTimeout(timer);
 		pendingInstallTimers = [];
