@@ -496,12 +496,16 @@ function parseBdUpdateStatus(command: string): { id: string; status: string } | 
 			const token = tokens[index];
 			if (!token) continue;
 			if (token === "--status" || token === "-s") {
-				status = tokens[index + 1];
+				status = stripQuotes(tokens[index + 1] ?? "");
 				index += 1;
 				continue;
 			}
 			if (token.startsWith("--status=")) {
-				status = token.slice("--status=".length);
+				status = stripQuotes(token.slice("--status=".length));
+				continue;
+			}
+			if (token.startsWith("-s=")) {
+				status = stripQuotes(token.slice("-s=".length));
 				continue;
 			}
 			if (valueFlags.has(token)) {
@@ -522,13 +526,23 @@ function reviewCheckpointTransition(command: string): { id: string; status: stri
 	return parsed && /^(simplified|reviewed|accepted)$/.test(parsed.status) ? parsed : undefined;
 }
 
+function normalizeStatusValue(value: string | undefined): string | undefined {
+	return value ? stripQuotes(value).toLowerCase() : undefined;
+}
+
 function directClosedTransition(command: string): { id: string; status: string } | undefined {
 	const parsed = parseBdUpdateStatus(command);
-	return parsed?.status === "closed" ? parsed : undefined;
+	if (!parsed || normalizeStatusValue(parsed.status) !== "closed") return undefined;
+	return { ...parsed, status: "closed" };
 }
 
 function closeCommandId(command: string): string | undefined {
-	return command.match(/\bbd\s+close\s+(\S+)/)?.[1];
+	for (const segment of splitShellSegments(command)) {
+		const tokens = shellTokens(segment);
+		const closeIndex = tokens.findIndex((token, index) => token === "close" && tokens[index - 1] === "bd");
+		if (closeIndex >= 0) return tokens[closeIndex + 1];
+	}
+	return undefined;
 }
 
 function commandHasReviewCheckpointTransition(command: string): boolean {
@@ -593,7 +607,7 @@ function commandDirectlySetsClosed(command: string): boolean {
 }
 
 function commandClosesBead(command: string): boolean {
-	return /\bbd\s+close\b/.test(command);
+	return Boolean(closeCommandId(command));
 }
 
 interface BdIssueSummary {
@@ -698,7 +712,7 @@ function formatIncompleteChildren(children: BdIssueSummary[]): string {
 
 function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
 	const id = terminalCloseId(command);
-	if (workflowState.state === "accepted" && workflowState.activeBead && id === workflowState.activeBead) {
+	if ((workflowState.state === "accepted" || workflowState.state === "reviewing") && workflowState.activeBead && id === workflowState.activeBead) {
 		return true;
 	}
 	if (!id) return false;

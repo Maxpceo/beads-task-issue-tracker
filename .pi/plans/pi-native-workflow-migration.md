@@ -132,7 +132,7 @@ Pi sessions must keep one active bead in a deterministic lifecycle:
 idle -> claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed -> idle/next task
 ```
 
-Terminal per-task states are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. `accepted` is not terminal; the bead still needs terminal close. While an active bead is non-terminal, Pi must block claiming, dispatching, or implementing another bead. If the active bead is `inreview`, the next valid action is `review-bead` / `review_bead`; unrelated work is blocked or redirected with that message. `land` is not part of the mandatory per-task lifecycle: it is an explicit user-triggered save/push checkpoint. `merge-to-main` remains an explicit user-triggered session-final workflow and includes commit/gates/push/PR/merge/main checkout.
+Terminal per-task states are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. `accepted` is not terminal; the bead still needs terminal close. Human phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted” for completed/inreview work are treated as human acceptance: the orchestrator records acceptance evidence when needed, runs `/workflow-update bead=<ID> state=accepted`, closes through standard `bd close`, updates workflow state to `closed`/idle, and syncs bead state with `bd dolt push`. While an active bead is non-terminal, Pi must block claiming, dispatching, or implementing another bead. If the active bead is `inreview`, the next valid action is `review-bead` / `review_bead` unless explicit human acceptance is recorded; unrelated work is blocked or redirected with that message. `land` is not part of the mandatory per-task lifecycle: it is an explicit user-triggered save/push checkpoint. `merge-to-main` remains an explicit user-triggered session-final workflow and includes commit/gates/push/PR/merge/main checkout.
 
 Stacked branches must review exact per-task scopes. `review_bead` accepts `startCommit` and `endCommit`; if `endCommit` is absent it uses the latest `END_COMMIT:` comment or `HEAD`. Supervisors/orchestrators should record `/workflow-update end=<sha>` or an `END_COMMIT: <sha>` comment before moving from implementation to review when later commits may be added for other beads.
 
@@ -172,7 +172,7 @@ Standard Pi/theme footer owns path/branch, selected model, thinking level, conte
 | `blockMainMutation` | Block edit/write and ordinary `git add`/`git stage`/`git commit` on `main`/`master`, including `.pi/*`; use a feature branch/worktree unless an approved merge/release workflow or explicit override applies |
 | `requireMergeSlotForPush` | Block `git push` unless workflow state says merge-slot is held |
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
-| `blockBdCloseWithoutReview` | Block close unless review/acceptance or explicit fast path permits it |
+| `blockBdCloseWithoutReview` | Block standard close and direct terminal status updates unless review/acceptance or explicit fast path permits it |
 | `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |
 | `blockUnmergedBranchCompletion` | Deprecated for per-task bead close: multi-task sessions may close accepted beads before explicit `merge-to-main`; merge/origin-main evidence is enforced by session-final `merge-to-main` verdict, not every bead close |
 | `validateReviewChain` | Block invalid lifecycle transitions |
@@ -214,6 +214,8 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | supervisor tries `bd close` | Blocked |
 | direct/standard epic completion with incomplete children | Blocked |
 | epic completion with all children closed and normal acceptance evidence | Allowed |
+| direct status update to non-terminal `inreview` | Allowed by terminal close guard; review-chain policy may still validate orchestrator-only checkpoints |
+| direct status update to terminal `closed` while workflow state is idle | Blocked; direct terminal updates cannot bypass accepted/reviewed close evidence |
 | accepted bead close on unmerged feature branch | Allowed; per-task lifecycle ends at `closed`, and session-final merge evidence is checked by explicit `merge-to-main` |
 | merge-to-main requested before origin/main ancestry | Runs explicit PR/merge workflow and final verdict checks; no preceding `land` required |
 | active bead `claimed`/`planning`/`implementing`/`reviewing`, then claim another bead | Blocked by `enforceActiveBeadLifecycle` |

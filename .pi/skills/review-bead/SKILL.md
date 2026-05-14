@@ -33,7 +33,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    - record `SIMPLIFY: DONE ...`, or
    - record `SIMPLIFY: SKIPPED. docs/config only` when no code simplification is applicable.
 7. Code review must check spec compliance first, then quality. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and redispatch supervisor with exact fixes; do not advance to `reviewed`, `accepted`, or `closed`.
-8. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then move `reviewed -> accepted -> closed`. After close, update workflow state to `closed`; `land` is not required before the next bead.
+8. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then move `reviewed -> accepted -> closed`. If the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat that as human acceptance: record an `ACCEPTANCE:` comment/evidence when needed, run `/workflow-update bead=<ID> state=accepted`, close through the standard `bd close` path, then update workflow state to `closed`/idle. After close, `land` is not required before the next bead.
 9. For frontend Vue diffs, run the Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo` (i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion, responsive/layout, regression evidence). This intentionally replaces undefined Claude RAMS/WIG requirements in Pi.
 10. If diff touches `$t(...)` or `i18n/locales/`, verify en/ru locale key parity.
 11. Close only after evidence:
@@ -69,7 +69,7 @@ bd comments add <ID> "PATTERN: <pattern>"
 
 - Never skip spec compliance.
 - Frontend/UI changes require the explicit Pi Frontend Review Checklist; do not require undefined RAMS/WIG.
-- Direct terminal status updates are invalid before accepted/reviewed-with-no-acceptance evidence.
+- Direct terminal status updates are invalid before accepted/reviewed-with-no-acceptance evidence; use standard `bd close` after workflow state records acceptance.
 - A confirmed current-session bead in `inreview` blocks unrelated next work; the valid next action is this review workflow. A stale/foreign `inreview` state must be reset or explicitly confirmed before any review/mutation.
 - Epic completion with incomplete children is blocked by `beads-policy` for both standard close and direct `closed` status updates; close child beads first or use an explicit documented override.
 - PR merged validation is required by merge/land workflows or explicit override.
