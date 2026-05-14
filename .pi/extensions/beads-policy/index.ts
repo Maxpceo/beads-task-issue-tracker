@@ -76,7 +76,6 @@ const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
 const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/agents|\.pi\/skills|scripts)\/|\.(ts|tsx|vue|rs|js|mjs|cjs|css|scss|sh)$/;
 const FAST_PATH_FILE_THRESHOLD = 3;
 const FAST_PATH_ADDED_LINE_THRESHOLD = 80;
-const LEGACY_SUPERVISOR_READY_STATES = new Set(["plan_approved", "implementing", "inreview", "reviewing", "accepted"]);
 const TERMINAL_WORKFLOW_STATES = new Set(["closed", "blocked", "deferred", "merged"]);
 const NON_TERMINAL_WORKFLOW_STATES = new Set(["claimed", "planning", "plan_approved", "implementing", "inreview", "reviewing", "accepted", "landing"]);
 const TERMINAL_BD_STATUSES = new Set(["closed", "blocked", "deferred"]);
@@ -871,8 +870,7 @@ function hasActiveBead(workflowState: WorkflowStateSnapshot): boolean {
 function isSupervisorPathActive(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
 	if (!hasActiveBead(workflowState)) return false;
 	if (workflowState.planApproved) return true;
-	if (cwd && workflowState.activeBead && hasScopedApprovedWorkflowComment(cwd, workflowState.activeBead, currentRecoveryScope(cwd, workflowState.sessionKey))) return true;
-	return LEGACY_SUPERVISOR_READY_STATES.has(workflowState.state ?? "");
+	return Boolean(cwd && workflowState.activeBead && hasScopedApprovedPlanComment(cwd, workflowState.activeBead, currentRecoveryScope(cwd, workflowState.sessionKey)));
 }
 
 interface RecoveryScope {
@@ -964,9 +962,30 @@ function hasCurrentSessionOwnership(state: WorkflowStateSnapshot, ctx?: Extensio
 	return Boolean(key && state.sessionKey === key);
 }
 
+function hasScopedApprovedPlanComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
+	const comments = getBdCommentsText(cwd, beadId);
+	return /PLAN APPROVED/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
+}
+
 function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
 	const comments = getBdCommentsText(cwd, beadId);
 	return /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
+}
+
+function recoverableApprovedPlanBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
+	if (!scope.sessionKey) return undefined;
+	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
+		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+		if (!raw) continue;
+		try {
+			const issues = JSON.parse(raw) as BdIssueSummary[];
+			const bead = issues.find((issue) => issue.id && hasScopedApprovedPlanComment(cwd, issue.id, scope));
+			if (bead?.id) return bead.id;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
 }
 
 function recoverableApprovedWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
@@ -1017,7 +1036,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 
 	if (risky && !supervisorPath) {
 		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
-		const recoveredBead = recoverableApprovedWorkflowBead(cwd);
+		const recoveredBead = recoverableApprovedPlanBead(cwd, currentRecoveryScope(cwd, workflowState.sessionKey));
 		if (recoveredBead) return undefined;
 		return {
 			policy: "fastPathDiscipline",
@@ -1211,9 +1230,6 @@ export function evaluateBashPolicy(
 	const staleDecision = evaluateStaleGuard(command, commandCwd);
 	if (staleDecision) return staleDecision;
 
-	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
-	if (fastPathDecision) return fastPathDecision;
-
 	if (
 		commandHasGitPush(command) &&
 		!workflowState.mergeSlotHeld &&
@@ -1226,6 +1242,9 @@ export function evaluateBashPolicy(
 			reason: "Blocked: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true or current bd merge-slot holder evidence).",
 		};
 	}
+
+	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
+	if (fastPathDecision) return fastPathDecision;
 
 	const beadLocaleError = getBeadLocaleError(command);
 	if (beadLocaleError) {

@@ -270,6 +270,50 @@ describe('Pi Fast Path bd-first supervisor readiness policy', () => {
     }
   })
 
+  it('blocks risky mutation when same-session comments only have dispatch evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFileSync(join(binDir, 'bd'), '#!/usr/bin/env bash\nif [[ "$1" == "comments" ]]; then printf "DISPATCH supervisor\\nPI_SESSION_KEY: id:session-current\\n"; exit 0; fi\nexit 1\n')
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        sessionKey: 'id:session-current',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['plan_approved', 'implementing', 'accepted'])(
+    'blocks risky mutation when only legacy workflow state %s exists without approved plan evidence',
+    (state) => {
+      const repo = createRepoWithRiskyPolicyDiff()
+      try {
+        const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+          activeBead: 'bead-a',
+          state,
+          bdStatus: 'in_progress',
+        }, { cwd: repo })
+
+        expect(decision?.policy).toBe('fastPathDiscipline')
+        expect(decision?.block).toBe(true)
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('preserves planning and merge-slot session-field guards', () => {
     const repo = createRepoWithRiskyPolicyDiff()
     try {
