@@ -88,20 +88,29 @@ interface WorkflowClaimApi<Ctx = unknown> {
 
 const WORKFLOW_CLAIM_API_KEY = "__piWorkflowClaimApi";
 
-type WorkflowClaimApiRegistry = WeakMap<object, WorkflowClaimApi>;
+interface WorkflowClaimApiRegistryState {
+	byPi: WeakMap<object, WorkflowClaimApi>;
+	latest?: WorkflowClaimApi;
+}
+
+type WorkflowClaimApiRegistry = WorkflowClaimApiRegistryState;
 
 function workflowClaimApiRegistry(): WorkflowClaimApiRegistry {
 	const root = globalThis as typeof globalThis & { [WORKFLOW_CLAIM_API_KEY]?: WorkflowClaimApiRegistry };
-	root[WORKFLOW_CLAIM_API_KEY] ??= new WeakMap<object, WorkflowClaimApi>();
+	root[WORKFLOW_CLAIM_API_KEY] ??= { byPi: new WeakMap<object, WorkflowClaimApi>() };
 	return root[WORKFLOW_CLAIM_API_KEY];
 }
 
 export function registerWorkflowClaimApi<Ctx = unknown>(pi: object, api: WorkflowClaimApi<Ctx>): void {
-	workflowClaimApiRegistry().set(pi, api as WorkflowClaimApi);
+	const registry = workflowClaimApiRegistry();
+	const typedApi = api as WorkflowClaimApi;
+	registry.byPi.set(pi, typedApi);
+	registry.latest = typedApi;
 }
 
 export async function requestWorkflowClaim<Ctx = unknown>(pi: object, beadId: string, ctx: Ctx): Promise<WorkflowClaimResult> {
-	const api = workflowClaimApiRegistry().get(pi);
+	const registry = workflowClaimApiRegistry();
+	const api = registry.byPi.get(pi) ?? registry.latest;
 	if (!api) {
 		return { ok: false, error: "workflow-state claim API is unavailable; cannot claim without lifecycle guard" };
 	}
@@ -520,6 +529,7 @@ function validateWorkflowUpdateParams(params: Record<string, unknown>): string |
 
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
+	let lastClaimError: string | undefined;
 
 	function persist(ctx?: ExtensionContext): void {
 		workflowState.runtimeOwnerKey = currentRuntimeOwnerKey();
@@ -637,45 +647,38 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	function recordClaimError(ctx: ExtensionContext, message: string): false {
+		lastClaimError = message.trim();
+		ctx.ui.notify(lastClaimError, "error");
+		return false;
+	}
+
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
+		lastClaimError = undefined;
 		await ensureReconciled(ctx);
 		if (workflowState.activeBead && workflowState.activeBead !== bead) {
 			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
 			if (activeStatus === "inreview") {
-				ctx.ui.notify(
-					`Cannot claim ${bead}: active bead ${workflowState.activeBead} is inreview. Run review-bead / review_bead for the active bead before claiming unrelated work.`,
-					"error",
-				);
-				return false;
+				return recordClaimError(ctx, `Cannot claim ${bead}: active bead ${workflowState.activeBead} is inreview. Run review-bead / review_bead for the active bead before claiming unrelated work.`);
 			}
 			if (activeStatus && !isTerminalBdStatus(activeStatus)) {
-				ctx.ui.notify(
-					`Cannot claim ${bead}: active bead ${workflowState.activeBead} has non-terminal bd status ${activeStatus}. Complete, review, or reset the active workflow before claiming unrelated work.`,
-					"error",
-				);
-				return false;
+				return recordClaimError(ctx, `Cannot claim ${bead}: active bead ${workflowState.activeBead} has non-terminal bd status ${activeStatus}. Complete, review, or reset the active workflow before claiming unrelated work.`);
 			}
 		}
 
 		const showResult = await pi.exec("bd", ["show", bead, "--json"]);
 		if (showResult.code !== 0) {
-			ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
-			return false;
+			return recordClaimError(ctx, `Failed to read bead ${bead}: command \`bd show ${bead} --json\` exited ${showResult.code}: ${(showResult.stderr || showResult.stdout || "<no output>").trim()}`);
 		}
 
 		const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
 		if (claimResult.code !== 0) {
-			ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
-			return false;
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd update ${bead} --claim --json\` exited ${claimResult.code}: ${(claimResult.stderr || claimResult.stdout || "<no output>").trim()}`);
 		}
 
 		const claimedBdStatus = await readBdStatus(pi, bead);
 		if (claimedBdStatus !== "in_progress") {
-			ctx.ui.notify(
-				`Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after bd update --claim; expected in_progress. Local workflow-state was not changed.`,
-				"error",
-			);
-			return false;
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress. Local workflow-state was not changed.`);
 		}
 
 		setState(
@@ -697,7 +700,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	registerWorkflowClaimApi<ExtensionContext>(pi, {
 		claimWorkflowBead: async (beadId, ctx) => {
 			const ok = await claimWorkflowBead(beadId, ctx);
-			return { ok, state: cloneState(workflowState) };
+			return { ok, state: cloneState(workflowState), error: ok ? undefined : lastClaimError };
 		},
 	});
 
@@ -849,8 +852,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			parameters: WorkflowClaimParams,
 			async execute(_id: string, params: { beadId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const ok = await claimWorkflowBead(params.beadId, ctx);
+				const error = ok ? undefined : lastClaimError;
 				await ensureReconciled(ctx);
-				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}: ${formatState(workflowState)}`, { ok, ...cloneState(workflowState) });
+				const failureDetails = error ? `; reason: ${error}` : "";
+				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}: ${formatState(workflowState)}${failureDetails}`, { ok, error, ...cloneState(workflowState) });
 			},
 		});
 

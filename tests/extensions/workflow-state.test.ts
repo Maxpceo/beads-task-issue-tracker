@@ -967,7 +967,9 @@ describe('Pi workflow-state typed tools', () => {
 
     expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
     expect(result.content[0].text).toContain('bdStatus=-')
-    expect(notifications.at(-1)?.message).toContain('bd status is open after bd update --claim; expected in_progress')
+    expect(result.content[0].text).toContain('reason: Failed to claim bead bead-next')
+    expect(result.content[0].text).toContain('bd update bead-next --claim --json')
+    expect(notifications.at(-1)?.message).toContain('bd status is open after command `bd update bead-next --claim --json`; expected in_progress')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
   })
