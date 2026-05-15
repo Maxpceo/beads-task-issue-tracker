@@ -23,6 +23,9 @@ Completion reports and status claims must be backed by fresh evidence in the sam
 
 - Claims that tests/builds/checks pass require the command, exit code, and relevant output excerpt.
 - Claims that a bug is fixed or acceptance is met require the exact command/manual check and observed result.
+- Before closing a non-trivial bead/epic with acceptance criteria, record an `ACCEPTANCE MATRIX:` bd comment that maps each acceptance/verification bullet to evidence, exit code or observed result, and `PASS|FAIL|NOT RUN|N/A`.
+- Do not close when the matrix contains `FAIL`, `NOT RUN`, `BLOCKED`, or `SCOPE GAP` unless Maxim provides `HUMAN ACCEPTANCE OVERRIDE` with `approver:` and `reason:`.
+- Prevent retry loops: after the same acceptance criterion fails twice, after two acceptance-fix cycles total, or when acceptance is blocked/not runnable without a clear local fix, stop with a concise delta report and ask Maxim for a decision instead of silently redispatching.
 - If a command was not run, say so explicitly; do not imply it passed.
 - Celebratory wording is allowed only after evidence, never instead of evidence.
 
