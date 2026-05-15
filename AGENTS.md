@@ -40,11 +40,12 @@ Do not raise style-only or naming-only preferences unless they have a clear main
 
 For workflow/task execution, proceed through approved steps without intermediate permission prompts. Do not ask “continue?”, “run review?”, “push now?”, or similar when the next step is already part of the approved workflow.
 
-Stop and ask only at real decision points:
+Stop and ask or report status only at real decision points where user attention is required:
 
 - code review returns `NOT APPROVED`;
 - acceptance checks fail;
 - fixing requires expanding scope or creating follow-up work that is not clearly in scope;
+- workflow state is stale/foreign/ambiguous and takeover is not explicit;
 - an unapproved destructive/hard-to-reverse action is needed.
 
 Final workflow/task reports should use a concise two-column table (`| Шаг | Результат |`) plus a short “Текущее состояние” section. Normal Q&A does not need this table format.
@@ -53,8 +54,8 @@ For long-running or noisy commands (`pnpm test`, `npx vue-tsc --noEmit`, `cargo 
 
 Stage and commit explicit file paths only. Do not stage whole trees with dot/all shortcuts.
 
-bd status is the lifecycle authority for beads. Pi `workflow-state` is session-local context only: active bead binding, branch/worktree/start/end commit, `sessionMode`, plan mode/approval, and merge-slot hint.
-Do not start, claim, implement, or dispatch unrelated work while the current-session active bead has a non-terminal bd status; terminal bd statuses are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. If bd status is `inreview`, the next action is `review-bead` / `review_bead`, not another task. `land` is an explicit save/push checkpoint and `merge-to-main` is an explicit session-final PR/merge workflow; neither is an automatic per-task stage.
+bd status is the lifecycle authority for beads. Pi `workflow-state` is session-local context only: active bead binding, branch/worktree/start/end commit, `sessionMode`, plan mode/approval, and merge-slot hint. Agents use typed workflow tools as the primary path: `workflow_status`, `workflow_claim`, `workflow_reset`, `workflow_update`, `workflow_plan_mode`, `workflow_plan_approved`, and `workflow_complete` when local terminal cleanup is needed. Slash commands such as `/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/workflow-update`, `/plan`, and `/plan-auto` are optional human UI shortcuts, not required agent steps. After every mutating workflow tool or blocker, provide a visible checkpoint with the observed state/tool result; do not silently stall.
+Do not start, claim, implement, or dispatch unrelated work while the current-session active bead has a non-terminal bd status; terminal bd statuses are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. If bd status is `inreview`, the next action is `review-bead` / `review_bead`, not another task. If active local workflow-state is stale, foreign, or ambiguous, call `workflow_reset` or ask for explicit takeover confirmation. `land` is an explicit save/push checkpoint and `merge-to-main` is an explicit session-final PR/merge workflow; neither is an automatic per-task stage.
 
 ## Fast Path / Large Change Discipline
 

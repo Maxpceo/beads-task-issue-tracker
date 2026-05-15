@@ -602,14 +602,14 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 	if (bdStatus) {
 		if (TERMINAL_BD_STATUSES.has(bdStatus)) return undefined;
 		const label = NON_TERMINAL_BD_STATUSES.has(bdStatus) ? bdStatus : `unknown bd status ${bdStatus}`;
-		if (bdStatus === "inreview") return `Blocked: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
-		return `Blocked: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+		if (bdStatus === "inreview") return `Blocked: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
+		return `Blocked: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
 	}
 
 	if (TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
 	if (!NON_TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
-	if (legacyState === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
-	return `Blocked: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+	if (legacyState === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
+	return `Blocked: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
 }
 
 function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -1141,21 +1141,24 @@ function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scop
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
 	const runtimeOwnerKey = currentRuntimeOwnerKey();
-	const last = entries
-		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+	const workflowEntries = entries
+		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state") as Array<{ data?: WorkflowStateSnapshot }>;
+	const last = workflowEntries
 		.filter((entry: { data?: unknown }) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === runtimeOwnerKey)
-		.pop() as { data?: WorkflowStateSnapshot } | undefined;
-	const state = last?.data ?? {};
+		.pop();
+	const restoredLast = workflowEntries.at(-1);
+	const state = last?.data ?? restoredLast?.data ?? {};
 	const scope = currentRecoveryScope(ctx.cwd, currentSessionKey(ctx));
 	if (state.activeBead && state.state && state.state !== "idle") {
+		const isCurrentSessionState = hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
+		if (!isCurrentSessionState) {
+			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+		}
 		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
 		if (hasForeignSessionOwnershipEvidence(commentsText, scope)) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
-		if (hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope)) {
-			return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
-		}
-		return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+		return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
 	}
 	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd, scope);
 	if (!recoveredBead) return { ...state, branch: scope.branch };
@@ -1196,7 +1199,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockRawBdClaim",
 			block: true,
-			reason: `Blocked: use /workflow-claim ${rawClaimId} instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
+			reason: `Blocked: use the workflow_claim typed tool (or optional human UI shortcut /workflow-claim ${rawClaimId}) instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
 		};
 	}
 

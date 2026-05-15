@@ -11,7 +11,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
 
 1. Guard session context and bd status:
    ```text
-   /workflow-status
+   workflow_status
    ```
    Required: current-session active bead exists, matches `<ID>`, bd status is `in_progress`, and session context shows an approved plan (`planApproved=true` or `sessionMode=plan_approved/implementing`). If any other current-session active bead has non-terminal bd status, stop; if bd status is `inreview`, continue with `review-bead`.
 2. Guard bead:
@@ -48,7 +48,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    bd comments add <ID> "END_COMMIT: <sha>"
    ```
    ```text
-   /workflow-update session=inreview end=<sha>
+   workflow_update(session=inreview, end=<sha>)
    ```
 8. Continue with `review-bead` automatically; do not start another bead while this one is `inreview`.
 
