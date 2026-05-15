@@ -974,6 +974,24 @@ function hasScopedApprovedPlanComment(cwd: string, beadId: string, scope: Recove
 	return commentEvidenceBlocks(comments).some((block) => /PLAN APPROVED/i.test(block) && hasSessionOwnershipEvidence(block, scope));
 }
 
+function hasScopeOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	if (hasForeignSessionOwnershipEvidence(commentsText, scope)) return false;
+	const branchMatches = latestFieldMatches(commentsText, branchNames, scope.branch);
+	const worktreeMatches = latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
+	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
+	return branchMatches && worktreeMatches && startMatches;
+}
+
+function hasScopedApprovedSupervisorWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
+	const comments = getBdCommentsText(cwd, beadId);
+	const blocks = commentEvidenceBlocks(comments);
+	const hasApprovedPlan = blocks.some((block) => /PLAN APPROVED/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+	const hasSupervisorDispatch = blocks.some((block) => /DISPATCH(?: RESULT)?/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+	return hasApprovedPlan && hasSupervisorDispatch;
+}
+
 function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
 	const comments = getBdCommentsText(cwd, beadId);
 	return /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
@@ -995,14 +1013,29 @@ function recoverableApprovedPlanBead(cwd: string, scope = currentRecoveryScope(c
 	return undefined;
 }
 
+function recoverableApprovedSupervisorWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
+	for (const status of ["inreview", "reviewed", "accepted", "in_progress", "simplified"]) {
+		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+		if (!raw) continue;
+		try {
+			const issues = JSON.parse(raw) as BdIssueSummary[];
+			const bead = issues.find((issue) => issue.id && hasScopedApprovedSupervisorWorkflowComment(cwd, issue.id, scope));
+			if (bead?.id) return bead.id;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
+}
+
 function recoverableApprovedWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
-	if (!scope.sessionKey) return undefined;
+	if (!scope.sessionKey) return recoverableApprovedSupervisorWorkflowBead(cwd, scope);
 	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
 		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
 		if (!raw) continue;
 		try {
 			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && hasScopedApprovedWorkflowComment(cwd, issue.id, scope));
+			const bead = issues.find((issue) => issue.id && (hasScopedApprovedWorkflowComment(cwd, issue.id, scope) || hasScopedApprovedSupervisorWorkflowComment(cwd, issue.id, scope)));
 			if (bead?.id) return bead.id;
 		} catch {
 			continue;
@@ -1043,12 +1076,13 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 
 	if (risky && !supervisorPath) {
 		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
-		const recoveredBead = recoverableApprovedPlanBead(cwd, currentRecoveryScope(cwd, workflowState.sessionKey));
+		const scope = currentRecoveryScope(cwd, workflowState.sessionKey);
+		const recoveredBead = recoverableApprovedPlanBead(cwd, scope) ?? recoverableApprovedSupervisorWorkflowBead(cwd, scope);
 		if (recoveredBead) return undefined;
 		return {
 			policy: "fastPathDiscipline",
 			block: true,
-			reason: `Blocked: risky scope requires an active bead with approved plan/supervisor path. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
+			reason: `Blocked: risky scope requires an active bead with approved plan/supervisor path, or bd comments with PLAN APPROVED plus DISPATCH evidence matching this branch/worktree/start commit. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
 		};
 	}
 
