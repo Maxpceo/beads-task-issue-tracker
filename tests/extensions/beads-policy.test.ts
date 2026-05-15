@@ -284,15 +284,16 @@ exit 1
     const repo = createRepoWithRiskyPolicyDiff()
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
     const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
     try {
       installFakeBd(binDir, `PLAN APPROVED
 BRANCH: fix/current
-WORKTREE: ${repo}
+WORKTREE: ${repoRoot}
 START_COMMIT: ${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()}
 
 DISPATCH RESULT (supervisor)
 BRANCH: fix/current
-WORKTREE: ${repo}
+WORKTREE: ${repoRoot}
 START_COMMIT: ${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()}
 END_COMMIT: HEAD
 `)
@@ -346,18 +347,53 @@ END_COMMIT: HEAD
     }
   })
 
+  it('blocks risky mutation when approved supervisor evidence has a stale start commit', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      installFakeBd(binDir, `PLAN APPROVED
+BRANCH: fix/current
+WORKTREE: ${repoRoot}
+START_COMMIT: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+
+DISPATCH RESULT (supervisor)
+BRANCH: fix/current
+WORKTREE: ${repoRoot}
+START_COMMIT: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+END_COMMIT: HEAD
+`)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps broad staging blocked even with approved supervisor evidence', () => {
     const repo = createRepoWithRiskyPolicyDiff()
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
     const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
     try {
       installFakeBd(binDir, `PLAN APPROVED
 BRANCH: fix/current
-WORKTREE: ${repo}
+WORKTREE: ${repoRoot}
 
 DISPATCH RESULT (supervisor)
 BRANCH: fix/current
-WORKTREE: ${repo}
+WORKTREE: ${repoRoot}
 `)
       process.env.PATH = `${binDir}:${oldPath ?? ''}`
 

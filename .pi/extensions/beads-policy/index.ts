@@ -981,8 +981,7 @@ function hasScopeOwnershipEvidence(commentsText: string, scope: RecoveryScope): 
 	const branchMatches = latestFieldMatches(commentsText, branchNames, scope.branch);
 	const worktreeMatches = latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
 	const startMatches = hasExactField(commentsText, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
-	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(commentsText);
-	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches);
+	return branchMatches && worktreeMatches && startMatches;
 }
 
 function hasScopedApprovedSupervisorWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
