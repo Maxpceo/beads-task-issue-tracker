@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -1207,6 +1207,340 @@ exit 1
       process.env.PATH = oldPath
       rmSync(repo, { recursive: true, force: true })
       rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+})
+
+
+describe('Pi active worktree cwd lock policy', () => {
+  function createRepo(branch: string): string {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-wt-'))
+    execFileSync('git', ['init', '-b', branch], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    writeFileSync(join(repo, 'tracked.txt'), 'initial\n')
+    execFileSync('git', ['add', 'tracked.txt'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+    return repo
+  }
+
+  function lockedState(worktreePath: string, extra: Record<string, unknown> = {}) {
+    return {
+      activeBead: 'bead-a',
+      state: 'implementing',
+      bdStatus: 'in_progress',
+      branch: 'task/current',
+      worktreePath,
+      runtimeOwnerKey,
+      planApproved: true,
+      ...extra,
+    }
+  }
+
+  it('blocks mutating bash from main before blockMainMutation when active bead has a worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const decision = evaluateBashPolicy('git add tracked.txt', lockedState(worktree), { cwd: main })
+
+      expect(decision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(decision?.reason).toContain(worktree)
+      expect(decision?.reason).not.toContain('main/master')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks bd writes and repo filesystem redirection from main under the lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const bdDecision = evaluateBashPolicy('bd comments add bead-a smoke', lockedState(worktree), { cwd: main })
+      const redirectDecision = evaluateBashPolicy('printf smoke > lock-smoke.txt', lockedState(worktree), { cwd: main })
+
+      expect(bdDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(redirectDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('allows read-only inspection from main while mutating work is locked to the task worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      for (const command of ['bd show bead-a --json', 'bd comments bead-a', 'git status --short', 'git worktree list']) {
+        const decision = evaluateBashPolicy(command, lockedState(worktree), { cwd: main })
+        expect(decision?.policy).not.toBe('enforceActiveWorktreeCwd')
+        expect(decision?.policy).not.toBe('blockMainMutation')
+      }
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks path-option gate commands from main and allows the same commands from the locked worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      for (const command of [
+        `pnpm --dir ${worktree} test`,
+        `pnpm --dir ${worktree} exec vitest`,
+        `pnpm --dir ${worktree} build`,
+        `npx --prefix ${worktree} vue-tsc --noEmit`,
+      ]) {
+        const fromMain = evaluateBashPolicy(command, lockedState(worktree), { cwd: main })
+        const fromWorktree = evaluateBashPolicy(command, lockedState(worktree), { cwd: worktree })
+
+        expect(fromMain?.policy).toBe('enforceActiveWorktreeCwd')
+        expect(fromMain?.reason).toContain('tests')
+        expect(fromWorktree?.policy).not.toBe('enforceActiveWorktreeCwd')
+        expect(fromWorktree?.policy).not.toBe('blockMainMutation')
+      }
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks cd/git -C attempts that redirect mutating work outside the locked worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const cdDecision = evaluateBashPolicy(`cd ${main} && touch smoke.txt`, lockedState(worktree), { cwd: worktree })
+      const gitDecision = evaluateBashPolicy(`git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: worktree })
+
+      expect(cdDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(gitDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('allows mutating bash from the worktree root, subdirectory, and symlink path', () => {
+    const worktree = createRepo('task/current')
+    const subdir = join(worktree, 'subdir')
+    const link = join(tmpdir(), `beads-policy-link-${Date.now()}`)
+    mkdirSync(subdir)
+    symlinkSync(worktree, link, 'dir')
+    try {
+      for (const cwd of [worktree, subdir, link]) {
+        const decision = evaluateBashPolicy('touch smoke.txt', lockedState(worktree), { cwd })
+        expect(decision?.policy).not.toBe('enforceActiveWorktreeCwd')
+        expect(decision?.policy).not.toBe('blockMainMutation')
+      }
+    } finally {
+      rmSync(link, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks missing worktree path and branch mismatch with actionable enforceActiveWorktreeCwd errors', () => {
+    const missing = join(tmpdir(), `missing-worktree-${Date.now()}`)
+    const wrongBranch = createRepo('task/other')
+    try {
+      const missingDecision = evaluateBashPolicy('touch smoke.txt', lockedState(missing), { cwd: tmpdir() })
+      const branchDecision = evaluateBashPolicy('touch smoke.txt', lockedState(wrongBranch), { cwd: wrongBranch })
+
+      expect(missingDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(missingDecision?.reason).toContain('missing worktree')
+      expect(missingDecision?.reason).toContain('workflow_reset')
+      expect(branchDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(branchDecision?.reason).toContain('branch task/current')
+      expect(branchDecision?.reason).toContain('task/other')
+    } finally {
+      rmSync(wrongBranch, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks mutating bash and edit/write when active lock has no recorded worktree path', () => {
+    const stateWithoutWorktree = lockedState('', { worktreePath: undefined })
+
+    const bashDecision = evaluateBashPolicy('touch smoke.txt', stateWithoutWorktree, { cwd: tmpdir() })
+    const editDecision = evaluatePathPolicy('edit', join(tmpdir(), 'outside.txt'), stateWithoutWorktree)
+    const writeDecision = evaluatePathPolicy('write', join(tmpdir(), 'outside.txt'), stateWithoutWorktree)
+    const readOnlyDecision = evaluateBashPolicy('bd show bead-a --json', stateWithoutWorktree, { cwd: tmpdir() })
+
+    expect(bashDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    expect(bashDecision?.reason).toContain('no recorded worktree path')
+    expect(bashDecision?.reason).toContain('workflow_reset')
+    expect(editDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    expect(editDecision?.reason).toContain('no recorded worktree path')
+    expect(writeDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    expect(writeDecision?.reason).toContain('no recorded worktree path')
+    expect(readOnlyDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+  })
+
+  it('does not enable the worktree lock for terminal states, absent active bead, or foreign stale state', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const terminalDecision = evaluateBashPolicy('git add tracked.txt', lockedState(worktree, { bdStatus: 'closed' }), { cwd: main })
+      const absentDecision = evaluateBashPolicy('git add tracked.txt', { worktreePath: worktree, branch: 'task/current', runtimeOwnerKey }, { cwd: main })
+      const foreignDecision = evaluateBashPolicy('git add tracked.txt', lockedState(worktree, { runtimeOwnerKey: 'runtime:foreign', sessionKey: undefined, planApproved: false }), { cwd: main })
+
+      expect(terminalDecision?.policy).toBe('blockMainMutation')
+      expect(absentDecision?.policy).toBe('blockMainMutation')
+      expect(foreignDecision?.policy).toBe('blockMainMutation')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks edit/write outside the active worktree and allows targets inside it', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const outside = evaluatePathPolicy('write', join(main, 'outside.txt'), lockedState(worktree))
+      const inside = evaluatePathPolicy('write', join(worktree, 'inside.txt'), lockedState(worktree))
+
+      expect(outside?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(inside).toBeUndefined()
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('requires typed dispatch/review/docs tools to carry the active worktree cwd', () => {
+    const worktree = createRepo('task/current')
+    try {
+      const missing = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-a' }, lockedState(worktree))
+      const matching = evaluateToolPolicy('dispatch_docs_agent', { beadId: 'bead-a', cwd: worktree }, lockedState(worktree))
+
+      expect(missing?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(matching).toBeUndefined()
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead'])(
+    'blocks %s when active lock has no recorded worktree path',
+    (toolName) => {
+      const decision = evaluateToolPolicy(toolName, { beadId: 'bead-a', cwd: tmpdir() }, lockedState('', { worktreePath: undefined }))
+
+      expect(decision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(decision?.reason).toContain('no recorded worktree path')
+      expect(decision?.reason).toContain('workflow_reset')
+      expect(decision?.reason).toContain(toolName)
+    },
+  )
+
+  it.each(['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead'])(
+    'blocks %s when active lock branch mismatches the recorded worktree',
+    (toolName) => {
+      const wrongBranch = createRepo('task/other')
+      try {
+        const decision = evaluateToolPolicy(toolName, { beadId: 'bead-a', cwd: wrongBranch }, lockedState(wrongBranch))
+
+        expect(decision?.policy).toBe('enforceActiveWorktreeCwd')
+        expect(decision?.reason).toContain('branch task/current')
+        expect(decision?.reason).toContain('task/other')
+        expect(decision?.reason).toContain('workflow_reset')
+        expect(decision?.reason).toContain(toolName)
+      } finally {
+        rmSync(wrongBranch, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('runtime-smoke: extension tool_call blocks main cwd and allows worktree cwd for the same harmless mutation', async () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const baseCtx = {
+        sessionManager: {
+          getSessionId: () => 'session-current',
+          getEntries: () => [
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                ...lockedState(worktree),
+                sessionKey: 'id:session-current',
+                startCommit: execFileSync('git', ['-C', worktree, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+              },
+            },
+          ],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const fromMain = await toolCallHandler({ toolName: 'bash', input: { command: 'touch smoke.txt' } }, { ...baseCtx, cwd: main })
+      const fromWorktree = await toolCallHandler({ toolName: 'bash', input: { command: 'touch smoke.txt' } }, { ...baseCtx, cwd: worktree })
+
+      expect(fromMain.reason).toContain('enforceActiveWorktreeCwd')
+      expect(fromMain.reason).not.toContain('blockMainMutation')
+      expect(fromWorktree).toBeUndefined()
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+
+  it('runtime-smoke: missing worktreePath keeps current-session lock for bash and write tools from main', async () => {
+    const main = createRepo('main')
+    try {
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const baseCtx = {
+        sessionManager: {
+          getSessionId: () => 'session-current',
+          getEntries: () => [
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                ...lockedState('', { worktreePath: undefined }),
+                sessionKey: 'id:session-current',
+              },
+            },
+          ],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const bashDecision = await toolCallHandler({ toolName: 'bash', input: { command: 'touch smoke.txt' } }, { ...baseCtx, cwd: main })
+      const writeDecision = await toolCallHandler({ toolName: 'write', input: { path: join(main, 'smoke.txt') } }, { ...baseCtx, cwd: main })
+
+      expect(bashDecision.reason).toContain('enforceActiveWorktreeCwd')
+      expect(bashDecision.reason).toContain('no recorded worktree path')
+      expect(bashDecision.reason).toContain('workflow_reset')
+      expect(bashDecision.reason).not.toContain('blockMainMutation')
+      expect(writeDecision.reason).toContain('enforceActiveWorktreeCwd')
+      expect(writeDecision.reason).toContain('no recorded worktree path')
+      expect(writeDecision.reason).toContain('workflow_reset')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
     }
   })
 })

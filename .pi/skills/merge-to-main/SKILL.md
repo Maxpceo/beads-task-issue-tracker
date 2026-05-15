@@ -9,7 +9,8 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
 
 ## Workflow
 
-1. Pre-flight:
+1. Start in the feature/task worktree when `workflowState.worktreePath` is present. The approved main checkout/pull phase begins only after PR merge; before that, mutating commands, docs dispatch, tests, commit, and branch push run from the feature worktree.
+2. Pre-flight:
    ```bash
    git status --short
    git branch --show-current
@@ -36,7 +37,7 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
 8. Create PR with `gh pr create`.
 9. Dispatch docs agent for documentation coverage before merge:
    ```text
-   dispatch_docs_agent(beadId=<ID>)
+   dispatch_docs_agent(beadId=<ID>, cwd=<feature-worktree-path>)
    ```
    The docs agent must inspect the branch diff and handle CHANGELOG/README/docs coverage during this merge workflow, not during `land`:
    - for code changes, update `CHANGELOG.md` under `[Unreleased]` or record an explicit skip reason;
