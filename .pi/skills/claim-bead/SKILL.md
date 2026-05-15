@@ -23,13 +23,7 @@ Slash commands (`/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/plan
 
 ## Reporting
 
-Every checkpoint or stop report must include `Где мы в workflow` with:
-
-- `Текущий этап`: claim / worktree setup / planning handoff / blocked.
-- `Стоп или продолжаю`: say whether the workflow continues automatically into planning or stops.
-- `Причина`: cite the exact bd status, ownership guard, policy, or worktree result.
-- `Следующий шаг`: next agent action.
-- `Действие Максима`: `не требуется` unless ownership/steal/closed-bead clarification is needed.
+Use a full `Где мы в workflow` block only when claim stops or needs Maxim's decision (closed bead, assigned to someone else, stale/foreign ownership, typed tool unavailable, worktree failure). Do not report routine claim/worktree/plan-mode state that is already visible in the footer when continuing automatically.
 
 ## Rules
 

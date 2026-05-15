@@ -78,23 +78,12 @@ bd comments add <ID> "PATTERN: <pattern>"
 
 ## Reporting
 
-All review checkpoints and final reports must include `Где мы в workflow` before or after the evidence table. Required fields:
+Use a full `Где мы в workflow` block for `NOT APPROVED`, failed acceptance, unavailable review tooling, ambiguous ownership, human acceptance/override requests, and final review reports. Routine `inreview -> simplified -> reviewed -> accepted` progress while continuing automatically should be silent or summarized only in the final evidence table.
 
-- `Текущий этап`: review guard / simplified / code review / acceptance / closed / blocked.
-- `Стоп или продолжаю`: continue through review automatically when guards pass; stop only for `NOT APPROVED`, failed acceptance, unavailable review tooling, or explicit ambiguity.
-- `Причина`: cite reviewer verdict, command evidence, bd status, or blocker.
-- `Следующий шаг`: redispatch fixes, run acceptance, close bead, or exact recovery action.
-- `Действие Максима`: `не требуется` unless human acceptance/override/clarification is required.
-
-Implementation handoff example:
+For recoverable errors where review can continue safely, prefer a short note:
 
 ```text
-Где мы в workflow:
-- Текущий этап: implementation complete, bead `inreview`.
-- Стоп или продолжаю: продолжаю автоматически.
-- Причина: supervisor committed changes and recorded END_COMMIT; review is the next lifecycle step.
-- Следующий шаг: run `review_bead` for START_COMMIT..END_COMMIT and record reviewer verdict.
-- Действие Максима: не требуется.
+Recovery: acceptance command failed because dependencies were missing; `pnpm install --frozen-lockfile` restored the environment, continuing checks.
 ```
 
 ## Final report

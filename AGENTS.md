@@ -50,14 +50,18 @@ Stop and ask or report status only at real decision points where user attention 
 
 Final workflow/task reports should use a concise two-column table (`| Шаг | Результат |`) plus a short “Где мы в workflow” / “Текущее состояние” section. Normal Q&A does not need this table format.
 
-Every workflow checkpoint or final workflow report must explicitly answer four user-facing questions:
+Use selective workflow reporting. Full `Где мы в workflow` blocks are required when the agent stops for a decision/blocker, reports a failed required check, hands off an unresolved workflow, or finishes a user-visible workflow/task. Routine internal checkpoints while the agent continues automatically should be omitted or compressed into one short sentence.
+
+Do not duplicate footer state. Do not report normal `plan`, `bdStatus`, branch/worktree, or merge-slot values just because they changed; these are already visible in the Pi footer/session context. Mention them only when they are anomalous, stale/foreign/ambiguous, safety-relevant, or needed as final evidence.
+
+When a full `Где мы в workflow` block is required, explicitly answer:
 
 - `Текущий этап`: claim / planning / implementation / review / acceptance / landing / merge / blocked / deferred / closed.
-- `Стоп или продолжаю`: whether the agent is stopping for a decision/blocker, pausing after a completed stage, or continuing automatically.
+- `Стоп или продолжаю`: whether the agent is stopping for a decision/blocker, pausing after a completed stage, or continuing automatically after an exception.
 - `Причина`: why it is stopping/continuing, tied to bd status, policy, approval, failing checks, or completed evidence.
 - `Следующий шаг`: the next agent action and whether any action is required from Maxim.
 
-Use `Действие Максима: не требуется` when the approved workflow continues automatically. Use `Действие Максима: <specific request>` only at real decision points.
+Use `Действие Максима: не требуется` only in final/recovery reports where saying so avoids ambiguity. Do not emit a full block solely to say no action is required.
 
 Example blocker checkpoint:
 
@@ -70,15 +74,10 @@ Example blocker checkpoint:
 - Действие Максима: выбрать один из вариантов выше.
 ```
 
-Example implementation checkpoint:
+Short recovery note when continuing automatically:
 
 ```text
-Где мы в workflow:
-- Текущий этап: implementation complete, bead ещё не закрыт.
-- Стоп или продолжаю: продолжаю автоматически.
-- Причина: commit сделан, bd status `in_progress`; следующий обязательный этап — submit for review.
-- Следующий шаг: записать `END_COMMIT`, перевести bead в `inreview`, запустить review workflow.
-- Действие Максима: не требуется.
+Recovery: `gh pr merge` returned exit 1 after a local worktree checkout conflict, but PR #176 is merged and `ecc2ad8` is ancestor of `origin/main`; continuing cleanup.
 ```
 
 For long-running or noisy commands (`pnpm test`, `npx vue-tsc --noEmit`, `cargo check`, `git push` hooks), filter output with `tail -N`/targeted grep where practical. Preserve exit code and the important failure/success excerpt; do not dump thousands of lines into context.

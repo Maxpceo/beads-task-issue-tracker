@@ -66,13 +66,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 
 ## Reporting
 
-Landing reports must include `Где мы в workflow` with:
-
-- `Текущий этап`: landing / save-push checkpoint / blocked / pushed.
-- `Стоп или продолжаю`: say whether landing completed, stopped on a failing command, or intentionally left beads open.
-- `Причина`: cite git/bd command evidence, merge-slot state, open bead lifecycle status, or skipped quality-gate reason.
-- `Следующий шаг`: retry failed command, review/accept open bead, merge-to-main, or no immediate action.
-- `Действие Максима`: `не требуется` unless a policy override or acceptance decision is needed.
+Use a full `Где мы в workflow` block for failed landing commands, policy/merge-slot blockers, intentionally open session beads, required Maxim decisions, and the final landing report. Do not emit separate checkpoint blocks for normal clean status, branch, bd status, or merge-slot values that are already visible in the footer or final evidence.
 
 ## Final report
 
