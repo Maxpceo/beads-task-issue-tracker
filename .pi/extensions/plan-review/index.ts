@@ -1,5 +1,9 @@
 import * as path from "node:path";
 
+export default function planReviewExtension(_pi: unknown): void {
+	// Helper module loaded from .pi/extensions; no runtime hooks are required here.
+}
+
 export const REQUIRED_PLAN_REVIEWERS = [
 	"plan-edge-reviewer",
 	"plan-consistency-reviewer",

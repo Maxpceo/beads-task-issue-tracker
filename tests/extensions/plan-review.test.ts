@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
+import planReviewExtension, {
   evaluatePlanReviewGate,
   missingRevisedPlanSections,
   parsePlanReviewOutput,
@@ -8,6 +8,11 @@ import {
 } from '../../.pi/extensions/plan-review/index'
 
 describe('plan-review gate helpers', () => {
+  it('exports a no-op extension factory for the Pi extension loader', () => {
+    expect(typeof planReviewExtension).toBe('function')
+    expect(planReviewExtension({} as never)).toBeUndefined()
+  })
+
   it('parses structured reviewer verdicts and findings', () => {
     const result = parsePlanReviewOutput('plan-edge-reviewer', `PLAN REVIEW: NEEDS_CHANGES
 Findings:
