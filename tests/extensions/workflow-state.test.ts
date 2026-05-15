@@ -8,12 +8,15 @@ function makeHarness(options: {
   startCommit: string
   issues: Record<string, { status: string; comments: string }>
   claimStatusById?: Record<string, string>
+  statusUpdateById?: Record<string, string>
+  commentAddCode?: number
   entries?: Array<{ type: string; customType?: string; data?: unknown }>
   sessionKey?: string
   ctxCwd?: string
   processBranch?: string
   processWorktreePath?: string
   processStartCommit?: string
+  staleScopedGitError?: boolean
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
@@ -31,6 +34,7 @@ function makeHarness(options: {
     exec: async (command: string, args: string[]) => {
       execCalls.push({ command, args })
       if (command === 'git' && args[0] === '-C' && args[1] === options.ctxCwd) {
+        if (options.staleScopedGitError) throw new Error('This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().')
         const scopedArgs = args.slice(2).join(' ')
         if (scopedArgs === 'branch --show-current') return { stdout: `${options.branch}\n`, stderr: '', code: 0 }
         if (scopedArgs === 'rev-parse HEAD') return { stdout: `${options.startCommit}\n`, stderr: '', code: 0 }
@@ -46,6 +50,14 @@ function makeHarness(options: {
           .filter(([, issue]) => issue.status === status)
           .map(([id]) => ({ id }))
         return { stdout: JSON.stringify(issues), stderr: '', code: 0 }
+      }
+      if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
+        const id = args[2] ?? ''
+        const issue = options.issues[id]
+        if (!issue) return { stdout: '', stderr: 'issue not found', code: 1 }
+        if (options.commentAddCode && options.commentAddCode !== 0) return { stdout: '', stderr: 'comment add failed', code: options.commentAddCode }
+        issue.comments = [issue.comments, args[3] ?? ''].filter(Boolean).join('\n\n')
+        return { stdout: JSON.stringify({ issue_id: id, text: args[3] ?? '' }), stderr: '', code: 0 }
       }
       if (command === 'bd' && args[0] === 'comments') {
         const id = args[1] ?? ''
@@ -67,9 +79,11 @@ function makeHarness(options: {
       if (command === 'bd' && args[0] === 'update' && args.includes('--status')) {
         const id = args[1] ?? ''
         const issue = options.issues[id]
-        const status = args[args.indexOf('--status') + 1]
-        if (issue && status) issue.status = status
-        return { stdout: JSON.stringify(issue ? { id, status: issue.status } : {}), stderr: '', code: issue ? 0 : 1 }
+        if (!issue) return { stdout: JSON.stringify({}), stderr: '', code: 1 }
+        const requestedStatus = args[args.indexOf('--status') + 1] ?? issue.status
+        const nextStatus = options.statusUpdateById?.[id] ?? requestedStatus
+        issue.status = nextStatus
+        return { stdout: JSON.stringify({ id, status: nextStatus }), stderr: '', code: 0 }
       }
       return { stdout: '', stderr: `unexpected ${command} ${args.join(' ')}`, code: 1 }
     },
@@ -404,6 +418,36 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).not.toContain('state=reviewing')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
+  })
+
+  it('keeps workflow-state:update non-fatal when the event ctx is stale after session replacement', async () => {
+    const { eventHandlers, ctx, appended } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      processBranch: 'fix/current',
+      processWorktreePath: '/repo/current',
+      processStartCommit: 'current-head',
+      ctxCwd: '/repo/current',
+      staleScopedGitError: true,
+      issues: {
+        'bead-current': { status: 'in_progress', comments: '' },
+      },
+    })
+
+    await expect(eventHandlers.get('workflow-state:update')?.({
+      state: 'implementing',
+      activeBead: 'bead-current',
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      ctx,
+    }, ctx)).resolves.toBeUndefined()
+
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-current',
+      state: 'implementing',
+    })
   })
 
   it('keeps restored active bead when session state matches current worktree even without comments', async () => {
@@ -953,8 +997,8 @@ describe('Pi workflow-state typed tools', () => {
     expect(notifications.at(-1)?.message).toContain('Claimed bead-current')
   })
 
-  it('workflow_claim fails without local claimed state when bd status remains open after claim', async () => {
-    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+  it('workflow_claim recovers when bd claim leaves an already-assigned open bead open', async () => {
+    const { toolHandlers, ctx, appended, notifications, execCalls } = makeHarness({
       branch: 'task/current',
       worktreePath: '/repo/current',
       startCommit: 'start-head',
@@ -965,10 +1009,70 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
+    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(execCalls).toEqual(expect.arrayContaining([
+      { command: 'bd', args: ['update', 'bead-next', '--claim', '--json'] },
+      { command: 'bd', args: ['update', 'bead-next', '--status', 'in_progress', '--json'] },
+    ]))
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', bdStatus: 'in_progress' })
+    expect(notifications.at(-1)?.message).toContain('Claimed bead-next')
+  })
+
+  it('workflow_claim fails without local claimed state when bd status remains open after claim fallback', async () => {
+    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-next': { status: 'open', comments: '' } },
+      claimStatusById: { 'bead-next': 'open' },
+      statusUpdateById: { 'bead-next': 'open' },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
     expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
     expect(result.content[0].text).toContain('bdStatus=-')
-    expect(notifications.at(-1)?.message).toContain('bd status is open after bd update --claim; expected in_progress')
+    expect(result.content[0].text).toContain('reason: Failed to claim bead bead-next')
+    expect(result.content[0].text).toContain('bd update bead-next --claim --json')
+    expect(notifications.at(-1)?.message).toContain('bd status is open after command `bd update bead-next --claim --json`; expected in_progress')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
+  })
+
+  it('workflow_claim keeps newly claimed current-session state even when old comments have foreign ownership evidence', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-next': { status: 'in_progress', comments: 'PLAN APPROVED\nPI_SESSION_KEY: id:old-session\nBRANCH: task/old\nWORKTREE: /repo/old\nSTART_COMMIT: old-head' } },
+    })
+
+    const claim = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+    const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
+
+    expect(claim.content[0].text).toContain('workflow_claim completed')
+    expect(status.content[0].text).toContain('bead=bead-next')
+    expect(status.content[0].text).toContain('bdStatus=in_progress')
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', bdStatus: 'in_progress' })
+  })
+
+  it('workflow_claim fails instead of reporting completed when ownership evidence cannot be recorded', async () => {
+    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      commentAddCode: 1,
+      issues: { 'bead-next': { status: 'in_progress', comments: 'PLAN APPROVED\nBRANCH: task/old\nWORKTREE: /repo/old' } },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
+    expect(result.content[0].text).toContain('bd comments add bead-next WORKFLOW CLAIM')
+    expect(notifications.at(-1)?.message).toContain('Local workflow-state was not changed')
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
   })
 

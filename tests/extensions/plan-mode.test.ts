@@ -33,7 +33,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}) {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean } = {}) {
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -93,7 +93,8 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
     },
   }
 
-  registerWorkflowClaimApi(pi, {
+  const claimApiPi = options.registerClaimApiOnDifferentPi ? { lifecycle: 'workflow-state-proxy' } : pi
+  registerWorkflowClaimApi(claimApiPi, {
     async claimWorkflowBead(beadId: string) {
       if (options.activeStatus === 'in_progress' || options.activeStatus === 'inreview') {
         return { ok: false, state: { activeBead: 'bead-current', bdStatus: options.activeStatus } }
@@ -159,6 +160,21 @@ describe('Pi plan-mode workflow synchronization', () => {
       { command: 'bd', args: ['update', 'beads-task-issue-tracker-zzkb', '--claim', '--json'] },
     ]))
     expect(delayedClaimEvents).toEqual([])
+    expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+  })
+
+  it('handles claim+plan when workflow-state registered the guarded claim API on a different Pi proxy object', async () => {
+    const { inputHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness({ registerClaimApiOnDifferentPi: true })
+
+    const result = await inputHandlers[0]?.({ source: 'user', text: 'claim beads-task-issue-tracker-zzkb and plan first' }, ctx)
+
+    expect(result).toEqual({ action: 'handled' })
+    expect(execCalls).toEqual(expect.arrayContaining([
+      { command: 'bd', args: ['show', 'beads-task-issue-tracker-zzkb', '--json'] },
+      { command: 'bd', args: ['update', 'beads-task-issue-tracker-zzkb', '--claim', '--json'] },
+    ]))
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])

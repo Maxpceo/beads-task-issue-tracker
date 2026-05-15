@@ -88,20 +88,29 @@ interface WorkflowClaimApi<Ctx = unknown> {
 
 const WORKFLOW_CLAIM_API_KEY = "__piWorkflowClaimApi";
 
-type WorkflowClaimApiRegistry = WeakMap<object, WorkflowClaimApi>;
+interface WorkflowClaimApiRegistryState {
+	byPi: WeakMap<object, WorkflowClaimApi>;
+	latest?: WorkflowClaimApi;
+}
+
+type WorkflowClaimApiRegistry = WorkflowClaimApiRegistryState;
 
 function workflowClaimApiRegistry(): WorkflowClaimApiRegistry {
 	const root = globalThis as typeof globalThis & { [WORKFLOW_CLAIM_API_KEY]?: WorkflowClaimApiRegistry };
-	root[WORKFLOW_CLAIM_API_KEY] ??= new WeakMap<object, WorkflowClaimApi>();
+	root[WORKFLOW_CLAIM_API_KEY] ??= { byPi: new WeakMap<object, WorkflowClaimApi>() };
 	return root[WORKFLOW_CLAIM_API_KEY];
 }
 
 export function registerWorkflowClaimApi<Ctx = unknown>(pi: object, api: WorkflowClaimApi<Ctx>): void {
-	workflowClaimApiRegistry().set(pi, api as WorkflowClaimApi);
+	const registry = workflowClaimApiRegistry();
+	const typedApi = api as WorkflowClaimApi;
+	registry.byPi.set(pi, typedApi);
+	registry.latest = typedApi;
 }
 
 export async function requestWorkflowClaim<Ctx = unknown>(pi: object, beadId: string, ctx: Ctx): Promise<WorkflowClaimResult> {
-	const api = workflowClaimApiRegistry().get(pi);
+	const registry = workflowClaimApiRegistry();
+	const api = registry.byPi.get(pi) ?? registry.latest;
 	if (!api) {
 		return { ok: false, error: "workflow-state claim API is unavailable; cannot claim without lifecycle guard" };
 	}
@@ -214,6 +223,21 @@ async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | 
 	}
 }
 
+async function ensureClaimedBdStatus(pi: ExtensionAPI, beadId: string): Promise<{ status?: string; error?: string }> {
+	const claimedBdStatus = await readBdStatus(pi, beadId);
+	if (claimedBdStatus === "in_progress") return { status: claimedBdStatus };
+	if (claimedBdStatus !== "open") return { status: claimedBdStatus };
+
+	const statusResult = await pi.exec("bd", ["update", beadId, "--status", "in_progress", "--json"]);
+	if (statusResult.code !== 0) {
+		return {
+			status: claimedBdStatus,
+			error: `fallback command \`bd update ${beadId} --status in_progress --json\` exited ${statusResult.code}: ${(statusResult.stderr || statusResult.stdout || "<no output>").trim()}`,
+		};
+	}
+	return { status: await readBdStatus(pi, beadId) };
+}
+
 interface RecoveryScope {
 	branch?: string;
 	worktreePath?: string;
@@ -307,6 +331,10 @@ async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope)
 
 function staleForeignRecoveryMessage(beadId: string, reason: string): string {
 	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Agents can call workflow_reset to clear stale local state, or explicitly confirm takeover and call workflow_update with bead=${beadId} after verifying branch/worktree ownership. /workflow-reset and /workflow-update remain optional human UI shortcuts.`;
+}
+
+function isStaleExtensionContextError(error: unknown): boolean {
+	return error instanceof Error && /extension ctx is stale after session replacement or reload/i.test(error.message);
 }
 
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
@@ -520,6 +548,7 @@ function validateWorkflowUpdateParams(params: Record<string, unknown>): string |
 
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
+	let lastClaimError: string | undefined;
 
 	function persist(ctx?: ExtensionContext): void {
 		workflowState.runtimeOwnerKey = currentRuntimeOwnerKey();
@@ -594,7 +623,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent) => {
 		applyEventUpdate(event);
-		await ensureReconciled(event.ctx);
+		try {
+			await ensureReconciled(event.ctx);
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) throw error;
+		}
 	});
 
 	pi.registerCommand("workflow-status", {
@@ -637,55 +670,71 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	function recordClaimError(ctx: ExtensionContext, message: string): false {
+		lastClaimError = message.trim();
+		ctx.ui.notify(lastClaimError, "error");
+		return false;
+	}
+
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
+		lastClaimError = undefined;
 		await ensureReconciled(ctx);
 		if (workflowState.activeBead && workflowState.activeBead !== bead) {
 			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
 			if (activeStatus === "inreview") {
-				ctx.ui.notify(
-					`Cannot claim ${bead}: active bead ${workflowState.activeBead} is inreview. Run review-bead / review_bead for the active bead before claiming unrelated work.`,
-					"error",
-				);
-				return false;
+				return recordClaimError(ctx, `Cannot claim ${bead}: active bead ${workflowState.activeBead} is inreview. Run review-bead / review_bead for the active bead before claiming unrelated work.`);
 			}
 			if (activeStatus && !isTerminalBdStatus(activeStatus)) {
-				ctx.ui.notify(
-					`Cannot claim ${bead}: active bead ${workflowState.activeBead} has non-terminal bd status ${activeStatus}. Complete, review, or reset the active workflow before claiming unrelated work.`,
-					"error",
-				);
-				return false;
+				return recordClaimError(ctx, `Cannot claim ${bead}: active bead ${workflowState.activeBead} has non-terminal bd status ${activeStatus}. Complete, review, or reset the active workflow before claiming unrelated work.`);
 			}
 		}
 
 		const showResult = await pi.exec("bd", ["show", bead, "--json"]);
 		if (showResult.code !== 0) {
-			ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
-			return false;
+			return recordClaimError(ctx, `Failed to read bead ${bead}: command \`bd show ${bead} --json\` exited ${showResult.code}: ${(showResult.stderr || showResult.stdout || "<no output>").trim()}`);
 		}
 
 		const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
 		if (claimResult.code !== 0) {
-			ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
-			return false;
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd update ${bead} --claim --json\` exited ${claimResult.code}: ${(claimResult.stderr || claimResult.stdout || "<no output>").trim()}`);
 		}
 
-		const claimedBdStatus = await readBdStatus(pi, bead);
+		const { status: claimedBdStatus, error: statusFallbackError } = await ensureClaimedBdStatus(pi, bead);
 		if (claimedBdStatus !== "in_progress") {
-			ctx.ui.notify(
-				`Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after bd update --claim; expected in_progress. Local workflow-state was not changed.`,
-				"error",
-			);
-			return false;
+			const fallbackDetails = statusFallbackError ? ` ${statusFallbackError}.` : "";
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress.${fallbackDetails} Local workflow-state was not changed.`);
+		}
+
+		const branch = await detectBranch(pi, ctx.cwd);
+		const worktreePath = await detectWorktreePath(pi, ctx.cwd);
+		const startCommit = await detectStartCommit(pi, ctx.cwd);
+		const sessionKey = currentSessionKey(ctx);
+		const ownershipCommentResult = await pi.exec("bd", [
+			"comments",
+			"add",
+			bead,
+			[
+				"WORKFLOW CLAIM",
+				branch ? `BRANCH: ${branch}` : undefined,
+				worktreePath ? `WORKTREE: ${worktreePath}` : undefined,
+				startCommit ? `START_COMMIT: ${startCommit}` : undefined,
+				sessionKey ? `PI_SESSION_KEY: ${sessionKey}` : undefined,
+			]
+				.filter((line) => line !== undefined)
+				.join("\n"),
+		]);
+		if (ownershipCommentResult.code !== 0) {
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd comments add ${bead} WORKFLOW CLAIM\` exited ${ownershipCommentResult.code}: ${(ownershipCommentResult.stderr || ownershipCommentResult.stdout || "<no output>").trim()}. Local workflow-state was not changed.`);
 		}
 
 		setState(
 			{
 				activeBead: bead,
 				state: "claimed",
-				branch: await detectBranch(pi, ctx.cwd),
-				worktreePath: await detectWorktreePath(pi, ctx.cwd),
-				startCommit: await detectStartCommit(pi, ctx.cwd),
-				sessionKey: currentSessionKey(ctx),
+				branch,
+				worktreePath,
+				startCommit,
+				sessionKey,
 				bdStatus: claimedBdStatus,
 			},
 			ctx,
@@ -697,7 +746,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	registerWorkflowClaimApi<ExtensionContext>(pi, {
 		claimWorkflowBead: async (beadId, ctx) => {
 			const ok = await claimWorkflowBead(beadId, ctx);
-			return { ok, state: cloneState(workflowState) };
+			return { ok, state: cloneState(workflowState), error: ok ? undefined : lastClaimError };
 		},
 	});
 
@@ -849,8 +898,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			parameters: WorkflowClaimParams,
 			async execute(_id: string, params: { beadId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const ok = await claimWorkflowBead(params.beadId, ctx);
+				const error = ok ? undefined : lastClaimError;
 				await ensureReconciled(ctx);
-				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}: ${formatState(workflowState)}`, { ok, ...cloneState(workflowState) });
+				const failureDetails = error ? `; reason: ${error}` : "";
+				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}: ${formatState(workflowState)}${failureDetails}`, { ok, error, ...cloneState(workflowState) });
 			},
 		});
 
