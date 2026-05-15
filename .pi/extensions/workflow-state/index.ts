@@ -284,9 +284,16 @@ function latestFieldIsForeign(text: string, names: string[], current?: string): 
 function hasForeignSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
 	const branchNames = ["BRANCH", "Branch", "branch"];
 	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
-	const hasCurrentEvidence = latestFieldMatches(commentsText, branchNames, scope.branch) || latestFieldMatches(commentsText, worktreeNames, scope.worktreePath);
-	if (hasCurrentEvidence) return false;
 	return latestFieldIsForeign(commentsText, branchNames, scope.branch) || latestFieldIsForeign(commentsText, worktreeNames, scope.worktreePath);
+}
+
+function hasCurrentCommentScopeEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const startNames = ["START_COMMIT", "Start-Commit", "startCommit", "start"];
+	return latestFieldMatches(commentsText, branchNames, scope.branch)
+		|| latestFieldMatches(commentsText, worktreeNames, scope.worktreePath)
+		|| latestFieldMatches(commentsText, startNames, scope.startCommit);
 }
 
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
@@ -320,7 +327,12 @@ async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope)
 			const issues = JSON.parse(stdout) as Array<{ id?: string }>;
 			for (const issue of issues) {
 				if (!issue.id) continue;
-				if (hasSessionOwnershipEvidence(await readBdComments(pi, issue.id), scope)) return issue.id;
+				const commentsText = await readBdComments(pi, issue.id);
+				if (
+					hasSessionOwnershipEvidence(commentsText, scope)
+					&& !hasForeignSessionOwnershipEvidence(commentsText, scope)
+					&& hasCurrentCommentScopeEvidence(commentsText, scope)
+				) return issue.id;
 			}
 		} catch {
 			continue;
@@ -970,6 +982,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				if (!changed) return toolText(`workflow_update no-op: no supported parameters provided. ${formatState(workflowState)}`, { ok: true, reason: "no supported parameters provided", ...cloneState(workflowState) });
 
 				assignState(next);
+				const unsafeCleared = clearUnsafeApprovedImplementingState(workflowState);
+				if (unsafeCleared.warning) {
+					assignState(unsafeCleared.state);
+					ctx.ui.notify(`${unsafeCleared.warning} ${formatState(workflowState)}`, "warn");
+				}
 				const hasExplicitScope = params.branch !== undefined || params.worktree !== undefined || params.start !== undefined;
 				if (hasExplicitScope) {
 					if (workflowState.activeBead) {

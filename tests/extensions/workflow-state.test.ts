@@ -940,6 +940,42 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-plan', state: 'implementing', planApproved: true, sessionMode: 'implementing' })
   })
 
+  it('clears unsafe approved implementing state when same-session recovery candidate has foreign latest scope', async () => {
+    const { eventHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'task/bead-plan',
+      worktreePath: '/repo/worktrees/bead-plan',
+      startCommit: 'task-head',
+      issues: {
+        'bead-foreign-scope': { status: 'in_progress', comments: 'PLAN APPROVED\nPI_SESSION_KEY: id:session-current\nBRANCH: task/other\nWORKTREE: /repo/worktrees/other\nSTART_COMMIT: other-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'idle',
+            planMode: 'off',
+            planApproved: true,
+            sessionMode: 'implementing',
+            mergeSlotHeld: false,
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(context.message.content).toContain('planApproved=false')
+    expect(context.message.content).toContain('sessionMode=idle')
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'idle' })
+    expect(notifications.at(-1)?.message).toContain('unsafe planApproved=true + sessionMode=implementing without active bead')
+  })
+
   it('clears unsafe approved implementing state when no current-session bead can be recovered', async () => {
     const { eventHandlers, ctx, appended, notifications } = makeHarness({
       branch: 'task/bead-plan',
@@ -1338,6 +1374,32 @@ describe('Pi workflow-state typed tools', () => {
       sessionKey: 'id:session-current',
       bdStatus: 'in_progress',
     })
+  })
+
+  it('workflow_update clears unsafe approved implementing state even with explicit typed scope', async () => {
+    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'task/bead-plan',
+      worktreePath: '/repo/worktrees/bead-plan',
+      startCommit: 'task-head',
+      ctxCwd: '/repo/worktrees/bead-plan',
+      issues: {},
+    })
+
+    const result = await toolHandlers.get('workflow_update')?.execute('call-1', {
+      state: 'implementing',
+      branch: 'task/bead-plan',
+      worktree: '/repo/worktrees/bead-plan',
+      start: 'task-head',
+      approved: true,
+      session: 'implementing',
+    }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('state=idle')
+    expect(result.content[0].text).toContain('bead=-')
+    expect(result.content[0].text).toContain('planApproved=false')
+    expect(result.content[0].text).toContain('sessionMode=idle')
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'idle' })
+    expect(notifications.at(-1)?.message).toContain('unsafe planApproved=true + sessionMode=implementing without active bead')
   })
 
   it('workflow_update records a task worktree over an existing main checkout session context', async () => {
