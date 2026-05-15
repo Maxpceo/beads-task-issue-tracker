@@ -34,6 +34,14 @@ const russianHandoffDescription = [
   '- Изменение bd CLI.',
 ].join('\n')
 
+function createMainRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), 'beads-policy-main-'))
+  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' })
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+  execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+  return repo
+}
+
 describe('Pi bead Russian locale policy', () => {
   it('blocks clearly English bead create title before writing to bd', () => {
     const decision = evaluateBashPolicy('bd create "Fix Dolt badge" -t task --label dx --description "Краткое русское описание" --json', {}, { cwd: tmpdir() })
@@ -64,6 +72,56 @@ describe('Pi bead Russian locale policy', () => {
 
     expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
     expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+  })
+})
+
+describe('Pi bead enrichment policy', () => {
+  const policyOnlyOptions = { cwd: tmpdir() }
+
+  it('does not inspect quoted bd comment text as a bead create command', () => {
+    const decision = evaluateBashPolicy(`bd comments add bead-a 'postmortem: the example bd create "Fix bug" --description "short" would be rejected'`, {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+    expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
+  })
+
+  it('still blocks actual incomplete bead create commands', () => {
+    const decision = evaluateBashPolicy('bd create "Исправить тест" -t task --label dx --description "Краткое описание" --json', {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('enforceBeadEnrichment')
+    expect(decision?.block).toBe(true)
+  })
+})
+
+describe('Pi protected branch mutation policy', () => {
+  it('allows redirection to a tmp file outside the repo on main', () => {
+    const repo = createMainRepo()
+    const decision = evaluateBashPolicy('printf evidence > /tmp/beads-policy-evidence.txt', {}, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('blockMainMutation')
+  })
+
+  it.each([
+    'printf evidence > tmp-output.txt',
+    'printf evidence >> .pi/plans/x.md',
+    'printf evidence > AGENTS.md',
+  ])('blocks redirection to repo-contained paths on main: %s', (command) => {
+    const repo = createMainRepo()
+    const decision = evaluateBashPolicy(command, {}, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('does not treat redirection-like quoted bd comment text as a repo mutation on main', () => {
+    const repo = createMainRepo()
+    const decision = evaluateBashPolicy(`bd comments add bead-a 'postmortem: command example printf evidence > tmp-output.txt was discussed'`, {}, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('blockMainMutation')
   })
 })
 
