@@ -7,6 +7,7 @@ function makeHarness(options: {
   worktreePath: string
   startCommit: string
   issues: Record<string, { status: string; comments: string }>
+  claimStatusById?: Record<string, string>
   entries?: Array<{ type: string; customType?: string; data?: unknown }>
   sessionKey?: string
   ctxCwd?: string
@@ -58,7 +59,10 @@ function makeHarness(options: {
       if (command === 'bd' && args[0] === 'update' && args.includes('--claim')) {
         const id = args[1] ?? ''
         const issue = options.issues[id]
-        return { stdout: JSON.stringify(issue ? { id, status: 'in_progress' } : {}), stderr: '', code: issue ? 0 : 1 }
+        if (!issue) return { stdout: JSON.stringify({}), stderr: '', code: 1 }
+        const nextStatus = options.claimStatusById?.[id] ?? 'in_progress'
+        issue.status = nextStatus
+        return { stdout: JSON.stringify({ id, status: nextStatus }), stderr: '', code: 0 }
       }
       return { stdout: '', stderr: `unexpected ${command} ${args.join(' ')}`, code: 1 }
     },
@@ -902,6 +906,7 @@ describe('Pi workflow-state typed tools', () => {
       worktreePath: '/repo/current',
       startCommit: 'start-head',
       sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
     })
   })
 
@@ -934,8 +939,27 @@ describe('Pi workflow-state typed tools', () => {
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-current' }, undefined, undefined, ctx)
 
     expect(result.content[0].text).toContain('workflow_claim completed')
-    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-current', state: 'claimed' })
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-current', state: 'claimed', bdStatus: 'in_progress' })
     expect(notifications.at(-1)?.message).toContain('Claimed bead-current')
+  })
+
+  it('workflow_claim fails without local claimed state when bd status remains open after claim', async () => {
+    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-next': { status: 'open', comments: '' } },
+      claimStatusById: { 'bead-next': 'open' },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
+    expect(result.content[0].text).toContain('bdStatus=-')
+    expect(notifications.at(-1)?.message).toContain('bd status is open after bd update --claim; expected in_progress')
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
   })
 
   it('workflow_claim blocks unrelated claim when current-session active bead is in_progress', async () => {
