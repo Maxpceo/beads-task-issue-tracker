@@ -697,14 +697,36 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress.${fallbackDetails} Local workflow-state was not changed.`);
 		}
 
+		const branch = await detectBranch(pi, ctx.cwd);
+		const worktreePath = await detectWorktreePath(pi, ctx.cwd);
+		const startCommit = await detectStartCommit(pi, ctx.cwd);
+		const sessionKey = currentSessionKey(ctx);
+		const ownershipCommentResult = await pi.exec("bd", [
+			"comments",
+			"add",
+			bead,
+			[
+				"WORKFLOW CLAIM",
+				branch ? `BRANCH: ${branch}` : undefined,
+				worktreePath ? `WORKTREE: ${worktreePath}` : undefined,
+				startCommit ? `START_COMMIT: ${startCommit}` : undefined,
+				sessionKey ? `PI_SESSION_KEY: ${sessionKey}` : undefined,
+			]
+				.filter((line) => line !== undefined)
+				.join("\n"),
+		]);
+		if (ownershipCommentResult.code !== 0) {
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd comments add ${bead} WORKFLOW CLAIM\` exited ${ownershipCommentResult.code}: ${(ownershipCommentResult.stderr || ownershipCommentResult.stdout || "<no output>").trim()}. Local workflow-state was not changed.`);
+		}
+
 		setState(
 			{
 				activeBead: bead,
 				state: "claimed",
-				branch: await detectBranch(pi, ctx.cwd),
-				worktreePath: await detectWorktreePath(pi, ctx.cwd),
-				startCommit: await detectStartCommit(pi, ctx.cwd),
-				sessionKey: currentSessionKey(ctx),
+				branch,
+				worktreePath,
+				startCommit,
+				sessionKey,
 				bdStatus: claimedBdStatus,
 			},
 			ctx,

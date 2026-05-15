@@ -9,6 +9,7 @@ function makeHarness(options: {
   issues: Record<string, { status: string; comments: string }>
   claimStatusById?: Record<string, string>
   statusUpdateById?: Record<string, string>
+  commentAddCode?: number
   entries?: Array<{ type: string; customType?: string; data?: unknown }>
   sessionKey?: string
   ctxCwd?: string
@@ -47,6 +48,14 @@ function makeHarness(options: {
           .filter(([, issue]) => issue.status === status)
           .map(([id]) => ({ id }))
         return { stdout: JSON.stringify(issues), stderr: '', code: 0 }
+      }
+      if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
+        const id = args[2] ?? ''
+        const issue = options.issues[id]
+        if (!issue) return { stdout: '', stderr: 'issue not found', code: 1 }
+        if (options.commentAddCode && options.commentAddCode !== 0) return { stdout: '', stderr: 'comment add failed', code: options.commentAddCode }
+        issue.comments = [issue.comments, args[3] ?? ''].filter(Boolean).join('\n\n')
+        return { stdout: JSON.stringify({ issue_id: id, text: args[3] ?? '' }), stderr: '', code: 0 }
       }
       if (command === 'bd' && args[0] === 'comments') {
         const id = args[1] ?? ''
@@ -996,6 +1005,42 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('bd update bead-next --claim --json')
     expect(notifications.at(-1)?.message).toContain('bd status is open after command `bd update bead-next --claim --json`; expected in_progress')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
+  })
+
+  it('workflow_claim keeps newly claimed current-session state even when old comments have foreign ownership evidence', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-next': { status: 'in_progress', comments: 'PLAN APPROVED\nPI_SESSION_KEY: id:old-session\nBRANCH: task/old\nWORKTREE: /repo/old\nSTART_COMMIT: old-head' } },
+    })
+
+    const claim = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+    const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
+
+    expect(claim.content[0].text).toContain('workflow_claim completed')
+    expect(status.content[0].text).toContain('bead=bead-next')
+    expect(status.content[0].text).toContain('bdStatus=in_progress')
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', bdStatus: 'in_progress' })
+  })
+
+  it('workflow_claim fails instead of reporting completed when ownership evidence cannot be recorded', async () => {
+    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      commentAddCode: 1,
+      issues: { 'bead-next': { status: 'in_progress', comments: 'PLAN APPROVED\nBRANCH: task/old\nWORKTREE: /repo/old' } },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
+    expect(result.content[0].text).toContain('bd comments add bead-next WORKFLOW CLAIM')
+    expect(notifications.at(-1)?.message).toContain('Local workflow-state was not changed')
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
   })
 
