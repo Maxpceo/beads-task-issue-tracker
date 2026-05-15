@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
+import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluatePathPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
 
 const runtimeOwnerKey = 'runtime:test-beads-policy'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
@@ -550,6 +550,59 @@ Approved-by: Максим
       rmSync(binDir, { recursive: true, force: true })
     }
   })
+
+describe('Pi destructive command and sensitive path policy', () => {
+  it.each([
+    ['rm -rf /tmp/example', 'recursive force delete'],
+    ['git reset --hard HEAD~1', 'reset --hard'],
+    ['git clean -fdx', 'git clean'],
+    ['git push origin main --force', 'force push'],
+    ['git push origin --delete old-branch', 'branch deletion'],
+    ['git stash drop stash@{0}', 'stash deletion'],
+    ['kubectl delete namespace prod', 'resource deletion'],
+    ['psql -c "DROP TABLE issues"', 'destructive SQL'],
+    ['cat ~/.ssh/id_ed25519', 'protected path'],
+  ])('blocks %s as %s', (command) => {
+    const decision = evaluateBashPolicy(command, {
+      activeBead: 'bead-a',
+      state: 'implementing',
+      mergeSlotHeld: true,
+    })
+
+    expect(decision?.policy).toBe('blockDestructiveCommand')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('does not block force-with-lease solely as an unsafe force push', () => {
+    const decision = evaluateBashPolicy('git push --force-with-lease', {
+      activeBead: 'bead-a',
+      state: 'implementing',
+      mergeSlotHeld: true,
+    })
+
+    expect(decision?.policy).not.toBe('blockDestructiveCommand')
+  })
+
+  it.each([
+    ['read', '/repo/.env'],
+    ['edit', '/Users/test/.aws/credentials'],
+    ['write', '/repo/terraform.tfstate'],
+    ['read', '/Users/test/.kube/config'],
+    ['read', '/Users/test/.ssh/id_rsa'],
+    ['read', '/repo/private.pem'],
+  ])('blocks %s access to protected path %s', (toolName, targetPath) => {
+    const decision = evaluatePathPolicy(toolName, targetPath)
+
+    expect(decision?.policy).toBe('protectPaths')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('allows ordinary source file reads', () => {
+    const decision = evaluatePathPolicy('read', '/repo/app/pages/index.vue')
+
+    expect(decision).toBeUndefined()
+  })
+})
 
   it.each(['plan_approved', 'implementing', 'accepted'])(
     'blocks risky mutation when only legacy session state %s exists without approved plan evidence',
