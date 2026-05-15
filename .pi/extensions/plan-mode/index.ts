@@ -27,7 +27,7 @@ import { requestWorkflowClaim } from "../workflow-state/index";
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved"];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 
 const WorkflowPlanModeParams = {
