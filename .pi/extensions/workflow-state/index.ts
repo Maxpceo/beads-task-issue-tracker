@@ -653,7 +653,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		const intent = parseWorkflowIntent(String(event.text ?? ""));
 		if (!shouldAutoClaim(intent) || intent.wantsPlan) return;
 		await claimWorkflowBead(intent.beadId, ctx);
-		return { action: "handled" };
+		// Do not consume claim-only natural-language input. The agent must still get a turn
+		// to decide whether the task needs strict plan mode, fast path, or a visible blocker.
+		return undefined;
 	});
 
 	pi.registerCommand("workflow-set-state", {

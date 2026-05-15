@@ -855,7 +855,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications.at(-1)?.message).toContain('sessionMode=implementing')
   })
 
-  it('handles natural-language claim-only intent with an explicit bead id', async () => {
+  it('claims natural-language claim-only intent but lets the agent continue for plan-mode decision', async () => {
     const { eventHandlers, ctx, appended, statuses, notifications } = makeHarness({
       branch: 'task/test',
       worktreePath: '/repo/current',
@@ -867,7 +867,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     const result = await eventHandlers.get('input')?.({ source: 'user', text: 'заклейми beads-task-issue-tracker-zzkb' }, ctx)
 
-    expect(result).toEqual({ action: 'handled' })
+    expect(result).toBeUndefined()
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', state: 'claimed', planMode: 'off' })
     expect(statuses['workflow-state']).toContain('session:claimed')
     expect(statuses['workflow-state']).toContain('bead:beads-task-issue-tracker-zzkb')

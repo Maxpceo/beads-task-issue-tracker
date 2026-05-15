@@ -161,7 +161,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(delayedClaimEvents).toEqual([])
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
   })
 
   it('does not run an unrelated bd update --claim for claim+plan when current-session bead is in_progress', async () => {
@@ -172,7 +172,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(result).toEqual({ action: 'handled' })
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'beads-task-issue-tracker-zzkb' && call.args.includes('--claim'))).toBe(false)
     expect(workflowUpdates.some((update: any) => update.planMode === 'strict')).toBe(false)
-    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
   })
 
   it('does not run an unrelated bd update --claim for claim+plan when current-session bead is inreview', async () => {
@@ -183,7 +183,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(result).toEqual({ action: 'handled' })
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'beads-task-issue-tracker-zzkb' && call.args.includes('--claim'))).toBe(false)
     expect(workflowUpdates.some((update: any) => update.planMode === 'strict')).toBe(false)
-    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
   })
 })
 
@@ -197,7 +197,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(workflowUpdates.at(-2)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
-    expect(activeTools.at(-2)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+    expect(activeTools.at(-2)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
   })
 
