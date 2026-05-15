@@ -114,37 +114,11 @@ bd dolt pull          # Pull bd/Dolt state when needed
 bd dolt push          # Push bd/Dolt state when needed
 ```
 
-## Landing the Plane (Session Completion)
+Note: `bd show <id> --json` returns an array; use `jq '.[0]'`. Validate one new `bd --json | jq` shape before parallelizing similar commands.
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+## Landing the Plane
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-
-   ```bash
-   git pull --rebase
-   bd dolt pull || true   # bd 0.57+ has no bd sync; Dolt projects sync with bd dolt
-   bd dolt push || true   # for legacy JSONL projects, commit named .beads/ paths instead
-   bd merge-slot acquire
-   git push
-   bd merge-slot release
-   git status  # MUST show "up to date with origin"
-   ```
-
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
+Use the `land` skill to save/push session work, or `merge-to-main` for PR + merge. These skills own quality gates, bd/Dolt sync, merge-slot, commit, push, cleanup, and final evidence. Work is not complete until the relevant skill reports successful push/merge; stop earlier only for a real blocker or Maxim decision.
 
 ## Permissions and Confirmation
 
@@ -354,17 +328,5 @@ bd 0.57+ uses a self-managing Dolt server with auto-flush/auto-import. The old `
 - Use `bd dolt pull` / `bd dolt push` for remote Dolt sync when needed.
 - For legacy JSONL projects, commit named `.beads/` paths explicitly instead of relying on Dolt commands.
 - No manual `bd sync` step is required or available.
-
-### Important Rules
-
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
 
 <!-- END BEADS INTEGRATION -->
