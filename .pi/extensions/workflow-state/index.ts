@@ -333,6 +333,10 @@ function staleForeignRecoveryMessage(beadId: string, reason: string): string {
 	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Agents can call workflow_reset to clear stale local state, or explicitly confirm takeover and call workflow_update with bead=${beadId} after verifying branch/worktree ownership. /workflow-reset and /workflow-update remain optional human UI shortcuts.`;
 }
 
+function isStaleExtensionContextError(error: unknown): boolean {
+	return error instanceof Error && /extension ctx is stale after session replacement or reload/i.test(error.message);
+}
+
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
 	const gitCwd = ctx?.cwd;
 	const currentScope = {
@@ -619,7 +623,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent) => {
 		applyEventUpdate(event);
-		await ensureReconciled(event.ctx);
+		try {
+			await ensureReconciled(event.ctx);
+		} catch (error) {
+			if (!isStaleExtensionContextError(error)) throw error;
+		}
 	});
 
 	pi.registerCommand("workflow-status", {

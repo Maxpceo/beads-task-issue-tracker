@@ -16,6 +16,7 @@ function makeHarness(options: {
   processBranch?: string
   processWorktreePath?: string
   processStartCommit?: string
+  staleScopedGitError?: boolean
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
@@ -33,6 +34,7 @@ function makeHarness(options: {
     exec: async (command: string, args: string[]) => {
       execCalls.push({ command, args })
       if (command === 'git' && args[0] === '-C' && args[1] === options.ctxCwd) {
+        if (options.staleScopedGitError) throw new Error('This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().')
         const scopedArgs = args.slice(2).join(' ')
         if (scopedArgs === 'branch --show-current') return { stdout: `${options.branch}\n`, stderr: '', code: 0 }
         if (scopedArgs === 'rev-parse HEAD') return { stdout: `${options.startCommit}\n`, stderr: '', code: 0 }
@@ -416,6 +418,36 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).not.toContain('state=reviewing')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
+  })
+
+  it('keeps workflow-state:update non-fatal when the event ctx is stale after session replacement', async () => {
+    const { eventHandlers, ctx, appended } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      processBranch: 'fix/current',
+      processWorktreePath: '/repo/current',
+      processStartCommit: 'current-head',
+      ctxCwd: '/repo/current',
+      staleScopedGitError: true,
+      issues: {
+        'bead-current': { status: 'in_progress', comments: '' },
+      },
+    })
+
+    await expect(eventHandlers.get('workflow-state:update')?.({
+      state: 'implementing',
+      activeBead: 'bead-current',
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      ctx,
+    }, ctx)).resolves.toBeUndefined()
+
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-current',
+      state: 'implementing',
+    })
   })
 
   it('keeps restored active bead when session state matches current worktree even without comments', async () => {
