@@ -297,15 +297,19 @@ function isWorkflowStateNonTerminal(workflowState: WorkflowStateSnapshot): boole
 }
 
 function hasWorktreeLockOwnershipEvidence(workflowState: WorkflowStateSnapshot): boolean {
-	if (!workflowState.activeBead || !workflowState.worktreePath) return false;
+	if (!workflowState.activeBead) return false;
 	if (workflowState.runtimeOwnerKey && workflowState.runtimeOwnerKey === currentRuntimeOwnerKey()) return true;
 	if (workflowState.sessionKey) return true;
 	if (workflowState.planApproved === true || workflowState.planApproved === "true") return true;
 	return false;
 }
 
+function hasActiveWorktreeLockRequirement(workflowState: WorkflowStateSnapshot): boolean {
+	return Boolean(workflowState.activeBead && isWorkflowStateNonTerminal(workflowState) && hasWorktreeLockOwnershipEvidence(workflowState));
+}
+
 function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot): boolean {
-	return Boolean(workflowState.activeBead && workflowState.worktreePath && isWorkflowStateNonTerminal(workflowState) && hasWorktreeLockOwnershipEvidence(workflowState));
+	return Boolean(workflowState.worktreePath && hasActiveWorktreeLockRequirement(workflowState));
 }
 
 function commandHasTestOrGateOperation(command: string): boolean {
@@ -389,16 +393,38 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 }
 
 function requiredToolCwdDecision(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if (!hasActiveWorktreeLock(workflowState)) return undefined;
+	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	if (!["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].includes(toolName)) return undefined;
 	const required = workflowState.worktreePath;
-	if (!required) return undefined;
+	if (!required) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before running ${toolName}.`,
+		};
+	}
+	if (!fs.existsSync(required)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before running ${toolName}.`,
+		};
+	}
 	const provided = String(input.cwd ?? input.worktreePath ?? "");
 	if (!provided || !isPathInsideOrEqual(normalizeFsPath(provided), required)) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
 			reason: `Blocked: ${toolName} for active bead ${workflowState.activeBead} must run with cwd/worktreePath ${required}.`,
+		};
+	}
+	const expectedBranch = workflowState.branch;
+	const actualBranch = getCurrentBranch(required);
+	if (expectedBranch && actualBranch && actualBranch !== expectedBranch) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before running ${toolName}.`,
 		};
 	}
 	return undefined;

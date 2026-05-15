@@ -1402,6 +1402,36 @@ describe('Pi active worktree cwd lock policy', () => {
     }
   })
 
+  it.each(['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead'])(
+    'blocks %s when active lock has no recorded worktree path',
+    (toolName) => {
+      const decision = evaluateToolPolicy(toolName, { beadId: 'bead-a', cwd: tmpdir() }, lockedState('', { worktreePath: undefined }))
+
+      expect(decision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(decision?.reason).toContain('no recorded worktree path')
+      expect(decision?.reason).toContain('workflow_reset')
+      expect(decision?.reason).toContain(toolName)
+    },
+  )
+
+  it.each(['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead'])(
+    'blocks %s when active lock branch mismatches the recorded worktree',
+    (toolName) => {
+      const wrongBranch = createRepo('task/other')
+      try {
+        const decision = evaluateToolPolicy(toolName, { beadId: 'bead-a', cwd: wrongBranch }, lockedState(wrongBranch))
+
+        expect(decision?.policy).toBe('enforceActiveWorktreeCwd')
+        expect(decision?.reason).toContain('branch task/current')
+        expect(decision?.reason).toContain('task/other')
+        expect(decision?.reason).toContain('workflow_reset')
+        expect(decision?.reason).toContain(toolName)
+      } finally {
+        rmSync(wrongBranch, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('runtime-smoke: extension tool_call blocks main cwd and allows worktree cwd for the same harmless mutation', async () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')
