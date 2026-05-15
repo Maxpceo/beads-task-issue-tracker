@@ -1357,6 +1357,24 @@ describe('Pi active worktree cwd lock policy', () => {
     }
   })
 
+  it('blocks mutating bash and edit/write when active lock has no recorded worktree path', () => {
+    const stateWithoutWorktree = lockedState('', { worktreePath: undefined })
+
+    const bashDecision = evaluateBashPolicy('touch smoke.txt', stateWithoutWorktree, { cwd: tmpdir() })
+    const editDecision = evaluatePathPolicy('edit', join(tmpdir(), 'outside.txt'), stateWithoutWorktree)
+    const writeDecision = evaluatePathPolicy('write', join(tmpdir(), 'outside.txt'), stateWithoutWorktree)
+    const readOnlyDecision = evaluateBashPolicy('bd show bead-a --json', stateWithoutWorktree, { cwd: tmpdir() })
+
+    expect(bashDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    expect(bashDecision?.reason).toContain('no recorded worktree path')
+    expect(bashDecision?.reason).toContain('workflow_reset')
+    expect(editDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    expect(editDecision?.reason).toContain('no recorded worktree path')
+    expect(writeDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    expect(writeDecision?.reason).toContain('no recorded worktree path')
+    expect(readOnlyDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+  })
+
   it('does not enable the worktree lock for terminal states, absent active bead, or foreign stale state', () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')

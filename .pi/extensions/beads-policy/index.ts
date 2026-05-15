@@ -305,7 +305,12 @@ function hasWorktreeLockOwnershipEvidence(workflowState: WorkflowStateSnapshot):
 }
 
 function hasActiveWorktreeLockRequirement(workflowState: WorkflowStateSnapshot): boolean {
-	return Boolean(workflowState.activeBead && isWorkflowStateNonTerminal(workflowState) && hasWorktreeLockOwnershipEvidence(workflowState));
+	return Boolean(
+		workflowState.activeBead &&
+		isWorkflowStateNonTerminal(workflowState) &&
+		hasWorktreeLockOwnershipEvidence(workflowState) &&
+		(workflowState.worktreePath || workflowState.branch),
+	);
 }
 
 function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot): boolean {
@@ -327,10 +332,16 @@ function commandRequiresActiveWorktreeCwd(command: string, processCwd: string): 
 }
 
 function activeWorktreeCwdDecision(command: string, processCwd: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if (!hasActiveWorktreeLock(workflowState)) return undefined;
+	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	if (!commandRequiresActiveWorktreeCwd(command, processCwd)) return undefined;
 	const required = workflowState.worktreePath;
-	if (!required) return undefined;
+	if (!required) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before mutating work.`,
+		};
+	}
 	if (!fs.existsSync(required)) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
@@ -362,9 +373,15 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 }
 
 function activeWorktreePathDecision(toolName: string, targetPath: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLock(workflowState)) return undefined;
+	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	const required = workflowState.worktreePath;
-	if (!required) return undefined;
+	if (!required) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before edit/write.`,
+		};
+	}
 	if (!fs.existsSync(required)) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
