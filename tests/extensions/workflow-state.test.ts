@@ -64,6 +64,13 @@ function makeHarness(options: {
         issue.status = nextStatus
         return { stdout: JSON.stringify({ id, status: nextStatus }), stderr: '', code: 0 }
       }
+      if (command === 'bd' && args[0] === 'update' && args.includes('--status')) {
+        const id = args[1] ?? ''
+        const issue = options.issues[id]
+        const status = args[args.indexOf('--status') + 1]
+        if (issue && status) issue.status = status
+        return { stdout: JSON.stringify(issue ? { id, status: issue.status } : {}), stderr: '', code: issue ? 0 : 1 }
+      }
       return { stdout: '', stderr: `unexpected ${command} ${args.join(' ')}`, code: 1 }
     },
     appendEntry: (type: string, data: unknown) => appended.push({ type, data }),
@@ -434,7 +441,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bead=bead-current')
   })
 
-  it('keeps restored session context and displays live bd inreview status for footer context', async () => {
+  it('coerces restored implementing session to inreview when live bd status is inreview', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -465,9 +472,12 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=implementing')
+    expect(context.message.content).toContain('state=inreview')
     expect(context.message.content).toContain('bead=bead-current')
+    expect(context.message.content).toContain('sessionMode=inreview')
     expect(context.message.content).toContain('bdStatus=inreview')
+    expect(context.message.content).toContain('[PI INREVIEW GUARD]')
+    expect(context.message.content).toContain('review-bead / review_bead')
   })
 
   it('keeps restored current-scope active bead when old foreign comments are followed by current ownership evidence', async () => {
@@ -636,7 +646,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     'reviewed',
     'accepted',
     'custom_status',
-  ])('keeps session mode and displays non-terminal bd status %s without lifecycle coercion', async (bdStatus) => {
+  ])('keeps planning session and displays non-terminal bd status %s without lifecycle coercion', async (bdStatus) => {
     const { eventHandlers, ctx, statuses } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -1203,6 +1213,75 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('workflow_update no-op: no supported parameters provided')
     expect(result.details).toMatchObject({ ok: true, reason: 'no supported parameters provided', state: 'idle' })
     expect(appended).toHaveLength(0)
+  })
+
+  it('workflow_submit_for_review syncs bd inreview and exposes review guard', async () => {
+    const { toolHandlers, eventHandlers, ctx, appended, execCalls } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-current': { status: 'in_progress', comments: '' } },
+    })
+
+    const result = await toolHandlers.get('workflow_submit_for_review')?.execute(
+      'call-1',
+      { beadId: 'bead-current', reason: 'tests passed', endCommit: 'end-head' },
+      undefined,
+      undefined,
+      ctx,
+    )
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(result.content[0].text).toContain('workflow_submit_for_review completed')
+    expect(result.content[0].text).toContain('Next action is review_bead/review-bead')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args.join(' ') === 'update bead-current --status inreview --json')).toBe(true)
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-current',
+      state: 'inreview',
+      sessionMode: 'inreview',
+      bdStatus: 'inreview',
+      endCommit: 'end-head',
+    })
+    expect(context.message.content).toContain('[PI INREVIEW GUARD]')
+    expect(context.message.content).toContain('review-bead / review_bead')
+  })
+
+  it('workflow_complete blocks active inreview normal completion but allows explicit blocker', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-current': { status: 'inreview', comments: '' } },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-current',
+          state: 'implementing',
+          sessionMode: 'implementing',
+          branch: 'task/current',
+          worktreePath: '/repo/current',
+          startCommit: 'start-head',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'off',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+    await eventHandlers.get('session_start')?.({}, ctx)
+
+    const blocked = await toolHandlers.get('workflow_complete')?.execute('call-1', { state: 'closed', reason: 'done' }, undefined, undefined, ctx)
+    const explicitBlocker = await toolHandlers.get('workflow_complete')?.execute('call-2', { state: 'blocked', reason: 'review_bead tool unavailable' }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_complete blocked')
+    expect(blocked.content[0].text).toContain('review_bead/review-bead')
+    expect(blocked.details).toMatchObject({ ok: false, activeBead: 'bead-current', state: 'inreview', sessionMode: 'inreview', bdStatus: 'inreview' })
+    expect(explicitBlocker.content[0].text).toContain('workflow_complete recorded blocked')
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'blocked', sessionMode: 'blocked' })
   })
 
   it('workflow_update reconciles stale open active bead instead of dead-ending new claims', async () => {

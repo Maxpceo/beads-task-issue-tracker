@@ -377,7 +377,21 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a readable bd status"),
 			};
 		}
-		return { state: { ...state, bdStatus, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit } };
+		const syncedState: WorkflowState = {
+			...state,
+			bdStatus,
+			branch: currentScope.branch ?? state.branch,
+			worktreePath: currentScope.worktreePath,
+			startCommit: currentScope.startCommit,
+		};
+		if (bdStatus === "inreview" && state.state === "implementing") {
+			syncedState.state = "inreview";
+			syncedState.sessionMode = "inreview";
+		}
+		if (bdStatus === "inreview" && state.sessionMode === "implementing") {
+			syncedState.sessionMode = "inreview";
+		}
+		return { state: syncedState };
 	}
 
 	const baseState = { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
@@ -445,6 +459,17 @@ const WorkflowUpdateParams = {
 		approved: { type: "boolean" },
 		slot: { type: "string", enum: ["held", "free"] },
 	},
+	additionalProperties: false,
+} as const;
+
+const WorkflowSubmitForReviewParams = {
+	type: "object",
+	properties: {
+		beadId: { type: "string", description: "Active bead ID to move to bd status inreview" },
+		reason: { type: "string", description: "Evidence summary for why implementation is ready for review" },
+		endCommit: { type: "string", description: "Implementation commit SHA, defaults to current HEAD" },
+	},
+	required: ["beadId", "reason"],
 	additionalProperties: false,
 } as const;
 
@@ -889,13 +914,52 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		});
 
 		pi.registerTool({
+			name: "workflow_submit_for_review",
+			label: "Workflow Submit For Review",
+			description: "Atomically move the active bead to bd status inreview and sync Pi workflow-state so the next action is review_bead/review-bead.",
+			parameters: WorkflowSubmitForReviewParams,
+			async execute(_id: string, params: { beadId: string; reason: string; endCommit?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				await ensureReconciled(ctx);
+				if (workflowState.activeBead && workflowState.activeBead !== params.beadId) {
+					return toolText(`workflow_submit_for_review blocked: active bead is ${workflowState.activeBead}, not ${params.beadId}. Use workflow_reset only after verifying stale/foreign ownership.`, { ok: false, ...cloneState(workflowState) });
+				}
+				const updateResult = await pi.exec("bd", ["update", params.beadId, "--status", "inreview", "--json"]);
+				if (updateResult.code !== 0) {
+					return toolText(`workflow_submit_for_review failed for ${params.beadId}: ${updateResult.stderr || updateResult.stdout}`.trim(), { ok: false, ...cloneState(workflowState) });
+				}
+				setState(
+					{
+						activeBead: params.beadId,
+						state: "inreview",
+						sessionMode: "inreview",
+						branch: await detectBranch(pi, ctx.cwd),
+						worktreePath: await detectWorktreePath(pi, ctx.cwd),
+						startCommit: workflowState.startCommit ?? (await detectStartCommit(pi, ctx.cwd)),
+						endCommit: params.endCommit ?? (await detectStartCommit(pi, ctx.cwd)),
+						sessionKey: currentSessionKey(ctx),
+						bdStatus: "inreview",
+					},
+					ctx,
+				);
+				return toolText(`workflow_submit_for_review completed for ${params.beadId}: ${params.reason}. Next action is review_bead/review-bead, or workflow_complete state=blocked|deferred with explicit blocker if review cannot run. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
+			},
+		});
+
+		pi.registerTool({
 			name: "workflow_complete",
 			label: "Workflow Complete",
 			description: "Mark local Pi workflow-state terminal after external bd/review workflow completion; does not close bd or push.",
 			parameters: WorkflowCompleteParams,
 			async execute(_id: string, params: { state: "closed" | "blocked" | "deferred" | "merged"; reason: string; endCommit?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				await ensureReconciled(ctx);
+				if (workflowState.activeBead && workflowState.bdStatus === "inreview" && params.state !== "blocked" && params.state !== "deferred") {
+					return toolText(
+						`workflow_complete blocked: active bead ${workflowState.activeBead} is bd:inreview. Next valid action is review_bead/review-bead, or workflow_complete state=blocked|deferred with an explicit blocker if review cannot run.`,
+						{ ok: false, ...cloneState(workflowState) },
+					);
+				}
 				setState({ state: params.state, sessionMode: params.state, endCommit: params.endCommit ?? (await detectStartCommit(pi, ctx.cwd)), activeBead: undefined, bdStatus: undefined, planMode: "off", planApproved: false }, ctx);
-				return toolText(`workflow_complete recorded ${params.state}: ${params.reason}. ${formatState(workflowState)}`, cloneState(workflowState));
+				return toolText(`workflow_complete recorded ${params.state}: ${params.reason}. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
 			},
 		});
 	}
@@ -917,10 +981,13 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (ctx) await ensureReconciled(ctx);
+		const inreviewGuard = workflowState.activeBead && workflowState.bdStatus === "inreview"
+			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} is bdStatus=inreview. Do not stop with a normal final report. The next action is review-bead / review_bead for ${workflowState.activeBead}. If review cannot run because of tool unavailability or stale/foreign ownership, return BLOCKED with the exact blocker and next action; workflow_complete is only valid with state=blocked|deferred for that explicit blocker.`
+			: "";
 		return {
 			message: {
 				customType: "workflow-state-context",
-				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nAgents use workflow_status/workflow_update typed tools for session context; /workflow-status and /workflow-update are optional human UI shortcuts. bdStatus is live read-only issue status.`,
+				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nAgents use workflow_status/workflow_update typed tools for session context; /workflow-status and /workflow-update are optional human UI shortcuts. bdStatus is live read-only issue status.${inreviewGuard}`,
 				display: false,
 			},
 		};

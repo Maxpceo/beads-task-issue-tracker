@@ -18,8 +18,9 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    Required: status `inreview` and explicit ownership evidence. Prefer current-session ownership (matching branch/worktree/start), but after typed supervisor dispatch a durable `DISPATCH RESULT` comment with matching branch/worktree/start/end may establish the task worktree review scope. If ownership is stale, foreign, or ambiguous, do not launch `review_bead` or `dispatch_reviewer`; agents can call `workflow_reset` for stale local state, or after explicit takeover/verified dispatch evidence call `workflow_update(bead=<ID>, session=reviewing, branch=<branch>, worktree=<path>, start=<sha>, end=<sha>)`.
 2. Update session context:
    ```text
-   workflow_update(bead=<ID>, session=reviewing)
+   workflow_update(bead=<ID>, state=reviewing, session=reviewing)
    ```
+   If `workflow_status` shows `bdStatus=inreview`, do not stop with a normal final report before this review workflow completes. If `review_bead`/`dispatch_reviewer` is unavailable or ownership is ambiguous, return an explicit `BLOCKED` report with the exact blocker and next action; `workflow_complete(state=blocked|deferred, reason=<...>)` is the only terminal local state allowed before review in that case.
 3. Prefer executable review workflow when available. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
    ```text
    review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>, worktreePath=<task-worktree-path>)
