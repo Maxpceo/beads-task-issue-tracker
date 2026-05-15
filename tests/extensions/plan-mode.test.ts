@@ -31,7 +31,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness() {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}) {
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -62,8 +62,22 @@ function makeHarness() {
       return { stdout: '', stderr: '', code: 0 }
     },
     events: {
-      emit: (name: string, event: unknown) => {
+      emit: async (name: string, event: any) => {
         if (name === 'workflow-state:update') workflowUpdates.push(event)
+        if (name === 'workflow-state:claim') {
+          if (options.activeStatus === 'in_progress' || options.activeStatus === 'inreview') {
+            event.result = { ok: false, state: { activeBead: 'bead-current', bdStatus: options.activeStatus } }
+            return
+          }
+          const show = await pi.exec('bd', ['show', event.beadId, '--json'])
+          if (show.code !== 0) {
+            event.result = { ok: false }
+            return
+          }
+          const claim = await pi.exec('bd', ['update', event.beadId, '--claim', '--json'])
+          event.result = { ok: claim.code === 0 }
+          if (claim.code === 0) workflowUpdates.push({ activeBead: event.beadId, sessionMode: 'claimed' })
+        }
       },
     },
   }
@@ -123,7 +137,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     }
   })
 
-  it('handles explicit claim+plan input before agent loop and enables real plan-mode tools', async () => {
+  it('handles explicit claim+plan input before agent loop through workflow-state claim guard and enables real plan-mode tools', async () => {
     const { inputHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness()
 
     const result = await inputHandlers[0]?.({ source: 'user', text: 'beads-task-issue-tracker-zzkb возьми эту задачу в работу, выполняй в режиме планирования' }, ctx)
@@ -136,6 +150,28 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+  })
+
+  it('does not run an unrelated bd update --claim for claim+plan when current-session bead is in_progress', async () => {
+    const { inputHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness({ activeStatus: 'in_progress' })
+
+    const result = await inputHandlers[0]?.({ source: 'user', text: 'claim beads-task-issue-tracker-zzkb and plan first' }, ctx)
+
+    expect(result).toEqual({ action: 'handled' })
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'beads-task-issue-tracker-zzkb' && call.args.includes('--claim'))).toBe(false)
+    expect(workflowUpdates.some((update: any) => update.planMode === 'strict')).toBe(false)
+    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+  })
+
+  it('does not run an unrelated bd update --claim for claim+plan when current-session bead is inreview', async () => {
+    const { inputHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness({ activeStatus: 'inreview' })
+
+    const result = await inputHandlers[0]?.({ source: 'user', text: 'claim beads-task-issue-tracker-zzkb and plan first' }, ctx)
+
+    expect(result).toEqual({ action: 'handled' })
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'beads-task-issue-tracker-zzkb' && call.args.includes('--claim'))).toBe(false)
+    expect(workflowUpdates.some((update: any) => update.planMode === 'strict')).toBe(false)
+    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
   })
 })
 

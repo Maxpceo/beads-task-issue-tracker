@@ -3,7 +3,7 @@ import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	appendEntry(type: string, data: unknown): void;
-	events: { on(name: string, handler: (event: WorkflowStateUpdateEvent) => void): void };
+	events: { on(name: string, handler: (event: WorkflowStateUpdateEvent | WorkflowStateClaimEvent) => void | Promise<void>): void };
 	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: { description: string; handler: (args: string, ctx: ExtensionContext) => unknown }): void;
 	registerTool?(tool: any): void;
@@ -74,6 +74,12 @@ interface WorkflowStateUpdateEvent {
 	planApproved?: boolean | string;
 	sessionMode?: string;
 	ctx?: ExtensionContext;
+}
+
+interface WorkflowStateClaimEvent {
+	beadId: string;
+	ctx: ExtensionContext;
+	result?: { ok: boolean; state: WorkflowState };
 }
 
 const DEFAULT_STATE: WorkflowState = {
@@ -505,9 +511,16 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return setState(next, event.ctx);
 	}
 
-	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent) => {
-		applyEventUpdate(event);
-		await ensureReconciled(event.ctx);
+	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent | WorkflowStateClaimEvent) => {
+		const updateEvent = event as WorkflowStateUpdateEvent;
+		applyEventUpdate(updateEvent);
+		await ensureReconciled(updateEvent.ctx);
+	});
+
+	pi.events.on("workflow-state:claim", async (event: WorkflowStateUpdateEvent | WorkflowStateClaimEvent) => {
+		const claimEvent = event as WorkflowStateClaimEvent;
+		const ok = await claimWorkflowBead(claimEvent.beadId, claimEvent.ctx);
+		claimEvent.result = { ok, state: cloneState(workflowState) };
 	});
 
 	pi.registerCommand("workflow-status", {

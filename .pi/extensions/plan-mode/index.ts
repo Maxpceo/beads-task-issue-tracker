@@ -208,27 +208,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
-		const showResult = await pi.exec("bd", ["show", bead, "--json"]);
-		if (showResult.code !== 0) {
-			if (ctx.hasUI) ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
+		const claimEvent: { beadId: string; ctx: ExtensionContext; result?: { ok: boolean } } = { beadId: bead, ctx };
+		await Promise.resolve(pi.events.emit("workflow-state:claim", claimEvent));
+		if (!claimEvent.result) {
+			if (ctx.hasUI) ctx.ui.notify("workflow-state claim handler is unavailable; cannot claim without lifecycle guard", "error");
 			return false;
 		}
-
-		const claimResult = await pi.exec("bd", ["update", bead, "--claim", "--json"]);
-		if (claimResult.code !== 0) {
-			if (ctx.hasUI) ctx.ui.notify(`Failed to claim bead ${bead}: ${claimResult.stderr || claimResult.stdout}`.trim(), "error");
-			return false;
-		}
-
-		pi.events.emit("workflow-state:update", {
-			ctx,
-			activeBead: bead,
-			sessionMode: "claimed",
-			branch: await detectGitValue(ctx, ["branch", "--show-current"]),
-			worktreePath: await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]),
-			startCommit: await detectGitValue(ctx, ["rev-parse", "HEAD"]),
-		});
-		return true;
+		return claimEvent.result.ok;
 	}
 
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean): void {
