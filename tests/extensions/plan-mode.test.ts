@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import ts from 'typescript'
 
+import { registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
@@ -22,6 +23,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         validateAutoExecutePlan: () => ({ valid: true, reason: '' }),
       }
     }
+    if (id === '../workflow-state/index') return { requestWorkflowClaim }
     if (id === '../workflow-intent/index') return { parseWorkflowIntent, shouldAutoClaimAndPlan }
     if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
     throw new Error(`Unexpected require: ${id}`)
@@ -40,6 +42,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
   const activeTools: string[][] = []
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
   const execCalls: Array<{ command: string, args: string[] }> = []
+  const delayedClaimEvents: unknown[] = []
 
   const pi: any = {
     registerFlag() {},
@@ -62,21 +65,13 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
       return { stdout: '', stderr: '', code: 0 }
     },
     events: {
-      emit: async (name: string, event: any) => {
+      emit: (name: string, event: any) => {
         if (name === 'workflow-state:update') workflowUpdates.push(event)
         if (name === 'workflow-state:claim') {
-          if (options.activeStatus === 'in_progress' || options.activeStatus === 'inreview') {
-            event.result = { ok: false, state: { activeBead: 'bead-current', bdStatus: options.activeStatus } }
-            return
-          }
-          const show = await pi.exec('bd', ['show', event.beadId, '--json'])
-          if (show.code !== 0) {
-            event.result = { ok: false }
-            return
-          }
-          const claim = await pi.exec('bd', ['update', event.beadId, '--claim', '--json'])
-          event.result = { ok: claim.code === 0 }
-          if (claim.code === 0) workflowUpdates.push({ activeBead: event.beadId, sessionMode: 'claimed' })
+          void Promise.resolve().then(() => {
+            delayedClaimEvents.push(event)
+            event.result = { ok: false, state: { activeBead: 'late-handler' } }
+          })
         }
       },
     },
@@ -96,8 +91,21 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
     },
   }
 
+  registerWorkflowClaimApi(pi, {
+    async claimWorkflowBead(beadId: string) {
+      if (options.activeStatus === 'in_progress' || options.activeStatus === 'inreview') {
+        return { ok: false, state: { activeBead: 'bead-current', bdStatus: options.activeStatus } }
+      }
+      const show = await pi.exec('bd', ['show', beadId, '--json'])
+      if (show.code !== 0) return { ok: false }
+      const claim = await pi.exec('bd', ['update', beadId, '--claim', '--json'])
+      if (claim.code === 0) workflowUpdates.push({ activeBead: beadId, sessionMode: 'claimed' })
+      return { ok: claim.code === 0 }
+    },
+  })
+
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, execCalls, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, execCalls, delayedClaimEvents, ctx }
 }
 
 describe('Pi plan-mode workflow synchronization', () => {
@@ -137,16 +145,18 @@ describe('Pi plan-mode workflow synchronization', () => {
     }
   })
 
-  it('handles explicit claim+plan input before agent loop through workflow-state claim guard and enables real plan-mode tools', async () => {
-    const { inputHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness()
+  it('handles explicit claim+plan input through awaitable workflow claim API with Pi-like void events.emit semantics', async () => {
+    const { inputHandlers, workflowUpdates, activeTools, execCalls, delayedClaimEvents, ctx } = makeHarness()
 
     const result = await inputHandlers[0]?.({ source: 'user', text: 'beads-task-issue-tracker-zzkb возьми эту задачу в работу, выполняй в режиме планирования' }, ctx)
+    await Promise.resolve()
 
     expect(result).toEqual({ action: 'handled' })
     expect(execCalls).toEqual(expect.arrayContaining([
       { command: 'bd', args: ['show', 'beads-task-issue-tracker-zzkb', '--json'] },
       { command: 'bd', args: ['update', 'beads-task-issue-tracker-zzkb', '--claim', '--json'] },
     ]))
+    expect(delayedClaimEvents).toEqual([])
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])

@@ -3,7 +3,7 @@ import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	appendEntry(type: string, data: unknown): void;
-	events: { on(name: string, handler: (event: WorkflowStateUpdateEvent | WorkflowStateClaimEvent) => void | Promise<void>): void };
+	events: { on(name: string, handler: (event: WorkflowStateUpdateEvent) => void | Promise<void>): void };
 	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: { description: string; handler: (args: string, ctx: ExtensionContext) => unknown }): void;
 	registerTool?(tool: any): void;
@@ -76,10 +76,36 @@ interface WorkflowStateUpdateEvent {
 	ctx?: ExtensionContext;
 }
 
-interface WorkflowStateClaimEvent {
-	beadId: string;
-	ctx: ExtensionContext;
-	result?: { ok: boolean; state: WorkflowState };
+export interface WorkflowClaimResult {
+	ok: boolean;
+	state?: unknown;
+	error?: string;
+}
+
+interface WorkflowClaimApi<Ctx = unknown> {
+	claimWorkflowBead(beadId: string, ctx: Ctx): Promise<WorkflowClaimResult>;
+}
+
+const WORKFLOW_CLAIM_API_KEY = "__piWorkflowClaimApi";
+
+type WorkflowClaimApiRegistry = WeakMap<object, WorkflowClaimApi>;
+
+function workflowClaimApiRegistry(): WorkflowClaimApiRegistry {
+	const root = globalThis as typeof globalThis & { [WORKFLOW_CLAIM_API_KEY]?: WorkflowClaimApiRegistry };
+	root[WORKFLOW_CLAIM_API_KEY] ??= new WeakMap<object, WorkflowClaimApi>();
+	return root[WORKFLOW_CLAIM_API_KEY];
+}
+
+export function registerWorkflowClaimApi<Ctx = unknown>(pi: object, api: WorkflowClaimApi<Ctx>): void {
+	workflowClaimApiRegistry().set(pi, api as WorkflowClaimApi);
+}
+
+export async function requestWorkflowClaim<Ctx = unknown>(pi: object, beadId: string, ctx: Ctx): Promise<WorkflowClaimResult> {
+	const api = workflowClaimApiRegistry().get(pi);
+	if (!api) {
+		return { ok: false, error: "workflow-state claim API is unavailable; cannot claim without lifecycle guard" };
+	}
+	return api.claimWorkflowBead(beadId, ctx);
 }
 
 const DEFAULT_STATE: WorkflowState = {
@@ -511,16 +537,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return setState(next, event.ctx);
 	}
 
-	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent | WorkflowStateClaimEvent) => {
-		const updateEvent = event as WorkflowStateUpdateEvent;
-		applyEventUpdate(updateEvent);
-		await ensureReconciled(updateEvent.ctx);
-	});
-
-	pi.events.on("workflow-state:claim", async (event: WorkflowStateUpdateEvent | WorkflowStateClaimEvent) => {
-		const claimEvent = event as WorkflowStateClaimEvent;
-		const ok = await claimWorkflowBead(claimEvent.beadId, claimEvent.ctx);
-		claimEvent.result = { ok, state: cloneState(workflowState) };
+	pi.events.on("workflow-state:update", async (event: WorkflowStateUpdateEvent) => {
+		applyEventUpdate(event);
+		await ensureReconciled(event.ctx);
 	});
 
 	pi.registerCommand("workflow-status", {
@@ -609,6 +628,13 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		ctx.ui.notify(`Claimed ${bead}; ${formatState(workflowState)}`, "success");
 		return true;
 	}
+
+	registerWorkflowClaimApi<ExtensionContext>(pi, {
+		claimWorkflowBead: async (beadId, ctx) => {
+			const ok = await claimWorkflowBead(beadId, ctx);
+			return { ok, state: cloneState(workflowState) };
+		},
+	});
 
 	pi.registerCommand("workflow-claim", {
 		description: "Claim a bead and set this Pi session's active workflow bead. Usage: /workflow-claim <bead-id>",

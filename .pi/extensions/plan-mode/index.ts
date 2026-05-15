@@ -23,6 +23,7 @@ import {
 	validateAutoExecutePlan,
 	type TodoItem,
 } from "./utils.js";
+import { requestWorkflowClaim } from "../workflow-state/index";
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 
 // Tools
@@ -208,13 +209,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
-		const claimEvent: { beadId: string; ctx: ExtensionContext; result?: { ok: boolean } } = { beadId: bead, ctx };
-		await Promise.resolve(pi.events.emit("workflow-state:claim", claimEvent));
-		if (!claimEvent.result) {
-			if (ctx.hasUI) ctx.ui.notify("workflow-state claim handler is unavailable; cannot claim without lifecycle guard", "error");
-			return false;
-		}
-		return claimEvent.result.ok;
+		const result = await requestWorkflowClaim(pi, bead, ctx);
+		if (!result.ok && result.error && ctx.hasUI) ctx.ui.notify(result.error, "error");
+		return result.ok;
 	}
 
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean): void {
