@@ -14,6 +14,16 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 5. For auto-execute, include: `Plan:`, `Edge-case review:`, `Files to change:`, `Acceptance:`, `Risks / rollback:`, and `AUTO_EXECUTE_ALLOWED: true`.
 6. After approval or auto gate, call `workflow_plan_approved(beadId=<ID>, planEvidence=<approved plan text>)`. This writes `PLAN APPROVED` evidence, exits plan mode, and updates workflow-state in one path.
 
+## Reporting
+
+Plan and approval reports must include `Где мы в workflow` with:
+
+- `Текущий этап`: planning / plan approved / blocked.
+- `Стоп или продолжаю`: stop for user approval in strict mode, or continue automatically only when auto mode/user approval allows it.
+- `Причина`: cite plan mode, bd status, missing context, or approval evidence.
+- `Следующий шаг`: approve plan, dispatch supervisor, or ask the exact clarification.
+- `Действие Максима`: the concrete approval/choice required, or `не требуется` after approval.
+
 ## Rules
 
 - Planning mode is read-only.
