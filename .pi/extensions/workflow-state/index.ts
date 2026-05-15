@@ -551,6 +551,25 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	});
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
+		await ensureReconciled(ctx);
+		if (workflowState.activeBead && workflowState.activeBead !== bead) {
+			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
+			if (activeStatus === "inreview") {
+				ctx.ui.notify(
+					`Cannot claim ${bead}: active bead ${workflowState.activeBead} is inreview. Run review-bead / review_bead for the active bead before claiming unrelated work.`,
+					"error",
+				);
+				return false;
+			}
+			if (activeStatus && !isTerminalBdStatus(activeStatus)) {
+				ctx.ui.notify(
+					`Cannot claim ${bead}: active bead ${workflowState.activeBead} has non-terminal bd status ${activeStatus}. Complete, review, or reset the active workflow before claiming unrelated work.`,
+					"error",
+				);
+				return false;
+			}
+		}
+
 		const showResult = await pi.exec("bd", ["show", bead, "--json"]);
 		if (showResult.code !== 0) {
 			ctx.ui.notify(`Failed to read bead ${bead}: ${showResult.stderr || showResult.stdout}`.trim(), "error");
