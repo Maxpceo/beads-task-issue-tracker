@@ -21,6 +21,16 @@ Claim first, then plan. Do not investigate deeply before claiming.
 
 Slash commands (`/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/plan`, `/plan-auto`) are optional human UI shortcuts, not required agent steps.
 
+## Reporting
+
+Every checkpoint or stop report must include `Где мы в workflow` with:
+
+- `Текущий этап`: claim / worktree setup / planning handoff / blocked.
+- `Стоп или продолжаю`: say whether the workflow continues automatically into planning or stops.
+- `Причина`: cite the exact bd status, ownership guard, policy, or worktree result.
+- `Следующий шаг`: next agent action.
+- `Действие Максима`: `не требуется` unless ownership/steal/closed-bead clarification is needed.
+
 ## Rules
 
 - First non-readonly action is `workflow_claim(beadId=<ID>)`. If typed tools are unavailable, stop with `BLOCKED` rather than using raw `bd update --claim` and drifting session state.

@@ -64,6 +64,16 @@ description: Pi-native landing workflow. Use when user says “пора зака
 - Evidence before claims: final report must include commands, exit codes, commits, push evidence, and PR/merge evidence or exception reason.
 - If follow-up beads were created during this session, list them even if already closed.
 
+## Reporting
+
+Landing reports must include `Где мы в workflow` with:
+
+- `Текущий этап`: landing / save-push checkpoint / blocked / pushed.
+- `Стоп или продолжаю`: say whether landing completed, stopped on a failing command, or intentionally left beads open.
+- `Причина`: cite git/bd command evidence, merge-slot state, open bead lifecycle status, or skipped quality-gate reason.
+- `Следующий шаг`: retry failed command, review/accept open bead, merge-to-main, or no immediate action.
+- `Действие Максима`: `не требуется` unless a policy override or acceptance decision is needed.
+
 ## Final report
 
 | Шаг | Результат |

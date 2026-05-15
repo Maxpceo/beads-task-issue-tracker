@@ -76,6 +76,27 @@ bd comments add <ID> "PATTERN: <pattern>"
 - PR merged validation is required by merge/land workflows or explicit override.
 - Create follow-up beads for out-of-scope findings.
 
+## Reporting
+
+All review checkpoints and final reports must include `Где мы в workflow` before or after the evidence table. Required fields:
+
+- `Текущий этап`: review guard / simplified / code review / acceptance / closed / blocked.
+- `Стоп или продолжаю`: continue through review automatically when guards pass; stop only for `NOT APPROVED`, failed acceptance, unavailable review tooling, or explicit ambiguity.
+- `Причина`: cite reviewer verdict, command evidence, bd status, or blocker.
+- `Следующий шаг`: redispatch fixes, run acceptance, close bead, or exact recovery action.
+- `Действие Максима`: `не требуется` unless human acceptance/override/clarification is required.
+
+Implementation handoff example:
+
+```text
+Где мы в workflow:
+- Текущий этап: implementation complete, bead `inreview`.
+- Стоп или продолжаю: продолжаю автоматически.
+- Причина: supervisor committed changes and recorded END_COMMIT; review is the next lifecycle step.
+- Следующий шаг: run `review_bead` for START_COMMIT..END_COMMIT and record reviewer verdict.
+- Действие Максима: не требуется.
+```
+
 ## Final report
 
 | Шаг | Результат |

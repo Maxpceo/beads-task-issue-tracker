@@ -48,7 +48,38 @@ Stop and ask or report status only at real decision points where user attention 
 - workflow state is stale/foreign/ambiguous and takeover is not explicit;
 - an unapproved destructive/hard-to-reverse action is needed.
 
-Final workflow/task reports should use a concise two-column table (`| Шаг | Результат |`) plus a short “Текущее состояние” section. Normal Q&A does not need this table format.
+Final workflow/task reports should use a concise two-column table (`| Шаг | Результат |`) plus a short “Где мы в workflow” / “Текущее состояние” section. Normal Q&A does not need this table format.
+
+Every workflow checkpoint or final workflow report must explicitly answer four user-facing questions:
+
+- `Текущий этап`: claim / planning / implementation / review / acceptance / landing / merge / blocked / deferred / closed.
+- `Стоп или продолжаю`: whether the agent is stopping for a decision/blocker, pausing after a completed stage, or continuing automatically.
+- `Причина`: why it is stopping/continuing, tied to bd status, policy, approval, failing checks, or completed evidence.
+- `Следующий шаг`: the next agent action and whether any action is required from Maxim.
+
+Use `Действие Максима: не требуется` when the approved workflow continues automatically. Use `Действие Максима: <specific request>` only at real decision points.
+
+Example blocker checkpoint:
+
+```text
+Где мы в workflow:
+- Текущий этап: review guard.
+- Стоп или продолжаю: стоп.
+- Причина: `review_bead` недоступен, а bd status уже `inreview`; без review tool нельзя закрывать bead.
+- Следующий шаг: восстановить review tool или явно подтвердить human acceptance.
+- Действие Максима: выбрать один из вариантов выше.
+```
+
+Example implementation checkpoint:
+
+```text
+Где мы в workflow:
+- Текущий этап: implementation complete, bead ещё не закрыт.
+- Стоп или продолжаю: продолжаю автоматически.
+- Причина: commit сделан, bd status `in_progress`; следующий обязательный этап — submit for review.
+- Следующий шаг: записать `END_COMMIT`, перевести bead в `inreview`, запустить review workflow.
+- Действие Максима: не требуется.
+```
 
 For long-running or noisy commands (`pnpm test`, `npx vue-tsc --noEmit`, `cargo check`, `git push` hooks), filter output with `tail -N`/targeted grep where practical. Preserve exit code and the important failure/success excerpt; do not dump thousands of lines into context.
 
