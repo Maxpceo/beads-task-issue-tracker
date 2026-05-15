@@ -5,21 +5,22 @@ Project-local Pi plan mode adapted for the beads workflow.
 ## Features
 
 - Read-only exploration mode via `/plan` or clear natural-language activation phrases.
-- Auto-execute mode via `/plan-auto` with a required plan quality gate.
+- Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands.
 - bd-aware allowlist/blocklist:
   - allowed: `bd show`, `bd comments`, `bd list`, `bd ready`, selected read-only `bd dep`/`bd dolt` commands;
   - blocked: `bd create`, `bd update`, `bd close`, mutating comments, merge-slot acquire/release, Dolt commit/push/pull.
-- Plan extraction from numbered `Plan:` sections.
+- Plan extraction from numbered `Plan:` / `Revised plan:` sections.
 - Execution progress via `[DONE:n]` markers.
 - Session persistence.
 
 ## Commands
 
 - `/plan` — toggle strict plan mode. User approval is required before execution.
-- `/plan-auto` — enter plan mode and auto-execute only if the final plan passes the quality gate.
+- `/plan-auto` — enter plan mode and auto-execute only after required plan-review agents run and the revised plan passes the gate.
 - `/plan-cancel` — cancel plan mode and restore normal tools.
+- `/plan-review` — run required plan-review agents against the latest draft plan without approving or executing it.
 - `/todos` — show current plan progress.
 - `Ctrl+Alt+P` — toggle strict plan mode.
 
@@ -38,17 +39,36 @@ Combined workflow requests with an explicit bead id are parsed by intent signals
 
 Safety guards intentionally do not auto-run workflow mutations for questions, negated commands, multiple bead ids, missing bead ids, or examples inside fenced code blocks. Informational or ambiguous prompts continue as normal user input, for example: `что такое режим планирования?`, `можно ли взять beads-task-issue-tracker-zzkb в режим планирования?`, `what is plan mode?`.
 
-## Auto-execute quality gate
+## Multi-agent auto-execute gate
 
-`/plan-auto` is only for cases where the user explicitly requested “plan and then implement”. The final planning response must include all sections below:
+`/plan-auto` is only for cases where the user explicitly requested “plan and then implement”. It does not execute the first draft plan. Instead:
+
+1. The main agent produces a draft plan in read-only plan mode.
+2. Pi runs required project-local plan reviewers:
+   - `plan-edge-reviewer`
+   - `plan-consistency-reviewer`
+   - `plan-dead-zone-reviewer`
+3. Reviewers return structured `PLAN REVIEW: APPROVED | NEEDS_CHANGES | BLOCKED` findings.
+4. The main agent must analyze findings and produce a revised plan.
+5. Auto-execute starts only if the revised plan contains all required sections and `Unresolved blockers: none`.
+
+Required revised-plan sections:
 
 ```markdown
-Plan:
+Reviewer findings summary:
+- Summary of reviewer verdicts and important findings
+
+Accepted findings:
+- Finding accepted and concrete plan change
+
+Rejected findings:
+- Finding rejected and reason, or none
+
+Unresolved blockers: none
+
+Revised plan:
 1. First step
 2. Second step
-
-Edge-case review:
-- Edge case and mitigation
 
 Files to change:
 - path/to/file: intended change
@@ -62,7 +82,11 @@ Risks / rollback:
 AUTO_EXECUTE_ALLOWED: true
 ```
 
-If any section is missing, auto-execute is blocked and the session remains in plan mode.
+If any reviewer is missing, fails, returns `BLOCKED`, or reports unresolved blockers, auto-execute is blocked and the session remains in plan mode/read-only.
+
+## Strict plan critique
+
+Strict `/plan` remains manual: it never auto-executes. When the user explicitly asks to check the current plan with agents (or runs `/plan-review`), Pi runs the same required reviewers against the latest draft plan and prints findings without mutating files, bd status, workflow approval state, or leaving plan mode. The user must still approve execution explicitly.
 
 ## Responsibility split
 

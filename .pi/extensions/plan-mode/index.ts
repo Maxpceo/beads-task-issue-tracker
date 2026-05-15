@@ -20,11 +20,17 @@ import {
 	extractTodoItems,
 	isSafeCommand,
 	markCompletedSteps,
-	validateAutoExecutePlan,
 	type TodoItem,
 } from "./utils.js";
 import { requestWorkflowClaim } from "../workflow-state/index";
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
+import {
+	evaluatePlanReviewGate,
+	missingRevisedPlanSections,
+	renderPlanReviewResults,
+	runPlanReviewers,
+	type PlanReviewResult,
+} from "../plan-review/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved"];
@@ -96,12 +102,29 @@ function isNaturalLanguagePlanModeActivation(text: string): boolean {
 	return [...russianActivationPatterns, ...englishActivationPatterns].some((pattern) => pattern.test(normalized));
 }
 
+function isExplicitPlanReviewRequest(text: string): boolean {
+	if (/[?？]/u.test(text)) return false;
+	const normalized = normalizePlanModeActivationText(text);
+	return /(?:запусти|проведи|сделай)\s+(?:агентов\s+)?(?:проверить|ревью|review|critique|критику)\s+план/u.test(normalized)
+		|| /(?:review|critique)\s+(?:the\s+)?plan\s+(?:with\s+)?(?:agents|reviewers)/u.test(normalized);
+}
+
+function latestAssistantTextFromEntries(entries: Array<{ type?: string; message?: AgentMessage }>): string {
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const message = entries[i].message;
+		if (message && isAssistantMessage(message)) return getTextContent(message);
+	}
+	return "";
+}
+
 export default function planModeExtension(pi: ExtensionAPI): void {
 	const workflowPi = pi as ExtensionAPI & { registerTool?: (tool: any) => void };
 	let planModeEnabled = false;
 	let autoExecuteEnabled = false;
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
+	let autoPlanReviewState: "idle" | "awaiting_revision" = "idle";
+	let autoPlanReviewResults: PlanReviewResult[] = [];
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -218,6 +241,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		planModeEnabled = true;
 		autoExecuteEnabled = autoExecute;
 		executionMode = false;
+		autoPlanReviewState = "idle";
+		autoPlanReviewResults = [];
 		todoItems = [];
 		pi.setActiveTools(PLAN_MODE_TOOLS);
 		if (ctx.hasUI) ctx.ui.notify(`${autoExecute ? "Auto " : ""}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
@@ -230,6 +255,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		planModeEnabled = false;
 		autoExecuteEnabled = false;
 		executionMode = false;
+		autoPlanReviewState = "idle";
+		autoPlanReviewResults = [];
 		todoItems = [];
 		pi.setActiveTools(NORMAL_MODE_TOOLS);
 		if (ctx.hasUI) ctx.ui.notify("Plan mode disabled. Full access restored.");
@@ -252,6 +279,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			autoExecute: autoExecuteEnabled,
 			todos: todoItems,
 			executing: executionMode,
+			autoPlanReviewState,
+			autoPlanReviewResults,
 		});
 	}
 
@@ -294,6 +323,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (_args, ctx) => exitPlanMode(ctx),
 	});
 
+	pi.registerCommand("plan-review", {
+		description: "Run required plan-review agents against the latest draft plan without approving or executing it",
+		handler: async (_args, ctx) => runStrictPlanCritique(ctx),
+	});
+
 	pi.registerCommand("todos", {
 		description: "Show current plan todo list",
 		handler: async (_args, ctx) => {
@@ -312,6 +346,59 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
+	async function runReviewGateForPlan(ctx: ExtensionContext, draftPlan: string): Promise<PlanReviewResult[]> {
+		const cwd = ctx.cwd || process.cwd();
+		return runPlanReviewers(pi, cwd, draftPlan);
+	}
+
+	async function requestRevisionAfterPlanReview(ctx: ExtensionContext, draftPlan: string): Promise<void> {
+		const results = await runReviewGateForPlan(ctx, draftPlan);
+		const gate = evaluatePlanReviewGate(results);
+		autoPlanReviewResults = results;
+		if (!gate.ok) {
+			const reasons = gate.reasons.map((reason) => `- ${reason}`).join("\n");
+			pi.sendMessage(
+				{
+					customType: "plan-review-gate-blocked",
+					content: `**Auto-execute blocked by plan-review gate.**\n\n${reasons}\n\nReviewer output:\n\n${renderPlanReviewResults(results)}\n\nRemain in plan mode/read-only and resolve blockers before execution.`,
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+			persistState();
+			return;
+		}
+
+		autoPlanReviewState = "awaiting_revision";
+		pi.sendMessage(
+			{
+				customType: "plan-review-findings",
+				content: `[PLAN REVIEW GATE COMPLETE]\n\nReviewer findings:\n\n${renderPlanReviewResults(results)}\n\nRevise the plan. You must analyze findings instead of accepting them blindly. Return a revised plan with these exact sections:\n\nReviewer findings summary:\nAccepted findings:\nRejected findings:\nUnresolved blockers: none\nRevised plan:\nFiles to change:\nAcceptance:\nRisks / rollback:\nAUTO_EXECUTE_ALLOWED: true`,
+				display: true,
+			},
+			{ triggerTurn: true },
+		);
+		persistState();
+	}
+
+	async function runStrictPlanCritique(ctx: ExtensionContext): Promise<void> {
+		const draftPlan = latestAssistantTextFromEntries(ctx.sessionManager.getEntries() as Array<{ type?: string; message?: AgentMessage }>);
+		if (!draftPlan.trim()) {
+			pi.sendMessage({ customType: "plan-review-blocked", content: "**Plan review blocked.** No draft plan found in the current session.", display: true }, { triggerTurn: false });
+			return;
+		}
+		const results = await runReviewGateForPlan(ctx, draftPlan);
+		pi.sendMessage(
+			{
+				customType: "plan-review-findings",
+				content: `**Strict plan critique complete.** Implementation remains blocked until explicit approval.\n\n${renderPlanReviewResults(results)}`,
+				display: true,
+			},
+			{ triggerTurn: false },
+		);
+		persistState();
+	}
+
 	// Natural-language activation for explicit claim+plan requests and clear enter-plan-mode requests.
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return;
@@ -319,6 +406,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (shouldAutoClaimAndPlan(workflowIntent)) {
 			const claimed = await claimWorkflowBead(workflowIntent.beadId, ctx);
 			if (claimed) enterPlanMode(ctx, false);
+			return { action: "handled" };
+		}
+		if (planModeEnabled && isExplicitPlanReviewRequest(event.text)) {
+			await runStrictPlanCritique(ctx);
 			return { action: "handled" };
 		}
 		if (!isNaturalLanguagePlanModeActivation(event.text)) return;
@@ -385,15 +476,23 @@ Use brave-search skill via bash for web research.
 
 Create a detailed numbered plan under a "Plan:" header.
 
-If auto-plan execution was explicitly requested, your final plan MUST include all sections below or execution will remain blocked:
+If auto-plan execution was explicitly requested, create a draft plan first. Pi will run required multi-agent plan-review agents before implementation. After reviewer findings are returned, your revised plan MUST include all sections below or execution will remain blocked:
 
-Plan:
+Reviewer findings summary:
+- Summary of reviewer verdicts and important findings
+
+Accepted findings:
+- Finding accepted and concrete plan change
+
+Rejected findings:
+- Finding rejected and reason, or none
+
+Unresolved blockers: none
+
+Revised plan:
 1. First step description
 2. Second step description
 ...
-
-Edge-case review:
-- Important edge case and mitigation
 
 Files to change:
 - path/to/file: intended change
@@ -476,10 +575,16 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		}
 
 		if (autoExecuteEnabled) {
-			const quality = validateAutoExecutePlan(lastAssistantText);
-			if (quality.ok) {
+			if (autoPlanReviewState === "idle") {
+				await requestRevisionAfterPlanReview(ctx, lastAssistantText);
+				return;
+			}
+
+			const missing = missingRevisedPlanSections(lastAssistantText);
+			if (missing.length === 0) {
 				planModeEnabled = false;
 				autoExecuteEnabled = false;
+				autoPlanReviewState = "idle";
 				executionMode = todoItems.length > 0;
 				pi.setActiveTools(NORMAL_MODE_TOOLS);
 				syncWorkflowPlanMode(ctx, "off", "implementing", { planApproved: true });
@@ -488,8 +593,8 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 				const execMessage =
 					todoItems.length > 0
-						? `Auto-execute approved plan. Start with: ${todoItems[0].text}`
-						: "Auto-execute the approved plan.";
+						? `Execute the revised plan after successful multi-agent review. Start with: ${todoItems[0].text}`
+						: "Execute the revised plan after successful multi-agent review.";
 				pi.sendMessage(
 					{ customType: "plan-mode-execute", content: execMessage, display: true },
 					{ triggerTurn: true },
@@ -497,11 +602,11 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				return;
 			}
 
-			const missing = quality.missing.map((item) => `- ${item}`).join("\n");
+			const missingText = missing.map((item) => `- ${item}`).join("\n");
 			pi.sendMessage(
 				{
 					customType: "plan-quality-gate-failed",
-					content: `**Auto-execute blocked.** Missing required plan sections:\n\n${missing}\n\nRemain in plan mode and refine the plan.`,
+					content: `**Auto-execute blocked.** Missing required revised-plan sections after plan review:\n\n${missingText}\n\nReviewer output:\n\n${renderPlanReviewResults(autoPlanReviewResults)}\n\nRemain in plan mode and refine the revised plan.`,
 					display: true,
 				},
 				{ triggerTurn: false },
@@ -567,7 +672,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		const planModeEntry = entries
 			.filter((e: { type: string; customType?: string }) => e.type === "custom" && e.customType === "plan-mode")
 			.pop() as
-			| { data?: { enabled: boolean; autoExecute?: boolean; todos?: TodoItem[]; executing?: boolean } }
+			| { data?: { enabled: boolean; autoExecute?: boolean; todos?: TodoItem[]; executing?: boolean; autoPlanReviewState?: "idle" | "awaiting_revision"; autoPlanReviewResults?: PlanReviewResult[] } }
 			| undefined;
 
 		if (planModeEntry?.data) {
@@ -575,6 +680,8 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			autoExecuteEnabled = planModeEntry.data.autoExecute ?? autoExecuteEnabled;
 			todoItems = planModeEntry.data.todos ?? todoItems;
 			executionMode = planModeEntry.data.executing ?? executionMode;
+			autoPlanReviewState = planModeEntry.data.autoPlanReviewState ?? autoPlanReviewState;
+			autoPlanReviewResults = planModeEntry.data.autoPlanReviewResults ?? autoPlanReviewResults;
 		}
 
 		// On resume: re-scan messages to rebuild completion state

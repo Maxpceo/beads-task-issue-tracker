@@ -7,6 +7,9 @@ import { registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extens
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
+let mockPlanReviewGateOk = true
+let mockPlanReviewReasons: string[] = []
+let mockMissingRevisedPlanSections: string[] = []
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -25,6 +28,14 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     }
     if (id === '../workflow-state/index') return { requestWorkflowClaim }
     if (id === '../workflow-intent/index') return { parseWorkflowIntent, shouldAutoClaimAndPlan }
+    if (id === '../plan-review/index') {
+      return {
+        evaluatePlanReviewGate: () => ({ ok: mockPlanReviewGateOk, reasons: mockPlanReviewReasons }),
+        missingRevisedPlanSections: () => mockMissingRevisedPlanSections,
+        renderPlanReviewResults: () => 'PLAN REVIEW: APPROVED',
+        runPlanReviewers: async () => [{ reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: 'PLAN REVIEW: APPROVED' }],
+      }
+    }
     if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
     throw new Error(`Unexpected require: ${id}`)
   }
@@ -34,6 +45,9 @@ function loadPlanModeExtension(): (pi: unknown) => void {
 }
 
 function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean } = {}) {
+  mockPlanReviewGateOk = true
+  mockPlanReviewReasons = []
+  mockMissingRevisedPlanSections = []
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -42,6 +56,8 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const activeTools: string[][] = []
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
   const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
+  const agentEndHandlers: Array<(event: any, ctx: any) => unknown> = []
+  const sendMessages: Array<{ message: any, options?: any }> = []
   const execCalls: Array<{ command: string, args: string[] }> = []
   const delayedClaimEvents: unknown[] = []
 
@@ -53,8 +69,10 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
     on: (event: string, handler: (event: any, ctx: any) => unknown) => {
       if (event === 'input') inputHandlers.push(handler)
       if (event === 'tool_call') toolCallHandlers.push(handler)
+      if (event === 'agent_end') agentEndHandlers.push(handler)
     },
     appendEntry() {},
+    sendMessage: (message: any, options?: any) => sendMessages.push({ message, options }),
     setActiveTools: (tools: string[]) => activeTools.push(tools),
     exec: async (command: string, args: string[]) => {
       execCalls.push({ command, args })
@@ -108,7 +126,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   })
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, execCalls, delayedClaimEvents, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sendMessages, execCalls, delayedClaimEvents, ctx }
 }
 
 describe('Pi plan-mode workflow synchronization', () => {
@@ -241,6 +259,45 @@ describe('Pi plan-mode typed workflow tools', () => {
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+  })
+
+  it('/plan-auto runs plan-review gate before execution and asks for a revised plan', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, activeTools, ctx } = makeHarness()
+
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement gate' }] }] }, ctx)
+
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-review-findings')
+    expect(sendMessages.at(-1)?.message.content).toContain('Reviewer findings')
+    expect(sendMessages.at(-1)?.options).toMatchObject({ triggerTurn: true })
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+  })
+
+  it('/plan-auto blocks execution when a required reviewer blocks the gate', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, activeTools, ctx } = makeHarness()
+    mockPlanReviewGateOk = false
+    mockPlanReviewReasons = ['blocked reviewer: plan-dead-zone-reviewer']
+
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement gate' }] }] }, ctx)
+
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-review-gate-blocked')
+    expect(sendMessages.at(-1)?.message.content).toContain('blocked reviewer: plan-dead-zone-reviewer')
+    expect(sendMessages.at(-1)?.options).toMatchObject({ triggerTurn: false })
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+  })
+
+  it('/plan-auto executes a revised plan with review adjudication sections', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, activeTools, workflowUpdates, ctx } = makeHarness()
+
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- reviewers approved\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement gate\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests pass\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, ctx)
+
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-mode-execute')
+    expect(sendMessages.at(-1)?.message.content).toContain('Execute the revised plan')
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
   })
 })
