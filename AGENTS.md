@@ -13,6 +13,7 @@ For Pi sessions, the source of truth is this `AGENTS.md` file plus `.pi/*`.
 
 Pi workflow migration plan: `.pi/plans/pi-native-workflow-migration.md`.
 Pi plans and design notes live in `.pi/plans/` or bd, not in `.claude/plans/`.
+Pi rules architecture / where to place new rules: `.pi/rules/README.md`.
 Pi domain rules for logging, locale sync, UI constraints, frontend review, and src-tauri/bd compatibility: `.pi/rules/domain.md`.
 Pi agent contracts, reporting vocabulary, and model guidance: `.pi/agents/README.md`.
 Progress is tracked in bd, not as markdown task lists.
