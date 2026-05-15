@@ -144,15 +144,30 @@ function hasForeignReviewOwnershipEvidence(comments: string, scope: { branch?: s
 	return latestFieldIsForeign(comments, branchNames, scope.branch) || latestFieldIsForeign(comments, worktreeNames, scope.worktreePath);
 }
 
-function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; worktreePath?: string; startCommit?: string }): boolean {
+function reviewOwnershipBlocks(comments: string): string[] {
+	const marker = /^.*(?:PLAN APPROVED|DISPATCH(?: RESULT)?|REVIEW START|review_bead|PI WORKFLOW).*$/gim;
+	const starts = [...comments.matchAll(marker)].map((match) => match.index ?? 0);
+	if (starts.length === 0) return [comments];
+	return starts.map((start, index) => comments.slice(start, starts[index + 1]).trim()).filter(Boolean);
+}
+
+function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; worktreePath?: string; startCommit?: string; endCommit?: string }): boolean {
 	const branchNames = ["BRANCH", "Branch", "branch"];
 	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const startNames = ["START_COMMIT", "START-COMMIT", "Start-commit", "start"];
+	const endNames = ["END_COMMIT", "END-COMMIT", "End-commit", "end"];
 	if (hasForeignReviewOwnershipEvidence(comments, scope)) return false;
-	const branchMatches = latestFieldMatches(comments, branchNames, scope.branch);
-	const worktreeMatches = latestFieldMatches(comments, worktreeNames, scope.worktreePath);
-	const startMatches = hasExactField(comments, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
 	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(comments);
-	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments));
+	const hasScopedDispatchEvidence = reviewOwnershipBlocks(comments).some((block) => {
+		const branchMatches = hasExactField(block, branchNames, scope.branch);
+		const worktreeMatches = hasExactField(block, worktreeNames, scope.worktreePath);
+		const startMatches = hasExactField(block, startNames, scope.startCommit);
+		const blockHasEnd = new RegExp(`(^|\\n)\\s*(${endNames.join("|")})\\s*[:=]`, "im").test(block);
+		const endMatches = !blockHasEnd || !scope.endCommit || hasExactField(block, endNames, scope.endCommit);
+		return branchMatches && worktreeMatches && startMatches && endMatches;
+	});
+	const legacyStartMatches = !hasBranchOrWorktreeField && hasExactField(comments, startNames, scope.startCommit) && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments);
+	return hasScopedDispatchEvidence || legacyStartMatches;
 }
 
 function checksForFiles(files: string[], cwd: string): string[][] {
@@ -282,7 +297,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const reviewCwd = params.worktreePath || ctx.cwd;
 				const branch = await execRequired(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
 				const worktreePath = await execRequired(pi, "git", ["-C", reviewCwd, "rev-parse", "--show-toplevel"]);
-				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit })) {
+				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit, endCommit })) {
 					throw new Error(`review_bead refused ${params.beadId}: no matching branch/worktree/start ownership evidence for review scope ${worktreePath || reviewCwd}. Agents can inspect bd comments ${params.beadId}, call workflow_reset for stale local state, or explicitly confirm takeover and bind verified dispatch evidence with workflow_update(bead=${params.beadId}, session=reviewing, branch=<branch>, worktree=<worktree>, start=<sha>, end=<sha>) before retrying review_bead with worktreePath=<worktree>.`);
 				}
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
