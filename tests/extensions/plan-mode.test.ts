@@ -240,7 +240,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(execCalls).toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
-    expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(workflowUpdates.at(-1)).toMatchObject({ state: 'implementing', activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
   })
 })

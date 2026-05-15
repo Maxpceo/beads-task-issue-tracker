@@ -337,6 +337,23 @@ function isStaleExtensionContextError(error: unknown): boolean {
 	return error instanceof Error && /extension ctx is stale after session replacement or reload/i.test(error.message);
 }
 
+function hasUnsafeApprovedImplementingState(state: WorkflowState): boolean {
+	return Boolean(state.planApproved && state.sessionMode === "implementing" && !state.activeBead);
+}
+
+function clearUnsafeApprovedImplementingState(state: WorkflowState): { state: WorkflowState; warning?: string } {
+	if (!hasUnsafeApprovedImplementingState(state)) return { state };
+	return {
+		state: {
+			...state,
+			state: state.state === "implementing" || state.state === "plan_approved" ? "idle" : state.state,
+			planApproved: false,
+			sessionMode: "idle",
+		},
+		warning: "Workflow state had unsafe planApproved=true + sessionMode=implementing without active bead; cleared approved/implementing flags because current-session ownership evidence was insufficient.",
+	};
+}
+
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
 	const gitCwd = ctx?.cwd;
 	const currentScope = {
@@ -354,56 +371,50 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 	if (state.activeBead && state.state !== "idle") {
 		const bdStatus = await readBdStatus(pi, state.activeBead);
 		if (isTerminalBdStatus(bdStatus)) {
-			return {
-				state: {
-					...state,
-					activeBead: undefined,
-					state: "idle",
-					branch: currentScope.branch ?? state.branch,
-					worktreePath: currentScope.worktreePath,
-					startCommit: currentScope.startCommit,
-					endCommit: undefined,
-					sessionKey: undefined,
-					bdStatus: undefined,
-				},
-				warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`),
-			};
+			const cleared = clearUnsafeApprovedImplementingState({
+				...state,
+				activeBead: undefined,
+				state: "idle",
+				branch: currentScope.branch ?? state.branch,
+				worktreePath: currentScope.worktreePath,
+				startCommit: currentScope.startCommit,
+				endCommit: undefined,
+				sessionKey: undefined,
+				bdStatus: undefined,
+			});
+			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`) };
 		}
 		if (isTerminalWorkflowState(state.state)) return { state: { ...state, bdStatus } };
 
 		const commentsText = await readBdComments(pi, state.activeBead);
 		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
 		if (!hasOwnership) {
-			return {
-				state: {
-					...state,
-					activeBead: undefined,
-					state: "idle",
-					branch: currentScope.branch ?? state.branch,
-					worktreePath: currentScope.worktreePath,
-					startCommit: currentScope.startCommit,
-					endCommit: undefined,
-					sessionKey: undefined,
-					bdStatus: undefined,
-				},
-				warning: staleForeignRecoveryMessage(state.activeBead, "stale or foreign for this branch/worktree/session"),
-			};
+			const cleared = clearUnsafeApprovedImplementingState({
+				...state,
+				activeBead: undefined,
+				state: "idle",
+				branch: currentScope.branch ?? state.branch,
+				worktreePath: currentScope.worktreePath,
+				startCommit: currentScope.startCommit,
+				endCommit: undefined,
+				sessionKey: undefined,
+				bdStatus: undefined,
+			});
+			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, "stale or foreign for this branch/worktree/session") };
 		}
 		if (!bdStatus) {
-			return {
-				state: {
-					...state,
-					activeBead: undefined,
-					state: "idle",
-					branch: currentScope.branch ?? state.branch,
-					worktreePath: currentScope.worktreePath,
-					startCommit: currentScope.startCommit,
-					endCommit: undefined,
-					sessionKey: undefined,
-					bdStatus: undefined,
-				},
-				warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a readable bd status"),
-			};
+			const cleared = clearUnsafeApprovedImplementingState({
+				...state,
+				activeBead: undefined,
+				state: "idle",
+				branch: currentScope.branch ?? state.branch,
+				worktreePath: currentScope.worktreePath,
+				startCommit: currentScope.startCommit,
+				endCommit: undefined,
+				sessionKey: undefined,
+				bdStatus: undefined,
+			});
+			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a readable bd status") };
 		}
 		const syncedState: WorkflowState = {
 			...state,
@@ -423,11 +434,20 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 	}
 
 	const baseState = { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
-	const activeBead = state.state === "idle" ? await findRecoverableActiveBead(pi, scope) : undefined;
-	if (!activeBead) return { state: baseState };
+	const canRecoverActiveBead = state.state === "idle" || hasUnsafeApprovedImplementingState(baseState);
+	const activeBead = canRecoverActiveBead ? await findRecoverableActiveBead(pi, scope) : undefined;
+	if (!activeBead) return clearUnsafeApprovedImplementingState(baseState);
 	const bdStatus = await readBdStatus(pi, activeBead);
-	if (!bdStatus || isTerminalBdStatus(bdStatus)) return { state: baseState };
-	return { state: { ...baseState, activeBead, bdStatus } };
+	if (!bdStatus || isTerminalBdStatus(bdStatus)) return clearUnsafeApprovedImplementingState(baseState);
+	return {
+		state: {
+			...baseState,
+			activeBead,
+			state: hasUnsafeApprovedImplementingState(baseState) ? "implementing" : baseState.state,
+			sessionKey: scope.sessionKey ?? baseState.sessionKey,
+			bdStatus,
+		},
+	};
 }
 
 function updateFooter(ctx: ExtensionContext, state: WorkflowState): void {
@@ -590,7 +610,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			reconciled.state.worktreePath !== workflowState.worktreePath ||
 			reconciled.state.startCommit !== workflowState.startCommit ||
 			reconciled.state.endCommit !== workflowState.endCommit ||
-			reconciled.state.bdStatus !== workflowState.bdStatus;
+			reconciled.state.bdStatus !== workflowState.bdStatus ||
+			reconciled.state.planApproved !== workflowState.planApproved ||
+			reconciled.state.sessionMode !== workflowState.sessionMode;
 		workflowState = reconciled.state;
 		if (changed) {
 			persist(ctx);
@@ -616,7 +638,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (event.endCommit !== undefined) next.endCommit = event.endCommit || undefined;
 		if (event.planMode !== undefined) next.planMode = event.planMode;
 		if (event.planApproved !== undefined) next.planApproved = event.planApproved;
-		if (event.sessionMode !== undefined) next.sessionMode = event.sessionMode || undefined;
+		if (event.sessionMode !== undefined) {
+			next.sessionMode = event.sessionMode || undefined;
+			if (!event.state && event.sessionMode && isWorkflowStateName(event.sessionMode)) next.state = event.sessionMode;
+		}
 		if (event.mergeSlotHeld !== undefined) next.mergeSlotHeld = event.mergeSlotHeld;
 		return setState(next, event.ctx);
 	}

@@ -202,7 +202,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoExecuteEnabled = false;
 		executionMode = false;
 		pi.setActiveTools(NORMAL_MODE_TOOLS);
-		syncWorkflowPlanMode(ctx, "off", "implementing", { activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
+		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
 		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
