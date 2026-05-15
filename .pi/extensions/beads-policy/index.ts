@@ -26,6 +26,7 @@ type PolicyName =
 	| "blockGitAddAll"
 	| "requireMergeSlotForPush"
 	| "protectPaths"
+	| "blockDestructiveCommand"
 	| "blockBdCloseWithoutReview"
 	| "blockEpicCloseWithIncompleteChildren"
 	| "blockUnmergedBranchCompletion"
@@ -69,7 +70,17 @@ interface BashPolicyOptions {
 	currentActor?: string;
 }
 
-const PROTECTED_PATHS = [".env", ".git/", "node_modules/"];
+const PRIVATE_KEY_OR_CERT_PATTERN = /(^|[\/])[^\/]+\.(pem|key|p12|pfx|crt|cer)$/i;
+const ENV_FILE_PATTERN = /(^|[\/])\.env(?:$|[.\/])/;
+const SENSITIVE_PATH_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+	{ pattern: ENV_FILE_PATTERN, reason: "env files may contain secrets" },
+	{ pattern: /(^|[\/])\.ssh(?:$|[\/])|(^|[\/])id_(rsa|dsa|ecdsa|ed25519)(?:$|[.\/])/, reason: "SSH credentials are protected" },
+	{ pattern: /(^|[\/])\.aws[\/]credentials(?:$|[\/])|(^|[\/])\.aws[\/]config(?:$|[\/])/, reason: "AWS credentials/config are protected" },
+	{ pattern: /(^|[\/])\.config[\/]gcloud(?:$|[\/])|(^|[\/])\.azure(?:$|[\/])/, reason: "cloud credentials/config are protected" },
+	{ pattern: /(^|[\/])\.kube[\/]config(?:$|[\/])/, reason: "Kubernetes config is protected" },
+	{ pattern: /(^|[\/])terraform\.tfstate(?:\.backup)?$|\.tfstate(?:\.backup)?$/, reason: "Terraform state is protected" },
+	{ pattern: PRIVATE_KEY_OR_CERT_PATTERN, reason: "private key/cert files are protected" },
+];
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
 const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
@@ -115,6 +126,72 @@ function applySkip(decision: PolicyDecision | undefined): PolicyDecision | undef
 
 function normalizeCommand(command: string): string {
 	return command.replace(/\s+/g, " ").trim();
+}
+
+function protectedPathReason(targetPath: string): string | undefined {
+	const normalizedPath = targetPath.replace(/\\/g, "/");
+	if (normalizedPath.includes(".git/")) return ".git internals are protected";
+	if (normalizedPath.includes("node_modules/")) return "node_modules is protected from direct tool access";
+	for (const { pattern, reason } of SENSITIVE_PATH_PATTERNS) {
+		if (pattern.test(normalizedPath)) return reason;
+	}
+	return undefined;
+}
+
+function commandTouchesSensitivePath(command: string): string | undefined {
+	const normalized = command.replace(/\\/g, "/");
+	for (const { pattern, reason } of SENSITIVE_PATH_PATTERNS) {
+		if (pattern.test(normalized)) return reason;
+	}
+	return undefined;
+}
+
+function commandHasRecursiveForceDelete(command: string): boolean {
+	return /(^|[;&|]\s*)rm\s+(?:-[^\s]*r[^\s]*f|-i?[^\s]*f[^\s]*r|--recursive\s+--force|--force\s+--recursive)\b/.test(command);
+}
+
+function commandHasHardReset(command: string): boolean {
+	return /(^|[;&|]\s*)git\s+reset\s+(?:[^;&|]*\s)?--hard\b/.test(command);
+}
+
+function commandHasForcedClean(command: string): boolean {
+	return /(^|[;&|]\s*)git\s+clean\b(?=[^;&|]*(?:\s-f|\s-[a-zA-Z]*f|--force\b))/.test(command);
+}
+
+function commandHasUnsafeForcePush(command: string): boolean {
+	if (!/(^|[;&|]\s*)git\s+push\b/.test(command)) return false;
+	const withoutLease = command.replace(/--force-with-lease(?:=\S+)?/g, "");
+	return /(^|\s)(?:--force|-f)(?:\s|$)/.test(withoutLease);
+}
+
+function commandHasRemoteBranchDeletion(command: string): boolean {
+	return /(^|[;&|]\s*)git\s+push\b[^;&|]*(?:--delete\b|\s:[^\s;&|]+)/.test(command);
+}
+
+function commandHasStashDeletion(command: string): boolean {
+	return /(^|[;&|]\s*)git\s+stash\s+(?:drop|clear)\b/.test(command);
+}
+
+function commandHasCloudResourceDeletion(command: string): boolean {
+	return /(^|[;&|]\s*)(?:kubectl\s+delete\b|terraform\s+destroy\b|aws\s+\S+\s+delete-\S+\b|gcloud\s+[^;&|]*\sdelete\b|az\s+[^;&|]*\sdelete\b)/.test(command);
+}
+
+function commandHasDestructiveSql(command: string): boolean {
+	return /\bDROP\s+(?:DATABASE|SCHEMA|TABLE)\b/i.test(command) || /\bTRUNCATE\s+TABLE\b/i.test(command) || /\bDELETE\s+FROM\b(?![^;&|]*\bWHERE\b)/i.test(command);
+}
+
+function destructiveCommandReason(command: string): string | undefined {
+	const sensitivePathReason = commandTouchesSensitivePath(command);
+	if (sensitivePathReason) return `Blocked: command references protected path (${sensitivePathReason}).`;
+	if (commandHasRecursiveForceDelete(command)) return "Blocked: recursive force delete is not allowed from Pi bash.";
+	if (commandHasHardReset(command)) return "Blocked: git reset --hard is destructive. Use an explicit documented override only if approved.";
+	if (commandHasForcedClean(command)) return "Blocked: forced git clean can delete untracked work.";
+	if (commandHasUnsafeForcePush(command)) return "Blocked: unsafe force push is not allowed; --force-with-lease is the safer explicit form.";
+	if (commandHasRemoteBranchDeletion(command)) return "Blocked: remote branch deletion requires explicit confirmation outside the normal Pi bash flow.";
+	if (commandHasStashDeletion(command)) return "Blocked: stash deletion can destroy recovery points.";
+	if (commandHasCloudResourceDeletion(command)) return "Blocked: cloud/infrastructure resource deletion is destructive.";
+	if (commandHasDestructiveSql(command)) return "Blocked: destructive SQL requires explicit human approval and a rollback plan.";
+	return undefined;
 }
 
 function runGit(cwd: string, args: string[]): string | undefined {
@@ -1340,6 +1417,15 @@ export function evaluateBashPolicy(
 		};
 	}
 
+	const destructiveReason = destructiveCommandReason(command);
+	if (destructiveReason) {
+		return {
+			policy: "blockDestructiveCommand",
+			block: true,
+			reason: destructiveReason,
+		};
+	}
+
 	const isPlanning = workflowState.planMode === "strict" || workflowState.planMode === "auto";
 	if (isPlanning && (commandHasMutatingBd(command) || commandHasMutatingGitOrFs(command))) {
 		return {
@@ -1461,12 +1547,12 @@ export function evaluateToolPolicy(toolName: string, input: Record<string, unkno
 }
 
 export function evaluatePathPolicy(toolName: string, targetPath: string, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
-	const normalizedPath = targetPath.replace(/\\/g, "/");
-	if (PROTECTED_PATHS.some((protectedPath) => normalizedPath.includes(protectedPath))) {
+	const pathReason = protectedPathReason(targetPath);
+	if (pathReason) {
 		return {
 			policy: "protectPaths",
 			block: true,
-			reason: `Blocked: ${targetPath} is protected.`,
+			reason: `Blocked: ${targetPath} is protected (${pathReason}).`,
 		};
 	}
 
@@ -1509,7 +1595,7 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 		const toolDecision = applySkip(evaluateToolPolicy(event.toolName, event.input as Record<string, unknown>, workflowState));
 		if (toolDecision?.block) return toToolBlock(toolDecision);
 
-		if (event.toolName === "edit" || event.toolName === "write") {
+		if (event.toolName === "read" || event.toolName === "edit" || event.toolName === "write") {
 			const targetPath = String(event.input.path ?? "");
 			const decision = applySkip(evaluatePathPolicy(event.toolName, targetPath, workflowState));
 			if (decision?.block) return toToolBlock(decision);
