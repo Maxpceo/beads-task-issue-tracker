@@ -179,6 +179,7 @@ Standard Pi/theme footer owns path/branch, selected model, thinking level, conte
 | `staleWorktreeGuard` | Block commit-like operations when staged code intersects newer `origin/main`; if `origin/main` is unavailable, hard-block code changes and allow docs/beads-only maintenance |
 | `fastPathDiscipline` | Warn when direct code work exceeds 3 files or 80 added lines without rationale; hard-block risky scopes or large commit-like work without active bead/approved plan |
 | `enforceActiveBeadLifecycle` | Block claiming, dispatching, reviewing, or implementing a different bead while the current-session active bead has non-terminal bd status; bd `inreview` redirects to `review-bead` / `review_bead` |
+| `enforceActiveWorktreeCwd` | When current-session active bead has a non-terminal `worktreePath`, block mutating bash, tests/gates, bd writes, edit/write, and typed dispatch/review/docs tools unless they run from/target that worktree (or a subdirectory). This guard runs before `blockMainMutation`; read-only inspection from `main` remains allowed. Missing worktree path or branch mismatch blocks with reset/recreate/takeover guidance. |
 
 Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an explicit reason.
 
@@ -192,6 +193,12 @@ Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an exp
 | edit/write project file on `main` | Blocked |
 | edit/write `.pi/*` on `main` | Blocked |
 | edit/write in feature worktree | Allowed |
+| active bead has task worktree lock, mutating command from `main` | Blocked by `enforceActiveWorktreeCwd` before `blockMainMutation` |
+| active bead has task worktree lock, `bd show` / `bd comments` / `git status` from `main` | Allowed as read-only inspection |
+| active bead has task worktree lock, edit/write outside worktree | Blocked by `enforceActiveWorktreeCwd` |
+| active bead has task worktree lock, cwd is worktree subdirectory or symlink to it | Allowed |
+| active bead has task worktree lock, missing path or branch mismatch | Blocked by `enforceActiveWorktreeCwd` with reset/recreate/takeover guidance |
+| dispatch/review/docs tool under worktree lock without matching cwd/worktreePath | Blocked by `enforceActiveWorktreeCwd` |
 | `git add .` | Blocked |
 | ordinary `git add <file>` / `git stage <file>` / `git commit` on `main` | Blocked |
 | `git push` without merge-slot | Blocked |

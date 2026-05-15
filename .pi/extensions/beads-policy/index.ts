@@ -37,6 +37,7 @@ type PolicyName =
 	| "blockRawBdClaim"
 	| "blockSupervisorClose"
 	| "blockWorktreeInsideRepo"
+	| "enforceActiveWorktreeCwd"
 	| "blockMainMutation"
 	| "staleWorktreeGuard"
 	| "fastPathDiscipline"
@@ -281,6 +282,122 @@ function inferCommandCwd(command: string, defaultCwd?: string): string {
 	return normalizeFsPath(cdPath.trim(), base);
 }
 
+
+function isPathInsideOrEqual(targetPath: string, rootPath: string): boolean {
+	const resolvedTarget = realpathExistingOrParent(targetPath);
+	const resolvedRoot = realpathExistingOrParent(rootPath);
+	return resolvedTarget === resolvedRoot || resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
+function isWorkflowStateNonTerminal(workflowState: WorkflowStateSnapshot): boolean {
+	const bdStatus = workflowState.bdStatus;
+	if (bdStatus) return !TERMINAL_BD_STATUSES.has(bdStatus);
+	const state = workflowState.state ?? "idle";
+	return NON_TERMINAL_WORKFLOW_STATES.has(state);
+}
+
+function hasWorktreeLockOwnershipEvidence(workflowState: WorkflowStateSnapshot): boolean {
+	if (!workflowState.activeBead || !workflowState.worktreePath) return false;
+	if (workflowState.runtimeOwnerKey && workflowState.runtimeOwnerKey === currentRuntimeOwnerKey()) return true;
+	if (workflowState.sessionKey) return true;
+	if (workflowState.planApproved === true || workflowState.planApproved === "true") return true;
+	return false;
+}
+
+function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot): boolean {
+	return Boolean(workflowState.activeBead && workflowState.worktreePath && isWorkflowStateNonTerminal(workflowState) && hasWorktreeLockOwnershipEvidence(workflowState));
+}
+
+function commandHasTestOrGateOperation(command: string): boolean {
+	return /(^|[;&|]\s*)(?:pnpm\s+(?:test|exec\s+vitest|vitest|tauri:dev|build)|npm\s+(?:test|run\s+(?:test|build|typecheck))|npx\s+vue-tsc\b|cargo\s+(?:check|test|build)|make\s+(?:test|check)|just\s+(?:test|check))\b/.test(command);
+}
+
+function commandRequiresActiveWorktreeCwd(command: string, processCwd: string): boolean {
+	return commandHasMutatingBd(command) || commandHasMutatingGitOrFs(command) || commandHasTestOrGateOperation(command) || commandHasRepoContainedRedirection(command, processCwd);
+}
+
+function activeWorktreeCwdDecision(command: string, processCwd: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
+	if (!hasActiveWorktreeLock(workflowState)) return undefined;
+	if (!commandRequiresActiveWorktreeCwd(command, processCwd)) return undefined;
+	const required = workflowState.worktreePath;
+	if (!required) return undefined;
+	if (!fs.existsSync(required)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before mutating work.`,
+		};
+	}
+	const effectiveCwd = inferCommandCwd(command, processCwd);
+	const gitCwdMatch = command.match(/(^|[;&|]\s*)git\s+-C\s+(\S+)/);
+	const explicitGitCwd = gitCwdMatch?.[2] ? normalizeFsPath(gitCwdMatch[2], processCwd) : undefined;
+	const outsideCwd = [processCwd, effectiveCwd, explicitGitCwd].filter(Boolean).find((cwd) => !isPathInsideOrEqual(String(cwd), required));
+	if (outsideCwd) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. Run mutating commands, tests, bd writes, and git operations with cwd ${required} or inside it; current/effective cwd is ${outsideCwd}. Read-only inspection from main is allowed.`,
+		};
+	}
+	const expectedBranch = workflowState.branch;
+	const actualBranch = getCurrentBranch(required);
+	if (expectedBranch && actualBranch && actualBranch !== expectedBranch) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before mutating work.`,
+		};
+	}
+	return undefined;
+}
+
+function activeWorktreePathDecision(toolName: string, targetPath: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
+	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLock(workflowState)) return undefined;
+	const required = workflowState.worktreePath;
+	if (!required) return undefined;
+	if (!fs.existsSync(required)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before edit/write.`,
+		};
+	}
+	const resolvedTarget = normalizeFsPath(targetPath);
+	if (!isPathInsideOrEqual(resolvedTarget, required)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: edit/write for active bead ${workflowState.activeBead} must target ${required} or a path inside it; target is ${targetPath}.`,
+		};
+	}
+	const expectedBranch = workflowState.branch;
+	const actualBranch = getCurrentBranch(required);
+	if (expectedBranch && actualBranch && actualBranch !== expectedBranch) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before edit/write.`,
+		};
+	}
+	return undefined;
+}
+
+function requiredToolCwdDecision(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
+	if (!hasActiveWorktreeLock(workflowState)) return undefined;
+	if (!["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].includes(toolName)) return undefined;
+	const required = workflowState.worktreePath;
+	if (!required) return undefined;
+	const provided = String(input.cwd ?? input.worktreePath ?? "");
+	if (!provided || !isPathInsideOrEqual(normalizeFsPath(provided), required)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: ${toolName} for active bead ${workflowState.activeBead} must run with cwd/worktreePath ${required}.`,
+		};
+	}
+	return undefined;
+}
+
 function commandHasGitPush(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+push\b/.test(command);
 }
@@ -298,7 +415,7 @@ function commandHasMutatingBd(command: string): boolean {
 }
 
 function commandHasMutatingGitOrFs(command: string): boolean {
-	return /\b(git\s+(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag)|rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(
+	return /\b(git\s+(?:-C\s+\S+\s+)?(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag)|rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(
 		command,
 	);
 }
@@ -1446,12 +1563,18 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const state = last?.data ?? restoredLast?.data ?? {};
 	const scope = currentRecoveryScope(ctx.cwd, currentSessionKey(ctx));
 	if (state.activeBead && state.state && state.state !== "idle") {
-		const isCurrentSessionState = hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
+		const stateScope = {
+			branch: state.branch ?? scope.branch,
+			worktreePath: state.worktreePath ?? scope.worktreePath,
+			startCommit: state.startCommit ?? scope.startCommit,
+			sessionKey: state.sessionKey ?? scope.sessionKey,
+		};
+		const isCurrentSessionState = hasCurrentSessionOwnership(state, ctx) && (workflowStateHasCurrentScopeEvidence(state, scope) || Boolean(state.worktreePath));
 		if (!isCurrentSessionState) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
 		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
-		if (hasForeignSessionOwnershipEvidence(commentsText, scope)) {
+		if (hasForeignSessionOwnershipEvidence(commentsText, stateScope)) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
 		return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
@@ -1524,6 +1647,9 @@ export function evaluateBashPolicy(
 			reason: "Blocked: workflow is in planning mode; only read-only commands are allowed.",
 		};
 	}
+
+	const worktreeCwdDecision = activeWorktreeCwdDecision(command, options.cwd ?? process.cwd(), workflowState);
+	if (worktreeCwdDecision) return worktreeCwdDecision;
 
 	if ((commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command, commandCwd)) && isProtectedBranch(commandCwd)) {
 		return {
@@ -1631,6 +1757,8 @@ export function evaluateBashPolicy(
 }
 
 export function evaluateToolPolicy(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
+	const worktreeDecision = requiredToolCwdDecision(toolName, input, workflowState);
+	if (worktreeDecision) return worktreeDecision;
 	if (toolName === "dispatch_supervisor") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
 	if (toolName === "review_bead") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
 	if (toolName === "workflow_complete" && workflowState.activeBead && workflowState.bdStatus === "inreview") {
@@ -1655,6 +1783,9 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 			reason: `Blocked: ${targetPath} is protected (${pathReason}).`,
 		};
 	}
+
+	const worktreeDecision = activeWorktreePathDecision(toolName, targetPath, workflowState);
+	if (worktreeDecision) return worktreeDecision;
 
 	const isPlanning = workflowState.planMode === "strict" || workflowState.planMode === "auto";
 	if (isPlanning && (toolName === "edit" || toolName === "write")) {

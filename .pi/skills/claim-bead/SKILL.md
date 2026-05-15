@@ -15,7 +15,7 @@ Claim first, then plan. Do not investigate deeply before claiming.
 2. Read `bd show <ID> --json`.
 3. If closed, stop and propose a follow-up bead. If assigned to someone else, ask before stealing.
 4. Claim and bind session with `workflow_claim(beadId=<ID>)`; this runs bd claim and records active bead, `sessionMode=claimed`, branch, worktree, and start commit.
-5. If the user requested a worktree, create it with an absolute external path and run setup.
+5. If the user requested a worktree, create it with an absolute external path and run setup. Immediately migrate the Pi process/tool cwd into that task worktree (or a subdirectory) and record `worktreePath`/branch in workflow-state. From that point, all mutating commands, tests, bd writes, git operations, and supervisor/reviewer/docs dispatch for the active bead must run from the task worktree; read-only inspection from the main checkout remains allowed.
 6. Enter planning with `workflow_plan_mode(mode=strict)` by default, or `workflow_plan_mode(mode=auto)` only when the user explicitly requested automatic implementation.
 7. Continue with `plan-bead`.
 

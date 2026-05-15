@@ -25,9 +25,9 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```text
    review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>, worktreePath=<task-worktree-path>)
    ```
-4. If orchestrating from a main/session checkout while implementation is in a task worktree, pass `worktreePath=<task-worktree-path>` so `review_bead` runs git diff/checks/reviewer from that worktree and validates it against durable dispatch evidence. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
+4. Run review from the task worktree. If `workflowState.worktreePath` is present, the current tool cwd must already be that worktree or a subdirectory; pass `worktreePath=<task-worktree-path>` so `review_bead` runs git diff/checks/reviewer from that worktree and validates it against durable dispatch evidence. Do not orchestrate mutating review/check commands from `main`; only read-only inspection may happen there. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
    ```text
-   dispatch_reviewer(beadId=<ID>)
+   dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
 5. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.
 6. Simplify/reuse pass:
