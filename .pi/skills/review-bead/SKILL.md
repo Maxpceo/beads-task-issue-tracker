@@ -15,16 +15,16 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    bd comments <ID> --json
    workflow_status
    ```
-   Required: status `inreview` and explicit current-session ownership evidence (matching branch, worktree, or approved-plan/start-commit comment). If ownership is stale, foreign, or ambiguous, do not launch `review_bead` or `dispatch_reviewer`; call `workflow_reset` for stale local state or ask for explicit takeover confirmation.
+   Required: status `inreview` and explicit ownership evidence. Prefer current-session ownership (matching branch/worktree/start), but after typed supervisor dispatch a durable `DISPATCH RESULT` comment with matching branch/worktree/start/end may establish the task worktree review scope. If ownership is stale, foreign, or ambiguous, do not launch `review_bead` or `dispatch_reviewer`; agents can call `workflow_reset` for stale local state, or after explicit takeover/verified dispatch evidence call `workflow_update(bead=<ID>, session=reviewing, branch=<branch>, worktree=<path>, start=<sha>, end=<sha>)`.
 2. Update session context:
    ```text
    workflow_update(bead=<ID>, session=reviewing)
    ```
 3. Prefer executable review workflow when available. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
    ```text
-   review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>)
+   review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>, worktreePath=<task-worktree-path>)
    ```
-4. Until `review_bead` covers the needed scenario, use typed reviewer dispatch:
+4. If orchestrating from a main/session checkout while implementation is in a task worktree, pass `worktreePath=<task-worktree-path>` so `review_bead` runs git diff/checks/reviewer from that worktree and validates it against durable dispatch evidence. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
    ```text
    dispatch_reviewer(beadId=<ID>)
    ```

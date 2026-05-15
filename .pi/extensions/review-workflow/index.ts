@@ -16,6 +16,7 @@ const ReviewParams = {
 		beadId: { type: "string", description: "Bead ID to review" },
 		startCommit: { type: "string", description: "Start commit override for scoped diff" },
 		endCommit: { type: "string", description: "End commit override for scoped diff; use this for stacked branches so later task commits are excluded", default: "HEAD" },
+		worktreePath: { type: "string", description: "Task worktree path to review; use when orchestrating review from a main/session worktree after supervisor dispatch" },
 		dryRun: { type: "boolean", description: "Prepare review context without spawning reviewer", default: false },
 	},
 	required: ["beadId"],
@@ -278,17 +279,18 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const startCommit = params.startCommit || findStartCommit(comments);
 				if (!startCommit) throw new Error("No startCommit provided and no START_COMMIT found in comments.");
 				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
-				const branch = await execRequired(pi, "git", ["-C", ctx.cwd, "branch", "--show-current"]);
-				const worktreePath = await execRequired(pi, "git", ["-C", ctx.cwd, "rev-parse", "--show-toplevel"]);
+				const reviewCwd = params.worktreePath || ctx.cwd;
+				const branch = await execRequired(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
+				const worktreePath = await execRequired(pi, "git", ["-C", reviewCwd, "rev-parse", "--show-toplevel"]);
 				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit })) {
-					throw new Error(`review_bead refused ${params.beadId}: no current-session branch/worktree/start ownership evidence. Run bd comments ${params.beadId} and /workflow-status; use /workflow-reset for stale foreign state or explicitly confirm takeover before reviewing.`);
+					throw new Error(`review_bead refused ${params.beadId}: no matching branch/worktree/start ownership evidence for review scope ${worktreePath || reviewCwd}. Agents can inspect bd comments ${params.beadId}, call workflow_reset for stale local state, or explicitly confirm takeover and bind verified dispatch evidence with workflow_update(bead=${params.beadId}, session=reviewing, branch=<branch>, worktree=<worktree>, start=<sha>, end=<sha>) before retrying review_bead with worktreePath=<worktree>.`);
 				}
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
-				const changedRaw = await execRequired(pi, "git", ["-C", ctx.cwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
+				const changedRaw = await execRequired(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
-				const pathRulesLoaded = await renderPathRulesLoaded(ctx.cwd, changedFiles);
+				const pathRulesLoaded = await renderPathRulesLoaded(reviewCwd, changedFiles);
 				const checkpoints = [
 					"Selected model: bd statuses inreview -> simplified -> reviewed -> accepted -> closed with structured comments as audit evidence.",
 					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
@@ -302,7 +304,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
 					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
-					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
+					const reviewer = await runReviewer(reviewCwd, prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
