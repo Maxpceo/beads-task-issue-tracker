@@ -223,6 +223,21 @@ async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | 
 	}
 }
 
+async function ensureClaimedBdStatus(pi: ExtensionAPI, beadId: string): Promise<{ status?: string; error?: string }> {
+	const claimedBdStatus = await readBdStatus(pi, beadId);
+	if (claimedBdStatus === "in_progress") return { status: claimedBdStatus };
+	if (claimedBdStatus !== "open") return { status: claimedBdStatus };
+
+	const statusResult = await pi.exec("bd", ["update", beadId, "--status", "in_progress", "--json"]);
+	if (statusResult.code !== 0) {
+		return {
+			status: claimedBdStatus,
+			error: `fallback command \`bd update ${beadId} --status in_progress --json\` exited ${statusResult.code}: ${(statusResult.stderr || statusResult.stdout || "<no output>").trim()}`,
+		};
+	}
+	return { status: await readBdStatus(pi, beadId) };
+}
+
 interface RecoveryScope {
 	branch?: string;
 	worktreePath?: string;
@@ -676,9 +691,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd update ${bead} --claim --json\` exited ${claimResult.code}: ${(claimResult.stderr || claimResult.stdout || "<no output>").trim()}`);
 		}
 
-		const claimedBdStatus = await readBdStatus(pi, bead);
+		const { status: claimedBdStatus, error: statusFallbackError } = await ensureClaimedBdStatus(pi, bead);
 		if (claimedBdStatus !== "in_progress") {
-			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress. Local workflow-state was not changed.`);
+			const fallbackDetails = statusFallbackError ? ` ${statusFallbackError}.` : "";
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress.${fallbackDetails} Local workflow-state was not changed.`);
 		}
 
 		setState(
