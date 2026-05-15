@@ -19,12 +19,13 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
    ```
 2. If on `main`, stop: nothing to merge.
 3. Resolve feature-related open beads only. Treat unrelated beads from parallel sessions as background; do not block on them. Any session-active bead on this branch must have terminal bd status (`closed`, `blocked`, or explicit `deferred`/handoff with reason) before merging; Pi session fields are context, not lifecycle authority.
-4. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
-5. Run quality gates:
+4. For each session bead being merged, inspect bd comments for the latest `ACCEPTANCE MATRIX:` or a valid `HUMAN ACCEPTANCE OVERRIDE` with `approver:` and `reason:`. The merge report must include a concise acceptance coverage table. If a session bead has `FAIL`, `NOT RUN`, `BLOCKED`, or `SCOPE GAP` without valid override, stop before PR/merge.
+5. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
+6. Run quality gates:
    ```bash
    pnpm test && npx vue-tsc --noEmit
    ```
-6. Push branch via merge-slot:
+7. Push branch via merge-slot:
    ```bash
    bd merge-slot acquire
    git pull --rebase
@@ -32,8 +33,8 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
    bd merge-slot release
    ```
    If any error happens after acquire, release merge-slot before reporting.
-7. Create PR with `gh pr create`.
-8. Dispatch docs agent for documentation coverage before merge:
+8. Create PR with `gh pr create`.
+9. Dispatch docs agent for documentation coverage before merge:
    ```text
    dispatch_docs_agent(beadId=<ID>)
    ```
@@ -42,21 +43,21 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
    - for user-facing behavior/setup/API changes, update `README.md` or `docs/` as needed;
    - CHANGELOG/README entries must be written in English.
    Documentation can be skipped only for internal/config/test-only changes, workflow-only changes, or explicit user request, and the skip reason must be recorded in the merge report.
-9. Wait for CI when checks exist. Do not merge with failing checks.
-10. Merge PR via merge-slot. If acquire fails, stop before `gh pr merge`:
+10. Wait for CI when checks exist. Do not merge with failing checks.
+11. Merge PR via merge-slot. If acquire fails, stop before `gh pr merge`:
     ```bash
     bd merge-slot acquire
     gh pr merge <PR_NUMBER> --merge --delete-branch
     ```
     If merge fails after acquire, release merge-slot before reporting.
-11. Switch to main, pull, and release slot:
+12. Switch to main, pull, and release slot:
     ```bash
     git checkout main
     git pull origin main
     bd merge-slot release
     ```
     If checkout or pull fails, release merge-slot before reporting. The workflow is not complete while the current session remains on the merged feature branch.
-12. Verify clean/up-to-date state and session-scoped artifact cleanup.
+13. Verify clean/up-to-date state and session-scoped artifact cleanup.
 
 ## Final verdict: can this Pi session close?
 
@@ -105,6 +106,7 @@ Final report format:
 | Push | OK / not required |
 | PR | `#N` URL |
 | Docs | CHANGELOG/README/docs updated or skipped with explicit reason |
+| Acceptance coverage | matrix summary / override with approver+reason / blocker |
 | CI | PASS / skipped with reason |
 | Merge | merge commit / evidence |
 | Branch | `main`, `<sha>` |

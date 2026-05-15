@@ -187,6 +187,42 @@ describe('Pi merge-slot push policy', () => {
 describe('Pi terminal close policy', () => {
   const policyOnlyOptions = { cwd: tmpdir() }
 
+  function withFakeBd(issue: Record<string, unknown>, comments: string, run: (cwd: string) => void, children: Array<Record<string, unknown>> = []): void {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-close-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const issueJson = JSON.stringify([issue]).replace(/'/g, `'\\''`)
+    const childrenJson = JSON.stringify(children).replace(/'/g, `'\\''`)
+    const escapedComments = comments.replace(/'/g, `'\\''`)
+    try {
+      writeFileSync(join(binDir, 'bd'), `#!/usr/bin/env bash
+if [[ "$1" == "show" ]]; then printf '%s' '${issueJson}'; exit 0; fi
+if [[ "$1" == "comments" ]]; then printf '%s' '${escapedComments}'; exit 0; fi
+if [[ "$1" == "list" ]]; then printf '%s' '${childrenJson}'; exit 0; fi
+exit 1
+`)
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+      run(repo)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  }
+
+  const issueWithAcceptance = {
+    id: 'bead-a',
+    status: 'accepted',
+    issue_type: 'bug',
+    description: [
+      '### Acceptance criteria',
+      '- Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled.',
+      '### Verification / acceptance checks',
+      '- Manual /reload in Pi exits with observed selected extensions active.',
+    ].join('\n'),
+  }
+
   it('blocks standard bd close when session context is idle and bd evidence is missing', () => {
     const decision = evaluateBashPolicy('bd close bead-a --reason done', {
       state: 'idle',
@@ -254,6 +290,116 @@ describe('Pi terminal close policy', () => {
 
     expect(decision?.policy).toBe('blockBdCloseWithoutReview')
     expect(decision?.block).toBe(true)
+  })
+
+  it('blocks accepted close when bead has acceptance criteria but no ACCEPTANCE MATRIX', () => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('requires ACCEPTANCE MATRIX')
+    })
+  })
+
+  it.each(['FAIL', 'NOT RUN'])('blocks accepted close when ACCEPTANCE MATRIX contains %s', (result) => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+- criterion: Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled.
+  evidence: Manual /reload in Pi exits with observed selected extensions active.
+  result: ${result}
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain(result === 'FAIL' ? 'FAIL' : 'NOT RUN')
+    })
+  })
+
+  it('allows accepted close with PASS matrix covering acceptance and verification checks', () => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+- criterion: Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled.
+  evidence: Manual /reload in Pi exits with observed selected extensions active.
+  exit code: n/a
+  result: PASS
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+    })
+  })
+
+  it('requires approver and reason for HUMAN ACCEPTANCE OVERRIDE', () => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+- criterion: Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled.
+  evidence: not executed
+  result: NOT RUN
+HUMAN ACCEPTANCE OVERRIDE
+approver: Максим
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('NOT RUN')
+    })
+  })
+
+  it('allows valid HUMAN ACCEPTANCE OVERRIDE with approver and reason', () => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+- criterion: Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled.
+  evidence: not executed
+  result: NOT RUN
+HUMAN ACCEPTANCE OVERRIDE
+approver: Максим
+reason: runtime smoke accepted manually outside this agent session
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+    })
+  })
+
+  it('blocks gdgf-style epic close when children are closed but runtime smoke criterion is not covered by matrix', () => {
+    const epic = {
+      id: 'epic-a',
+      status: 'accepted',
+      issue_type: 'epic',
+      description: [
+        '### Acceptance criteria',
+        '- All child beads are closed or explicitly deferred with recorded reason.',
+        '- .pi/settings.json loads only implemented/stable extensions.',
+        '- Runtime smoke checks confirm Pi starts/reloads with the selected extensions enabled.',
+      ].join('\n'),
+    }
+    withFakeBd(epic, `ACCEPTANCE MATRIX:
+- criterion: All child beads are closed or explicitly deferred with recorded reason.
+  evidence: bd list --parent epic-a
+  result: PASS
+- criterion: .pi/settings.json loads only implemented/stable extensions.
+  evidence: file existence check plus pnpm exec vitest run tests/extensions
+  result: PASS
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close epic-a --reason accepted', {
+        activeBead: 'epic-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('Runtime smoke')
+    })
   })
 })
 

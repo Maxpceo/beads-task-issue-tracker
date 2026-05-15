@@ -773,6 +773,7 @@ interface BdIssueSummary {
 	status?: string;
 	issue_type?: string;
 	title?: string;
+	description?: string;
 	metadata?: Record<string, unknown>;
 }
 
@@ -874,6 +875,95 @@ function canCloseByReviewState(command: string, cwd: string, workflowState: Work
 	const status = workflowState.activeBead === id && workflowState.bdStatus ? workflowState.bdStatus : getBdIssue(cwd, id)?.status;
 	const comments = getBdCommentsText(cwd, id);
 	return status === "accepted" || (status === "reviewed" && /NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments));
+}
+
+function descriptionAcceptanceChecks(description?: string): string[] {
+	if (!description) return [];
+	const sections = [extractSection(description, "### Acceptance criteria"), extractSection(description, "### Verification / acceptance checks")];
+	return sections
+		.flatMap((section) => section.split(/\r?\n/))
+		.map((line) => line.replace(/^\s*(?:[-*]|\d+\.)\s+/, "").trim())
+		.filter((line) => line.length > 0 && !/^###\s+/.test(line));
+}
+
+function latestAcceptanceMatrix(commentsText: string): string | undefined {
+	const index = commentsText.toUpperCase().lastIndexOf("ACCEPTANCE MATRIX:");
+	if (index < 0) return undefined;
+	return commentsText.slice(index).trim();
+}
+
+function hasValidHumanAcceptanceOverride(commentsText: string): boolean {
+	const index = commentsText.toUpperCase().lastIndexOf("HUMAN ACCEPTANCE OVERRIDE");
+	if (index < 0) return false;
+	const override = commentsText.slice(index);
+	return /(?:approver|approved[_ -]?by)\s*:\s*\S+/i.test(override) && /reason\s*:\s*\S+/i.test(override);
+}
+
+const ACCEPTANCE_MATRIX_COMMON_WORDS = new Set([
+	"acceptance",
+	"check",
+	"checks",
+	"criteria",
+	"criterion",
+	"evidence",
+	"exit",
+	"manual",
+	"observed",
+	"result",
+	"should",
+	"verification",
+	"должен",
+	"должна",
+	"должно",
+	"если",
+	"критерий",
+	"проверка",
+	"результат",
+]);
+
+function acceptanceCoverageTokens(value: string): string[] {
+	const normalized = value.toLowerCase().replace(/ё/g, "е");
+	return Array.from(new Set(normalized.match(/[a-zа-я0-9]+/g) ?? [])).filter((token) => token.length >= 4 && !ACCEPTANCE_MATRIX_COMMON_WORDS.has(token));
+}
+
+function matrixCoversCheck(matrixText: string, check: string): boolean {
+	const normalizedMatrix = matrixText.toLowerCase().replace(/ё/g, "е");
+	const normalizedCheck = check.toLowerCase().replace(/ё/g, "е");
+	const highSignalGroups = [
+		/(?:runtime|smoke|reload|starts?\/reloads?|pi\s+starts?)/,
+		/(?:settings\.json|stable\s+extensions|implemented\/stable)/,
+		/(?:child\s+beads|children|дочерн)/,
+	];
+	for (const group of highSignalGroups) {
+		if (group.test(normalizedCheck) && !group.test(normalizedMatrix)) return false;
+	}
+	const matrixTokens = new Set(acceptanceCoverageTokens(matrixText));
+	const checkTokens = acceptanceCoverageTokens(check);
+	if (checkTokens.length === 0) return true;
+	const matches = checkTokens.filter((token) => matrixTokens.has(token)).length;
+	return matches >= Math.min(2, checkTokens.length);
+}
+
+function validateAcceptanceMatrixForClose(cwd: string, id: string): string | undefined {
+	const issue = getBdIssue(cwd, id);
+	const checks = descriptionAcceptanceChecks(issue?.description);
+	if (checks.length === 0) return undefined;
+	const comments = getBdCommentsText(cwd, id);
+	if (hasValidHumanAcceptanceOverride(comments)) return undefined;
+	const matrix = latestAcceptanceMatrix(comments);
+	if (!matrix) return `Blocked: terminal close for ${id} requires ACCEPTANCE MATRIX in bd comments because the bead has acceptance criteria.`;
+	if (/result\s*:\s*(?:FAIL|NOT\s+RUN|BLOCKED|SCOPE\s+GAP)\b/i.test(matrix) || /\b(?:FAIL|NOT\s+RUN|BLOCKED|SCOPE\s+GAP)\b/i.test(matrix.replace(/HUMAN ACCEPTANCE OVERRIDE[\s\S]*$/i, ""))) {
+		return `Blocked: ACCEPTANCE MATRIX for ${id} contains FAIL/NOT RUN/BLOCKED/SCOPE GAP. Fix the criteria or add HUMAN ACCEPTANCE OVERRIDE with approver and reason.`;
+	}
+	if (!/result\s*:\s*PASS\b|\bPASS\b/i.test(matrix)) {
+		return `Blocked: ACCEPTANCE MATRIX for ${id} must include PASS result evidence or a valid HUMAN ACCEPTANCE OVERRIDE.`;
+	}
+	const uncovered = checks.filter((check) => !matrixCoversCheck(matrix, check));
+	const firstUncovered = uncovered[0];
+	if (firstUncovered) {
+		return `Blocked: ACCEPTANCE MATRIX for ${id} does not cover acceptance/verification item: ${firstUncovered.slice(0, 140)}.`;
+	}
+	return undefined;
 }
 
 function hasPrMergedException(command: string): boolean {
@@ -1510,12 +1600,22 @@ export function evaluateBashPolicy(
 	// Per-task bead closure is allowed before merge-to-main in multi-task sessions.
 	// Session-final merge evidence is enforced by merge-to-main/final verdict workflows,
 	// not by blocking every accepted bead close on a feature branch.
-	if ((commandClosesBead(command) || commandDirectlySetsClosed(command)) && !canCloseByReviewState(command, commandCwd, workflowState)) {
-		return {
-			policy: "blockBdCloseWithoutReview",
-			block: true,
-			reason: "Blocked: terminal close requires bd status accepted, or bd status reviewed with documented no-acceptance shortcut, or an explicit policy override.",
-		};
+	if (commandClosesBead(command) || commandDirectlySetsClosed(command)) {
+		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId) : undefined;
+		if (matrixError) {
+			return {
+				policy: "blockBdCloseWithoutReview",
+				block: true,
+				reason: matrixError,
+			};
+		}
+		if (!canCloseByReviewState(command, commandCwd, workflowState)) {
+			return {
+				policy: "blockBdCloseWithoutReview",
+				block: true,
+				reason: "Blocked: terminal close requires bd status accepted, or bd status reviewed with documented no-acceptance shortcut, or an explicit policy override.",
+			};
+		}
 	}
 
 	const invalidReviewTransition = validateReviewTransitionForCommand(command, commandCwd);
