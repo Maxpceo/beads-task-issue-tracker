@@ -1282,6 +1282,30 @@ describe('Pi active worktree cwd lock policy', () => {
     }
   })
 
+  it('blocks path-option gate commands from main and allows the same commands from the locked worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      for (const command of [
+        `pnpm --dir ${worktree} test`,
+        `pnpm --dir ${worktree} exec vitest`,
+        `pnpm --dir ${worktree} build`,
+        `npx --prefix ${worktree} vue-tsc --noEmit`,
+      ]) {
+        const fromMain = evaluateBashPolicy(command, lockedState(worktree), { cwd: main })
+        const fromWorktree = evaluateBashPolicy(command, lockedState(worktree), { cwd: worktree })
+
+        expect(fromMain?.policy).toBe('enforceActiveWorktreeCwd')
+        expect(fromMain?.reason).toContain('tests')
+        expect(fromWorktree?.policy).not.toBe('enforceActiveWorktreeCwd')
+        expect(fromWorktree?.policy).not.toBe('blockMainMutation')
+      }
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
   it('blocks cd/git -C attempts that redirect mutating work outside the locked worktree', () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')

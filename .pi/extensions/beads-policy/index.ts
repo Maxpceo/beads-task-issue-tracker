@@ -309,7 +309,13 @@ function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot): boolean {
 }
 
 function commandHasTestOrGateOperation(command: string): boolean {
-	return /(^|[;&|]\s*)(?:pnpm\s+(?:test|exec\s+vitest|vitest|tauri:dev|build)|npm\s+(?:test|run\s+(?:test|build|typecheck))|npx\s+vue-tsc\b|cargo\s+(?:check|test|build)|make\s+(?:test|check)|just\s+(?:test|check))\b/.test(command);
+	const shellWord = String.raw`(?:"[^"]+"|'[^']+'|\S+)`;
+	const optionalPnpmPathOptions = String.raw`(?:(?:--dir|-C)(?:\s+|=)${shellWord}\s+)*`;
+	const optionalNpxPathOptions = String.raw`(?:(?:--prefix)(?:\s+|=)${shellWord}\s+)*`;
+	const gatePattern = new RegExp(
+		String.raw`(^|[;&|]\s*)(?:pnpm\s+${optionalPnpmPathOptions}(?:test|exec\s+vitest|vitest|tauri:dev|build)|npm\s+(?:test|run\s+(?:test|build|typecheck))|npx\s+${optionalNpxPathOptions}vue-tsc\b|cargo\s+(?:check|test|build)|make\s+(?:test|check)|just\s+(?:test|check))\b`,
+	);
+	return gatePattern.test(command);
 }
 
 function commandRequiresActiveWorktreeCwd(command: string, processCwd: string): boolean {
