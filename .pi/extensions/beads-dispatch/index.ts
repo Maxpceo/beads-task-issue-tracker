@@ -402,9 +402,9 @@ async function dispatch(
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, prompt);
 	if (mode === "supervisor") {
-		pi.events.emit("workflow-state:update", { activeBead: bead.id, sessionMode: "implementing", branch, worktreePath, startCommit });
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", sessionMode: "implementing", branch, worktreePath, startCommit });
 	} else if (mode === "reviewer") {
-		pi.events.emit("workflow-state:update", { activeBead: bead.id, sessionMode: "reviewing", branch, worktreePath, startCommit });
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "reviewing", sessionMode: "reviewing", branch, worktreePath, startCommit });
 	}
 	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, exitCode: 0, output: prompt, stderr: "" };
 
@@ -413,9 +413,11 @@ async function dispatch(
 		const endCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 		const updatedBead = await getBead(pi, bead.id);
 		await addEndCommitComment(pi, bead.id, agentName, branch, worktreePath, startCommit, endCommit);
+		const readyForReview = updatedBead.status === "inreview";
 		pi.events.emit("workflow-state:update", {
 			activeBead: bead.id,
-			sessionMode: updatedBead.status === "inreview" ? "inreview" : "implementing",
+			state: readyForReview ? "inreview" : "implementing",
+			sessionMode: readyForReview ? "inreview" : "implementing",
 			branch,
 			worktreePath,
 			startCommit,

@@ -42,15 +42,16 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    ```
 5. The tool fail-closes readiness, collects cwd branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 6. After supervisor returns, inspect status/report.
-7. If completed and bead is `inreview`, record the exact implementation end commit and update state:
+7. If completed and bead is ready for review, use the typed transition guard instead of raw `bd update --status inreview` when available:
    ```bash
    git rev-parse HEAD
    bd comments add <ID> "END_COMMIT: <sha>"
    ```
    ```text
-   workflow_update(session=inreview, end=<sha>)
+   workflow_submit_for_review(beadId=<ID>, reason=<fresh evidence summary>, endCommit=<sha>)
    ```
-8. Continue with `review-bead` automatically; do not start another bead while this one is `inreview`.
+   This synchronizes `bdStatus=inreview` with `state/sessionMode=inreview`. If a supervisor used raw bd update, immediately repair the session with `workflow_update(bead=<ID>, state=inreview, session=inreview, end=<sha>)` before any final report.
+8. Continue with `review-bead` automatically; do not start another bead or stop with a normal final report while this one is `inreview`. If review cannot run, return an explicit `BLOCKED` report with the blocker and exact next action.
 
 ## Supervisor selection
 

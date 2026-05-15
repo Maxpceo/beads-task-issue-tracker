@@ -470,6 +470,37 @@ WORKTREE: ${repoRoot}
     }
   })
 
+  it('allows risky mutation when a scoped dispatch comment carries approved plan context from the prompt', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      installFakeBd(binDir, `DISPATCH (test-supervisor)
+BRANCH: fix/current
+WORKTREE: ${repoRoot}
+START_COMMIT: ${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()}
+
+APPROVED PLAN:
+PLAN APPROVED
+Approved-by: Максим
+`)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
   it('blocks risky mutation when same-session comments only have dispatch evidence', () => {
     const repo = createRepoWithRiskyPolicyDiff()
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
@@ -603,19 +634,41 @@ describe('Pi bd-first active bead policy', () => {
   })
 
 
-  it('records bd inreview without coercing session state for redirect decisions', () => {
+  it('coerces implementing session to inreview when live bd status is inreview', () => {
     const reconciled = reconcileWorkflowStateWithBdStatus({
       activeBead: 'bead-a',
       state: 'implementing',
+      sessionMode: 'implementing',
     }, 'inreview')
 
     const decision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, reconciled)
 
-    expect(reconciled.state).toBe('implementing')
+    expect(reconciled.state).toBe('inreview')
+    expect(reconciled.sessionMode).toBe('inreview')
     expect(reconciled.bdStatus).toBe('inreview')
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.reason).toContain('review-bead / review_bead')
     expect(decision?.reason).not.toContain('implementing')
+  })
+
+  it('blocks workflow_complete on active inreview bead unless it is an explicit blocker or deferral', () => {
+    const decision = evaluateToolPolicy('workflow_complete', { state: 'closed' }, {
+      activeBead: 'bead-a',
+      state: 'inreview',
+      bdStatus: 'inreview',
+    })
+
+    expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('review-bead / review_bead')
+
+    const blockerDecision = evaluateToolPolicy('workflow_complete', { state: 'blocked', reason: 'review_bead unavailable' }, {
+      activeBead: 'bead-a',
+      state: 'inreview',
+      bdStatus: 'inreview',
+    })
+
+    expect(blockerDecision).toBeUndefined()
   })
 
   it('does not let broad bd in_progress clobber local planning state', () => {

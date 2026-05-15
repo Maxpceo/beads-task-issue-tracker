@@ -1075,9 +1075,10 @@ function hasScopeOwnershipEvidence(commentsText: string, scope: RecoveryScope): 
 function hasScopedApprovedSupervisorWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
 	const comments = getBdCommentsText(cwd, beadId);
 	const blocks = commentEvidenceBlocks(comments);
-	const hasApprovedPlan = blocks.some((block) => /PLAN APPROVED/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+	const hasScopedApprovedPlan = blocks.some((block) => /PLAN APPROVED/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+	const hasAnyApprovedPlan = /PLAN APPROVED/i.test(comments);
 	const hasSupervisorDispatch = blocks.some((block) => /DISPATCH(?: RESULT)?/i.test(block) && hasScopeOwnershipEvidence(block, scope));
-	return hasApprovedPlan && hasSupervisorDispatch;
+	return hasSupervisorDispatch && (hasScopedApprovedPlan || hasAnyApprovedPlan);
 }
 
 function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
@@ -1245,7 +1246,13 @@ export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot,
 			endCommit: undefined,
 		};
 	}
-	return { ...state, bdStatus };
+	const next = { ...state, bdStatus };
+	if (bdStatus === "inreview" && state.state === "implementing") {
+		next.state = "inreview";
+		next.sessionMode = "inreview";
+	}
+	if (bdStatus === "inreview" && state.sessionMode === "implementing") next.sessionMode = "inreview";
+	return next;
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
@@ -1440,6 +1447,16 @@ export function evaluateBashPolicy(
 export function evaluateToolPolicy(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
 	if (toolName === "dispatch_supervisor") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
 	if (toolName === "review_bead") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
+	if (toolName === "workflow_complete" && workflowState.activeBead && workflowState.bdStatus === "inreview") {
+		const targetState = String(input.state ?? "");
+		if (targetState !== "blocked" && targetState !== "deferred") {
+			return {
+				policy: "enforceActiveBeadLifecycle",
+				block: true,
+				reason: `Blocked: active bead ${workflowState.activeBead} is bd:inreview; workflow_complete ${targetState || "without blocker"} would stop before review. Run review-bead / review_bead for ${workflowState.activeBead}, or use workflow_complete state=blocked|deferred with an explicit blocker and next action if review cannot run.`,
+			};
+		}
+	}
 	return undefined;
 }
 
