@@ -614,6 +614,15 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			return false;
 		}
 
+		const claimedBdStatus = await readBdStatus(pi, bead);
+		if (claimedBdStatus !== "in_progress") {
+			ctx.ui.notify(
+				`Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after bd update --claim; expected in_progress. Local workflow-state was not changed.`,
+				"error",
+			);
+			return false;
+		}
+
 		setState(
 			{
 				activeBead: bead,
@@ -622,6 +631,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				worktreePath: await detectWorktreePath(pi, ctx.cwd),
 				startCommit: await detectStartCommit(pi, ctx.cwd),
 				sessionKey: currentSessionKey(ctx),
+				bdStatus: claimedBdStatus,
 			},
 			ctx,
 		);
@@ -785,7 +795,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			async execute(_id: string, params: { beadId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const ok = await claimWorkflowBead(params.beadId, ctx);
 				await ensureReconciled(ctx);
-				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}`, { ok, ...cloneState(workflowState) });
+				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}: ${formatState(workflowState)}`, { ok, ...cloneState(workflowState) });
 			},
 		});
 
