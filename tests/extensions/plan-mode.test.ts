@@ -33,6 +33,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
 
 function makeHarness() {
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
+  const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
   const statuses: Record<string, string | undefined> = {}
   const widgets: Record<string, string[] | undefined> = {}
@@ -43,6 +44,7 @@ function makeHarness() {
   const pi: any = {
     registerFlag() {},
     registerCommand: (name: string, config: { handler: (args: string, ctx: any) => unknown }) => commandHandlers.set(name, config),
+    registerTool: (tool: any) => toolHandlers.set(tool.name, tool),
     registerShortcut() {},
     on: (event: string, handler: (event: any, ctx: any) => unknown) => {
       if (event === 'input') inputHandlers.push(handler)
@@ -53,6 +55,7 @@ function makeHarness() {
       execCalls.push({ command, args })
       if (command === 'bd' && args[0] === 'show') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"open"}]', stderr: '', code: 0 }
       if (command === 'bd' && args[0] === 'update') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"in_progress"}]', stderr: '', code: 0 }
+      if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '{"ok":true}', stderr: '', code: 0 }
       if (command === 'git' && args.includes('branch')) return { stdout: 'task/test\n', stderr: '', code: 0 }
       if (command === 'git' && args.includes('--show-toplevel')) return { stdout: '/tmp/project\n', stderr: '', code: 0 }
       if (command === 'git' && args.includes('HEAD')) return { stdout: 'abc123\n', stderr: '', code: 0 }
@@ -65,6 +68,8 @@ function makeHarness() {
     },
   }
   const ctx: any = {
+    cwd: '/tmp/project',
+    sessionManager: { getSessionId: () => 'session-current' },
     hasUI: true,
     ui: {
       notify() {},
@@ -78,7 +83,7 @@ function makeHarness() {
   }
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, execCalls, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, execCalls, ctx }
 }
 
 describe('Pi plan-mode workflow synchronization', () => {
@@ -131,5 +136,35 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+  })
+})
+
+
+describe('Pi plan-mode typed workflow tools', () => {
+  it('workflow_plan_mode strict and off change active tools and workflow state', async () => {
+    const { toolHandlers, workflowUpdates, activeTools, ctx } = makeHarness()
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-1', { mode: 'strict', reason: 'plan first' }, undefined, undefined, ctx)
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-2', { mode: 'off', reason: 'cancel' }, undefined, undefined, ctx)
+
+    expect(workflowUpdates.at(-2)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
+    expect(activeTools.at(-2)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+  })
+
+  it('workflow_plan_approved requires evidence and only updates state after bd comment succeeds', async () => {
+    const { toolHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness()
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-1', { beadId: 'bead-plan', planEvidence: 'too short' }, undefined, undefined, ctx)
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-2', { beadId: 'bead-plan', planEvidence: 'Plan: update typed tools. Files: .pi/extensions/plan-mode/index.ts. Acceptance: tests verify approval.' }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('blocked')
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(execCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
   })
 })

@@ -602,14 +602,14 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 	if (bdStatus) {
 		if (TERMINAL_BD_STATUSES.has(bdStatus)) return undefined;
 		const label = NON_TERMINAL_BD_STATUSES.has(bdStatus) ? bdStatus : `unknown bd status ${bdStatus}`;
-		if (bdStatus === "inreview") return `Blocked: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
-		return `Blocked: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+		if (bdStatus === "inreview") return `Blocked: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
+		return `Blocked: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
 	}
 
 	if (TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
 	if (!NON_TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
-	if (legacyState === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
-	return `Blocked: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+	if (legacyState === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
+	return `Blocked: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
 }
 
 function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -1196,7 +1196,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockRawBdClaim",
 			block: true,
-			reason: `Blocked: use /workflow-claim ${rawClaimId} instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
+			reason: `Blocked: use the workflow_claim typed tool (or optional human UI shortcut /workflow-claim ${rawClaimId}) instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
 		};
 	}
 

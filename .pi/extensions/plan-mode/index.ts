@@ -29,6 +29,31 @@ import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 
+const WorkflowPlanModeParams = {
+	type: "object",
+	properties: {
+		mode: { type: "string", enum: ["off", "strict", "auto"], description: "Target plan mode" },
+		reason: { type: "string", description: "Visible checkpoint reason for the mode change" },
+	},
+	required: ["mode"],
+	additionalProperties: false,
+} as const;
+
+const WorkflowPlanApprovedParams = {
+	type: "object",
+	properties: {
+		beadId: { type: "string", description: "Bead receiving the PLAN APPROVED evidence comment" },
+		planEvidence: { type: "string", description: "Approved plan text or concise evidence. Must include enough details to audit approval." },
+		approvedBy: { type: "string", description: "Approver name", default: "Максим" },
+	},
+	required: ["beadId", "planEvidence"],
+	additionalProperties: false,
+} as const;
+
+function toolText(text: string, details: Record<string, unknown> = {}) {
+	return { content: [{ type: "text", text }], details };
+}
+
 // Type guard for assistant messages
 function isAssistantMessage(m: AgentMessage): m is AssistantMessage {
 	return m.role === "assistant" && Array.isArray(m.content);
@@ -71,6 +96,7 @@ function isNaturalLanguagePlanModeActivation(text: string): boolean {
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
+	const workflowPi = pi as ExtensionAPI & { registerTool?: (tool: any) => void };
 	let planModeEnabled = false;
 	let autoExecuteEnabled = false;
 	let executionMode = false;
@@ -125,6 +151,60 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const fullArgs = ctx.cwd ? ["-C", ctx.cwd, ...args] : args;
 		const result = await pi.exec("git", fullArgs);
 		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
+	}
+
+	function currentSessionKey(ctx: ExtensionContext): string | undefined {
+		const manager = ctx.sessionManager;
+		const sessionId = manager?.getSessionId?.();
+		if (sessionId) return `id:${sessionId}`;
+		const sessionFile = manager?.getSessionFile?.();
+		if (sessionFile) return `file:${sessionFile}`;
+		const leafId = manager?.getLeafId?.();
+		if (leafId) return `leaf:${leafId}`;
+		return undefined;
+	}
+
+	function validatePlanEvidence(planEvidence: string): string | undefined {
+		const trimmed = planEvidence.trim();
+		if (trimmed.length < 40) return "planEvidence must contain at least 40 characters of auditable plan/approval evidence";
+		if (!/(plan|план|acceptance|verification|files|риски|провер)/i.test(trimmed)) return "planEvidence must mention plan content, files, acceptance, verification, or risks";
+		return undefined;
+	}
+
+	async function approvePlanTool(params: { beadId: string; planEvidence: string; approvedBy?: string }, ctx: ExtensionContext) {
+		const evidenceError = validatePlanEvidence(params.planEvidence);
+		if (evidenceError) return toolText(`workflow_plan_approved blocked: ${evidenceError}`, { ok: false, error: evidenceError });
+
+		const branch = await detectGitValue(ctx, ["branch", "--show-current"]);
+		const worktreePath = await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]);
+		const startCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+		const sessionKey = currentSessionKey(ctx);
+		const approvedAt = new Date().toISOString();
+		const comment = [
+			"PLAN APPROVED",
+			`Approved-by: ${params.approvedBy || "Максим"}`,
+			`Approved-at: ${approvedAt}`,
+			branch ? `BRANCH: ${branch}` : undefined,
+			worktreePath ? `WORKTREE: ${worktreePath}` : undefined,
+			startCommit ? `START_COMMIT: ${startCommit}` : undefined,
+			sessionKey ? `PI_SESSION_KEY: ${sessionKey}` : undefined,
+			"",
+			params.planEvidence.trim(),
+		].filter((line) => line !== undefined).join("\n");
+
+		const result = await pi.exec("bd", ["comments", "add", params.beadId, comment]);
+		if (result.code !== 0) {
+			return toolText(`workflow_plan_approved failed before session update: ${(result.stderr || result.stdout).trim()}`, { ok: false, code: result.code });
+		}
+
+		planModeEnabled = false;
+		autoExecuteEnabled = false;
+		executionMode = false;
+		pi.setActiveTools(NORMAL_MODE_TOOLS);
+		syncWorkflowPlanMode(ctx, "off", "implementing", { activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
+		updateStatus(ctx);
+		persistState();
+		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
 	}
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
@@ -189,6 +269,30 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			autoExecute: autoExecuteEnabled,
 			todos: todoItems,
 			executing: executionMode,
+		});
+	}
+
+	if (workflowPi.registerTool) {
+		workflowPi.registerTool({
+			name: "workflow_plan_mode",
+			label: "Workflow Plan Mode",
+			description: "Enter/exit strict or auto plan mode and update active tool restrictions plus workflow-state metadata. Slash commands are optional human shortcuts.",
+			parameters: WorkflowPlanModeParams,
+			async execute(_id: string, params: { mode: "off" | "strict" | "auto"; reason?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				if (params.mode === "off") exitPlanMode(ctx);
+				else enterPlanMode(ctx, params.mode === "auto");
+				return toolText(`workflow_plan_mode=${params.mode}${params.reason ? `: ${params.reason}` : ""}`, { mode: params.mode, activeTools: params.mode === "off" ? NORMAL_MODE_TOOLS : PLAN_MODE_TOOLS });
+			},
+		});
+
+		workflowPi.registerTool({
+			name: "workflow_plan_approved",
+			label: "Workflow Plan Approved",
+			description: "Write PLAN APPROVED evidence to bd and atomically exit plan mode/update workflow-state only after the comment succeeds.",
+			parameters: WorkflowPlanApprovedParams,
+			async execute(_id: string, params: { beadId: string; planEvidence: string; approvedBy?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				return approvePlanTool(params, ctx);
+			},
 		});
 	}
 

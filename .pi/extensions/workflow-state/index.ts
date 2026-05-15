@@ -6,6 +6,7 @@ interface ExtensionAPI {
 	events: { on(name: string, handler: (event: WorkflowStateUpdateEvent) => void): void };
 	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: { description: string; handler: (args: string, ctx: ExtensionContext) => unknown }): void;
+	registerTool?(tool: any): void;
 }
 
 interface ExtensionContext {
@@ -273,7 +274,7 @@ async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope)
 }
 
 function staleForeignRecoveryMessage(beadId: string, reason: string): string {
-	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Use /workflow-reset to clear stale local state, or explicitly confirm takeover and run /workflow-set-bead ${beadId} <state> after verifying branch/worktree ownership.`;
+	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Agents can call workflow_reset to clear stale local state, or explicitly confirm takeover and call workflow_update with bead=${beadId} after verifying branch/worktree ownership. /workflow-reset and /workflow-update remain optional human UI shortcuts.`;
 }
 
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
@@ -378,6 +379,58 @@ function parseKeyValueArgs(args: string): Record<string, string> {
 	return result;
 }
 
+
+const WorkflowStatusParams = {
+	type: "object",
+	properties: {},
+	additionalProperties: false,
+} as const;
+
+const WorkflowClaimParams = {
+	type: "object",
+	properties: { beadId: { type: "string", description: "Bead ID to claim and bind to this Pi session" } },
+	required: ["beadId"],
+	additionalProperties: false,
+} as const;
+
+const WorkflowResetParams = {
+	type: "object",
+	properties: { reason: { type: "string", description: "Why the local workflow state is being reset" } },
+	additionalProperties: false,
+} as const;
+
+const WorkflowUpdateParams = {
+	type: "object",
+	properties: {
+		bead: { type: "string" },
+		state: { type: "string", enum: WORKFLOW_STATES },
+		session: { type: "string" },
+		branch: { type: "string" },
+		worktree: { type: "string" },
+		start: { type: "string" },
+		end: { type: "string" },
+		plan: { type: "string", enum: ["off", "strict", "auto"] },
+		approved: { type: "boolean" },
+		slot: { type: "string", enum: ["held", "free"] },
+	},
+	additionalProperties: false,
+} as const;
+
+const WorkflowCompleteParams = {
+	type: "object",
+	properties: {
+		state: { type: "string", enum: ["closed", "blocked", "deferred", "merged"] },
+		reason: { type: "string" },
+		endCommit: { type: "string" },
+	},
+	required: ["state", "reason"],
+	additionalProperties: false,
+} as const;
+
+function toolText(text: string, details: unknown = {}) {
+	return { content: [{ type: "text", text }], details };
+}
+
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
 
@@ -395,6 +448,19 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	function setState(partial: Partial<WorkflowState>, ctx?: ExtensionContext): WorkflowState {
 		assignState(partial);
+		persist(ctx);
+		return workflowState;
+	}
+
+	async function resetWorkflowState(ctx: ExtensionContext): Promise<WorkflowState> {
+		workflowState = {
+			...cloneState(DEFAULT_STATE),
+			branch: await detectBranch(pi, ctx.cwd),
+			worktreePath: await detectWorktreePath(pi, ctx.cwd),
+			startCommit: await detectStartCommit(pi, ctx.cwd),
+			runtimeOwnerKey: currentRuntimeOwnerKey(),
+			updatedAt: new Date().toISOString(),
+		};
 		persist(ctx);
 		return workflowState;
 	}
@@ -453,17 +519,9 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("workflow-reset", {
-		description: "Reset Pi session context to idle",
+		description: "Reset Pi session context to idle (optional human UI shortcut; agents can call workflow_reset)",
 		handler: async (_args, ctx) => {
-			workflowState = {
-				...cloneState(DEFAULT_STATE),
-				branch: await detectBranch(pi, ctx.cwd),
-				worktreePath: await detectWorktreePath(pi, ctx.cwd),
-				startCommit: await detectStartCommit(pi, ctx.cwd),
-				runtimeOwnerKey: currentRuntimeOwnerKey(),
-				updatedAt: new Date().toISOString(),
-			};
-			persist(ctx);
+			await resetWorkflowState(ctx);
 			ctx.ui.notify("Workflow session context reset to idle", "info");
 		},
 	});
@@ -646,6 +704,81 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+
+	if (pi.registerTool) {
+		pi.registerTool({
+			name: "workflow_status",
+			label: "Workflow Status",
+			description: "Inspect current Pi workflow-state with live bd reconciliation. Agent-operable equivalent of optional /workflow-status.",
+			parameters: WorkflowStatusParams,
+			async execute(_id: string, _params: Record<string, never>, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				await ensureReconciled(ctx);
+				return toolText(formatState(workflowState), cloneState(workflowState));
+			},
+		});
+
+		pi.registerTool({
+			name: "workflow_claim",
+			label: "Workflow Claim",
+			description: "Claim a bead via bd and bind it to this Pi session without requiring slash commands.",
+			parameters: WorkflowClaimParams,
+			async execute(_id: string, params: { beadId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				const ok = await claimWorkflowBead(params.beadId, ctx);
+				await ensureReconciled(ctx);
+				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}`, { ok, ...cloneState(workflowState) });
+			},
+		});
+
+		pi.registerTool({
+			name: "workflow_reset",
+			label: "Workflow Reset",
+			description: "Clear stale/recoverable local Pi workflow-state to idle without requiring /workflow-reset.",
+			parameters: WorkflowResetParams,
+			async execute(_id: string, params: { reason?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				await resetWorkflowState(ctx);
+				return toolText(`workflow_reset completed${params.reason ? `: ${params.reason}` : ""}. ${formatState(workflowState)}`, cloneState(workflowState));
+			},
+		});
+
+		pi.registerTool({
+			name: "workflow_update",
+			label: "Workflow Update",
+			description: "Update typed Pi session workflow fields; agent-operable equivalent of optional /workflow-update.",
+			parameters: WorkflowUpdateParams,
+			async execute(_id: string, params: { bead?: string; state?: WorkflowStateName; session?: string; branch?: string; worktree?: string; start?: string; end?: string; plan?: PlanMode; approved?: boolean; slot?: "held" | "free" }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				const next: Partial<WorkflowState> = {};
+				if (params.state) next.state = params.state;
+				if (params.bead) {
+					next.activeBead = params.bead;
+					next.sessionKey = currentSessionKey(ctx);
+				}
+				if (params.branch) next.branch = params.branch;
+				if (params.worktree) next.worktreePath = params.worktree;
+				if (params.start) next.startCommit = params.start;
+				if (params.end) next.endCommit = params.end;
+				if (params.plan) next.planMode = params.plan;
+				if (params.approved !== undefined) next.planApproved = params.approved;
+				if (params.session) next.sessionMode = params.session;
+				if (params.slot) next.mergeSlotHeld = params.slot === "held";
+				assignState(next);
+				const reconciled = await ensureReconciled(ctx);
+				if (!reconciled) persist(ctx);
+				return toolText(`workflow_update completed: ${formatState(workflowState)}`, cloneState(workflowState));
+			},
+		});
+
+		pi.registerTool({
+			name: "workflow_complete",
+			label: "Workflow Complete",
+			description: "Mark local Pi workflow-state terminal after external bd/review workflow completion; does not close bd or push.",
+			parameters: WorkflowCompleteParams,
+			async execute(_id: string, params: { state: "closed" | "blocked" | "deferred" | "merged"; reason: string; endCommit?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				setState({ state: params.state, sessionMode: params.state, endCommit: params.endCommit ?? (await detectStartCommit(pi, ctx.cwd)), activeBead: undefined, bdStatus: undefined, planMode: "off", planApproved: false }, ctx);
+				return toolText(`workflow_complete recorded ${params.state}: ${params.reason}. ${formatState(workflowState)}`, cloneState(workflowState));
+			},
+		});
+	}
+
 	pi.on("session_start", async (_event, ctx) => {
 		const entries = ctx.sessionManager.getEntries();
 		const lastStateEntry = entries
@@ -666,7 +799,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		return {
 			message: {
 				customType: "workflow-state-context",
-				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nUse /workflow-status to inspect session context. Use /workflow-update for explicit session context changes; bdStatus is live read-only issue status.`,
+				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nAgents use workflow_status/workflow_update typed tools for session context; /workflow-status and /workflow-update are optional human UI shortcuts. bdStatus is live read-only issue status.`,
 				display: false,
 			},
 		};

@@ -19,7 +19,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 2. File follow-up beads for remaining work using the full `AGENTS.md` template. Track every follow-up bead created in this session for the final report.
 3. Resolve session beads before push:
    - `inreview` with `CODE REVIEW: APPROVED` and acceptance evidence may be closed by the orchestrator;
-   - if the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat it as human acceptance: record acceptance evidence/comment when needed, run `/workflow-update bead=<ID> session=accepted`, close via standard `bd close`, then run `/workflow-update session=closed` or reset to idle;
+   - if the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat it as human acceptance: record acceptance evidence/comment when needed, run `workflow_update(bead=<ID>, session=accepted)`, close via standard `bd close`, then run `workflow_complete(state=closed, reason=<bead closed>)` or reset to idle;
    - `inreview` without approval or human acceptance remains open and must be listed;
    - `in_progress` remains open unless the work is explicitly accepted/closed by an allowed fast-path route.
    - Do not use `land` to skip bd lifecycle authority: current-session active beads with bd status `inreview` still need `review-bead` or explicit human acceptance, and active non-terminal bd statuses block unrelated next work unless explicitly handed off/deferred with reason.

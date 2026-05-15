@@ -16,6 +16,7 @@ function makeHarness(options: {
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
+  const toolHandlers = new Map<string, any>()
   const appended: Array<{ type: string; data: unknown }> = []
   const notifications: Array<{ message: string; level?: string }> = []
   const statuses: Record<string, string | undefined> = {}
@@ -63,6 +64,7 @@ function makeHarness(options: {
     events: { on: (name: string, handler: (event: unknown, ctx: any) => unknown) => eventHandlers.set(name, handler) },
     on: (name: string, handler: (event: unknown, ctx: any) => unknown) => eventHandlers.set(name, handler),
     registerCommand: (name: string, config: any) => commandHandlers.set(name, config),
+    registerTool: (tool: any) => toolHandlers.set(tool.name, tool),
   }
 
   const ctx: any = {
@@ -76,7 +78,7 @@ function makeHarness(options: {
 
   workflowStateExtension(pi)
 
-  return { eventHandlers, commandHandlers, ctx, appended, notifications, statuses }
+  return { eventHandlers, commandHandlers, toolHandlers, ctx, appended, notifications, statuses }
 }
 
 describe('Pi workflow-state session-scoped recovery', () => {
@@ -874,5 +876,46 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(hasSessionOwnershipEvidence('DISPATCH\n\nBRANCH: fix/current', { branch: 'fix/current', sessionKey: 'id:session-current' })).toBe(false)
     expect(hasSessionOwnershipEvidence('DISPATCH\n\nPI_SESSION_KEY: id:session-current', { sessionKey: 'id:session-current' })).toBe(true)
     expect(hasSessionOwnershipEvidence('DISPATCH\n\nPI_SESSION_KEY: id:other', { sessionKey: 'id:session-current' })).toBe(false)
+  })
+})
+
+
+describe('Pi workflow-state typed tools', () => {
+  it('workflow_claim claims through bd and persists session-bound workflow state', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-next': { status: 'open', comments: '' } },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      state: 'claimed',
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      sessionKey: 'id:session-current',
+    })
+  })
+
+  it('workflow_update reconciles stale open active bead instead of dead-ending new claims', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: { 'bead-old': { status: 'open', comments: 'BRANCH: task/foreign\nWORKTREE: /repo/foreign' } },
+    })
+
+    const result = await toolHandlers.get('workflow_update')?.execute('call-1', { bead: 'bead-old', state: 'implementing' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('state=idle')
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
   })
 })
