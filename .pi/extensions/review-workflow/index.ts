@@ -16,6 +16,7 @@ const ReviewParams = {
 		beadId: { type: "string", description: "Bead ID to review" },
 		startCommit: { type: "string", description: "Start commit override for scoped diff" },
 		endCommit: { type: "string", description: "End commit override for scoped diff; use this for stacked branches so later task commits are excluded", default: "HEAD" },
+		worktreePath: { type: "string", description: "Task worktree path to review; use when orchestrating review from a main/session worktree after supervisor dispatch" },
 		dryRun: { type: "boolean", description: "Prepare review context without spawning reviewer", default: false },
 	},
 	required: ["beadId"],
@@ -143,32 +144,47 @@ function hasForeignReviewOwnershipEvidence(comments: string, scope: { branch?: s
 	return latestFieldIsForeign(comments, branchNames, scope.branch) || latestFieldIsForeign(comments, worktreeNames, scope.worktreePath);
 }
 
-function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; worktreePath?: string; startCommit?: string }): boolean {
-	const branchNames = ["BRANCH", "Branch", "branch"];
-	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
-	if (hasForeignReviewOwnershipEvidence(comments, scope)) return false;
-	const branchMatches = latestFieldMatches(comments, branchNames, scope.branch);
-	const worktreeMatches = latestFieldMatches(comments, worktreeNames, scope.worktreePath);
-	const startMatches = hasExactField(comments, ["START_COMMIT", "START-COMMIT", "Start-commit", "start"], scope.startCommit);
-	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(comments);
-	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments));
+function reviewOwnershipBlocks(comments: string): string[] {
+	const marker = /^.*(?:PLAN APPROVED|DISPATCH(?: RESULT)?|REVIEW START|review_bead|PI WORKFLOW).*$/gim;
+	const starts = [...comments.matchAll(marker)].map((match) => match.index ?? 0);
+	if (starts.length === 0) return [comments];
+	return starts.map((start, index) => comments.slice(start, starts[index + 1]).trim()).filter(Boolean);
 }
 
-function checksForFiles(files: string[]): string[][] {
+function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; worktreePath?: string; startCommit?: string; endCommit?: string }): boolean {
+	const branchNames = ["BRANCH", "Branch", "branch"];
+	const worktreeNames = ["WORKTREE", "Worktree", "worktree", "worktreePath"];
+	const startNames = ["START_COMMIT", "START-COMMIT", "Start-commit", "start"];
+	const endNames = ["END_COMMIT", "END-COMMIT", "End-commit", "end"];
+	if (hasForeignReviewOwnershipEvidence(comments, scope)) return false;
+	const hasBranchOrWorktreeField = new RegExp(`(^|\\n)\\s*(${[...branchNames, ...worktreeNames].join("|")})\\s*[:=]`, "im").test(comments);
+	const hasScopedDispatchEvidence = reviewOwnershipBlocks(comments).some((block) => {
+		const branchMatches = hasExactField(block, branchNames, scope.branch);
+		const worktreeMatches = hasExactField(block, worktreeNames, scope.worktreePath);
+		const startMatches = hasExactField(block, startNames, scope.startCommit);
+		const blockHasEnd = new RegExp(`(^|\\n)\\s*(${endNames.join("|")})\\s*[:=]`, "im").test(block);
+		const endMatches = !blockHasEnd || !scope.endCommit || hasExactField(block, endNames, scope.endCommit);
+		return branchMatches && worktreeMatches && startMatches && endMatches;
+	});
+	const legacyStartMatches = !hasBranchOrWorktreeField && hasExactField(comments, startNames, scope.startCommit) && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments);
+	return hasScopedDispatchEvidence || legacyStartMatches;
+}
+
+function checksForFiles(files: string[], cwd: string): string[][] {
 	const checks: string[][] = [];
 	if (files.some((file) => /^(app|tests|i18n)\/|\.(vue|ts)$/.test(file))) {
-		checks.push(["pnpm", "test"]);
-		checks.push(["npx", "vue-tsc", "--noEmit"]);
+		checks.push(["pnpm", "--dir", cwd, "test"]);
+		checks.push(["npx", "--prefix", cwd, "vue-tsc", "--noEmit"]);
 	}
 	if (files.some((file) => file.startsWith("src-tauri/") || file.endsWith(".rs"))) {
-		checks.push(["cargo", "check", "--manifest-path", "src-tauri/Cargo.toml"]);
+		checks.push(["cargo", "check", "--manifest-path", path.join(cwd, "src-tauri", "Cargo.toml")]);
 	}
 	return checks;
 }
 
-async function runChecks(pi: ExtensionAPI, files: string[]): Promise<string[]> {
+async function runChecks(pi: ExtensionAPI, files: string[], cwd: string): Promise<string[]> {
 	const results: string[] = [];
-	for (const check of checksForFiles(files)) {
+	for (const check of checksForFiles(files, cwd)) {
 		const [command, ...args] = check;
 		if (!command) continue;
 		const { stdout, stderr, code } = await exec(pi, command, args);
@@ -278,17 +294,18 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const startCommit = params.startCommit || findStartCommit(comments);
 				if (!startCommit) throw new Error("No startCommit provided and no START_COMMIT found in comments.");
 				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
-				const branch = await execRequired(pi, "git", ["-C", ctx.cwd, "branch", "--show-current"]);
-				const worktreePath = await execRequired(pi, "git", ["-C", ctx.cwd, "rev-parse", "--show-toplevel"]);
-				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit })) {
-					throw new Error(`review_bead refused ${params.beadId}: no current-session branch/worktree/start ownership evidence. Run bd comments ${params.beadId} and /workflow-status; use /workflow-reset for stale foreign state or explicitly confirm takeover before reviewing.`);
+				const reviewCwd = params.worktreePath || ctx.cwd;
+				const branch = await execRequired(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
+				const worktreePath = await execRequired(pi, "git", ["-C", reviewCwd, "rev-parse", "--show-toplevel"]);
+				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit, endCommit })) {
+					throw new Error(`review_bead refused ${params.beadId}: no matching branch/worktree/start ownership evidence for review scope ${worktreePath || reviewCwd}. Agents can inspect bd comments ${params.beadId}, call workflow_reset for stale local state, or explicitly confirm takeover and bind verified dispatch evidence with workflow_update(bead=${params.beadId}, session=reviewing, branch=<branch>, worktree=<worktree>, start=<sha>, end=<sha>) before retrying review_bead with worktreePath=<worktree>.`);
 				}
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
-				const changedRaw = await execRequired(pi, "git", ["-C", ctx.cwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
+				const changedRaw = await execRequired(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
-				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
+				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles, reviewCwd);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
-				const pathRulesLoaded = await renderPathRulesLoaded(ctx.cwd, changedFiles);
+				const pathRulesLoaded = await renderPathRulesLoaded(reviewCwd, changedFiles);
 				const checkpoints = [
 					"Selected model: bd statuses inreview -> simplified -> reviewed -> accepted -> closed with structured comments as audit evidence.",
 					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
@@ -302,7 +319,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
 					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
-					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
+					const reviewer = await runReviewer(reviewCwd, prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
