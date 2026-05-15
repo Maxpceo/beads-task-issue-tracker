@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -693,12 +693,19 @@ exit 1
 
   it('ignores restored foreign workflow-state even when start commit matches current HEAD', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'beads-policy-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const bdCalledMarker = join(repo, 'bd-called')
     try {
       execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
       execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
       execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
       execFileSync('git', ['commit', '--allow-empty', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
       const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+      const fakeBd = join(binDir, 'bd')
+      writeFileSync(fakeBd, `#!/bin/sh\ntouch "${bdCalledMarker}"\nexit 1\n`)
+      chmodSync(fakeBd, 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
 
       let toolCallHandler: any
       const pi = {
@@ -743,8 +750,11 @@ exit 1
 
       expect(result).toBeUndefined()
       expect(notifications).toEqual([])
+      expect(existsSync(bdCalledMarker)).toBe(false)
     } finally {
+      process.env.PATH = oldPath
       rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
     }
   })
 })

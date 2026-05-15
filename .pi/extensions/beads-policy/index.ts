@@ -1141,21 +1141,24 @@ function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scop
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
 	const runtimeOwnerKey = currentRuntimeOwnerKey();
-	const last = entries
-		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state")
+	const workflowEntries = entries
+		.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "workflow-state") as Array<{ data?: WorkflowStateSnapshot }>;
+	const last = workflowEntries
 		.filter((entry: { data?: unknown }) => (entry.data as WorkflowStateSnapshot | undefined)?.runtimeOwnerKey === runtimeOwnerKey)
-		.pop() as { data?: WorkflowStateSnapshot } | undefined;
-	const state = last?.data ?? {};
+		.pop();
+	const restoredLast = workflowEntries.at(-1);
+	const state = last?.data ?? restoredLast?.data ?? {};
 	const scope = currentRecoveryScope(ctx.cwd, currentSessionKey(ctx));
 	if (state.activeBead && state.state && state.state !== "idle") {
+		const isCurrentSessionState = hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
+		if (!isCurrentSessionState) {
+			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+		}
 		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
 		if (hasForeignSessionOwnershipEvidence(commentsText, scope)) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
-		if (hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope)) {
-			return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
-		}
-		return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
+		return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
 	}
 	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd, scope);
 	if (!recoveredBead) return { ...state, branch: scope.branch };
