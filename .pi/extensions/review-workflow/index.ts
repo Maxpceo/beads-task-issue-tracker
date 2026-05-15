@@ -155,21 +155,21 @@ function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; 
 	return branchMatches || worktreeMatches || (!hasBranchOrWorktreeField && startMatches && /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments));
 }
 
-function checksForFiles(files: string[]): string[][] {
+function checksForFiles(files: string[], cwd: string): string[][] {
 	const checks: string[][] = [];
 	if (files.some((file) => /^(app|tests|i18n)\/|\.(vue|ts)$/.test(file))) {
-		checks.push(["pnpm", "test"]);
-		checks.push(["npx", "vue-tsc", "--noEmit"]);
+		checks.push(["pnpm", "--dir", cwd, "test"]);
+		checks.push(["npx", "--prefix", cwd, "vue-tsc", "--noEmit"]);
 	}
 	if (files.some((file) => file.startsWith("src-tauri/") || file.endsWith(".rs"))) {
-		checks.push(["cargo", "check", "--manifest-path", "src-tauri/Cargo.toml"]);
+		checks.push(["cargo", "check", "--manifest-path", path.join(cwd, "src-tauri", "Cargo.toml")]);
 	}
 	return checks;
 }
 
-async function runChecks(pi: ExtensionAPI, files: string[]): Promise<string[]> {
+async function runChecks(pi: ExtensionAPI, files: string[], cwd: string): Promise<string[]> {
 	const results: string[] = [];
-	for (const check of checksForFiles(files)) {
+	for (const check of checksForFiles(files, cwd)) {
 		const [command, ...args] = check;
 		if (!command) continue;
 		const { stdout, stderr, code } = await exec(pi, command, args);
@@ -288,7 +288,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
 				const changedRaw = await execRequired(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
-				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
+				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles, reviewCwd);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
 				const pathRulesLoaded = await renderPathRulesLoaded(reviewCwd, changedFiles);
 				const checkpoints = [
