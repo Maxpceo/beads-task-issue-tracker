@@ -1083,6 +1083,104 @@ describe('Pi workflow-state typed tools', () => {
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed' })
   })
 
+  it('workflow_update persists a complete explicit typed update without cwd reconciliation overwriting task fields', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'bead-task': { status: 'in_progress', comments: '' } },
+    })
+
+    const result = await toolHandlers.get('workflow_update')?.execute('call-1', {
+      bead: 'bead-task',
+      state: 'implementing',
+      branch: 'task/bead-task',
+      worktree: '/repo/worktrees/bead-task',
+      start: 'task-start',
+      end: 'task-end',
+      approved: false,
+      session: 'implementing',
+      slot: 'free',
+    }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('branch=task/bead-task')
+    expect(result.content[0].text).toContain('worktree=/repo/worktrees/bead-task')
+    expect(result.content[0].text).toContain('planApproved=false')
+    expect(result.content[0].text).toContain('sessionMode=implementing')
+    expect(result.content[0].text).toContain('mergeSlot=free')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-task',
+      state: 'implementing',
+      branch: 'task/bead-task',
+      worktreePath: '/repo/worktrees/bead-task',
+      startCommit: 'task-start',
+      endCommit: 'task-end',
+      planApproved: false,
+      sessionMode: 'implementing',
+      mergeSlotHeld: false,
+      sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
+    })
+  })
+
+  it('workflow_update records a task worktree over an existing main checkout session context', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended, statuses } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'bead-task': { status: 'in_progress', comments: 'BRANCH: main\nWORKTREE: /repo/primary' } },
+    })
+    await eventHandlers.get('session_start')?.({}, ctx)
+
+    await toolHandlers.get('workflow_update')?.execute('call-1', {
+      bead: 'bead-task',
+      state: 'implementing',
+      branch: 'task/bead-task',
+      worktree: '/repo/worktrees/bead-task',
+      start: 'task-head',
+    }, undefined, undefined, ctx)
+
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-task',
+      branch: 'task/bead-task',
+      worktreePath: '/repo/worktrees/bead-task',
+      startCommit: 'task-head',
+    })
+    expect(statuses['workflow-state']).toContain('br:task/bead-task')
+  })
+
+  it('workflow_update rejects invalid typed parameters without resetting state', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      issues: {},
+    })
+
+    const result = await toolHandlers.get('workflow_update')?.execute('call-1', { state: 'not-a-state', slot: 'busy' } as any, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_update rejected')
+    expect(result.details).toMatchObject({ ok: false, error: 'Invalid state: not-a-state', state: 'idle' })
+    expect(appended).toHaveLength(0)
+  })
+
+  it('workflow_update reports a no-op reason when no parameters are provided', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      issues: {},
+    })
+
+    const result = await toolHandlers.get('workflow_update')?.execute('call-1', {}, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_update no-op: no supported parameters provided')
+    expect(result.details).toMatchObject({ ok: true, reason: 'no supported parameters provided', state: 'idle' })
+    expect(appended).toHaveLength(0)
+  })
+
   it('workflow_update reconciles stale open active bead instead of dead-ending new claims', async () => {
     const { toolHandlers, ctx, appended } = makeHarness({
       branch: 'task/current',

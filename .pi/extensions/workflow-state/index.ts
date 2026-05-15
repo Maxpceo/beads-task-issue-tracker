@@ -463,6 +463,36 @@ function toolText(text: string, details: unknown = {}) {
 	return { content: [{ type: "text", text }], details };
 }
 
+const WORKFLOW_UPDATE_KEYS = ["bead", "state", "session", "branch", "worktree", "start", "end", "plan", "approved", "slot"] as const;
+
+type WorkflowUpdateToolParams = {
+	bead?: string;
+	state?: WorkflowStateName;
+	session?: string;
+	branch?: string;
+	worktree?: string;
+	start?: string;
+	end?: string;
+	plan?: PlanMode;
+	approved?: boolean;
+	slot?: "held" | "free";
+};
+
+function validateWorkflowUpdateParams(params: Record<string, unknown>): string | undefined {
+	const allowed = new Set<string>(WORKFLOW_UPDATE_KEYS);
+	for (const key of Object.keys(params)) {
+		if (!allowed.has(key)) return `Unsupported workflow_update parameter: ${key}`;
+	}
+	for (const key of ["bead", "session", "branch", "worktree", "start", "end"] as const) {
+		if (params[key] !== undefined && (typeof params[key] !== "string" || params[key].trim() === "")) return `Invalid ${key} value: expected non-empty string`;
+	}
+	if (params.state !== undefined && (typeof params.state !== "string" || !isWorkflowStateName(params.state))) return `Invalid state: ${String(params.state)}`;
+	if (params.plan !== undefined && (typeof params.plan !== "string" || !isPlanMode(params.plan))) return `Invalid plan mode: ${String(params.plan)}`;
+	if (params.approved !== undefined && typeof params.approved !== "boolean") return `Invalid approved value: expected boolean`;
+	if (params.slot !== undefined && params.slot !== "held" && params.slot !== "free") return `Invalid slot value: ${String(params.slot)}`;
+	return undefined;
+}
+
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
 
@@ -805,25 +835,46 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			label: "Workflow Update",
 			description: "Update typed Pi session workflow fields; agent-operable equivalent of optional /workflow-update.",
 			parameters: WorkflowUpdateParams,
-			async execute(_id: string, params: { bead?: string; state?: WorkflowStateName; session?: string; branch?: string; worktree?: string; start?: string; end?: string; plan?: PlanMode; approved?: boolean; slot?: "held" | "free" }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+			async execute(_id: string, params: WorkflowUpdateToolParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				const rawParams = params as Record<string, unknown>;
+				const validationError = validateWorkflowUpdateParams(rawParams);
+				if (validationError) return toolText(`workflow_update rejected: ${validationError}`, { ok: false, error: validationError, ...cloneState(workflowState) });
+
 				const next: Partial<WorkflowState> = {};
-				if (params.state) next.state = params.state;
-				if (params.bead) {
+				if (params.state !== undefined) next.state = params.state;
+				if (params.bead !== undefined) {
 					next.activeBead = params.bead;
 					next.sessionKey = currentSessionKey(ctx);
 				}
-				if (params.branch) next.branch = params.branch;
-				if (params.worktree) next.worktreePath = params.worktree;
-				if (params.start) next.startCommit = params.start;
-				if (params.end) next.endCommit = params.end;
-				if (params.plan) next.planMode = params.plan;
+				if (params.branch !== undefined) next.branch = params.branch;
+				if (params.worktree !== undefined) next.worktreePath = params.worktree;
+				if (params.start !== undefined) next.startCommit = params.start;
+				if (params.end !== undefined) next.endCommit = params.end;
+				if (params.plan !== undefined) next.planMode = params.plan;
 				if (params.approved !== undefined) next.planApproved = params.approved;
-				if (params.session) next.sessionMode = params.session;
-				if (params.slot) next.mergeSlotHeld = params.slot === "held";
+				if (params.session !== undefined) next.sessionMode = params.session;
+				if (params.slot !== undefined) next.mergeSlotHeld = params.slot === "held";
+
+				const changed = Object.keys(next).length > 0;
+				if (!changed) return toolText(`workflow_update no-op: no supported parameters provided. ${formatState(workflowState)}`, { ok: true, reason: "no supported parameters provided", ...cloneState(workflowState) });
+
 				assignState(next);
-				const reconciled = await ensureReconciled(ctx);
-				if (!reconciled) persist(ctx);
-				return toolText(`workflow_update completed: ${formatState(workflowState)}`, cloneState(workflowState));
+				const hasExplicitScope = params.branch !== undefined || params.worktree !== undefined || params.start !== undefined;
+				if (hasExplicitScope) {
+					if (workflowState.activeBead) {
+						const bdStatus = await readBdStatus(pi, workflowState.activeBead);
+						if (isTerminalBdStatus(bdStatus)) {
+							assignState({ activeBead: undefined, state: "idle", endCommit: undefined, sessionKey: undefined, bdStatus: undefined });
+						} else if (bdStatus) {
+							assignState({ bdStatus });
+						}
+					}
+					persist(ctx);
+				} else {
+					const reconciled = await ensureReconciled(ctx);
+					if (!reconciled) persist(ctx);
+				}
+				return toolText(`workflow_update completed: ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
 			},
 		});
 
