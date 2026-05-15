@@ -230,8 +230,67 @@ function commandHasMainLocalMutation(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+(add|stage|commit)\b/.test(command);
 }
 
-function commandHasProtectedBranchFsMutation(command: string): boolean {
-	return /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(command) || /(^|[^<])>(?!>)/.test(command) || />>/.test(command);
+function commandHasProtectedBranchFsMutation(command: string, cwd: string): boolean {
+	return /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(command) || commandHasRepoContainedRedirection(command, cwd);
+}
+
+function commandHasRepoContainedRedirection(command: string, cwd: string): boolean {
+	const repoRoot = getRepoRoot(cwd);
+	if (!repoRoot) return false;
+	const resolvedRepoRoot = realpathExistingOrParent(repoRoot);
+	return extractShellRedirectionTargets(command).some((target) => {
+		const resolvedTarget = realpathExistingOrParent(normalizeFsPath(target, cwd));
+		return resolvedTarget === resolvedRepoRoot || resolvedTarget.startsWith(`${resolvedRepoRoot}${path.sep}`);
+	});
+}
+
+function extractShellRedirectionTargets(command: string): string[] {
+	const targets: string[] = [];
+	let quote: '"' | "'" | undefined;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char !== '>') continue;
+		if (command[index - 1] === '<') continue;
+
+		let cursor = command[index + 1] === '>' ? index + 2 : index + 1;
+		while (/\s/.test(command[cursor] ?? '')) cursor += 1;
+		if (command[cursor] === '&') continue;
+
+		const { token, end } = readShellToken(command, cursor);
+		if (token) targets.push(stripQuotes(token));
+		index = Math.max(index, end - 1);
+	}
+	return targets;
+}
+
+function readShellToken(command: string, start: number): { token: string; end: number } {
+	let token = '';
+	let quote: '"' | "'" | undefined;
+	let index = start;
+	for (; index < command.length; index += 1) {
+		const char = command[index] ?? "";
+		if (quote) {
+			token += char;
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			token += char;
+			continue;
+		}
+		if (/\s/.test(char) || char === ';' || char === '&' || char === '|') break;
+		token += char;
+	}
+	return { token, end: index };
 }
 
 function commandHasCommitLikeOperation(command: string): boolean {
@@ -426,8 +485,8 @@ function parseBdCreateTitle(segment: string): string | undefined {
 
 function getBeadLocaleError(command: string): string | undefined {
 	for (const segment of splitShellSegments(command)) {
-		const isCreate = /\bbd\s+(create|new)\b/.test(segment);
-		const isUpdate = /\bbd\s+update\b/.test(segment);
+		const isCreate = segmentHasBdCommand(segment, new Set(["create", "new"]));
+		const isUpdate = segmentHasBdCommand(segment, new Set(["update"]));
 		if (!isCreate && !isUpdate) continue;
 
 		const title = isCreate ? parseBdCreateTitle(segment) : valueAfterFlag(segment, ["--title"]);
@@ -444,28 +503,35 @@ function getBeadLocaleError(command: string): string | undefined {
 }
 
 function getBeadEnrichmentError(command: string): string | undefined {
-	if (!/\bbd\s+(create|new)\b/.test(command)) return undefined;
-	if (hasCreateExemption(command)) return undefined;
+	for (const segment of splitShellSegments(command)) {
+		if (!segmentHasBdCommand(segment, new Set(["create", "new"]))) continue;
+		if (hasCreateExemption(segment)) continue;
 
-	const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !command.includes(section));
-	if (missing.length > 0) {
-		return `Blocked: agent-created beads require a self-contained handoff template. Missing: ${missing.join(", ")}. Ask the user or create a spike if context/acceptance is unclear.`;
-	}
+		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !segment.includes(section));
+		if (missing.length > 0) {
+			return `Blocked: agent-created beads require a self-contained handoff template. Missing: ${missing.join(", ")}. Ask the user or create a spike if context/acceptance is unclear.`;
+		}
 
-	if (!hasLabel(command)) {
-		return "Blocked: agent-created beads require at least one label via --label/--labels/-l so future sessions can route work.";
-	}
+		if (!hasLabel(segment)) {
+			return "Blocked: agent-created beads require at least one label via --label/--labels/-l so future sessions can route work.";
+		}
 
-	const acceptance = extractSection(command, "### Acceptance criteria");
-	const verification = extractSection(command, "### Verification / acceptance checks");
-	if (!hasBullet(acceptance) || !hasBullet(verification)) {
-		return "Blocked: Acceptance criteria and Verification / acceptance checks must contain concrete bullet checks. If unclear, ask the user with 2-4 options before creating the bead.";
-	}
-	if (isVagueOnly(acceptance) || isVagueOnly(verification)) {
-		return "Blocked: acceptance/verification is too vague. Ask a concrete question with 2-4 proposed acceptance options before creating the bead.";
+		const acceptance = extractSection(segment, "### Acceptance criteria");
+		const verification = extractSection(segment, "### Verification / acceptance checks");
+		if (!hasBullet(acceptance) || !hasBullet(verification)) {
+			return "Blocked: Acceptance criteria and Verification / acceptance checks must contain concrete bullet checks. If unclear, ask the user with 2-4 options before creating the bead.";
+		}
+		if (isVagueOnly(acceptance) || isVagueOnly(verification)) {
+			return "Blocked: acceptance/verification is too vague. Ask a concrete question with 2-4 proposed acceptance options before creating the bead.";
+		}
 	}
 
 	return undefined;
+}
+
+function segmentHasBdCommand(segment: string, commands: Set<string>): boolean {
+	const tokens = shellTokens(segment);
+	return tokens.some((token, index) => token === "bd" && commands.has(tokens[index + 1] ?? ""));
 }
 
 function shellTokens(input: string): string[] {
@@ -782,7 +848,29 @@ function unmergedBranchCompletionReason(command: string, cwd: string): string | 
 }
 
 function splitShellSegments(command: string): string[] {
-	return command.split(/\s*(?:&&|;|\|\|)\s*/).filter(Boolean);
+	const segments: string[] = [];
+	let quote: '"' | "'" | undefined;
+	let start = 0;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		const two = command.slice(index, index + 2);
+		if (char !== ';' && two !== '&&' && two !== '||') continue;
+		const segment = command.slice(start, index).trim();
+		if (segment) segments.push(segment);
+		index += two === '&&' || two === '||' ? 1 : 0;
+		start = index + 1;
+	}
+	const finalSegment = command.slice(start).trim();
+	if (finalSegment) segments.push(finalSegment);
+	return segments;
 }
 
 function extractWorktreePathFromSegment(segment: string): string | undefined {
@@ -1254,7 +1342,7 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	if ((commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command)) && isProtectedBranch(commandCwd)) {
+	if ((commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command, commandCwd)) && isProtectedBranch(commandCwd)) {
 		return {
 			policy: "blockMainMutation",
 			block: true,
