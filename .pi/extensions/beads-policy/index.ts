@@ -1614,11 +1614,13 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	if (state.activeBead && state.state && state.state !== "idle") {
 		const stateScope = {
 			branch: state.branch ?? scope.branch,
-			worktreePath: state.worktreePath ?? scope.worktreePath,
+			worktreePath: state.worktreePath,
 			startCommit: state.startCommit ?? scope.startCommit,
 			sessionKey: state.sessionKey ?? scope.sessionKey,
 		};
-		const isCurrentSessionState = hasCurrentSessionOwnership(state, ctx) && (workflowStateHasCurrentScopeEvidence(state, scope) || Boolean(state.worktreePath));
+		const currentSessionState = hasCurrentSessionOwnership(state, ctx);
+		const missingWorktreeLock = currentSessionState && hasActiveWorktreeLockRequirement(state) && !state.worktreePath;
+		const isCurrentSessionState = currentSessionState && (workflowStateHasCurrentScopeEvidence(state, scope) || Boolean(state.worktreePath) || missingWorktreeLock);
 		if (!isCurrentSessionState) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}

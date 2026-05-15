@@ -1495,4 +1495,52 @@ describe('Pi active worktree cwd lock policy', () => {
       rmSync(worktree, { recursive: true, force: true })
     }
   })
+
+
+  it('runtime-smoke: missing worktreePath keeps current-session lock for bash and write tools from main', async () => {
+    const main = createRepo('main')
+    try {
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const baseCtx = {
+        sessionManager: {
+          getSessionId: () => 'session-current',
+          getEntries: () => [
+            {
+              type: 'custom',
+              customType: 'workflow-state',
+              data: {
+                ...lockedState('', { worktreePath: undefined }),
+                sessionKey: 'id:session-current',
+              },
+            },
+          ],
+        },
+        ui: {
+          notify() {},
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const bashDecision = await toolCallHandler({ toolName: 'bash', input: { command: 'touch smoke.txt' } }, { ...baseCtx, cwd: main })
+      const writeDecision = await toolCallHandler({ toolName: 'write', input: { path: join(main, 'smoke.txt') } }, { ...baseCtx, cwd: main })
+
+      expect(bashDecision.reason).toContain('enforceActiveWorktreeCwd')
+      expect(bashDecision.reason).toContain('no recorded worktree path')
+      expect(bashDecision.reason).toContain('workflow_reset')
+      expect(bashDecision.reason).not.toContain('blockMainMutation')
+      expect(writeDecision.reason).toContain('enforceActiveWorktreeCwd')
+      expect(writeDecision.reason).toContain('no recorded worktree path')
+      expect(writeDecision.reason).toContain('workflow_reset')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+    }
+  })
 })
