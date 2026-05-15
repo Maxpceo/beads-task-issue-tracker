@@ -16,13 +16,7 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 
 ## Reporting
 
-Plan and approval reports must include `Где мы в workflow` with:
-
-- `Текущий этап`: planning / plan approved / blocked.
-- `Стоп или продолжаю`: stop for user approval in strict mode, or continue automatically only when auto mode/user approval allows it.
-- `Причина`: cite plan mode, bd status, missing context, or approval evidence.
-- `Следующий шаг`: approve plan, dispatch supervisor, or ask the exact clarification.
-- `Действие Максима`: the concrete approval/choice required, or `не требуется` after approval.
+Use a full `Где мы в workflow` block when strict planning stops for user approval, requirements are ambiguous, or planning is blocked. Do not announce normal plan-mode or bd-status values that the footer already shows. After approval/auto gate, continue silently to the next approved workflow step unless there is a real decision point.
 
 ## Rules
 

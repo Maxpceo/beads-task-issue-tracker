@@ -75,13 +75,7 @@ If the domain is ambiguous, ask one concrete question with 2-4 options before di
 
 ## Reporting
 
-Dispatch reports must include `Где мы в workflow` with:
-
-- `Текущий этап`: dispatch guard / supervisor running / implementation complete / inreview / blocked.
-- `Стоп или продолжаю`: continue automatically into review after successful implementation; stop only for `BLOCKED`, `NEEDS_CONTEXT`, failed guard, or unavailable review path.
-- `Причина`: cite guard evidence, supervisor status, bd status, and END_COMMIT when present.
-- `Следующий шаг`: dispatch supervisor, submit for review, run review workflow, or exact fix/clarification.
-- `Действие Максима`: `не требуется` unless context or policy decision is required.
+Use a full `Где мы в workflow` block for `BLOCKED`, `NEEDS_CONTEXT`, failed guards, unavailable review path, required policy/context decisions, and final dispatch summaries. Do not print routine guard/pass or footer-state checkpoints while continuing automatically from dispatch to review.
 
 ## Final report
 
