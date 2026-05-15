@@ -14,7 +14,7 @@ Workflow-critical `typedWorkflow` steps are handoff-only in v1. They are shown i
 
 The widget is designed to resemble the original chain dashboard visual target:
 
-- terminal-style header with chain title, current workflow state, branch, bead, and source config;
+- terminal-style header with chain title, current session mode, bd status, branch, bead, and source config;
 - running status line with colored status icons/dots;
 - horizontal bordered step cards connected by arrows;
 - per-step status (`pending`, `running`, `done`, `error`, `blocked`), elapsed time, guard, operation, mutation policy, and preview;
@@ -47,7 +47,7 @@ The extension does not scan `.claude`, `.gemini`, or `.codex`.
         { "type": "message", "message": "Hello" },
         { "type": "wait", "ms": 100 },
         { "type": "readOnlyBuiltin", "operation": "workflowStatus" },
-        { "type": "typedWorkflow", "operation": "dispatch_supervisor", "requiredState": "plan_approved", "handoff": "Use dispatch-supervisor" }
+        { "type": "typedWorkflow", "operation": "dispatch_supervisor", "requiredBdStatus": "in_progress", "requiredSessionMode": "implementing", "handoff": "Use dispatch-supervisor" }
       ]
     }
   ]

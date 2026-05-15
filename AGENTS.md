@@ -53,9 +53,8 @@ For long-running or noisy commands (`pnpm test`, `npx vue-tsc --noEmit`, `cargo 
 
 Stage and commit explicit file paths only. Do not stage whole trees with dot/all shortcuts.
 
-Pi controls one active bead through the per-task lifecycle:
-`idle -> claimed -> planning -> plan_approved -> implementing -> inreview -> reviewing -> accepted -> closed -> idle/next task`.
-Do not start, claim, implement, or dispatch unrelated work while the active bead is non-terminal; terminal states are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. If the active bead reaches `inreview`, the next action is `review-bead` / `review_bead`, not another task. `land` is an explicit save/push checkpoint and `merge-to-main` is an explicit session-final PR/merge workflow; neither is an automatic per-task stage.
+bd status is the lifecycle authority for beads. Pi `workflow-state` is session-local context only: active bead binding, branch/worktree/start/end commit, `sessionMode`, plan mode/approval, and merge-slot hint.
+Do not start, claim, implement, or dispatch unrelated work while the current-session active bead has a non-terminal bd status; terminal bd statuses are `closed`, `blocked`, or explicit `deferred`/handoff with a recorded reason. If bd status is `inreview`, the next action is `review-bead` / `review_bead`, not another task. `land` is an explicit save/push checkpoint and `merge-to-main` is an explicit session-final PR/merge workflow; neither is an automatic per-task stage.
 
 ## Fast Path / Large Change Discipline
 

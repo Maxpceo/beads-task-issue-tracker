@@ -16,6 +16,7 @@
 
 ### Changed
 
+- **Pi bd-first workflow sessions** (`beads-task-issue-tracker-r8tj`): Pi workflow extensions, guards, dashboards, skills, and agent docs now treat bd status as the lifecycle authority while keeping Pi state scoped to session context (`activeBead`, worktree/branch, plan approval, review scope, session mode, and merge-slot hints). Policy, plan, dispatch, review, workflow-chain, footer, and session-context paths now derive lifecycle decisions from live bd status and evidence instead of duplicated Pi lifecycle states.
 - **Pi workflow-state session context** (`beads-task-issue-tracker-v495`): `.pi/extensions/workflow-state` now treats bd status as live read-only issue lifecycle data instead of coercing it into Pi session state, shows `bdStatus` in injected session context/footer output, and clears active session bindings only for terminal bd statuses.
 - **Pi bead locale policy** (`beads-task-issue-tracker-7xou`): Pi `beads-policy` now blocks clearly English `bd create`/`bd update` titles and descriptions so agent-authored bead content stays in Russian for Maxim while preserving technical identifiers and required handoff headings.
 - **Pi agents dashboard close hint** (`beads-task-issue-tracker-hnqx`): `/agents-dashboard` now shows a dedicated close hint that documents `/agents-dashboard hide`, while wide terminals also mention `clear`; command help now lists both `hide` and `clear`.

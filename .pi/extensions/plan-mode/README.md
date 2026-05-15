@@ -66,11 +66,11 @@ If any section is missing, auto-execute is blocked and the session remains in pl
 
 ## Responsibility split
 
-This extension owns real plan-mode behavior: tool access, read-only command gates, plan extraction, and plan execution. It also emits `workflow-state:update` events so `.pi/extensions/workflow-state` keeps the footer/workflow `plan` field synchronized:
+This extension owns real plan-mode behavior: tool access, read-only command gates, plan extraction, and plan execution. It also emits `workflow-state:update` events so `.pi/extensions/workflow-state` keeps session fields synchronized while bd remains lifecycle authority:
 
-- `/plan` or a supported natural-language activation phrase -> `plan=strict`, `state=planning`
-- `/plan-auto` -> `plan=auto`, `state=planning`
-- `/plan-cancel` -> `plan=off` and `state=idle` when the current workflow state is still `planning`
-- executing an approved plan -> `plan=off`, `state=implementing` when the current workflow state is still `planning`
+- `/plan` or a supported natural-language activation phrase -> `plan=strict`, `sessionMode=planning`
+- `/plan-auto` -> `plan=auto`, `sessionMode=planning`
+- `/plan-cancel` -> `plan=off` and `sessionMode=idle` when the current session is still planning
+- executing an approved plan -> `plan=off`, `planApproved=true`, and `sessionMode=implementing` when the current session is still planning
 
-The `workflow-state` extension remains the source of truth for bead lifecycle fields such as active bead, branch, worktree, merge slot, review, acceptance, landing, and idle reset.
+The `workflow-state` extension stores session context such as active bead, branch, worktree, merge-slot hint, plan approval, review/acceptance session mode, landing, and idle reset. It displays live `bdStatus`, but bd remains the source of truth for bead lifecycle.

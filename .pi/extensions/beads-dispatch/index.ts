@@ -48,7 +48,9 @@ interface DispatchResult {
 	agent: string;
 	beadId: string;
 	branch: string;
+	worktreePath: string;
 	startCommit: string;
+	endCommit?: string;
 	exitCode: number;
 	output: string;
 	stderr: string;
@@ -355,8 +357,13 @@ async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signa
 	}
 }
 
-async function addDispatchComment(pi: ExtensionAPI, beadId: string, agent: string, branch: string, startCommit: string, prompt: string): Promise<void> {
-	const comment = `DISPATCH (${agent})\n\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\n\n${prompt}`;
+async function addDispatchComment(pi: ExtensionAPI, beadId: string, agent: string, branch: string, worktreePath: string, startCommit: string, prompt: string): Promise<void> {
+	const comment = `DISPATCH (${agent})\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\n\n${prompt}`;
+	await pi.exec("bd", ["comments", "add", beadId, comment]);
+}
+
+async function addEndCommitComment(pi: ExtensionAPI, beadId: string, agent: string, branch: string, worktreePath: string, startCommit: string, endCommit: string): Promise<void> {
+	const comment = `DISPATCH RESULT (${agent})\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}`;
 	await pi.exec("bd", ["comments", "add", beadId, comment]);
 }
 
@@ -379,6 +386,7 @@ async function dispatch(
 	}
 
 	const branch = await getGitValue(pi, cwd, ["branch", "--show-current"]);
+	const worktreePath = await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
 	const startCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 	const agentName = params.agent ?? (mode === "supervisor" ? chooseSupervisor(bead) : mode === "reviewer" ? "code-reviewer" : "documentation-expert");
 	const agent = loadAgent(cwd, agentName);
@@ -392,27 +400,30 @@ async function dispatch(
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
-	await addDispatchComment(pi, bead.id, agentName, branch, startCommit, prompt);
+	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, prompt);
 	if (mode === "supervisor") {
-		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", branch, startCommit });
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, sessionMode: "implementing", branch, worktreePath, startCommit });
 	} else if (mode === "reviewer") {
-		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "reviewing", branch, startCommit });
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, sessionMode: "reviewing", branch, worktreePath, startCommit });
 	}
-	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, startCommit, exitCode: 0, output: prompt, stderr: "" };
+	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, exitCode: 0, output: prompt, stderr: "" };
 
 	const result = await runPiAgent(agent, prompt, cwd, signal);
 	if (mode === "supervisor") {
 		const endCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 		const updatedBead = await getBead(pi, bead.id);
+		await addEndCommitComment(pi, bead.id, agentName, branch, worktreePath, startCommit, endCommit);
 		pi.events.emit("workflow-state:update", {
 			activeBead: bead.id,
-			state: updatedBead.status === "inreview" ? "inreview" : "implementing",
+			sessionMode: updatedBead.status === "inreview" ? "inreview" : "implementing",
 			branch,
+			worktreePath,
 			startCommit,
 			endCommit,
 		});
+		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, ...result };
 	}
-	return { agent: agentName, beadId: bead.id, branch, startCommit, ...result };
+	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, ...result };
 }
 
 function renderDispatchResult(result: DispatchResult): string {
@@ -420,7 +431,9 @@ function renderDispatchResult(result: DispatchResult): string {
 		`agent=${result.agent}`,
 		`bead=${result.beadId}`,
 		`branch=${result.branch}`,
+		`worktree=${result.worktreePath}`,
 		`start=${result.startCommit}`,
+		result.endCommit ? `end=${result.endCommit}` : "",
 		`exit=${result.exitCode}`,
 		result.stderr ? `stderr:\n${result.stderr}` : "",
 		result.output ? `output:\n${result.output.slice(-8000)}` : "",

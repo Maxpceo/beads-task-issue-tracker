@@ -58,6 +58,9 @@ interface WorkflowStateSnapshot {
 	runtimeOwnerKey?: string;
 	mergeSlotHeld?: boolean;
 	planMode?: string;
+	planApproved?: boolean | string;
+	sessionMode?: string;
+	bdStatus?: string;
 }
 
 interface BashPolicyOptions {
@@ -73,9 +76,10 @@ const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
 const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/agents|\.pi\/skills|scripts)\/|\.(ts|tsx|vue|rs|js|mjs|cjs|css|scss|sh)$/;
 const FAST_PATH_FILE_THRESHOLD = 3;
 const FAST_PATH_ADDED_LINE_THRESHOLD = 80;
-const SUPERVISOR_READY_STATES = new Set(["plan_approved", "implementing", "inreview", "reviewing", "accepted"]);
 const TERMINAL_WORKFLOW_STATES = new Set(["closed", "blocked", "deferred", "merged"]);
 const NON_TERMINAL_WORKFLOW_STATES = new Set(["claimed", "planning", "plan_approved", "implementing", "inreview", "reviewing", "accepted", "landing"]);
+const TERMINAL_BD_STATUSES = new Set(["closed", "blocked", "deferred"]);
+const NON_TERMINAL_BD_STATUSES = new Set(["open", "in_progress", "inreview", "simplified", "reviewed", "accepted"]);
 const RISKY_FILE_PREFIXES = [
 	".pi/extensions/beads-policy/",
 	".pi/extensions/beads-dispatch/",
@@ -590,12 +594,22 @@ function commandReviewsBead(command: string): string | undefined {
 
 export function activeBeadLifecycleReason(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): string | undefined {
 	const activeBead = workflowState.activeBead;
-	const state = workflowState.state ?? "idle";
-	if (!activeBead || TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
-	if (!NON_TERMINAL_WORKFLOW_STATES.has(state)) return undefined;
+	const bdStatus = workflowState.bdStatus;
+	const legacyState = workflowState.state ?? "idle";
+	if (!activeBead) return undefined;
 	if (targetBead && targetBead === activeBead) return undefined;
-	if (state === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
-	return `Blocked: active bead ${activeBead} is non-terminal (${state}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+
+	if (bdStatus) {
+		if (TERMINAL_BD_STATUSES.has(bdStatus)) return undefined;
+		const label = NON_TERMINAL_BD_STATUSES.has(bdStatus) ? bdStatus : `unknown bd status ${bdStatus}`;
+		if (bdStatus === "inreview") return `Blocked: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
+		return `Blocked: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
+	}
+
+	if (TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
+	if (!NON_TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
+	if (legacyState === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, run /workflow-reset or explicitly confirm takeover before acting.`;
+	return `Blocked: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or run /workflow-reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}.`;
 }
 
 function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -713,11 +727,8 @@ function formatIncompleteChildren(children: BdIssueSummary[]): string {
 
 function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
 	const id = terminalCloseId(command);
-	if ((workflowState.state === "accepted" || workflowState.state === "reviewing") && workflowState.activeBead && id === workflowState.activeBead) {
-		return true;
-	}
 	if (!id) return false;
-	const status = getBdIssue(cwd, id)?.status;
+	const status = workflowState.activeBead === id && workflowState.bdStatus ? workflowState.bdStatus : getBdIssue(cwd, id)?.status;
 	const comments = getBdCommentsText(cwd, id);
 	return status === "accepted" || (status === "reviewed" && /NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments));
 }
@@ -856,8 +867,10 @@ function hasActiveBead(workflowState: WorkflowStateSnapshot): boolean {
 	return Boolean(workflowState.activeBead);
 }
 
-function isSupervisorPathActive(workflowState: WorkflowStateSnapshot): boolean {
-	return hasActiveBead(workflowState) && SUPERVISOR_READY_STATES.has(workflowState.state ?? "");
+function isSupervisorPathActive(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
+	if (!hasActiveBead(workflowState)) return false;
+	if (workflowState.planApproved) return true;
+	return Boolean(cwd && workflowState.activeBead && hasScopedApprovedPlanComment(cwd, workflowState.activeBead, currentRecoveryScope(cwd, workflowState.sessionKey)));
 }
 
 interface RecoveryScope {
@@ -949,9 +962,37 @@ function hasCurrentSessionOwnership(state: WorkflowStateSnapshot, ctx?: Extensio
 	return Boolean(key && state.sessionKey === key);
 }
 
+function commentEvidenceBlocks(text: string): string[] {
+	return text
+		.split(/\n\s*\n+/)
+		.map((block) => block.trim())
+		.filter(Boolean);
+}
+
+function hasScopedApprovedPlanComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
+	const comments = getBdCommentsText(cwd, beadId);
+	return commentEvidenceBlocks(comments).some((block) => /PLAN APPROVED/i.test(block) && hasSessionOwnershipEvidence(block, scope));
+}
+
 function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
 	const comments = getBdCommentsText(cwd, beadId);
 	return /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
+}
+
+function recoverableApprovedPlanBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
+	if (!scope.sessionKey) return undefined;
+	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
+		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+		if (!raw) continue;
+		try {
+			const issues = JSON.parse(raw) as BdIssueSummary[];
+			const bead = issues.find((issue) => issue.id && hasScopedApprovedPlanComment(cwd, issue.id, scope));
+			if (bead?.id) return bead.id;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
 }
 
 function recoverableApprovedWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
@@ -996,13 +1037,13 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 	const addedLines = getAddedLines(cwd, changedCodeFiles);
 	const thresholdExceeded = changedCodeFiles.length > FAST_PATH_FILE_THRESHOLD || addedLines > FAST_PATH_ADDED_LINE_THRESHOLD;
 	const risky = hasRiskyScope(changedCodeFiles) || hasCrossDomainScope(changedCodeFiles);
-	const supervisorPath = isSupervisorPathActive(workflowState);
+	const supervisorPath = isSupervisorPathActive(workflowState, cwd);
 	const activeBead = hasActiveBead(workflowState);
 	const rationale = hasFastPathRationale(command) || hasMechanicalBatchMarker(command);
 
 	if (risky && !supervisorPath) {
 		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
-		const recoveredBead = recoverableApprovedWorkflowBead(cwd);
+		const recoveredBead = recoverableApprovedPlanBead(cwd, currentRecoveryScope(cwd, workflowState.sessionKey));
 		if (recoveredBead) return undefined;
 		return {
 			policy: "fastPathDiscipline",
@@ -1071,36 +1112,18 @@ function isSupervisorContext(): boolean {
 	return /supervisor/i.test(process.env.PI_AGENT_ROLE ?? "") || /supervisor/i.test(process.env.PI_SUBAGENT_ROLE ?? "");
 }
 
-function workflowStateFromBdStatus(status?: string): string | undefined {
-	if (status === "in_progress") return "implementing";
-	if (status === "inreview") return "inreview";
-	if (status === "reviewed" || status === "accepted") return "accepted";
-	if (status === "closed") return "closed";
-	if (status === "blocked") return "blocked";
-	if (status === "deferred") return "deferred";
-	return undefined;
-}
-
 export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot, bdStatus?: string): WorkflowStateSnapshot {
-	const bdState = workflowStateFromBdStatus(bdStatus);
-	if (!bdState) return state;
-	if (TERMINAL_WORKFLOW_STATES.has(bdState)) {
+	if (!bdStatus) return state;
+	if (TERMINAL_BD_STATUSES.has(bdStatus)) {
 		return {
 			...state,
 			activeBead: undefined,
 			state: "idle",
+			bdStatus,
 			endCommit: undefined,
 		};
 	}
-	if (bdState === state.state) return state;
-
-	// `in_progress` is bd's broad worker status and can coexist with Pi-local
-	// planning/plan_approved state.  Later review statuses are authoritative for
-	// lifecycle guards because they may be written by raw bd commands or typed
-	// review tools during the same Pi session.
-	if (bdState === "implementing") return state;
-
-	return { ...state, state: bdState };
+	return { ...state, bdStatus };
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scope: RecoveryScope): boolean {
@@ -1140,7 +1163,8 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	return {
 		...state,
 		activeBead: recoveredBead,
-		state: workflowStateFromBdStatus(issue?.status) ?? "implementing",
+		state: state.state ?? "idle",
+		bdStatus: issue?.status,
 		branch: scope.branch,
 		worktreePath: scope.worktreePath,
 		startCommit: scope.startCommit,
@@ -1213,9 +1237,6 @@ export function evaluateBashPolicy(
 	const staleDecision = evaluateStaleGuard(command, commandCwd);
 	if (staleDecision) return staleDecision;
 
-	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
-	if (fastPathDecision) return fastPathDecision;
-
 	if (
 		commandHasGitPush(command) &&
 		!workflowState.mergeSlotHeld &&
@@ -1228,6 +1249,9 @@ export function evaluateBashPolicy(
 			reason: "Blocked: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true or current bd merge-slot holder evidence).",
 		};
 	}
+
+	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
+	if (fastPathDecision) return fastPathDecision;
 
 	const beadLocaleError = getBeadLocaleError(command);
 	if (beadLocaleError) {
@@ -1272,16 +1296,16 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockBdCloseWithoutReview",
 			block: true,
-			reason: "Blocked: terminal close requires accepted status/workflow state, or reviewed with documented no-acceptance shortcut, or an explicit policy override.",
+			reason: "Blocked: terminal close requires bd status accepted, or bd status reviewed with documented no-acceptance shortcut, or an explicit policy override.",
 		};
 	}
 
 	const invalidReviewTransition = validateReviewTransitionForCommand(command, commandCwd);
-	if (commandHasReviewCheckpointTransition(command) && (workflowState.state !== "reviewing" || invalidReviewTransition)) {
+	if (commandHasReviewCheckpointTransition(command) && invalidReviewTransition) {
 		return {
 			policy: "validateReviewChain",
 			block: true,
-			reason: invalidReviewTransition ?? "Blocked: orchestrator review statuses require workflow state reviewing.",
+			reason: invalidReviewTransition,
 		};
 	}
 

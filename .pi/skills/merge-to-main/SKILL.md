@@ -5,7 +5,7 @@ description: Pi-native merge workflow. Use when user says “мержим”, �
 
 # Merge to Main
 
-Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` before this skill; merge-to-main includes commit/push. This workflow is user-triggered session-final work, not an automatic per-task lifecycle stage.
+Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` before this skill; merge-to-main includes commit/push. This workflow is user-triggered session-final work, not an automatic per-task bd-status stage.
 
 ## Workflow
 
@@ -18,7 +18,7 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
    bd list --status=inreview
    ```
 2. If on `main`, stop: nothing to merge.
-3. Resolve feature-related open beads only. Treat unrelated beads from parallel sessions as background; do not block on them. Any session-active bead on this branch must be terminal (`closed`, `blocked`, or explicit `deferred`/handoff with reason) before merging.
+3. Resolve feature-related open beads only. Treat unrelated beads from parallel sessions as background; do not block on them. Any session-active bead on this branch must have terminal bd status (`closed`, `blocked`, or explicit `deferred`/handoff with reason) before merging; Pi session fields are context, not lifecycle authority.
 4. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
 5. Run quality gates:
    ```bash

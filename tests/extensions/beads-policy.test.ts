@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -129,7 +129,7 @@ describe('Pi merge-slot push policy', () => {
 describe('Pi terminal close policy', () => {
   const policyOnlyOptions = { cwd: tmpdir() }
 
-  it('blocks standard bd close when workflow state is idle', () => {
+  it('blocks standard bd close when session context is idle and bd evidence is missing', () => {
     const decision = evaluateBashPolicy('bd close bead-a --reason done', {
       state: 'idle',
     }, policyOnlyOptions)
@@ -143,7 +143,7 @@ describe('Pi terminal close policy', () => {
     'bd update bead-a --status=closed --json',
     'bd update bead-a -s=closed --json',
     'bd update bead-a --status "closed" --json',
-  ])('blocks direct terminal status update without accepted workflow state: %s', (command) => {
+  ])('blocks direct terminal status update without accepted session/review evidence: %s', (command) => {
     const decision = evaluateBashPolicy(command, {
       state: 'idle',
     }, policyOnlyOptions)
@@ -168,16 +168,27 @@ describe('Pi terminal close policy', () => {
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
   })
 
-  it.each(['accepted', 'reviewing'])('allows active bead terminal close in workflow state %s', (state) => {
+  it('allows active bead terminal close when live bd status is accepted', () => {
     const decision = evaluateBashPolicy('bd update bead-a --status closed --json', {
       activeBead: 'bead-a',
-      state,
+      state: 'reviewing',
+      bdStatus: 'accepted',
     }, policyOnlyOptions)
 
     expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
   })
 
-  it('blocks terminal close when accepted workflow state belongs to a different active bead', () => {
+  it.each(['accepted', 'reviewing'])('does not allow terminal close from stale session context %s without bd evidence', (state) => {
+    const decision = evaluateBashPolicy('bd update bead-a --status closed --json', {
+      activeBead: 'bead-a',
+      state,
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks terminal close when accepted session context belongs to a different active bead', () => {
     const decision = evaluateBashPolicy('bd update bead-b --status closed --json', {
       activeBead: 'bead-a',
       state: 'accepted',
@@ -188,19 +199,196 @@ describe('Pi terminal close policy', () => {
   })
 })
 
-describe('Pi active bead lifecycle policy', () => {
-  it.each(['claimed', 'planning', 'implementing', 'inreview', 'reviewing'])(
-    'blocks claiming another bead while active bead is %s',
+describe('Pi Fast Path bd-first supervisor readiness policy', () => {
+  function createRepoWithRiskyPolicyDiff(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-fastpath-'))
+    execFileSync('git', ['init', '-b', 'fix/current'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    mkdirSync(join(repo, '.pi/extensions/beads-policy'), { recursive: true })
+    writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const before = true\n')
+    execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+    writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const after = true\n')
+    return repo
+  }
+
+  it('blocks risky mutation when only bd in_progress exists without approved plan evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('allows risky mutation when session state has approved plan evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        planApproved: true,
+      }, { cwd: repo })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('allows risky mutation when bd comments have same-session approved plan evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFileSync(join(binDir, 'bd'), '#!/usr/bin/env bash\nif [[ "$1" == "comments" ]]; then printf "PLAN APPROVED\\nPI_SESSION_KEY: id:session-current\\n"; exit 0; fi\nexit 1\n')
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        sessionKey: 'id:session-current',
+      }, { cwd: repo })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks risky mutation when same-session comments only have dispatch evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFileSync(join(binDir, 'bd'), '#!/usr/bin/env bash\nif [[ "$1" == "comments" ]]; then printf "DISPATCH supervisor\\nPI_SESSION_KEY: id:session-current\\n"; exit 0; fi\nexit 1\n')
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        sessionKey: 'id:session-current',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks risky mutation when plan approval and session evidence are split across comments', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFileSync(join(binDir, 'bd'), '#!/usr/bin/env bash\nif [[ "$1" == "comments" ]]; then printf "PLAN APPROVED\\n\\nDISPATCH supervisor\\nPI_SESSION_KEY: id:session-current\\n"; exit 0; fi\nexit 1\n')
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        state: 'idle',
+        bdStatus: 'in_progress',
+        sessionKey: 'id:session-current',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it.each(['plan_approved', 'implementing', 'accepted'])(
+    'blocks risky mutation when only legacy session state %s exists without approved plan evidence',
     (state) => {
+      const repo = createRepoWithRiskyPolicyDiff()
+      try {
+        const decision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+          activeBead: 'bead-a',
+          state,
+          bdStatus: 'in_progress',
+        }, { cwd: repo })
+
+        expect(decision?.policy).toBe('fastPathDiscipline')
+        expect(decision?.block).toBe(true)
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('preserves planning and merge-slot session-field guards', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const planningDecision = evaluateBashPolicy('bd update bead-a --priority 2 --json', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        planApproved: true,
+        planMode: 'strict',
+      }, { cwd: repo })
+      const pushDecision = evaluateBashPolicy('git push', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        planApproved: true,
+        mergeSlotHeld: false,
+      }, { cwd: repo, bdMergeSlotIssue: null })
+
+      expect(planningDecision?.policy).toBe('blockMutationsInPlanning')
+      expect(pushDecision?.policy).toBe('requireMergeSlotForPush')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Pi bd-first active bead policy', () => {
+  it.each(['in_progress', 'inreview', 'simplified', 'reviewed', 'accepted'])(
+    'blocks claiming another bead while active bead bd status is %s',
+    (bdStatus) => {
       const decision = evaluateBashPolicy('bd update bead-b --claim --json', {
         activeBead: 'bead-a',
-        state,
+        state: 'idle',
+        bdStatus,
       })
 
       expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
       expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain(`bd:${bdStatus}`)
     },
   )
+
+  it('treats unknown active bd status as non-terminal for lifecycle-sensitive actions', () => {
+    const decision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, {
+      activeBead: 'bead-a',
+      state: 'idle',
+      bdStatus: 'custom_review_hold',
+    })
+
+    expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(decision?.reason).toContain('unknown bd status custom_review_hold')
+  })
 
   it('redirects active inreview bead to review-bead next action', () => {
     const reason = activeBeadLifecycleReason('bead-b', 'start/claim another bead', {
@@ -215,7 +403,7 @@ describe('Pi active bead lifecycle policy', () => {
   })
 
 
-  it('reconciles stale implementing state to bd inreview for redirect decisions', () => {
+  it('records bd inreview without coercing session state for redirect decisions', () => {
     const reconciled = reconcileWorkflowStateWithBdStatus({
       activeBead: 'bead-a',
       state: 'implementing',
@@ -223,7 +411,8 @@ describe('Pi active bead lifecycle policy', () => {
 
     const decision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, reconciled)
 
-    expect(reconciled.state).toBe('inreview')
+    expect(reconciled.state).toBe('implementing')
+    expect(reconciled.bdStatus).toBe('inreview')
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.reason).toContain('review-bead / review_bead')
     expect(decision?.reason).not.toContain('implementing')
@@ -238,7 +427,7 @@ describe('Pi active bead lifecycle policy', () => {
     expect(reconciled.state).toBe('planning')
   })
 
-  it('clears active bead when bd status is terminal before lifecycle decisions', () => {
+  it('clears active bead when bd status is terminal before session decisions', () => {
     const reconciled = reconcileWorkflowStateWithBdStatus({
       activeBead: 'bead-a',
       state: 'reviewing',
@@ -256,10 +445,11 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
   })
 
-  it('allows next workflow claim after active bead reaches closed terminal state', () => {
+  it('allows next workflow claim after active bead reaches closed terminal bd status', () => {
     const decision = evaluateBashPolicy('/workflow-claim bead-b', {
       activeBead: 'bead-a',
-      state: 'closed',
+      state: 'implementing',
+      bdStatus: 'closed',
     })
 
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
@@ -295,10 +485,11 @@ describe('Pi active bead lifecycle policy', () => {
     expect(decision?.block).toBe(true)
   })
 
-  it('allows accepted bead close before explicit merge-to-main', () => {
+  it('allows accepted bead close before explicit merge-to-main when bd evidence is accepted', () => {
     const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
       activeBead: 'bead-a',
-      state: 'accepted',
+      state: 'implementing',
+      bdStatus: 'accepted',
     })
 
     expect(decision?.policy).not.toBe('blockUnmergedBranchCompletion')

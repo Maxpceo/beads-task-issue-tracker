@@ -26,6 +26,8 @@ type WidgetFactory = (tui: unknown, theme: ExtensionContext["ui"]["theme"]) => C
 interface WorkflowStateSnapshot {
 	activeBead?: string;
 	state?: string;
+	sessionMode?: string;
+	bdStatus?: string;
 	updatedAt?: string;
 	runtimeOwnerKey?: string;
 }
@@ -36,7 +38,8 @@ interface WorkflowStateUpdateEvent {
 
 interface BeadPurposeSnapshot {
 	bead?: string;
-	state: string;
+	sessionMode: string;
+	bdStatus?: string;
 	title?: string;
 	lookupFailed: boolean;
 	nextAction?: string;
@@ -45,6 +48,7 @@ interface BeadPurposeSnapshot {
 const WIDGET_KEY = "bead-purpose";
 const STATUS_KEY = "bead-purpose";
 const ACTIVE_STATES_WITHOUT_STALE_ACTIONS = new Set(["idle", "accepted", "closed", "blocked", "deferred", "merged"]);
+const TERMINAL_BD_STATUSES = new Set(["closed", "blocked", "deferred"]);
 
 const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
 
@@ -86,7 +90,9 @@ function nextActionFor(state: string): string | undefined {
 }
 
 function isActivePurpose(state: WorkflowStateSnapshot): state is WorkflowStateSnapshot & { activeBead: string } {
-	return Boolean(state.activeBead && !ACTIVE_STATES_WITHOUT_STALE_ACTIONS.has(state.state ?? "idle"));
+	if (!state.activeBead) return false;
+	if (state.bdStatus && TERMINAL_BD_STATUSES.has(state.bdStatus)) return false;
+	return !ACTIVE_STATES_WITHOUT_STALE_ACTIONS.has(state.sessionMode ?? state.state ?? "idle");
 }
 
 function parseBdTitle(stdout: string): string | undefined {
@@ -120,7 +126,8 @@ function compactSnapshot(snapshot: BeadPurposeSnapshot): string {
 	const fallback = snapshot.lookupFailed ? " · title unavailable" : "";
 	const next = snapshot.nextAction ? ` · ${snapshot.nextAction}` : "";
 	const title = snapshot.title ? ` · ${snapshot.title}` : "";
-	return `purpose: ${bead} · ${snapshot.state}${fallback}${next}${title}`;
+	const bd = snapshot.bdStatus ? ` · bd:${snapshot.bdStatus}` : "";
+	return `purpose: ${bead} · session:${snapshot.sessionMode}${bd}${fallback}${next}${title}`;
 }
 
 function compactBeadId(id: string | undefined): string {
@@ -133,7 +140,8 @@ function compactWidgetSnapshot(snapshot: BeadPurposeSnapshot): string {
 	const title = snapshot.title ? ` · ${snapshot.title}` : "";
 	const next = snapshot.nextAction ? ` · ${snapshot.nextAction}` : "";
 	const fallback = snapshot.lookupFailed ? " · title unavailable" : "";
-	return `purpose: ${bead} · ${snapshot.state}${title}${next}${fallback}`;
+	const bd = snapshot.bdStatus ? ` · bd:${snapshot.bdStatus}` : "";
+	return `purpose: ${bead} · session:${snapshot.sessionMode}${bd}${title}${next}${fallback}`;
 }
 
 function renderPurposeWidget(snapshot: BeadPurposeSnapshot, theme: ExtensionContext["ui"]["theme"]): Component {
@@ -154,9 +162,9 @@ export default function beadPurposeExtension(pi: ExtensionAPI): void {
 		const generation = ++refreshGeneration;
 		if (!ctx.hasUI) return;
 		const workflow = latestWorkflowState(ctx);
-		const state = workflow.state ?? "idle";
+		const sessionMode = workflow.sessionMode ?? workflow.state ?? "idle";
 
-		if (!isActivePurpose({ ...workflow, state })) {
+		if (!isActivePurpose({ ...workflow, sessionMode })) {
 			ctx.ui.setWidget(WIDGET_KEY, undefined);
 			ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("dim", "purpose:no active bead"));
 			return;
@@ -168,8 +176,8 @@ export default function beadPurposeExtension(pi: ExtensionAPI): void {
 			const resolved = await resolveBeadTitle(pi, workflow.activeBead);
 			if (generation !== refreshGeneration) return;
 			const currentWorkflow = latestWorkflowState(ctx);
-			const currentState = currentWorkflow.state ?? "idle";
-			if (!isActivePurpose({ ...currentWorkflow, state: currentState }) || currentWorkflow.activeBead !== workflow.activeBead || currentState !== state) return;
+			const currentSessionMode = currentWorkflow.sessionMode ?? currentWorkflow.state ?? "idle";
+			if (!isActivePurpose({ ...currentWorkflow, sessionMode: currentSessionMode }) || currentWorkflow.activeBead !== workflow.activeBead || currentSessionMode !== sessionMode) return;
 			title = resolved.title;
 			lookupFailed = resolved.lookupFailed;
 			titleCache.set(workflow.activeBead, title);
@@ -179,10 +187,11 @@ export default function beadPurposeExtension(pi: ExtensionAPI): void {
 
 		const snapshot: BeadPurposeSnapshot = {
 			bead: workflow.activeBead,
-			state,
+			sessionMode,
+			bdStatus: workflow.bdStatus,
 			title,
 			lookupFailed,
-			nextAction: nextActionFor(state),
+			nextAction: nextActionFor(sessionMode),
 		};
 
 		ctx.ui.setWidget(WIDGET_KEY, (_tui, theme) => renderPurposeWidget(snapshot, theme));

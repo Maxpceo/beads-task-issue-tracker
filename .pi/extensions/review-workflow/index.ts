@@ -278,13 +278,13 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const startCommit = params.startCommit || findStartCommit(comments);
 				if (!startCommit) throw new Error("No startCommit provided and no START_COMMIT found in comments.");
 				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
-				const branch = await execRequired(pi, "git", ["branch", "--show-current"]);
-				const worktreePath = await execRequired(pi, "git", ["rev-parse", "--show-toplevel"]);
+				const branch = await execRequired(pi, "git", ["-C", ctx.cwd, "branch", "--show-current"]);
+				const worktreePath = await execRequired(pi, "git", ["-C", ctx.cwd, "rev-parse", "--show-toplevel"]);
 				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit })) {
 					throw new Error(`review_bead refused ${params.beadId}: no current-session branch/worktree/start ownership evidence. Run bd comments ${params.beadId} and /workflow-status; use /workflow-reset for stale foreign state or explicitly confirm takeover before reviewing.`);
 				}
-				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "reviewing", branch, startCommit, endCommit });
-				const changedRaw = await execRequired(pi, "git", ["diff", "--name-only", `${startCommit}..${endCommit}`]);
+				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
+				const changedRaw = await execRequired(pi, "git", ["-C", ctx.cwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
@@ -299,7 +299,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				];
 				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, pathRulesLoaded };
 				if (!params.dryRun) {
-					await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
+					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
 					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
 					const reviewer = await runReviewer(ctx.cwd, prompt, signal);
@@ -312,11 +312,11 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\n${automatedChecks.join("\n\n")}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
 						await exec(pi, "bd", ["close", params.beadId, "--reason", "Reviewed and accepted by review_bead"]);
-						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "closed", branch, startCommit, endCommit });
+						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "closed", branch, worktreePath, startCommit, endCommit });
 					} else {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: NOT APPROVED\n\nRedispatch required before completion.\n\n${reviewer.output.slice(-4000)}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "inreview"]);
-						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, state: "inreview", branch, startCommit, endCommit });
+						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "inreview", branch, worktreePath, startCommit, endCommit });
 					}
 				}
 				return { content: [{ type: "text", text: render(result) }], details: result };
