@@ -335,7 +335,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (!isSafeCommand(command)) {
 			return {
 				block: true,
-				reason: `Plan mode: command blocked (not allowlisted). Use /plan to disable plan mode first.\nCommand: ${command}`,
+				reason: `Plan mode: command blocked (not allowlisted). Agents should call workflow_plan_mode with mode=off when an approved workflow requires leaving plan mode; /plan remains an optional human UI shortcut.\nCommand: ${command}`,
 			};
 		}
 	});

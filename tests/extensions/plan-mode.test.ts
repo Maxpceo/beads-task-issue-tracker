@@ -18,7 +18,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     if (id === './utils.js') {
       return {
         extractTodoItems: () => [],
-        isSafeCommand: () => true,
+        isSafeCommand: (command: string) => !command.includes('rm -rf'),
         markCompletedSteps: (items: unknown[]) => items,
         validateAutoExecutePlan: () => ({ valid: true, reason: '' }),
       }
@@ -41,6 +41,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
   const widgets: Record<string, string[] | undefined> = {}
   const activeTools: string[][] = []
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
+  const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
   const execCalls: Array<{ command: string, args: string[] }> = []
   const delayedClaimEvents: unknown[] = []
 
@@ -51,6 +52,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
     registerShortcut() {},
     on: (event: string, handler: (event: any, ctx: any) => unknown) => {
       if (event === 'input') inputHandlers.push(handler)
+      if (event === 'tool_call') toolCallHandlers.push(handler)
     },
     appendEntry() {},
     setActiveTools: (tools: string[]) => activeTools.push(tools),
@@ -105,7 +107,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview' } = {}
   })
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, execCalls, delayedClaimEvents, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, execCalls, delayedClaimEvents, ctx }
 }
 
 describe('Pi plan-mode workflow synchronization', () => {
@@ -197,6 +199,18 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
     expect(activeTools.at(-2)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire'])
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+  })
+
+  it('plan-mode bash block message points agents to workflow_plan_mode, not slash-only recovery', async () => {
+    const { commandHandlers, toolCallHandlers, ctx } = makeHarness()
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const decision = await toolCallHandlers[0]?.({ toolName: 'bash', input: { command: 'rm -rf tmp' } }, ctx) as { block: boolean, reason: string }
+
+    expect(decision).toMatchObject({ block: true })
+    expect(decision.reason).toContain('workflow_plan_mode')
+    expect(decision.reason).toContain('optional human UI shortcut')
+    expect(decision.reason).not.toContain('Use /plan')
   })
 
   it('workflow_plan_approved requires evidence and only updates state after bd comment succeeds', async () => {
