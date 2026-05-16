@@ -1110,6 +1110,48 @@ function matrixCoversCheck(matrixText: string, check: string): boolean {
 	return matches >= Math.min(2, checkTokens.length);
 }
 
+const ACCEPTANCE_BLOCKING_RESULTS = /^(?:FAIL|NOT\s+RUN|BLOCKED|SCOPE\s+GAP)\b/i;
+
+function normalizeAcceptanceResultCell(value: string): string {
+	return value
+		.replace(/[`*_~]/g, "")
+		.replace(/<[^>]*>/g, " ")
+		.replace(/&nbsp;/gi, " ")
+		.trim();
+}
+
+function acceptanceMatrixStructuredResults(matrixText: string): string[] {
+	const matrixWithoutOverride = matrixText.replace(/HUMAN ACCEPTANCE OVERRIDE[\s\S]*$/i, "");
+	const results: string[] = [];
+	for (const line of matrixWithoutOverride.split(/\r?\n/)) {
+		const yamlLike = line.match(/^\s*(?:[-*]\s*)?(?:result|verdict|status)\s*:\s*(.+?)\s*$/i);
+		if (yamlLike?.[1]) results.push(normalizeAcceptanceResultCell(yamlLike[1]));
+	}
+	const tableLines = matrixWithoutOverride.split(/\r?\n/).filter((line) => line.includes("|"));
+	for (let index = 0; index < tableLines.length; index += 1) {
+		const headerLine = tableLines[index];
+		if (!headerLine) continue;
+		const headerCells = headerLine.split("|").map((cell) => cell.trim().toLowerCase());
+		const resultColumn = headerCells.findIndex((cell) => /^(?:result|verdict|status)$/.test(cell));
+		if (resultColumn < 0) continue;
+		let rowIndex = index + 1;
+		const separatorLine = tableLines[rowIndex];
+		if (separatorLine && /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(separatorLine)) rowIndex += 1;
+		for (; rowIndex < tableLines.length; rowIndex += 1) {
+			const rowLine = tableLines[rowIndex];
+			if (!rowLine) break;
+			const cells = rowLine.split("|").map((cell) => cell.trim());
+			if (cells.length <= resultColumn) break;
+			results.push(normalizeAcceptanceResultCell(cells[resultColumn] ?? ""));
+		}
+	}
+	return results;
+}
+
+function acceptanceMatrixHasBlockingResult(matrixText: string): boolean {
+	return acceptanceMatrixStructuredResults(matrixText).some((result) => ACCEPTANCE_BLOCKING_RESULTS.test(result));
+}
+
 function validateAcceptanceMatrixForClose(cwd: string, id: string): string | undefined {
 	const issue = getBdIssue(cwd, id);
 	const checks = descriptionAcceptanceChecks(issue?.description);
@@ -1118,7 +1160,7 @@ function validateAcceptanceMatrixForClose(cwd: string, id: string): string | und
 	if (hasValidHumanAcceptanceOverride(comments)) return undefined;
 	const matrix = latestAcceptanceMatrix(comments);
 	if (!matrix) return `Blocked: terminal close for ${id} requires ACCEPTANCE MATRIX in bd comments because the bead has acceptance criteria.`;
-	if (/result\s*:\s*(?:FAIL|NOT\s+RUN|BLOCKED|SCOPE\s+GAP)\b/i.test(matrix) || /\b(?:FAIL|NOT\s+RUN|BLOCKED|SCOPE\s+GAP)\b/i.test(matrix.replace(/HUMAN ACCEPTANCE OVERRIDE[\s\S]*$/i, ""))) {
+	if (acceptanceMatrixHasBlockingResult(matrix)) {
 		return `Blocked: ACCEPTANCE MATRIX for ${id} contains FAIL/NOT RUN/BLOCKED/SCOPE GAP. Fix the criteria or add HUMAN ACCEPTANCE OVERRIDE with approver and reason.`;
 	}
 	if (!/result\s*:\s*PASS\b|\bPASS\b/i.test(matrix)) {
