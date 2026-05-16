@@ -126,7 +126,17 @@ export async function runPlanReviewers(
 	const task = `Task: ${buildPlanReviewTask(draftPlan)}`;
 	return Promise.all(reviewers.map(async (reviewer) => {
 		const agentPath = path.join(cwd, ".pi", "agents", `${reviewer}.md`);
-		const result = await pi.exec("pi", ["--mode", "json", "-p", "--no-session", "--append-system-prompt", agentPath, task]);
+		const result = await pi.exec("pi", [
+			"--mode", "json",
+			"-p",
+			"--no-session",
+			"--no-extensions",
+			"--no-skills",
+			"--no-prompt-templates",
+			"--tools", "read,grep,find,ls",
+			"--append-system-prompt", agentPath,
+			task,
+		]);
 		if (result.code !== 0) {
 			return { reviewer, verdict: "BLOCKED", findings: [], unresolvedBlockers: [result.stderr || result.stdout || `reviewer ${reviewer} failed`], raw: result.stdout, error: result.stderr || result.stdout } satisfies PlanReviewResult;
 		}

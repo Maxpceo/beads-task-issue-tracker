@@ -84,7 +84,15 @@ Risks / rollback:
     const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer'])
 
     expect(calls[0]).toMatchObject({ command: 'pi' })
-    expect(calls[0]?.args).toEqual(expect.arrayContaining(['--mode', 'json', '--append-system-prompt', '/repo/.pi/agents/plan-edge-reviewer.md']))
+    expect(calls[0]?.args).toEqual(expect.arrayContaining([
+      '--mode', 'json',
+      '--no-extensions',
+      '--no-skills',
+      '--no-prompt-templates',
+      '--tools', 'read,grep,find,ls',
+      '--append-system-prompt', '/repo/.pi/agents/plan-edge-reviewer.md',
+    ]))
+    expect(calls[0]?.args).not.toEqual(expect.arrayContaining(['edit', 'write', 'bash']))
     expect(results[0]).toMatchObject({ reviewer: 'plan-edge-reviewer', verdict: 'APPROVED' })
   })
 })
