@@ -7,9 +7,11 @@ import { registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extens
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
+const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review']
 let mockPlanReviewGateOk = true
 let mockPlanReviewReasons: string[] = []
 let mockMissingRevisedPlanSections: string[] = []
+let mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -30,10 +32,10 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     if (id === '../workflow-intent/index') return { parseWorkflowIntent, shouldAutoClaimAndPlan }
     if (id === '../plan-review/index') {
       return {
-        evaluatePlanReviewGate: () => ({ ok: mockPlanReviewGateOk, reasons: mockPlanReviewReasons }),
+        evaluatePlanReviewGate: (results: unknown[]) => ({ ok: mockPlanReviewGateOk, reasons: mockPlanReviewReasons, results, missingReviewers: mockPlanReviewReasons.filter((reason) => reason.startsWith('missing reviewer:')), blockedReviewers: [] }),
         missingRevisedPlanSections: () => mockMissingRevisedPlanSections,
-        renderPlanReviewResults: () => 'PLAN REVIEW: APPROVED',
-        runPlanReviewers: async () => [{ reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: 'PLAN REVIEW: APPROVED' }],
+        renderPlanReviewResults: () => mockRenderedPlanReviewResults,
+        runPlanReviewers: async () => ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({ reviewer, verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: 'PLAN REVIEW: APPROVED' })),
       }
     }
     if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
@@ -48,6 +50,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
+  mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -180,7 +183,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(delayedClaimEvents).toEqual([])
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
   })
 
   it('handles claim+plan when workflow-state registered the guarded claim API on a different Pi proxy object', async () => {
@@ -195,7 +198,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     ]))
     expect(workflowUpdates.at(-2)).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', sessionMode: 'claimed' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
   })
 
   it('does not run an unrelated bd update --claim for claim+plan when current-session bead is in_progress', async () => {
@@ -206,7 +209,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(result).toEqual({ action: 'handled' })
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'beads-task-issue-tracker-zzkb' && call.args.includes('--claim'))).toBe(false)
     expect(workflowUpdates.some((update: any) => update.planMode === 'strict')).toBe(false)
-    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-1)).not.toEqual(expectedPlanTools)
   })
 
   it('does not run an unrelated bd update --claim for claim+plan when current-session bead is inreview', async () => {
@@ -217,10 +220,9 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(result).toEqual({ action: 'handled' })
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'beads-task-issue-tracker-zzkb' && call.args.includes('--claim'))).toBe(false)
     expect(workflowUpdates.some((update: any) => update.planMode === 'strict')).toBe(false)
-    expect(activeTools.at(-1)).not.toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-1)).not.toEqual(expectedPlanTools)
   })
 })
-
 
 describe('Pi plan-mode typed workflow tools', () => {
   it('workflow_plan_mode strict and off change active tools and workflow state', async () => {
@@ -231,7 +233,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(workflowUpdates.at(-2)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
-    expect(activeTools.at(-2)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-2)).toEqual(expectedPlanTools)
     expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
   })
 
@@ -245,6 +247,32 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(decision.reason).toContain('workflow_plan_mode')
     expect(decision.reason).toContain('optional human UI shortcut')
     expect(decision.reason).not.toContain('Use /plan')
+  })
+
+  it('workflow_plan_review is available in plan mode, returns findings, blocks failures, and avoids workflow/bd/git mutations', async () => {
+    const { toolHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness()
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-setup', { mode: 'strict' }, undefined, undefined, ctx)
+    const beforeWorkflowUpdates = workflowUpdates.length
+    const beforeExecCalls = execCalls.length
+    const ok = await toolHandlers.get('workflow_plan_review')?.execute('call-review-ok', { draftPlan: `Plan:\n1. Implement typed plan review tool.` }, undefined, undefined, ctx)
+    mockPlanReviewGateOk = false
+    mockPlanReviewReasons = ['missing reviewer: plan-dead-zone-reviewer', 'blocked reviewer: plan-consistency-reviewer']
+    mockRenderedPlanReviewResults = 'PLAN REVIEW: BLOCKED'
+    const blocked = await toolHandlers.get('workflow_plan_review')?.execute('call-review-blocked', { draftPlan: `Plan:\n1. Implement typed plan review tool.` }, undefined, undefined, ctx)
+
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
+    expect(ok.content[0].text).toContain('workflow_plan_review complete')
+    expect(ok.content[0].text).toContain('PLAN REVIEW: APPROVED')
+    expect(ok.details).toMatchObject({ ok: true })
+    expect(blocked.content[0].text).toContain('missing reviewer: plan-dead-zone-reviewer')
+    expect(blocked.content[0].text).toContain('blocked reviewer: plan-consistency-reviewer')
+    expect(blocked.details).toMatchObject({ ok: false })
+    expect(workflowUpdates).toHaveLength(beforeWorkflowUpdates)
+    expect(execCalls).toHaveLength(beforeExecCalls)
+    expect(source).toEqual(expect.stringContaining('MUST call workflow_plan_review'))
+    expect(source).toEqual(expect.stringContaining('Accepted findings'))
+    expect(source).toEqual(expect.stringContaining('Rejected findings'))
   })
 
   it('workflow_plan_approved requires evidence and only updates state after bd comment succeeds', async () => {
@@ -271,7 +299,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(sendMessages.at(-1)?.message.customType).toBe('plan-review-findings')
     expect(sendMessages.at(-1)?.message.content).toContain('Reviewer findings')
     expect(sendMessages.at(-1)?.options).toMatchObject({ triggerTurn: true })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
   })
 
   it('/plan-auto blocks execution when a required reviewer blocks the gate', async () => {
@@ -285,7 +313,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(sendMessages.at(-1)?.message.customType).toBe('plan-review-gate-blocked')
     expect(sendMessages.at(-1)?.message.content).toContain('blocked reviewer: plan-dead-zone-reviewer')
     expect(sendMessages.at(-1)?.options).toMatchObject({ triggerTurn: false })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved'])
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
   })
 
   it('/plan-auto executes a revised plan with review adjudication sections', async () => {

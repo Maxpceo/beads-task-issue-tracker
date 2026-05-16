@@ -33,7 +33,7 @@ import {
 } from "../plan-review/index";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review"];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 
 const WorkflowPlanModeParams = {
@@ -195,6 +195,29 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
+	async function planReviewTool(params: { draftPlan: string }, ctx: ExtensionContext) {
+		const draftPlan = params.draftPlan.trim();
+		if (!draftPlan) {
+			return toolText("workflow_plan_review blocked: draftPlan is required", { ok: false, error: "draftPlan is required" });
+		}
+
+		const results = await runReviewGateForPlan(ctx, draftPlan);
+		const gate = evaluatePlanReviewGate(results);
+		const renderedResults = renderPlanReviewResults(results);
+		if (!gate.ok) {
+			const reasons = gate.reasons.map((reason) => `- ${reason}`).join("\n");
+			return toolText(
+				`workflow_plan_review blocked. Do not execute or approve the plan until blockers are resolved.\n\n${reasons}\n\nReviewer output:\n\n${renderedResults}`,
+				{ ok: false, gate, results },
+			);
+		}
+
+		return toolText(
+			`workflow_plan_review complete. Implementation remains blocked until the revised plan explicitly adjudicates accepted/rejected findings and receives normal approval.\n\n${renderedResults}`,
+			{ ok: true, gate, results },
+		);
+	}
+
 	async function approvePlanTool(params: { beadId: string; planEvidence: string; approvedBy?: string }, ctx: ExtensionContext) {
 		const evidenceError = validatePlanEvidence(params.planEvidence);
 		if (evidenceError) return toolText(`workflow_plan_approved blocked: ${evidenceError}`, { ok: false, error: evidenceError });
@@ -294,6 +317,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (params.mode === "off") exitPlanMode(ctx);
 				else enterPlanMode(ctx, params.mode === "auto");
 				return toolText(`workflow_plan_mode=${params.mode}${params.reason ? `: ${params.reason}` : ""}`, { mode: params.mode, activeTools: params.mode === "off" ? NORMAL_MODE_TOOLS : PLAN_MODE_TOOLS });
+			},
+		});
+
+		workflowPi.registerTool({
+			name: "workflow_plan_review",
+			label: "Workflow Plan Review",
+			description: "Run required plan-review reviewers against a draft plan and return structured gate findings without mutating files, bd, git, workflow approval, merge-slot, or plan mode state.",
+			parameters: { type: "object", properties: { draftPlan: { type: "string" } }, required: ["draftPlan"], additionalProperties: false },
+			async execute(_id: string, params: { draftPlan: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				return planReviewTool(params, ctx);
 			},
 		});
 
@@ -465,7 +498,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 You are in plan mode - a read-only exploration mode for safe code analysis.
 
 Restrictions:
-- You can only use: read, bash, grep, find, ls, questionnaire
+- You can only use: read, bash, grep, find, ls, questionnaire, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review
 - You CANNOT use: edit, write (file modifications are disabled)
 - Bash is restricted to an allowlist of read-only commands
 - bd read-only commands are allowed: bd show, bd comments, bd list, bd ready, selected bd dep/dolt status commands
@@ -474,7 +507,9 @@ Restrictions:
 Ask clarifying questions using the questionnaire tool.
 Use brave-search skill via bash for web research.
 
-Create a detailed numbered plan under a "Plan:" header.
+Create a detailed numbered draft plan under a "Plan:" header.
+
+For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan. Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections. Do not call workflow_plan_approved yourself unless Maxim explicitly approves.
 
 If auto-plan execution was explicitly requested, create a draft plan first. Pi will run required multi-agent plan-review agents before implementation. After reviewer findings are returned, your revised plan MUST include all sections below or execution will remain blocked:
 

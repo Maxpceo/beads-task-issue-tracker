@@ -6,6 +6,7 @@ Project-local Pi plan mode adapted for the beads workflow.
 
 - Read-only exploration mode via `/plan` or clear natural-language activation phrases.
 - Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation.
+- Agent-operable `workflow_plan_review` typed tool for autonomous strict plan mode.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands.
 - bd-aware allowlist/blocklist:
@@ -87,6 +88,8 @@ If any reviewer is missing, fails, returns `BLOCKED`, or reports unresolved bloc
 ## Strict plan critique
 
 Strict `/plan` remains manual: it never auto-executes. When the user explicitly asks to check the current plan with agents (or runs `/plan-review`), Pi runs the same required reviewers against the latest draft plan and prints findings without mutating files, bd status, workflow approval state, or leaving plan mode. The user must still approve execution explicitly.
+
+Autonomous planning agents should use the typed `workflow_plan_review` tool instead of relying on slash/input triggers. The tool accepts the complete `draftPlan`, runs the required reviewers, and returns structured gate details plus rendered reviewer output. It does not write files, mutate bd, approve the plan, acquire/release merge-slot, change git state, or leave plan mode. If a reviewer is missing, fails, returns `BLOCKED`, or reports unresolved blockers, the tool returns `ok: false` and the agent must keep implementation blocked.
 
 ## Responsibility split
 
