@@ -304,7 +304,7 @@ exit 1
     })
   })
 
-  it.each(['FAIL', 'NOT RUN'])('blocks accepted close when ACCEPTANCE MATRIX contains %s', (result) => {
+  it.each(['FAIL', 'NOT RUN', 'BLOCKED', 'SCOPE GAP'])('blocks accepted close when ACCEPTANCE MATRIX contains result: %s', (result) => {
     withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
 - criterion: Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled.
   evidence: Manual /reload in Pi exits with observed selected extensions active.
@@ -316,7 +316,55 @@ exit 1
       }, { cwd })
 
       expect(decision?.policy).toBe('blockBdCloseWithoutReview')
-      expect(decision?.reason).toContain(result === 'FAIL' ? 'FAIL' : 'NOT RUN')
+      expect(decision?.reason).toContain('FAIL/NOT RUN/BLOCKED/SCOPE GAP')
+    })
+  })
+
+  it.each(['FAIL', 'NOT RUN', 'BLOCKED', 'SCOPE GAP'])('blocks accepted close when markdown table result contains %s', (result) => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+| criterion | evidence | result |
+| --- | --- | --- |
+| Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled. | Manual /reload in Pi exits with observed selected extensions active. | ${result} |
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('FAIL/NOT RUN/BLOCKED/SCOPE GAP')
+    })
+  })
+
+  it.each(['verdict', 'status'])('blocks accepted close when markdown table %s column contains BLOCKED', (column) => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+| criterion | evidence | ${column} |
+| --- | --- | --- |
+| Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled. | Manual /reload in Pi exits with observed selected extensions active. | BLOCKED |
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('FAIL/NOT RUN/BLOCKED/SCOPE GAP')
+    })
+  })
+
+  it('allows accepted close when forbidden words are only mentioned as absent in evidence text', () => {
+    withFakeBd(issueWithAcceptance, `ACCEPTANCE MATRIX:
+| criterion | evidence | result |
+| --- | --- | --- |
+| Runtime smoke checks confirm Pi starts/reloads with selected extensions enabled. | Manual /reload in Pi exits with observed selected extensions active; no FAIL, NOT RUN, BLOCKED, or SCOPE GAP results were observed. | PASS |
+| Manual /reload in Pi exits with observed selected extensions active. | Covered by the same runtime smoke check. | N/A |
+`, (cwd) => {
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
     })
   })
 
