@@ -2,6 +2,12 @@
 
 These are Pi-native project rules distilled from Claude reference files. Do not modify `.claude/*` for Pi workflow changes. Shared codebase rules migrated from `PROJECT-CONTEXT.md` live in `.pi/rules/codebase.md` and are loaded together with this file by Pi path-rules.
 
+## Pi extension entrypoints
+
+- Every project-local `.pi/extensions/<name>/index.ts` is a Pi extension entrypoint and must export a default factory function, even when the directory mostly contains shared helper logic.
+- Helper-only modules should live outside extension entrypoint paths, for example in a nested helper file or another `.pi/` support directory, unless the entrypoint also provides a no-op `export default function <name>Extension(_pi: unknown): void {}` with a comment or clear name.
+- Keep the focused guard `tests/extensions/extension-entrypoints.test.ts` passing when adding, moving, or refactoring `.pi/extensions/*/index.ts`; named exports alone are not enough for Pi runtime loading.
+
 ## Logging
 
 - Do not use `console.*` in `app/` except the console-to-log interceptor.
