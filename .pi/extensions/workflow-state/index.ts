@@ -43,6 +43,8 @@ const WORKFLOW_STATES = [
 type WorkflowStateName = (typeof WORKFLOW_STATES)[number];
 type PlanMode = "off" | "strict" | "auto";
 
+const PROTECTED_BRANCHES = new Set(["main", "master"]);
+
 interface WorkflowState {
 	activeBead?: string;
 	state: WorkflowStateName;
@@ -313,6 +315,15 @@ function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: Recov
 	return hasMatchingWorktree || hasMatchingBranch || hasMatchingStartCommit;
 }
 
+async function workflowStateHasValidRecordedTaskScope(pi: ExtensionAPI, state: WorkflowState): Promise<boolean> {
+	if (!state.worktreePath || !state.branch || PROTECTED_BRANCHES.has(state.branch)) return false;
+	const [actualWorktree, actualBranch] = await Promise.all([
+		detectWorktreePath(pi, state.worktreePath),
+		detectBranch(pi, state.worktreePath),
+	]);
+	return actualWorktree === state.worktreePath && actualBranch === state.branch;
+}
+
 async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string> {
 	const { stdout, code } = await pi.exec("bd", ["comments", beadId]);
 	return code === 0 ? stdout : "";
@@ -399,7 +410,11 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 		if (isTerminalWorkflowState(state.state)) return { state: { ...state, bdStatus } };
 
 		const commentsText = await readBdComments(pi, state.activeBead);
-		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope) && hasCurrentSessionOwnership(state, ctx) && workflowStateHasCurrentScopeEvidence(state, scope);
+		const hasCurrentScope = workflowStateHasCurrentScopeEvidence(state, scope);
+		const hasRecordedTaskScope = await workflowStateHasValidRecordedTaskScope(pi, state);
+		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope)
+			&& hasCurrentSessionOwnership(state, ctx)
+			&& (hasCurrentScope || hasRecordedTaskScope);
 		if (!hasOwnership) {
 			const cleared = clearUnsafeApprovedImplementingState({
 				...state,
@@ -431,9 +446,9 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 		const syncedState: WorkflowState = {
 			...state,
 			bdStatus,
-			branch: currentScope.branch ?? state.branch,
-			worktreePath: currentScope.worktreePath,
-			startCommit: currentScope.startCommit,
+			branch: hasCurrentScope ? (currentScope.branch ?? state.branch) : state.branch,
+			worktreePath: hasCurrentScope ? currentScope.worktreePath : state.worktreePath,
+			startCommit: hasCurrentScope ? currentScope.startCommit : state.startCommit,
 		};
 		if (bdStatus === "inreview" && state.state === "implementing") {
 			syncedState.state = "inreview";

@@ -1285,6 +1285,88 @@ describe('Pi active worktree cwd lock policy', () => {
     }
   }
 
+  it('recovers stale main lock when the tool cwd is the task worktree', async () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      const fakeBd = join(binDir, 'bd')
+      writeFileSync(fakeBd, `#!/bin/sh
+if [ "$1" = "comments" ]; then
+  cat <<'EOF'
+WORKFLOW CLAIM
+BRANCH: main
+WORKTREE: ${main}
+PI_SESSION_KEY: id:session-current
+EOF
+  exit 0
+fi
+if [ "$1" = "show" ]; then
+  printf '[{"id":"bead-a","status":"in_progress"}]'
+  exit 0
+fi
+exit 1
+`)
+      chmodSync(fakeBd, 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+      let toolCallHandler: any
+      const pi = {
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      }
+      const ctx = {
+        cwd: worktree,
+        sessionManager: {
+          getSessionId: () => 'session-current',
+          getEntries: () => [{
+            type: 'custom',
+            customType: 'workflow-state',
+            data: {
+              activeBead: 'bead-a',
+              state: 'implementing',
+              bdStatus: 'in_progress',
+              branch: 'main',
+              worktreePath: main,
+              sessionKey: 'id:session-current',
+              planMode: 'off',
+              mergeSlotHeld: false,
+            },
+          }],
+        },
+        ui: { notify() {}, setStatus() {}, theme: { fg: (_style: string, value: string) => value } },
+      }
+
+      beadsPolicyExtension(pi as any)
+      const taskDecision = await toolCallHandler({ toolName: 'bash', input: { command: 'touch smoke.txt' } }, ctx)
+      const mainDecision = evaluateBashPolicy('git add tracked.txt', {}, { cwd: main })
+
+      expect(taskDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(mainDecision?.policy).toBe('blockMainMutation')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('allows review_bead from the locked inreview task worktree and blocks missing review cwd', () => {
+    const worktree = createRepo('task/current')
+    try {
+      const state = lockedState(worktree, { state: 'inreview', bdStatus: 'inreview' })
+      const matching = evaluateToolPolicy('review_bead', { beadId: 'bead-a', worktreePath: worktree }, state)
+      const missing = evaluateToolPolicy('review_bead', { beadId: 'bead-a' }, state)
+
+      expect(matching).toBeUndefined()
+      expect(missing?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
   it('blocks mutating bash from main before blockMainMutation when active bead has a worktree lock', () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')
