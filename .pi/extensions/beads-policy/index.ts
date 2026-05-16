@@ -1600,6 +1600,13 @@ function workflowStateHasCurrentScopeEvidence(state: WorkflowStateSnapshot, scop
 	);
 }
 
+function workflowStateHasValidRecordedTaskScope(state: WorkflowStateSnapshot): boolean {
+	if (!state.worktreePath || !state.branch || PROTECTED_BRANCHES.has(state.branch)) return false;
+	if (!fs.existsSync(state.worktreePath)) return false;
+	const repoRoot = getRepoRoot(state.worktreePath);
+	return Boolean(repoRoot && isPathInsideOrEqual(repoRoot, state.worktreePath) && isPathInsideOrEqual(state.worktreePath, repoRoot) && getCurrentBranch(state.worktreePath) === state.branch);
+}
+
 function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 	const entries = ctx.sessionManager.getEntries();
 	const runtimeOwnerKey = currentRuntimeOwnerKey();
@@ -1619,13 +1626,16 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 			sessionKey: state.sessionKey ?? scope.sessionKey,
 		};
 		const currentSessionState = hasCurrentSessionOwnership(state, ctx);
+		const currentScopeState = workflowStateHasCurrentScopeEvidence(state, scope);
+		const recordedTaskScopeState = workflowStateHasValidRecordedTaskScope(state);
 		const missingWorktreeLock = currentSessionState && hasActiveWorktreeLockRequirement(state) && !state.worktreePath;
-		const isCurrentSessionState = currentSessionState && (workflowStateHasCurrentScopeEvidence(state, scope) || Boolean(state.worktreePath) || missingWorktreeLock);
+		const isCurrentSessionState = currentSessionState && (currentScopeState || recordedTaskScopeState || missingWorktreeLock);
 		if (!isCurrentSessionState) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
 		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
-		if (hasForeignSessionOwnershipEvidence(commentsText, stateScope)) {
+		const ownershipScope = recordedTaskScopeState && !currentScopeState ? scope : stateScope;
+		if (hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
 		return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);

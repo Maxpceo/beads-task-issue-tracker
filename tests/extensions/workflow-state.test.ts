@@ -17,6 +17,7 @@ function makeHarness(options: {
   processWorktreePath?: string
   processStartCommit?: string
   staleScopedGitError?: boolean
+  gitScopes?: Record<string, { branch: string; worktreePath: string; startCommit: string }>
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
@@ -33,12 +34,15 @@ function makeHarness(options: {
   const pi: any = {
     exec: async (command: string, args: string[]) => {
       execCalls.push({ command, args })
-      if (command === 'git' && args[0] === '-C' && args[1] === options.ctxCwd) {
-        if (options.staleScopedGitError) throw new Error('This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().')
-        const scopedArgs = args.slice(2).join(' ')
-        if (scopedArgs === 'branch --show-current') return { stdout: `${options.branch}\n`, stderr: '', code: 0 }
-        if (scopedArgs === 'rev-parse HEAD') return { stdout: `${options.startCommit}\n`, stderr: '', code: 0 }
-        if (scopedArgs === 'rev-parse --show-toplevel') return { stdout: `${options.worktreePath}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args[0] === '-C') {
+        if (args[1] === options.ctxCwd && options.staleScopedGitError) throw new Error('This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().')
+        const scope = options.gitScopes?.[String(args[1])] ?? (args[1] === options.ctxCwd ? { branch: options.branch, worktreePath: options.worktreePath, startCommit: options.startCommit } : undefined)
+        if (scope) {
+          const scopedArgs = args.slice(2).join(' ')
+          if (scopedArgs === 'branch --show-current') return { stdout: `${scope.branch}\n`, stderr: '', code: 0 }
+          if (scopedArgs === 'rev-parse HEAD') return { stdout: `${scope.startCommit}\n`, stderr: '', code: 0 }
+          if (scopedArgs === 'rev-parse --show-toplevel') return { stdout: `${scope.worktreePath}\n`, stderr: '', code: 0 }
+        }
       }
       if (command === 'git' && args.join(' ') === 'branch --show-current') return { stdout: `${processBranch}\n`, stderr: '', code: 0 }
       if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return { stdout: `${processStartCommit}\n`, stderr: '', code: 0 }
@@ -1408,6 +1412,7 @@ describe('Pi workflow-state typed tools', () => {
       worktreePath: '/repo/primary',
       startCommit: 'main-head',
       ctxCwd: '/repo/primary',
+      gitScopes: { '/repo/worktrees/bead-task': { branch: 'task/bead-task', worktreePath: '/repo/worktrees/bead-task', startCommit: 'task-head' } },
       issues: { 'bead-task': { status: 'in_progress', comments: 'BRANCH: main\nWORKTREE: /repo/primary' } },
     })
     await eventHandlers.get('session_start')?.({}, ctx)
@@ -1419,7 +1424,11 @@ describe('Pi workflow-state typed tools', () => {
       worktree: '/repo/worktrees/bead-task',
       start: 'task-head',
     }, undefined, undefined, ctx)
+    const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
 
+    expect(status.content[0].text).toContain('branch=task/bead-task')
+    expect(status.content[0].text).toContain('worktree=/repo/worktrees/bead-task')
+    expect(status.content[0].text).not.toContain('branch=main')
     expect(appended.at(-1)?.data).toMatchObject({
       activeBead: 'bead-task',
       branch: 'task/bead-task',
@@ -1427,6 +1436,54 @@ describe('Pi workflow-state typed tools', () => {
       startCommit: 'task-head',
     })
     expect(statuses['workflow-state']).toContain('br:task/bead-task')
+  })
+
+  it('workflow_update recovers an inreview bead to the task worktree review state from stale main context', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      gitScopes: { '/repo/worktrees/bead-task': { branch: 'task/bead-task', worktreePath: '/repo/worktrees/bead-task', startCommit: 'task-head' } },
+      issues: { 'bead-task': { status: 'inreview', comments: 'WORKFLOW CLAIM\nBRANCH: main\nWORKTREE: /repo/primary\nPI_SESSION_KEY: id:session-current' } },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-task',
+          state: 'idle',
+          branch: 'main',
+          worktreePath: '/repo/primary',
+          startCommit: 'main-head',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'off',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+    await eventHandlers.get('session_start')?.({}, ctx)
+
+    const result = await toolHandlers.get('workflow_update')?.execute('call-1', {
+      bead: 'bead-task',
+      state: 'reviewing',
+      session: 'reviewing',
+      branch: 'task/bead-task',
+      worktree: '/repo/worktrees/bead-task',
+      start: 'task-head',
+      end: 'task-end',
+    }, undefined, undefined, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(result.content[0].text).toContain('state=reviewing')
+    expect(result.content[0].text).toContain('branch=task/bead-task')
+    expect(result.content[0].text).toContain('worktree=/repo/worktrees/bead-task')
+    expect(result.content[0].text).toContain('sessionMode=reviewing')
+    expect(result.content[0].text).toContain('bdStatus=inreview')
+    expect(context.message.content).toContain('[PI INREVIEW GUARD]')
+    expect(context.message.content).toContain('review-bead / review_bead')
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-task', state: 'reviewing', sessionMode: 'reviewing', branch: 'task/bead-task', worktreePath: '/repo/worktrees/bead-task', bdStatus: 'inreview' })
   })
 
   it('workflow_update rejects invalid typed parameters without resetting state', async () => {
