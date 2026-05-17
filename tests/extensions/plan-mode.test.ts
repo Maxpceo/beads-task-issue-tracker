@@ -8,6 +8,19 @@ import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extension
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
 const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review']
+const mandatoryWorkflowTools = [
+  'workflow_status',
+  'workflow_claim',
+  'workflow_reset',
+  'workflow_update',
+  'workflow_submit_for_review',
+  'workflow_complete',
+  'dispatch_supervisor',
+  'dispatch_reviewer',
+  'dispatch_docs_agent',
+  'review_bead',
+]
+const expectedNormalTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'subagent', ...mandatoryWorkflowTools]
 let mockPlanReviewGateOk = true
 let mockPlanReviewReasons: string[] = []
 let mockMissingRevisedPlanSections: string[] = []
@@ -57,6 +70,8 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const statuses: Record<string, string | undefined> = {}
   const widgets: Record<string, string[] | undefined> = {}
   const activeTools: string[][] = []
+  let currentActiveTools = [...expectedNormalTools]
+  const allTools = [...new Set([...expectedNormalTools, ...expectedPlanTools])].map((name) => ({ name }))
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
   const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
   const agentEndHandlers: Array<(event: any, ctx: any) => unknown> = []
@@ -76,7 +91,12 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
     },
     appendEntry() {},
     sendMessage: (message: any, options?: any) => sendMessages.push({ message, options }),
-    setActiveTools: (tools: string[]) => activeTools.push(tools),
+    getActiveTools: () => currentActiveTools.map((name) => ({ name })),
+    getAllTools: () => allTools,
+    setActiveTools: (tools: string[]) => {
+      currentActiveTools = [...tools]
+      activeTools.push(tools)
+    },
     exec: async (command: string, args: string[]) => {
       execCalls.push({ command, args })
       if (command === 'bd' && args[0] === 'show') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"open"}]', stderr: '', code: 0 }
@@ -143,7 +163,7 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
     expect(statuses['plan-mode']).toBeUndefined()
     expect(widgets['plan-todos']).toBeUndefined()
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+    expect(activeTools.at(-1)).toEqual(expectedNormalTools)
   })
 
   it('parses varied explicit claim+plan workflow intents without matching full phrases', () => {
@@ -229,12 +249,19 @@ describe('Pi plan-mode typed workflow tools', () => {
     const { toolHandlers, workflowUpdates, activeTools, ctx } = makeHarness()
 
     await toolHandlers.get('workflow_plan_mode')?.execute('call-1', { mode: 'strict', reason: 'plan first' }, undefined, undefined, ctx)
+
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
+    for (const mutatingWorkflowTool of ['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead', 'workflow_submit_for_review', 'workflow_complete']) {
+      expect(activeTools.at(-1)).not.toContain(mutatingWorkflowTool)
+    }
+
     await toolHandlers.get('workflow_plan_mode')?.execute('call-2', { mode: 'off', reason: 'cancel' }, undefined, undefined, ctx)
 
     expect(workflowUpdates.at(-2)).toMatchObject({ planMode: 'strict', sessionMode: 'planning' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'idle' })
     expect(activeTools.at(-2)).toEqual(expectedPlanTools)
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+    expect(activeTools.at(-1)).toEqual(expectedNormalTools)
+    expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
   })
 
   it('plan-mode bash block message points agents to workflow_plan_mode, not slash-only recovery', async () => {
@@ -287,7 +314,8 @@ describe('Pi plan-mode typed workflow tools', () => {
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
     expect(workflowUpdates.at(-1)).toMatchObject({ state: 'implementing', activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+    expect(activeTools.at(-1)).toEqual(expectedNormalTools)
+    expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
   })
 
   it('/plan-auto runs plan-review gate before execution and asks for a revised plan', async () => {
@@ -326,6 +354,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(sendMessages.at(-1)?.message.customType).toBe('plan-mode-execute')
     expect(sendMessages.at(-1)?.message.content).toContain('Execute the revised plan')
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
-    expect(activeTools.at(-1)).toEqual(['read', 'bash', 'edit', 'write'])
+    expect(activeTools.at(-1)).toEqual(expectedNormalTools)
+    expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
   })
 })
