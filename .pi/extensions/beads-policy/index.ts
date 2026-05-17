@@ -1461,6 +1461,12 @@ function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: Re
 	return /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
 }
 
+function hasScopedPostCloseMergeFixComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
+	const comments = getBdCommentsText(cwd, beadId);
+	const blocks = commentEvidenceBlocks(comments);
+	return blocks.some((block) => /POST[- ]CLOSE MERGE FIX/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+}
+
 function recoverableApprovedPlanBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
 	if (!scope.sessionKey) return undefined;
 	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
@@ -1484,6 +1490,21 @@ function recoverableApprovedSupervisorWorkflowBead(cwd: string, scope = currentR
 		try {
 			const issues = JSON.parse(raw) as BdIssueSummary[];
 			const bead = issues.find((issue) => issue.id && hasScopedApprovedSupervisorWorkflowComment(cwd, issue.id, scope));
+			if (bead?.id) return bead.id;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
+}
+
+function recoverablePostCloseMergeFixBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
+	for (const status of ["closed"]) {
+		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+		if (!raw) continue;
+		try {
+			const issues = JSON.parse(raw) as BdIssueSummary[];
+			const bead = issues.find((issue) => issue.id && hasScopedPostCloseMergeFixComment(cwd, issue.id, scope));
 			if (bead?.id) return bead.id;
 		} catch {
 			continue;
@@ -1541,12 +1562,15 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 	if (risky && !supervisorPath) {
 		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
 		const scope = currentRecoveryScope(cwd, workflowState.sessionKey);
-		const recoveredBead = recoverableApprovedPlanBead(cwd, scope) ?? recoverableApprovedSupervisorWorkflowBead(cwd, scope);
+		const recoveredBead =
+			recoverableApprovedPlanBead(cwd, scope) ??
+			recoverableApprovedSupervisorWorkflowBead(cwd, scope) ??
+			recoverablePostCloseMergeFixBead(cwd, scope);
 		if (recoveredBead) return undefined;
 		return {
 			policy: "fastPathDiscipline",
 			block: true,
-			reason: `Blocked: risky scope requires an active bead with approved plan/supervisor path, or bd comments with PLAN APPROVED plus DISPATCH evidence matching this branch/worktree/start commit. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
+			reason: `Blocked: risky scope requires an active bead with approved plan/supervisor path, a valid POST-CLOSE MERGE FIX marker (closed scope), or other scoped recoverable approval evidence. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
 		};
 	}
 
