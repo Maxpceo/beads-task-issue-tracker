@@ -181,7 +181,7 @@ Standard Pi/theme footer owns path/branch, selected model, thinking level, conte
 | `enforceActiveBeadLifecycle` | Block claiming, dispatching, reviewing, or implementing a different bead while the current-session active bead has non-terminal bd status; bd `inreview` redirects to `review-bead` / `review_bead` |
 | `enforceActiveWorktreeCwd` | When current-session active bead has a non-terminal `worktreePath`, block mutating bash, tests/gates, bd writes, edit/write, and typed dispatch/review/docs tools unless they run from/target that worktree (or a subdirectory). This guard runs before `blockMainMutation`; read-only inspection from `main` remains allowed. Missing worktree path or branch mismatch blocks with reset/recreate/takeover guidance. |
 
-Overrides use `PI_SKIP_POLICY=<policy-name>` or `PI_SKIP_POLICY=all` with an explicit reason.
+`PI_SKIP_POLICY` is read from the pi-extension process environment (not the current shell command line environment), so single-command shell invocations cannot use it as a reliable shell-level bypass. Overrides are possible only when set in the tool runtime context (e.g. via persistent session env) with an explicit reason.
 
 ## Smoke test scenarios
 

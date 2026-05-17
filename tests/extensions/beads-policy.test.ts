@@ -591,7 +591,7 @@ END_COMMIT: HEAD
 
       expect(decision?.policy).toBe('fastPathDiscipline')
       expect(decision?.block).toBe(true)
-      expect(decision?.reason).toContain('PLAN APPROVED plus DISPATCH evidence')
+      expect(decision?.reason).toContain('POST-CLOSE MERGE FIX')
     } finally {
       process.env.PATH = oldPath
       rmSync(repo, { recursive: true, force: true })
@@ -664,30 +664,54 @@ WORKTREE: ${repoRoot}
     }
   })
 
-  it('allows risky mutation when a scoped dispatch comment carries approved plan context from the prompt', () => {
+  it('allows risky mutation when a closed bead has matching POST-CLOSE MERGE FIX marker', () => {
     const repo = createRepoWithRiskyPolicyDiff()
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
     const oldPath = process.env.PATH
     const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
     try {
-      installFakeBd(binDir, `DISPATCH (test-supervisor)
+      installFakeBd(binDir, `POST-CLOSE MERGE FIX
 BRANCH: fix/current
 WORKTREE: ${repoRoot}
-START_COMMIT: ${execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()}
-
-APPROVED PLAN:
-PLAN APPROVED
-Approved-by: Максим
+START_COMMIT: ${head}
+REASON: Recovery fix for merge quality gate
 `)
       process.env.PATH = `${binDir}:${oldPath ?? ''}`
 
       const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
         state: 'idle',
-        bdStatus: 'in_progress',
-        planApproved: false,
       }, { cwd: repo })
 
       expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks risky mutation for closed bead when POST-CLOSE MERGE FIX marker belongs to another branch', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+    try {
+      installFakeBd(binDir, `POST-CLOSE MERGE FIX
+BRANCH: fix/other
+WORKTREE: ${repoRoot}
+START_COMMIT: ${head}
+REASON: Recovery fix for merge quality gate
+`)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
     } finally {
       process.env.PATH = oldPath
       rmSync(repo, { recursive: true, force: true })
