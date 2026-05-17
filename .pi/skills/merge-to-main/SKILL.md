@@ -22,16 +22,32 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
 3. Resolve feature-related open beads only. Treat unrelated beads from parallel sessions as background; do not block on them. Any session-active bead on this branch must have terminal bd status (`closed`, `blocked`, or explicit `deferred`/handoff with reason) before merging; Pi session fields are context, not lifecycle authority.
 4. For each session bead being merged, inspect bd comments for the latest `ACCEPTANCE MATRIX:` or a valid `HUMAN ACCEPTANCE OVERRIDE` with `approver:` and `reason:`. The merge report must include a concise acceptance coverage table. If a session bead has `FAIL`, `NOT RUN`, `BLOCKED`, or `SCOPE GAP` without valid override, stop before PR/merge.
 4.1. Если проблемы нашли после закрытия bead в merge-to-main, и надо сделать мелкий scoped fix на той же ветке:
-- Добавьте marker в comments закрытого bead:
+- Добавьте многострочный marker в comments закрытого bead. Используйте shell quoting, который создаёт реальные переводы строк; literal `\n` внутри обычной строки не является валидным marker:
+  ```bash
+BRANCH=$(git branch --show-current)
+WORKTREE=$(pwd)
+START_COMMIT=$(git rev-parse HEAD)
+bd comments add <bead-id> "$(cat <<EOF
+POST-CLOSE MERGE FIX
+BRANCH: ${BRANCH}
+WORKTREE: ${WORKTREE}
+START_COMMIT: ${START_COMMIT}
+FILES: .pi/extensions/beads-policy/index.ts
+REASON: <кратко зачем правка нужна для merge quality gate>
+EOF
+)" --json
+  ```
+  Marker format:
   ```text
   POST-CLOSE MERGE FIX
   BRANCH: <current branch>
   WORKTREE: <current worktree>
   START_COMMIT: <git rev-parse HEAD>
+  FILES: <comma-separated repo-relative files allowed for this fix>
   REASON: <кратко зачем правка нужна для merge quality gate>
   ```
-- Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом запуска `pnpm test && npx vue-tsc --noEmit` после правки.
-- Без такого marker новые risky-изменения в `.pi/extensions` / `workflow` на уже закрытом bead блокируются.
+- Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом запуска `pnpm test && npx vue-tsc --noEmit` после правки.
+- Без такого marker, без `FILES:`, или при изменении файлов вне `FILES:` новые risky-изменения в `.pi/extensions` / `workflow` на уже закрытом bead блокируются.
 5. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
 6. Run quality gates:
    ```bash
