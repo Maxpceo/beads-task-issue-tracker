@@ -33,6 +33,7 @@
     "tauri:dev": "./scripts/predev.sh",
     "tauri:build": "tauri build",
     "test": "vitest run",
+    "test:e2e:pi": "vitest run tests/e2e/pi-runtime-harness.test.ts",
     "test:watch": "vitest"
   },
   "dependencies": {

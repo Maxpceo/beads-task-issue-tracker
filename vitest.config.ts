@@ -26,7 +26,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '~': resolve(__dirname, 'app'),
+      '@earendil-works/pi-ai': resolve(__dirname, 'tests/mocks/pi-ai.ts'),
+      '@earendil-works/pi-coding-agent': resolve(__dirname, 'tests/mocks/pi-coding-agent.ts'),
       '@earendil-works/pi-tui': resolve(__dirname, 'tests/mocks/pi-tui.ts'),
+      'typebox': resolve(__dirname, 'tests/mocks/typebox.ts'),
     },
   },
 })
