@@ -1461,10 +1461,33 @@ function hasScopedApprovedWorkflowComment(cwd: string, beadId: string, scope: Re
 	return /PLAN APPROVED|DISPATCH|review_bead|PI WORKFLOW/i.test(comments) && hasSessionOwnershipEvidence(comments, scope);
 }
 
-function hasScopedPostCloseMergeFixComment(cwd: string, beadId: string, scope: RecoveryScope): boolean {
+function normalizePostCloseMergeFixFiles(block: string): string[] | undefined {
+	const rawValues = readFieldValues(block, ["FILES", "PATHS"]);
+	if (rawValues.length === 0) return undefined;
+	const files = rawValues.flatMap((value) => value.split(","));
+	const normalized = new Set<string>();
+	for (const rawFile of files) {
+		const file = rawFile.trim();
+		if (!file) continue;
+		if (path.isAbsolute(file)) return undefined;
+		const normalizedFile = path.posix.normalize(file.replace(/\\/g, "/"));
+		if (normalizedFile === "." || normalizedFile.startsWith("../") || normalizedFile === ".." || normalizedFile.includes("/../")) {
+			return undefined;
+		}
+		normalized.add(normalizedFile);
+	}
+	return normalized.size > 0 ? [...normalized] : undefined;
+}
+
+function hasScopedPostCloseMergeFixComment(cwd: string, beadId: string, scope: RecoveryScope, changedCodeFiles: string[]): boolean {
 	const comments = getBdCommentsText(cwd, beadId);
 	const blocks = commentEvidenceBlocks(comments);
-	return blocks.some((block) => /POST[- ]CLOSE MERGE FIX/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+	return blocks.some((block) => {
+		if (!/POST[- ]CLOSE MERGE FIX/i.test(block) || !hasScopeOwnershipEvidence(block, scope)) return false;
+		const allowedFiles = normalizePostCloseMergeFixFiles(block);
+		if (!allowedFiles) return false;
+		return changedCodeFiles.every((file) => allowedFiles.includes(path.posix.normalize(file.replace(/\\/g, "/"))));
+	});
 }
 
 function recoverableApprovedPlanBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
@@ -1498,13 +1521,14 @@ function recoverableApprovedSupervisorWorkflowBead(cwd: string, scope = currentR
 	return undefined;
 }
 
-function recoverablePostCloseMergeFixBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
+function recoverablePostCloseMergeFixBead(cwd: string, scope = currentRecoveryScope(cwd), changedCodeFiles: string[] = []): string | undefined {
+	if (changedCodeFiles.length === 0) return undefined;
 	for (const status of ["closed"]) {
 		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
 		if (!raw) continue;
 		try {
 			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && hasScopedPostCloseMergeFixComment(cwd, issue.id, scope));
+			const bead = issues.find((issue) => issue.id && hasScopedPostCloseMergeFixComment(cwd, issue.id, scope, changedCodeFiles));
 			if (bead?.id) return bead.id;
 		} catch {
 			continue;
@@ -1565,7 +1589,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 		const recoveredBead =
 			recoverableApprovedPlanBead(cwd, scope) ??
 			recoverableApprovedSupervisorWorkflowBead(cwd, scope) ??
-			recoverablePostCloseMergeFixBead(cwd, scope);
+			recoverablePostCloseMergeFixBead(cwd, scope, changedCodeFiles);
 		if (recoveredBead) return undefined;
 		return {
 			policy: "fastPathDiscipline",
