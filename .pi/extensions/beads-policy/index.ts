@@ -274,14 +274,139 @@ function isProtectedBranch(cwd: string): boolean {
 	return branch ? PROTECTED_BRANCHES.has(branch) : false;
 }
 
-function inferCommandCwd(command: string, defaultCwd?: string): string {
-	const base = defaultCwd ?? process.cwd();
-	const match = command.match(/^\s*cd\s+([^;&|]+?)\s*&&/);
-	const cdPath = match?.[1];
-	if (!cdPath) return base;
-	return normalizeFsPath(cdPath.trim(), base);
+function shellWords(command: string): string[] {
+	const words: string[] = [];
+	const pattern = /"((?:\\.|[^"])*)"|'([^']*)'|(\S+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = pattern.exec(command)) && words.length < 24) {
+		words.push(match[1] ?? match[2] ?? match[3] ?? "");
+	}
+	return words;
 }
 
+function envWrappedCommandIndex(words: string[]): number | undefined {
+	if (words[0] !== "env") return undefined;
+	for (let index = 1; index < words.length; index += 1) {
+		const word = words[index];
+		if (!word) continue;
+		if (word === "-C" || word === "--chdir") {
+			index += 1;
+			continue;
+		}
+		if (word.startsWith("--chdir=")) continue;
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+		if (word.startsWith("-")) continue;
+		return index;
+	}
+	return undefined;
+}
+
+function envCommandCwd(words: string[], base: string): string | undefined {
+	for (let index = 1; index < words.length; index += 1) {
+		const word = words[index];
+		if (!word) continue;
+		if (word === "-C" || word === "--chdir") {
+			const chdirPath = words[index + 1];
+			return chdirPath ? normalizeFsPath(chdirPath, base) : undefined;
+		}
+		if (word.startsWith("--chdir=")) {
+			return normalizeFsPath(word.slice("--chdir=".length), base);
+		}
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+		if (word.startsWith("-")) continue;
+		break;
+	}
+	return undefined;
+}
+
+function isShellInterpreter(word: string): boolean {
+	return /(^|\/)(?:bash|sh|zsh|dash|fish)$/.test(word);
+}
+
+function hasShellCommandOption(words: string[], commandIndex: number): boolean {
+	return words.slice(commandIndex + 1).some((word) => word === "-c" || /^-[^-]*c/.test(word));
+}
+
+function hasUnquotedShellOperator(command: string): boolean {
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (!char) continue;
+		if (char === "\\" && !singleQuoted) {
+			index += 1;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (!singleQuoted && !doubleQuoted && /[;&|<>]/.test(char)) return true;
+	}
+	return false;
+}
+
+function hasAmbiguousEnvShellCommand(command: string): boolean {
+	const words = shellWords(command);
+	const commandIndex = envWrappedCommandIndex(words);
+	if (commandIndex === undefined) return false;
+	if (hasUnquotedShellOperator(command)) return true;
+	const commandWord = words[commandIndex];
+	if (!commandWord) return false;
+	return isShellInterpreter(commandWord) && hasShellCommandOption(words, commandIndex);
+}
+
+function inferCommandCwdInfo(command: string, defaultCwd?: string): { cwd: string; explicit: boolean } {
+	const base = defaultCwd ?? process.cwd();
+	const cdMatch = command.match(/^\s*cd\s+([^;&|]+?)\s*&&/);
+	const cdPath = cdMatch?.[1];
+	if (cdPath) return { cwd: normalizeFsPath(cdPath.trim(), base), explicit: true };
+
+	const words = shellWords(command);
+	const envCwd = envCommandCwd(words, base);
+	if (envCwd) return { cwd: envCwd, explicit: true };
+
+	return { cwd: base, explicit: false };
+}
+
+function inferCommandCwd(command: string, defaultCwd?: string): string {
+	return inferCommandCwdInfo(command, defaultCwd).cwd;
+}
+
+function isGitExecutableWord(word: string): boolean {
+	return path.basename(word) === "git";
+}
+
+function isShellSeparatorWord(word: string): boolean {
+	return word === "&&" || word === ";" || word === "||" || word === "|";
+}
+
+function findGitCommandIndex(words: string[]): number {
+	if (words[0] && isGitExecutableWord(words[0])) return 0;
+
+	const wrappedCommandIndex = envWrappedCommandIndex(words);
+	const wrappedCommand = wrappedCommandIndex === undefined ? undefined : words[wrappedCommandIndex];
+	if (wrappedCommand && isGitExecutableWord(wrappedCommand)) return wrappedCommandIndex ?? -1;
+
+	const separatorCommandIndex = words.findIndex((word, index) => {
+		const previousWord = words[index - 1];
+		return Boolean(word && previousWord && index > 0 && isShellSeparatorWord(previousWord) && isGitExecutableWord(word));
+	});
+	return separatorCommandIndex;
+}
+
+function inferExplicitGitCwd(command: string, defaultCwd: string): string | undefined {
+	const words = shellWords(command);
+	const gitIndex = findGitCommandIndex(words);
+	if (gitIndex === -1) return undefined;
+	const cwdOptionIndex = words.findIndex((word, index) => index > gitIndex && word === "-C");
+	const gitCwd = cwdOptionIndex === -1 ? undefined : words[cwdOptionIndex + 1];
+	return gitCwd ? normalizeFsPath(gitCwd, defaultCwd) : undefined;
+}
 
 function isPathInsideOrEqual(targetPath: string, rootPath: string): boolean {
 	const resolvedTarget = realpathExistingOrParent(targetPath);
@@ -349,10 +474,18 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 			reason: `Заблокировано: активный bead ${workflowState.activeBead} привязан к отсутствующему worktree ${required}. Пересоздай worktree, используй workflow_reset для stale state или явно подтверди takeover перед изменениями.`,
 		};
 	}
-	const effectiveCwd = inferCommandCwd(command, processCwd);
-	const gitCwdMatch = command.match(/(^|[;&|]\s*)git\s+-C\s+(\S+)/);
-	const explicitGitCwd = gitCwdMatch?.[2] ? normalizeFsPath(gitCwdMatch[2], processCwd) : undefined;
-	const outsideCwd = [processCwd, effectiveCwd, explicitGitCwd].filter(Boolean).find((cwd) => !isPathInsideOrEqual(String(cwd), required));
+	if (hasAmbiguousEnvShellCommand(command)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. env -C with shell operators or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command env -C form.`,
+		};
+	}
+	const effectiveCwdInfo = inferCommandCwdInfo(command, processCwd);
+	const effectiveCwd = effectiveCwdInfo.cwd;
+	const explicitGitCwd = inferExplicitGitCwd(command, effectiveCwd);
+	const cwdCandidates = effectiveCwdInfo.explicit ? [effectiveCwd, explicitGitCwd] : [processCwd, effectiveCwd, explicitGitCwd];
+	const outsideCwd = cwdCandidates.filter(Boolean).find((cwd) => !isPathInsideOrEqual(String(cwd), required));
 	if (outsideCwd) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
