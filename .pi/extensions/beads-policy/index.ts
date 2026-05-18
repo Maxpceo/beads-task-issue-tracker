@@ -284,39 +284,55 @@ function shellWords(command: string): string[] {
 	return words;
 }
 
-function envWrappedCommandIndex(words: string[]): number | undefined {
-	if (words[0] !== "env") return undefined;
-	for (let index = 1; index < words.length; index += 1) {
-		const word = words[index];
-		if (!word) continue;
-		if (word === "-C" || word === "--chdir") {
-			index += 1;
-			continue;
-		}
-		if (word.startsWith("--chdir=")) continue;
-		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-		if (word.startsWith("-")) continue;
-		return index;
-	}
-	return undefined;
-}
+type EnvPrefixParse = {
+	commandIndex?: number;
+	cwd?: string;
+	unsupportedOption?: string;
+};
 
-function envCommandCwd(words: string[], base: string): string | undefined {
+function parseEnvPrefix(words: string[], base?: string): EnvPrefixParse {
+	if (words[0] !== "env") return {};
+	let cwd: string | undefined;
 	for (let index = 1; index < words.length; index += 1) {
 		const word = words[index];
 		if (!word) continue;
 		if (word === "-C" || word === "--chdir") {
 			const chdirPath = words[index + 1];
-			return chdirPath ? normalizeFsPath(chdirPath, base) : undefined;
+			if (!chdirPath) return { cwd, unsupportedOption: word };
+			cwd = base ? normalizeFsPath(chdirPath, base) : chdirPath;
+			index += 1;
+			continue;
 		}
 		if (word.startsWith("--chdir=")) {
-			return normalizeFsPath(word.slice("--chdir=".length), base);
+			const chdirPath = word.slice("--chdir=".length);
+			cwd = base ? normalizeFsPath(chdirPath, base) : chdirPath;
+			continue;
 		}
 		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-		if (word.startsWith("-")) continue;
-		break;
+		if (word === "-u" || word === "--unset") {
+			if (!words[index + 1]) return { cwd, unsupportedOption: word };
+			index += 1;
+			continue;
+		}
+		if (word.startsWith("--unset=")) continue;
+		if (word === "-i" || word === "--ignore-environment" || word === "-0" || word === "--null" || /^-[i0]+$/.test(word)) continue;
+		if (word === "-S" || word === "--split-string" || word.startsWith("--split-string=")) return { cwd, unsupportedOption: word };
+		if (word.startsWith("-")) return { cwd, unsupportedOption: word };
+		return { commandIndex: index, cwd };
 	}
-	return undefined;
+	return { cwd };
+}
+
+function envWrappedCommandIndex(words: string[]): number | undefined {
+	return parseEnvPrefix(words).commandIndex;
+}
+
+function envCommandCwd(words: string[], base: string): string | undefined {
+	return parseEnvPrefix(words, base).cwd;
+}
+
+function hasUnsupportedEnvOption(command: string): boolean {
+	return Boolean(parseEnvPrefix(shellWords(command)).unsupportedOption);
 }
 
 function isShellInterpreter(word: string): boolean {
@@ -350,19 +366,62 @@ function hasUnquotedShellOperator(command: string): boolean {
 	return false;
 }
 
+function hasShellCommandSubstitution(command: string): boolean {
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (!char) continue;
+		if (char === "\\" && !singleQuoted) {
+			index += 1;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted) continue;
+		if (char === "`" || (char === "$" && command[index + 1] === "(")) return true;
+	}
+	return false;
+}
+
 function hasAmbiguousEnvShellCommand(command: string): boolean {
 	const words = shellWords(command);
 	const commandIndex = envWrappedCommandIndex(words);
 	if (commandIndex === undefined) return false;
-	if (hasUnquotedShellOperator(command)) return true;
+	if (hasUnquotedShellOperator(command) || hasShellCommandSubstitution(command) || hasUnsupportedEnvOption(command)) return true;
 	const commandWord = words[commandIndex];
 	if (!commandWord) return false;
 	return isShellInterpreter(commandWord) && hasShellCommandOption(words, commandIndex);
 }
 
+function leadingCdMatch(command: string): RegExpMatchArray | null {
+	return command.match(/^\s*cd\s+([^;&|]+?)\s*&&\s*/);
+}
+
+function leadingCdSuffix(command: string): string | undefined {
+	const match = leadingCdMatch(command);
+	return match ? command.slice(match[0].length) : undefined;
+}
+
+function hasAmbiguousLeadingCdShellCommand(command: string): boolean {
+	const suffix = leadingCdSuffix(command);
+	if (suffix === undefined) return false;
+	if (hasUnquotedShellOperator(suffix) || hasShellCommandSubstitution(suffix)) return true;
+	const words = shellWords(suffix);
+	const commandWord = words[0];
+	if (!commandWord) return false;
+	return isShellInterpreter(commandWord) && hasShellCommandOption(words, 0);
+}
+
 function inferCommandCwdInfo(command: string, defaultCwd?: string): { cwd: string; explicit: boolean } {
 	const base = defaultCwd ?? process.cwd();
-	const cdMatch = command.match(/^\s*cd\s+([^;&|]+?)\s*&&/);
+	const cdMatch = leadingCdMatch(command);
 	const cdPath = cdMatch?.[1];
 	if (cdPath) return { cwd: normalizeFsPath(cdPath.trim(), base), explicit: true };
 
@@ -478,7 +537,14 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. env -C with shell operators or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command env -C form.`,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. env -C with shell operators, command substitution, unsupported env options, or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command env -C form.`,
+		};
+	}
+	if (hasAmbiguousLeadingCdShellCommand(command)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. leading cd with shell operators, command substitution, or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command leading cd form.`,
 		};
 	}
 	const effectiveCwdInfo = inferCommandCwdInfo(command, processCwd);
