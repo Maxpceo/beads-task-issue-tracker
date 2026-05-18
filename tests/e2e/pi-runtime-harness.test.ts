@@ -14,6 +14,7 @@ import workflowChainExtension from '../../.pi/extensions/workflow-chain/index'
 
 const projectRoot = process.cwd()
 const runtimeOwnerKey = 'runtime:e2e-pi-runtime-harness'
+const piCliAvailable = spawnSync('sh', ['-lc', 'command -v pi'], { encoding: 'utf8', timeout: 5_000 }).status === 0
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
 
 const theme = {
@@ -92,7 +93,7 @@ function renderWidget(value: unknown, width = 100): string {
 }
 
 describe('Pi runtime E2E automation harness', () => {
-  it('startup/settings: project settings reference existing extensions and Pi startup smoke exits without extension startup errors', () => {
+  it.skipIf(!piCliAvailable)('startup/settings: project settings reference existing extensions and Pi startup smoke exits without extension startup errors', () => {
     const settings = JSON.parse(execFileSync('cat', [join(projectRoot, '.pi/settings.json')], { encoding: 'utf8' })) as { extensions: string[] }
     for (const extensionPath of settings.extensions) {
       expect(existsSync(join(projectRoot, '.pi', extensionPath)), extensionPath).toBe(true)
