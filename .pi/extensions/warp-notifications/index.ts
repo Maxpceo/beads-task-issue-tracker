@@ -146,8 +146,12 @@ function terminalNotifierPath(): string | undefined {
 	return TERMINAL_NOTIFIER_PATHS.find((candidate) => existsSync(candidate));
 }
 
+export function buildWarpOscPayload(title: string, body: string): string {
+	return `${OSC_777_PREFIX}${sanitizeOscPart(title)};${sanitizeOscPart(body)}${OSC_BEL}`;
+}
+
 function notifyWarp(title: string, body: string): void {
-	const payload = `${OSC_777_PREFIX}${sanitizeOscPart(title)};${sanitizeOscPart(body)}${OSC_BEL}`;
+	const payload = buildWarpOscPayload(title, body);
 	try {
 		writeFileSync("/dev/tty", payload);
 	} catch {
