@@ -34,7 +34,19 @@ import {
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review"];
-const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
+const NORMAL_MODE_FALLBACK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent"];
+const MANDATORY_WORKFLOW_TOOLS = [
+	"workflow_status",
+	"workflow_claim",
+	"workflow_reset",
+	"workflow_update",
+	"workflow_submit_for_review",
+	"workflow_complete",
+	"dispatch_supervisor",
+	"dispatch_reviewer",
+	"dispatch_docs_agent",
+	"review_bead",
+];
 
 const WorkflowPlanModeParams = {
 	type: "object",
@@ -118,19 +130,62 @@ function latestAssistantTextFromEntries(entries: Array<{ type?: string; message?
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
-	const workflowPi = pi as ExtensionAPI & { registerTool?: (tool: any) => void };
+	const workflowPi = pi as ExtensionAPI & {
+		registerTool?: (tool: any) => void;
+		getActiveTools?: () => Array<{ name: string } | string>;
+		getAllTools?: () => Array<{ name: string } | string>;
+	};
 	let planModeEnabled = false;
 	let autoExecuteEnabled = false;
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
 	let autoPlanReviewState: "idle" | "awaiting_revision" = "idle";
 	let autoPlanReviewResults: PlanReviewResult[] = [];
+	let prePlanActiveToolNames: string[] | undefined;
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
 		type: "boolean",
 		default: false,
 	});
+
+	function toolName(tool: { name: string } | string): string | undefined {
+		return typeof tool === "string" ? tool : tool?.name;
+	}
+
+	function uniqueToolNames(names: Array<string | undefined>): string[] {
+		return [...new Set(names.filter((name): name is string => Boolean(name)))];
+	}
+
+	function readActiveToolNames(): string[] | undefined {
+		const activeTools = workflowPi.getActiveTools?.();
+		if (!activeTools) return undefined;
+		return uniqueToolNames(activeTools.map(toolName));
+	}
+
+	function readRegisteredToolNames(): Set<string> | undefined {
+		const allTools = workflowPi.getAllTools?.();
+		if (!allTools) return undefined;
+		return new Set(uniqueToolNames(allTools.map(toolName)));
+	}
+
+	function normalModeTools(): string[] {
+		const registeredTools = readRegisteredToolNames();
+		const mandatoryRegisteredWorkflowTools = registeredTools
+			? MANDATORY_WORKFLOW_TOOLS.filter((name) => registeredTools.has(name))
+			: MANDATORY_WORKFLOW_TOOLS;
+		return uniqueToolNames([...(prePlanActiveToolNames?.length ? prePlanActiveToolNames : NORMAL_MODE_FALLBACK_TOOLS), ...mandatoryRegisteredWorkflowTools]);
+	}
+
+	function snapshotNormalToolSurface(): void {
+		prePlanActiveToolNames = readActiveToolNames() ?? prePlanActiveToolNames ?? normalModeTools();
+	}
+
+	function restoreNormalToolSurface(): string[] {
+		const tools = normalModeTools();
+		pi.setActiveTools(tools);
+		return tools;
+	}
 
 	function updateStatus(ctx: ExtensionContext): void {
 		if (!ctx.hasUI) return;
@@ -247,7 +302,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		planModeEnabled = false;
 		autoExecuteEnabled = false;
 		executionMode = false;
-		pi.setActiveTools(NORMAL_MODE_TOOLS);
+		restoreNormalToolSurface();
 		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
@@ -261,6 +316,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean): void {
+		if (!planModeEnabled) snapshotNormalToolSurface();
 		planModeEnabled = true;
 		autoExecuteEnabled = autoExecute;
 		executionMode = false;
@@ -281,8 +337,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
 		todoItems = [];
-		pi.setActiveTools(NORMAL_MODE_TOOLS);
-		if (ctx.hasUI) ctx.ui.notify("Plan mode disabled. Full access restored.");
+		const restoredTools = restoreNormalToolSurface();
+		if (ctx.hasUI) ctx.ui.notify(`Plan mode disabled. Full access restored: ${restoredTools.join(", ")}`);
 		syncWorkflowPlanMode(ctx, "off", "idle");
 		updateStatus(ctx);
 		persistState();
@@ -314,9 +370,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			description: "Enter/exit strict or auto plan mode and update active tool restrictions plus workflow-state metadata. Slash commands are optional human shortcuts.",
 			parameters: WorkflowPlanModeParams,
 			async execute(_id: string, params: { mode: "off" | "strict" | "auto"; reason?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-				if (params.mode === "off") exitPlanMode(ctx);
-				else enterPlanMode(ctx, params.mode === "auto");
-				return toolText(`workflow_plan_mode=${params.mode}${params.reason ? `: ${params.reason}` : ""}`, { mode: params.mode, activeTools: params.mode === "off" ? NORMAL_MODE_TOOLS : PLAN_MODE_TOOLS });
+				let activeTools: string[];
+				if (params.mode === "off") {
+					exitPlanMode(ctx);
+					activeTools = normalModeTools();
+				} else {
+					enterPlanMode(ctx, params.mode === "auto");
+					activeTools = PLAN_MODE_TOOLS;
+				}
+				return toolText(`workflow_plan_mode=${params.mode}${params.reason ? `: ${params.reason}` : ""}`, { mode: params.mode, activeTools });
 			},
 		});
 
@@ -499,7 +561,8 @@ You are in plan mode - a read-only exploration mode for safe code analysis.
 
 Restrictions:
 - You can only use: read, bash, grep, find, ls, questionnaire, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review
-- You CANNOT use: edit, write (file modifications are disabled)
+- You CANNOT use: edit, write, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete (file/workflow mutations are disabled until approval)
+- After approved/cancelled plan mode, Pi restores the pre-plan active tool surface plus registered mandatory workflow tools.
 - Bash is restricted to an allowlist of read-only commands
 - bd read-only commands are allowed: bd show, bd comments, bd list, bd ready, selected bd dep/dolt status commands
 - bd mutating commands are blocked: bd create, bd update, bd close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull
@@ -589,7 +652,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				);
 				executionMode = false;
 				todoItems = [];
-				pi.setActiveTools(NORMAL_MODE_TOOLS);
+				restoreNormalToolSurface();
 				syncWorkflowPlanMode(ctx, "off", "idle");
 				updateStatus(ctx);
 				persistState(); // Save cleared state so resume doesn't restore old execution mode
@@ -621,7 +684,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				autoExecuteEnabled = false;
 				autoPlanReviewState = "idle";
 				executionMode = todoItems.length > 0;
-				pi.setActiveTools(NORMAL_MODE_TOOLS);
+				restoreNormalToolSurface();
 				syncWorkflowPlanMode(ctx, "off", "implementing", { planApproved: true });
 				updateStatus(ctx);
 				persistState();
@@ -675,7 +738,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			planModeEnabled = false;
 			autoExecuteEnabled = false;
 			executionMode = todoItems.length > 0;
-			pi.setActiveTools(NORMAL_MODE_TOOLS);
+			restoreNormalToolSurface();
 			syncWorkflowPlanMode(ctx, "off", "implementing", { planApproved: true });
 			updateStatus(ctx);
 
