@@ -298,9 +298,21 @@ function hasCurrentCommentScopeEvidence(commentsText: string, scope: RecoverySco
 		|| latestFieldMatches(commentsText, startNames, scope.startCommit);
 }
 
+function hasAnyCurrentCommentScopeEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	return hasExactField(commentsText, ["BRANCH", "Branch", "branch"], scope.branch)
+		|| hasExactField(commentsText, ["WORKTREE", "Worktree", "worktree", "worktreePath"], scope.worktreePath)
+		|| hasExactField(commentsText, ["START_COMMIT", "Start-Commit", "startCommit", "start"], scope.startCommit);
+}
+
 export function hasSessionOwnershipEvidence(commentsText: string, scope: RecoveryScope): boolean {
 	if (!scope.sessionKey) return false;
 	return hasExactField(commentsText, ["PI_SESSION_KEY", "SESSION_KEY", "sessionKey", "session"], scope.sessionKey);
+}
+
+function hasForeignSessionKeyEvidence(commentsText: string, scope: RecoveryScope): boolean {
+	if (!scope.sessionKey) return false;
+	const latest = latestFieldValue(commentsText, ["PI_SESSION_KEY", "SESSION_KEY", "sessionKey", "session"]);
+	return Boolean(latest && latest !== scope.sessionKey);
 }
 
 function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
@@ -329,27 +341,41 @@ async function readBdComments(pi: ExtensionAPI, beadId: string): Promise<string>
 	return code === 0 ? stdout : "";
 }
 
-async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope): Promise<string | undefined> {
-	if (!scope.sessionKey) return undefined;
+async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope, excludedBeads = new Set<string>()): Promise<{ beadId?: string; diagnostic?: string }> {
+	const candidates: Array<{ id: string; via: "session" | "scope" }> = [];
+	const foreignSessionScopeMatches: string[] = [];
 	for (const status of ["in_progress", "inreview", "simplified", "reviewed", "accepted"]) {
 		const { stdout, code } = await pi.exec("bd", ["list", `--status=${status}`, "--json"]);
 		if (code !== 0) continue;
 		try {
 			const issues = JSON.parse(stdout) as Array<{ id?: string }>;
 			for (const issue of issues) {
-				if (!issue.id) continue;
+				if (!issue.id || excludedBeads.has(issue.id)) continue;
 				const commentsText = await readBdComments(pi, issue.id);
-				if (
-					hasSessionOwnershipEvidence(commentsText, scope)
-					&& !hasForeignSessionOwnershipEvidence(commentsText, scope)
-					&& hasCurrentCommentScopeEvidence(commentsText, scope)
-				) return issue.id;
+				const hasSessionEvidence = hasSessionOwnershipEvidence(commentsText, scope);
+				const hasLatestScopeEvidence = hasCurrentCommentScopeEvidence(commentsText, scope);
+				const hasAnyScopeEvidence = hasAnyCurrentCommentScopeEvidence(commentsText, scope);
+				if (hasForeignSessionKeyEvidence(commentsText, scope) && hasAnyScopeEvidence) {
+					foreignSessionScopeMatches.push(issue.id);
+					continue;
+				}
+				if (hasForeignSessionOwnershipEvidence(commentsText, scope)) continue;
+				if (hasSessionEvidence && hasLatestScopeEvidence) candidates.push({ id: issue.id, via: "session" });
+				else if (hasAnyScopeEvidence) candidates.push({ id: issue.id, via: "scope" });
 			}
 		} catch {
 			continue;
 		}
 	}
-	return undefined;
+	const sessionCandidates = candidates.filter((candidate) => candidate.via === "session");
+	if (sessionCandidates.length === 1) return { beadId: sessionCandidates[0]?.id };
+	if (sessionCandidates.length > 1) return { diagnostic: `UNBOUND_WORKFLOW_STATE: multiple current-session non-terminal beads match this session (${sessionCandidates.map((candidate) => candidate.id).join(", ")}); use workflow_update after choosing the active bead.` };
+
+	const scopeCandidates = candidates.filter((candidate) => candidate.via === "scope");
+	if (scopeCandidates.length === 1 && scope.branch && !PROTECTED_BRANCHES.has(scope.branch)) return { beadId: scopeCandidates[0]?.id };
+	if (scopeCandidates.length > 0) return { diagnostic: `UNBOUND_WORKFLOW_STATE: found non-terminal bead/worktree evidence (${scopeCandidates.map((candidate) => candidate.id).join(", ")}) but auto-bind is ambiguous or current branch is protected; use workflow_status/workflow_update/workflow_reset to recover explicitly.` };
+	if (foreignSessionScopeMatches.length > 0) return { diagnostic: `UNBOUND_WORKFLOW_STATE: found non-terminal bead/worktree evidence with a foreign session marker (${foreignSessionScopeMatches.join(", ")}); use workflow_status/workflow_update/workflow_reset after verifying ownership.` };
+	return {};
 }
 
 function staleForeignRecoveryMessage(beadId: string, reason: string): string {
@@ -377,7 +403,7 @@ function clearUnsafeApprovedImplementingState(state: WorkflowState): { state: Wo
 	};
 }
 
-async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext): Promise<{ state: WorkflowState; warning?: string }> {
+async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext, staleRecoveryBlockedBeads = new Set<string>()): Promise<{ state: WorkflowState; warning?: string }> {
 	const gitCwd = ctx?.cwd;
 	const currentScope = {
 		branch: await detectBranch(pi, gitCwd),
@@ -416,6 +442,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 			&& hasCurrentSessionOwnership(state, ctx)
 			&& (hasCurrentScope || hasRecordedTaskScope);
 		if (!hasOwnership) {
+			staleRecoveryBlockedBeads.add(state.activeBead);
 			const cleared = clearUnsafeApprovedImplementingState({
 				...state,
 				activeBead: undefined,
@@ -462,8 +489,18 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 
 	const baseState = { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
 	const canRecoverActiveBead = state.state === "idle" || hasUnsafeApprovedImplementingState(baseState);
-	const activeBead = canRecoverActiveBead ? await findRecoverableActiveBead(pi, scope) : undefined;
-	if (!activeBead) return clearUnsafeApprovedImplementingState(baseState);
+	const recovery = canRecoverActiveBead ? await findRecoverableActiveBead(pi, scope, staleRecoveryBlockedBeads) : {};
+	if (!recovery.beadId) {
+		const cleared = clearUnsafeApprovedImplementingState(baseState);
+		if (recovery.diagnostic && !cleared.warning) {
+			return {
+				state: { ...cleared.state, sessionMode: "UNBOUND_WORKFLOW_STATE" },
+				warning: recovery.diagnostic,
+			};
+		}
+		return cleared;
+	}
+	const activeBead = recovery.beadId;
 	const bdStatus = await readBdStatus(pi, activeBead);
 	if (!bdStatus || isTerminalBdStatus(bdStatus)) return clearUnsafeApprovedImplementingState(baseState);
 	return {
@@ -596,6 +633,7 @@ function validateWorkflowUpdateParams(params: Record<string, unknown>): string |
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
 	let lastClaimError: string | undefined;
+	const staleRecoveryBlockedBeads = new Set<string>();
 
 	function persist(ctx?: ExtensionContext): void {
 		workflowState.runtimeOwnerKey = currentRuntimeOwnerKey();
@@ -629,7 +667,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	}
 
 	async function ensureReconciled(ctx?: ExtensionContext): Promise<boolean> {
-		const reconciled = await reconcileActiveBeadState(pi, workflowState, ctx);
+		const reconciled = await reconcileActiveBeadState(pi, workflowState, ctx, staleRecoveryBlockedBeads);
 		const changed =
 			reconciled.state.state !== workflowState.state ||
 			reconciled.state.activeBead !== workflowState.activeBead ||

@@ -173,6 +173,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
             sessionKey: 'id:other-session',
             planMode: 'off',
             mergeSlotHeld: false,
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
             updatedAt: new Date().toISOString(),
           },
         },
@@ -184,7 +185,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
 
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
-    expect(notifications).toEqual([])
+    expect(notifications.at(-1)?.message).toContain('stale or foreign')
   })
 
   it('clears stale restored active bead when ownership does not match current worktree', async () => {
@@ -817,7 +818,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('mergeSlot=held')
   })
 
-  it('does not recover global inreview beads from branch/worktree comments without current-session marker', async () => {
+  it('recovers a unique non-terminal bead from current branch/worktree comments without current-session marker', async () => {
     const { eventHandlers, ctx } = makeHarness({
       branch: 'fix/current',
       worktreePath: '/repo/current',
@@ -832,11 +833,48 @@ describe('Pi workflow-state session-scoped recovery', () => {
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
     expect(context.message.content).toContain('state=idle')
-    expect(context.message.content).toContain('bead=-')
-    expect(context.message.content).not.toContain('bead=bead-current')
+    expect(context.message.content).toContain('bead=bead-current')
+    expect(context.message.content).toContain('bdStatus=inreview')
     expect(context.message.content).not.toContain('bead=bead-foreign')
   })
 
+  it('marks protected-branch non-terminal bead evidence as explicit unbound workflow state instead of silent bdStatus dash', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo',
+      startCommit: 'main-head',
+      issues: {
+        'bead-current': { status: 'in_progress', comments: 'DISPATCH (test-supervisor)\n\nBRANCH: main\nWORKTREE: /repo\nSTART_COMMIT: main-head' },
+      },
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(context.message.content).toContain('sessionMode=UNBOUND_WORKFLOW_STATE')
+    expect(notifications.at(-1)?.message).toContain('UNBOUND_WORKFLOW_STATE')
+  })
+
+  it('marks current worktree evidence with a foreign session marker as explicit unbound workflow state', async () => {
+    const { eventHandlers, ctx, notifications } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/worktrees/current',
+      startCommit: 'task-head',
+      issues: {
+        'bead-current': { status: 'in_progress', comments: 'RUNTIME SMOKE SCOPE EVIDENCE\nBRANCH: task/current\nWORKTREE: /repo/worktrees/current\nSTART_COMMIT: task-head\nPI_SESSION_KEY: id:other-session' },
+      },
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('bead=-')
+    expect(context.message.content).toContain('sessionMode=UNBOUND_WORKFLOW_STATE')
+    expect(notifications.at(-1)?.message).toContain('foreign session marker')
+  })
 
   it('persists current runtime plan and slot changes from workflow-update without stale strict entries', async () => {
     const { eventHandlers, commandHandlers, ctx, appended, notifications, statuses } = makeHarness({
@@ -980,7 +1018,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(notifications.at(-1)?.message).toContain('unsafe planApproved=true + sessionMode=implementing without active bead')
   })
 
-  it('clears unsafe approved implementing state when no current-session bead can be recovered', async () => {
+  it('clears unsafe approved implementing state and reports unbound when only foreign-session scope evidence remains', async () => {
     const { eventHandlers, ctx, appended, notifications } = makeHarness({
       branch: 'task/bead-plan',
       worktreePath: '/repo/worktrees/bead-plan',
@@ -1011,9 +1049,9 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('state=idle')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('planApproved=false')
-    expect(context.message.content).toContain('sessionMode=idle')
-    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'idle' })
-    expect(notifications.at(-1)?.message).toContain('unsafe planApproved=true + sessionMode=implementing without active bead')
+    expect(context.message.content).toContain('sessionMode=UNBOUND_WORKFLOW_STATE')
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'UNBOUND_WORKFLOW_STATE' })
+    expect(notifications.at(-1)?.message).toContain('foreign session marker')
   })
 
   it('prevents workflow-update command from persisting approved implementing state without active bead', async () => {
