@@ -183,15 +183,15 @@ function commandHasDestructiveSql(command: string): boolean {
 
 function destructiveCommandReason(command: string): string | undefined {
 	const sensitivePathReason = commandTouchesSensitivePath(command);
-	if (sensitivePathReason) return `Blocked: command references protected path (${sensitivePathReason}).`;
-	if (commandHasRecursiveForceDelete(command)) return "Blocked: recursive force delete is not allowed from Pi bash.";
-	if (commandHasHardReset(command)) return "Blocked: git reset --hard is destructive. Use an explicit documented override only if approved.";
-	if (commandHasForcedClean(command)) return "Blocked: forced git clean can delete untracked work.";
-	if (commandHasUnsafeForcePush(command)) return "Blocked: unsafe force push is not allowed; --force-with-lease is the safer explicit form.";
-	if (commandHasRemoteBranchDeletion(command)) return "Blocked: remote branch deletion requires explicit confirmation outside the normal Pi bash flow.";
-	if (commandHasStashDeletion(command)) return "Blocked: stash deletion can destroy recovery points.";
-	if (commandHasCloudResourceDeletion(command)) return "Blocked: cloud/infrastructure resource deletion is destructive.";
-	if (commandHasDestructiveSql(command)) return "Blocked: destructive SQL requires explicit human approval and a rollback plan.";
+	if (sensitivePathReason) return `Заблокировано: command references protected path (${sensitivePathReason}).`;
+	if (commandHasRecursiveForceDelete(command)) return "Заблокировано: recursive force delete is not allowed from Pi bash.";
+	if (commandHasHardReset(command)) return "Заблокировано: git reset --hard is destructive. Use an explicit documented override only if approved.";
+	if (commandHasForcedClean(command)) return "Заблокировано: forced git clean can delete untracked work.";
+	if (commandHasUnsafeForcePush(command)) return "Заблокировано: unsafe force push is not allowed; --force-with-lease is the safer explicit form.";
+	if (commandHasRemoteBranchDeletion(command)) return "Заблокировано: remote branch deletion requires explicit confirmation outside the normal Pi bash flow.";
+	if (commandHasStashDeletion(command)) return "Заблокировано: stash deletion can destroy recovery points.";
+	if (commandHasCloudResourceDeletion(command)) return "Заблокировано: cloud/infrastructure resource deletion is destructive.";
+	if (commandHasDestructiveSql(command)) return "Заблокировано: destructive SQL requires explicit human approval and a rollback plan.";
 	return undefined;
 }
 
@@ -339,14 +339,14 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before mutating work.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before mutating work.`,
 		};
 	}
 	if (!fs.existsSync(required)) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before mutating work.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before mutating work.`,
 		};
 	}
 	const effectiveCwd = inferCommandCwd(command, processCwd);
@@ -357,7 +357,7 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. Run mutating commands, tests, bd writes, and git operations with cwd ${required} or inside it; current/effective cwd is ${outsideCwd}. Read-only inspection from main is allowed.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} has WORKTREE_LOCK. Run mutating commands, tests, bd writes, and git operations with cwd ${required} or inside it; current/effective cwd is ${outsideCwd}. Read-only inspection from main is allowed.`,
 		};
 	}
 	const expectedBranch = workflowState.branch;
@@ -366,7 +366,7 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before mutating work.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before mutating work.`,
 		};
 	}
 	return undefined;
@@ -379,14 +379,14 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before edit/write.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before edit/write.`,
 		};
 	}
 	if (!fs.existsSync(required)) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before edit/write.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before edit/write.`,
 		};
 	}
 	const resolvedTarget = normalizeFsPath(targetPath);
@@ -394,7 +394,7 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: edit/write for active bead ${workflowState.activeBead} must target ${required} or a path inside it; target is ${targetPath}.`,
+			reason: `Заблокировано: edit/write for active bead ${workflowState.activeBead} must target ${required} or a path inside it; target is ${targetPath}.`,
 		};
 	}
 	const expectedBranch = workflowState.branch;
@@ -403,7 +403,7 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before edit/write.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before edit/write.`,
 		};
 	}
 	return undefined;
@@ -417,14 +417,14 @@ function requiredToolCwdDecision(toolName: string, input: Record<string, unknown
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before running ${toolName}.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} has WORKTREE_LOCK but no recorded worktree path. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before running ${toolName}.`,
 		};
 	}
 	if (!fs.existsSync(required)) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before running ${toolName}.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} is locked to missing worktree ${required}. Recreate the worktree, use workflow_reset for stale state, or explicitly confirm takeover before running ${toolName}.`,
 		};
 	}
 	const provided = String(input.cwd ?? input.worktreePath ?? "");
@@ -432,7 +432,7 @@ function requiredToolCwdDecision(toolName: string, input: Record<string, unknown
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: ${toolName} for active bead ${workflowState.activeBead} must run with cwd/worktreePath ${required}.`,
+			reason: `Заблокировано: ${toolName} for active bead ${workflowState.activeBead} must run with cwd/worktreePath ${required}.`,
 		};
 	}
 	const expectedBranch = workflowState.branch;
@@ -441,7 +441,7 @@ function requiredToolCwdDecision(toolName: string, input: Record<string, unknown
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Blocked: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before running ${toolName}.`,
+			reason: `Заблокировано: active bead ${workflowState.activeBead} is locked to branch ${expectedBranch}, but worktree ${required} is on ${actualBranch}. Use workflow_reset for stale state, recreate the worktree, or explicitly confirm takeover before running ${toolName}.`,
 		};
 	}
 	return undefined;
@@ -734,12 +734,12 @@ function getBeadLocaleError(command: string): string | undefined {
 
 		const title = isCreate ? parseBdCreateTitle(segment) : valueAfterFlag(segment, ["--title"]);
 		if (title && isClearlyEnglishBeadText(title, "title")) {
-			return "Blocked: bead title is clearly English. Write bead titles in Russian for Maxim; keep only technical identifiers in English.";
+			return "Заблокировано: bead title is clearly English. Write bead titles in Russian for Maxim; keep only technical identifiers in English.";
 		}
 
 		const description = valueAfterFlag(segment, ["--description", "-d"]);
 		if (description && isClearlyEnglishBeadText(description, "description")) {
-			return "Blocked: bead description is clearly English. Write bead descriptions in Russian for Maxim while preserving required section headings and technical identifiers.";
+			return "Заблокировано: bead description is clearly English. Write bead descriptions in Russian for Maxim while preserving required section headings and technical identifiers.";
 		}
 	}
 	return undefined;
@@ -752,20 +752,20 @@ function getBeadEnrichmentError(command: string): string | undefined {
 
 		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !segment.includes(section));
 		if (missing.length > 0) {
-			return `Blocked: agent-created beads require a self-contained handoff template. Missing: ${missing.join(", ")}. Ask the user or create a spike if context/acceptance is unclear.`;
+			return `Заблокировано: agent-created beads require a self-contained handoff template. Missing: ${missing.join(", ")}. Ask the user or create a spike if context/acceptance is unclear.`;
 		}
 
 		if (!hasLabel(segment)) {
-			return "Blocked: agent-created beads require at least one label via --label/--labels/-l so future sessions can route work.";
+			return "Заблокировано: agent-created beads require at least one label via --label/--labels/-l so future sessions can route work.";
 		}
 
 		const acceptance = extractSection(segment, "### Acceptance criteria");
 		const verification = extractSection(segment, "### Verification / acceptance checks");
 		if (!hasBullet(acceptance) || !hasBullet(verification)) {
-			return "Blocked: Acceptance criteria and Verification / acceptance checks must contain concrete bullet checks. If unclear, ask the user with 2-4 options before creating the bead.";
+			return "Заблокировано: Acceptance criteria and Verification / acceptance checks must contain concrete bullet checks. If unclear, ask the user with 2-4 options before creating the bead.";
 		}
 		if (isVagueOnly(acceptance) || isVagueOnly(verification)) {
-			return "Blocked: acceptance/verification is too vague. Ask a concrete question with 2-4 proposed acceptance options before creating the bead.";
+			return "Заблокировано: acceptance/verification is too vague. Ask a concrete question with 2-4 proposed acceptance options before creating the bead.";
 		}
 	}
 
@@ -911,14 +911,14 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 	if (bdStatus) {
 		if (TERMINAL_BD_STATUSES.has(bdStatus)) return undefined;
 		const label = NON_TERMINAL_BD_STATUSES.has(bdStatus) ? bdStatus : `unknown bd status ${bdStatus}`;
-		if (bdStatus === "inreview") return `Blocked: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
-		return `Blocked: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
+		if (bdStatus === "inreview") return `Заблокировано: active bead ${activeBead} is bd:${bdStatus}; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
+		return `Заблокировано: active bead ${activeBead} is non-terminal (bd:${label}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
 	}
 
 	if (TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
 	if (!NON_TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
-	if (legacyState === "inreview") return `Blocked: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
-	return `Blocked: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
+	if (legacyState === "inreview") return `Заблокировано: active bead ${activeBead} is inreview; after confirming current-session branch/worktree ownership, next valid action is review-bead / review_bead for ${activeBead}, not ${action}${targetBead ? ` on ${targetBead}` : ""}. If ownership is stale or foreign, agents can call workflow_reset; /workflow-reset is only an optional human UI shortcut.`;
+	return `Заблокировано: active bead ${activeBead} is non-terminal (${legacyState}). Finish it to closed, block/defer it with an explicit reason, hand it off, or call workflow_reset if this is stale/foreign state before ${action}${targetBead ? ` on ${targetBead}` : ""}. /workflow-reset is an optional human UI shortcut.`;
 }
 
 function activeBeadLifecycleDecision(targetBead: string | undefined, action: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -1006,11 +1006,11 @@ function validateReviewTransitionForCommand(command: string, cwd: string): strin
 	const issue = getBdIssue(cwd, transition.id);
 	const from = issue?.status;
 	const comments = getBdCommentsText(cwd, transition.id);
-	if (transition.status === "simplified" && from !== "inreview") return `simplified requires source status inreview, got ${from ?? "unknown"}`;
-	if (transition.status === "reviewed" && from !== "simplified") return `reviewed requires source status simplified, got ${from ?? "unknown"}`;
-	if (transition.status === "reviewed" && !/CODE REVIEW:\s*APPROVED|VERDICT:\s*APPROVED/i.test(comments)) return "reviewed requires CODE REVIEW APPROVED evidence";
-	if (transition.status === "accepted" && from !== "reviewed") return `accepted requires source status reviewed, got ${from ?? "unknown"}`;
-	if (transition.status === "accepted" && !/ACCEPTANCE|Acceptance evidence|human acceptance/i.test(comments)) return "accepted requires acceptance evidence";
+	if (transition.status === "simplified" && from !== "inreview") return `simplified требует source status inreview, получен ${from ?? "unknown"}`;
+	if (transition.status === "reviewed" && from !== "simplified") return `reviewed требует source status simplified, получен ${from ?? "unknown"}`;
+	if (transition.status === "reviewed" && !/CODE REVIEW:\s*APPROVED|VERDICT:\s*APPROVED/i.test(comments)) return "reviewed требует evidence CODE REVIEW: APPROVED или VERDICT: APPROVED";
+	if (transition.status === "accepted" && from !== "reviewed") return `accepted требует source status reviewed, получен ${from ?? "unknown"}`;
+	if (transition.status === "accepted" && !/ACCEPTANCE|Acceptance evidence|human acceptance/i.test(comments)) return "accepted требует acceptance evidence";
 	return undefined;
 }
 
@@ -1159,17 +1159,17 @@ function validateAcceptanceMatrixForClose(cwd: string, id: string): string | und
 	const comments = getBdCommentsText(cwd, id);
 	if (hasValidHumanAcceptanceOverride(comments)) return undefined;
 	const matrix = latestAcceptanceMatrix(comments);
-	if (!matrix) return `Blocked: terminal close for ${id} requires ACCEPTANCE MATRIX in bd comments because the bead has acceptance criteria.`;
+	if (!matrix) return `Заблокировано: terminal close for ${id} requires ACCEPTANCE MATRIX in bd comments because the bead has acceptance criteria.`;
 	if (acceptanceMatrixHasBlockingResult(matrix)) {
-		return `Blocked: ACCEPTANCE MATRIX for ${id} contains FAIL/NOT RUN/BLOCKED/SCOPE GAP. Fix the criteria or add HUMAN ACCEPTANCE OVERRIDE with approver and reason.`;
+		return `Заблокировано: ACCEPTANCE MATRIX for ${id} contains FAIL/NOT RUN/BLOCKED/SCOPE GAP. Fix the criteria or add HUMAN ACCEPTANCE OVERRIDE with approver and reason.`;
 	}
 	if (!/result\s*:\s*PASS\b|\bPASS\b/i.test(matrix)) {
-		return `Blocked: ACCEPTANCE MATRIX for ${id} must include PASS result evidence or a valid HUMAN ACCEPTANCE OVERRIDE.`;
+		return `Заблокировано: ACCEPTANCE MATRIX for ${id} must include PASS result evidence or a valid HUMAN ACCEPTANCE OVERRIDE.`;
 	}
 	const uncovered = checks.filter((check) => !matrixCoversCheck(matrix, check));
 	const firstUncovered = uncovered[0];
 	if (firstUncovered) {
-		return `Blocked: ACCEPTANCE MATRIX for ${id} does not cover acceptance/verification item: ${firstUncovered.slice(0, 140)}.`;
+		return `Заблокировано: ACCEPTANCE MATRIX for ${id} does not cover acceptance/verification item: ${firstUncovered.slice(0, 140)}.`;
 	}
 	return undefined;
 }
@@ -1219,7 +1219,7 @@ function unmergedBranchCompletionReason(command: string, cwd: string): string | 
 
 	const originEvidence = ancestor === false ? "HEAD is not an ancestor of origin/main" : "origin/main unavailable";
 	const prEvidence = ghMerged ? `PR ${ghMerged.evidence} is not merged` : `could not verify merged PR with gh pr view ${branch}`;
-	return `Blocked: remote branch completion for ${branch} requires a merged PR or explicit documented exception (${originEvidence}; ${prEvidence}). Use merge-to-main first, or add PR_MERGED_EXCEPTION=<reason> / NO_REMOTE_BRANCH_COMPLETION_REQUIRED for local-only fast-path or spike work.`;
+	return `Заблокировано: remote branch completion for ${branch} requires a merged PR or explicit documented exception (${originEvidence}; ${prEvidence}). Use merge-to-main first, or add PR_MERGED_EXCEPTION=<reason> / NO_REMOTE_BRANCH_COMPLETION_REQUIRED for local-only fast-path or spike work.`;
 }
 
 function splitShellSegments(command: string): string[] {
@@ -1594,7 +1594,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 		return {
 			policy: "fastPathDiscipline",
 			block: true,
-			reason: `Blocked: risky scope requires an active bead with approved plan/supervisor path, a valid POST-CLOSE MERGE FIX marker (closed scope), or other scoped recoverable approval evidence. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
+			reason: `Заблокировано: risky scope requires an active bead with approved plan/supervisor path, a valid POST-CLOSE MERGE FIX marker (closed scope), or other scoped recoverable approval evidence. Changed code files: ${changedCodeFiles.slice(0, 5).join(", ")}.`,
 		};
 	}
 
@@ -1602,7 +1602,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 		return {
 			policy: "fastPathDiscipline",
 			block: true,
-			reason: `Blocked: large code change without active bead (${changedCodeFiles.length} files, ${addedLines} added lines). Create/claim a self-contained bead with concrete acceptance or dispatch supervisor.`,
+			reason: `Заблокировано: large code change without active bead (${changedCodeFiles.length} files, ${addedLines} added lines). Create/claim a self-contained bead with concrete acceptance or dispatch supervisor.`,
 		};
 	}
 
@@ -1630,13 +1630,13 @@ function evaluateStaleGuard(command: string, cwd: string): PolicyDecision | unde
 			return {
 				policy: "staleWorktreeGuard",
 				block: false,
-				reason: "Warning: origin/main is unavailable; docs/beads-only commit-like operation is allowed, but run git fetch origin before code changes.",
+				reason: "Предупреждение: origin/main is unavailable; docs/beads-only commit-like operation is allowed, but run git fetch origin before code changes.",
 			};
 		}
 		return {
 			policy: "staleWorktreeGuard",
 			block: true,
-			reason: "Blocked: origin/main is unavailable for a code change; run git fetch origin before commit-like operations.",
+			reason: "Заблокировано: origin/main is unavailable for a code change; run git fetch origin before commit-like operations.",
 		};
 	}
 
@@ -1650,7 +1650,7 @@ function evaluateStaleGuard(command: string, cwd: string): PolicyDecision | unde
 	return {
 		policy: "staleWorktreeGuard",
 		block: true,
-		reason: `Blocked: branch is stale vs origin/main and staged code files intersect main changes: ${intersect.slice(0, 5).join(", ")}. Run git fetch origin && git rebase origin/main.`,
+		reason: `Заблокировано: branch is stale vs origin/main and staged code files intersect main changes: ${intersect.slice(0, 5).join(", ")}. Run git fetch origin && git rebase origin/main.`,
 	};
 }
 
@@ -1769,7 +1769,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockRawBdClaim",
 			block: true,
-			reason: `Blocked: use the workflow_claim typed tool (or optional human UI shortcut /workflow-claim ${rawClaimId}) instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
+			reason: `Заблокировано: use the workflow_claim typed tool (or optional human UI shortcut /workflow-claim ${rawClaimId}) instead of raw bd update --claim so Pi footer/workflow-state stays synchronized.`,
 		};
 	}
 
@@ -1777,7 +1777,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockGitAddAll",
 			block: true,
-			reason: "Blocked: use explicit file paths instead of git add . / -A / --all.",
+			reason: "Заблокировано: use explicit file paths instead of git add . / -A / --all.",
 		};
 	}
 
@@ -1795,7 +1795,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockMutationsInPlanning",
 			block: true,
-			reason: "Blocked: workflow is in planning mode; only read-only commands are allowed.",
+			reason: "Заблокировано: workflow is in planning mode; only read-only commands are allowed.",
 		};
 	}
 
@@ -1806,7 +1806,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockMainMutation",
 			block: true,
-			reason: "Blocked: file mutations and git add/stage/commit on main/master are not allowed. Use a feature branch or approved merge/release workflow.",
+			reason: "Заблокировано: file mutations and git add/stage/commit on main/master are not allowed. Use a feature branch or approved merge/release workflow.",
 		};
 	}
 
@@ -1815,7 +1815,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockWorktreeInsideRepo",
 			block: true,
-			reason: `Blocked: worktree path must be under ${WORKTREE_ROOT}; got ${invalidWorktree}.`,
+			reason: `Заблокировано: worktree path must be under ${WORKTREE_ROOT}; получен ${invalidWorktree}.`,
 		};
 	}
 
@@ -1831,7 +1831,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "requireMergeSlotForPush",
 			block: true,
-			reason: "Blocked: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true or current bd merge-slot holder evidence).",
+			reason: "Заблокировано: git push requires bd merge-slot acquire first (or workflow state mergeSlotHeld=true or current bd merge-slot holder evidence).",
 		};
 	}
 
@@ -1860,7 +1860,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockSupervisorClose",
 			block: true,
-			reason: "Blocked: supervisor contexts cannot close beads, set orchestrator statuses, or push.",
+			reason: "Заблокировано: supervisor contexts cannot close beads, set orchestrator statuses, or push.",
 		};
 	}
 
@@ -1870,7 +1870,7 @@ export function evaluateBashPolicy(
 		return {
 			policy: "blockEpicCloseWithIncompleteChildren",
 			block: true,
-			reason: `Blocked: epic ${closeId} cannot be completed while child beads are not closed (${formatIncompleteChildren(incompleteChildren)}). Close children first or use an explicit documented policy override.`,
+			reason: `Заблокировано: epic ${closeId} cannot be completed while child beads are not closed (${formatIncompleteChildren(incompleteChildren)}). Close children first or use an explicit documented policy override.`,
 		};
 	}
 
@@ -1890,7 +1890,7 @@ export function evaluateBashPolicy(
 			return {
 				policy: "blockBdCloseWithoutReview",
 				block: true,
-				reason: "Blocked: terminal close requires bd status accepted, or bd status reviewed with documented no-acceptance shortcut, or an explicit policy override.",
+				reason: "Заблокировано: terminal close requires bd status accepted, or bd status reviewed with documented no-acceptance shortcut, or an explicit policy override.",
 			};
 		}
 	}
@@ -1918,7 +1918,7 @@ export function evaluateToolPolicy(toolName: string, input: Record<string, unkno
 			return {
 				policy: "enforceActiveBeadLifecycle",
 				block: true,
-				reason: `Blocked: active bead ${workflowState.activeBead} is bd:inreview; workflow_complete ${targetState || "without blocker"} would stop before review. Run review-bead / review_bead for ${workflowState.activeBead}, or use workflow_complete state=blocked|deferred with an explicit blocker and next action if review cannot run.`,
+				reason: `Заблокировано: active bead ${workflowState.activeBead} is bd:inreview; workflow_complete ${targetState || "without blocker"} would stop before review. Run review-bead / review_bead for ${workflowState.activeBead}, or use workflow_complete state=blocked|deferred with an explicit blocker and next action if review cannot run.`,
 			};
 		}
 	}
@@ -1931,7 +1931,7 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 		return {
 			policy: "protectPaths",
 			block: true,
-			reason: `Blocked: ${targetPath} is protected (${pathReason}).`,
+			reason: `Заблокировано: ${targetPath} is protected (${pathReason}).`,
 		};
 	}
 
@@ -1943,7 +1943,7 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 		return {
 			policy: "blockMutationsInPlanning",
 			block: true,
-			reason: "Blocked: workflow is in planning mode; edit/write are disabled.",
+			reason: "Заблокировано: workflow is in planning mode; edit/write are disabled.",
 		};
 	}
 
@@ -1951,7 +1951,7 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 		return {
 			policy: "blockMainMutation",
 			block: true,
-			reason: `Blocked: edit/write on main/master is not allowed for ${targetPath}. Use a feature branch or external worktree.`,
+			reason: `Заблокировано: edit/write on main/master is not allowed for ${targetPath}. Use a feature branch or external worktree.`,
 		};
 	}
 
