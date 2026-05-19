@@ -212,23 +212,23 @@ function unresolvedBlockers(bead: BeadInfo): DependencyInfo[] {
 
 export function validateSupervisorReadiness(bead: BeadInfo, comments: BeadComment[]): string[] {
 	const errors: string[] = [];
-	if (!bead.id) errors.push("bead does not exist or bd show returned no id");
-	if (bead.status && TERMINAL_STATUSES.has(bead.status)) errors.push(`terminal bead cannot be dispatched: status=${bead.status}`);
-	if (!ALLOWED_SUPERVISOR_STATUSES.has(bead.status ?? "")) errors.push(`dispatch_supervisor requires status in_progress, got ${bead.status ?? "unknown"}`);
-	if ((bead.labels ?? []).length === 0) errors.push("bead requires labels before supervisor dispatch");
+	if (!bead.id) errors.push("bead не найден или bd show не вернул id");
+	if (bead.status && TERMINAL_STATUSES.has(bead.status)) errors.push(`terminal bead нельзя dispatch: status=${bead.status}`);
+	if (!ALLOWED_SUPERVISOR_STATUSES.has(bead.status ?? "")) errors.push(`dispatch_supervisor требует status in_progress, получен ${bead.status ?? "unknown"}`);
+	if ((bead.labels ?? []).length === 0) errors.push("перед supervisor dispatch у bead должен быть хотя бы один label");
 
 	const missingSections = REQUIRED_HANDOFF_SECTIONS.filter((section) => !bead.description?.includes(section));
-	if (missingSections.length > 0) errors.push(`missing handoff sections: ${missingSections.join(", ")}`);
-	if (!hasConcreteBullets(extractSection(bead.description ?? "", "### Acceptance criteria"))) errors.push("Acceptance criteria must contain concrete non-vague bullets");
-	if (!hasConcreteBullets(extractSection(bead.description ?? "", "### Verification / acceptance checks"))) errors.push("Verification / acceptance checks must contain concrete non-vague bullets");
+	if (missingSections.length > 0) errors.push(`отсутствуют handoff sections: ${missingSections.join(", ")}`);
+	if (!hasConcreteBullets(extractSection(bead.description ?? "", "### Acceptance criteria"))) errors.push("Acceptance criteria должны содержать конкретные bullet-проверки без vague формулировок");
+	if (!hasConcreteBullets(extractSection(bead.description ?? "", "### Verification / acceptance checks"))) errors.push("Verification / acceptance checks должны содержать конкретные bullet-проверки без vague формулировок");
 
 	const blockers = unresolvedBlockers(bead);
-	if (blockers.length > 0) errors.push(`unresolved blockers: ${blockers.map((dep) => dependencyId(dep) ?? "unknown").join(", ")}`);
+	if (blockers.length > 0) errors.push(`есть unresolved blockers: ${blockers.map((dep) => dependencyId(dep) ?? "unknown").join(", ")}`);
 	const plan = getPlanComment(comments);
 	const missingFields = missingPlanFields(plan);
-	if (missingFields.length > 0) errors.push(`PLAN APPROVED comment missing fields: ${missingFields.join(", ")}`);
+	if (missingFields.length > 0) errors.push(`в PLAN APPROVED comment отсутствуют fields: ${missingFields.join(", ")}`);
 	if ((bead.parent || (bead.dependencies ?? []).some((dep) => dependencyType(dep) === "parent-child")) && !getParentId(bead)) {
-		errors.push("epic child dispatch requires parent/EPIC_ID context");
+		errors.push("dispatch epic child требует parent/EPIC_ID context");
 	}
 	return errors;
 }
@@ -379,10 +379,10 @@ async function dispatch(
 	const comments = await getComments(pi, params.beadId);
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments);
-		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness failed: ${readinessErrors.join("; ")}`);
+		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);
 	}
 	if (mode === "reviewer" && bead.status !== "inreview") {
-		throw new Error(`dispatch_reviewer requires bead status inreview, got ${bead.status}`);
+		throw new Error(`dispatch_reviewer требует bead status inreview, получен ${bead.status}`);
 	}
 
 	const branch = await getGitValue(pi, cwd, ["branch", "--show-current"]);
@@ -455,7 +455,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
-				return { content: [{ type: "text", text: `dispatch_supervisor failed: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+				return { content: [{ type: "text", text: `dispatch_supervisor не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
 			}
 		},
 	});
@@ -470,7 +470,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
-				return { content: [{ type: "text", text: `dispatch_reviewer failed: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+				return { content: [{ type: "text", text: `dispatch_reviewer не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
 			}
 		},
 	});
@@ -485,7 +485,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				const result = await dispatch(pi, "docs", params, signal, ctx.cwd);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
-				return { content: [{ type: "text", text: `dispatch_docs_agent failed: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+				return { content: [{ type: "text", text: `dispatch_docs_agent не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
 			}
 		},
 	});

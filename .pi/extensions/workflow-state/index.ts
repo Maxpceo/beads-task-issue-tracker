@@ -369,17 +369,17 @@ async function findRecoverableActiveBead(pi: ExtensionAPI, scope: RecoveryScope,
 	}
 	const sessionCandidates = candidates.filter((candidate) => candidate.via === "session");
 	if (sessionCandidates.length === 1) return { beadId: sessionCandidates[0]?.id };
-	if (sessionCandidates.length > 1) return { diagnostic: `UNBOUND_WORKFLOW_STATE: multiple current-session non-terminal beads match this session (${sessionCandidates.map((candidate) => candidate.id).join(", ")}); use workflow_update after choosing the active bead.` };
+	if (sessionCandidates.length > 1) return { diagnostic: `UNBOUND_WORKFLOW_STATE: несколько non-terminal beads текущей сессии подходят для этой сессии (${sessionCandidates.map((candidate) => candidate.id).join(", ")}); выберите active bead и вызовите workflow_update.` };
 
 	const scopeCandidates = candidates.filter((candidate) => candidate.via === "scope");
 	if (scopeCandidates.length === 1 && scope.branch && !PROTECTED_BRANCHES.has(scope.branch)) return { beadId: scopeCandidates[0]?.id };
-	if (scopeCandidates.length > 0) return { diagnostic: `UNBOUND_WORKFLOW_STATE: found non-terminal bead/worktree evidence (${scopeCandidates.map((candidate) => candidate.id).join(", ")}) but auto-bind is ambiguous or current branch is protected; use workflow_status/workflow_update/workflow_reset to recover explicitly.` };
-	if (foreignSessionScopeMatches.length > 0) return { diagnostic: `UNBOUND_WORKFLOW_STATE: found non-terminal bead/worktree evidence with a foreign session marker (${foreignSessionScopeMatches.join(", ")}); use workflow_status/workflow_update/workflow_reset after verifying ownership.` };
+	if (scopeCandidates.length > 0) return { diagnostic: `UNBOUND_WORKFLOW_STATE: найдена evidence non-terminal bead/worktree (${scopeCandidates.map((candidate) => candidate.id).join(", ")}), но auto-bind неоднозначен или текущая branch защищена; восстановитесь явно через workflow_status/workflow_update/workflow_reset.` };
+	if (foreignSessionScopeMatches.length > 0) return { diagnostic: `UNBOUND_WORKFLOW_STATE: найдена evidence non-terminal bead/worktree с foreign session marker (${foreignSessionScopeMatches.join(", ")}); после проверки ownership восстановитесь через workflow_status/workflow_update/workflow_reset.` };
 	return {};
 }
 
 function staleForeignRecoveryMessage(beadId: string, reason: string): string {
-	return `Workflow state for ${beadId} is ${reason}. Not auto-continuing or reviewing it. Agents can call workflow_reset to clear stale local state, or explicitly confirm takeover and call workflow_update with bead=${beadId} after verifying branch/worktree ownership. /workflow-reset and /workflow-update remain optional human UI shortcuts.`;
+	return `Workflow-state для ${beadId} не может быть продолжен автоматически: ${reason}. Автопродолжение и review остановлены. Агент может вызвать workflow_reset, чтобы очистить stale local state, или явно подтвердить takeover и вызвать workflow_update с bead=${beadId} после проверки branch/worktree ownership. /workflow-reset и /workflow-update остаются опциональными human UI shortcuts.`;
 }
 
 function isStaleExtensionContextError(error: unknown): boolean {
@@ -399,7 +399,7 @@ function clearUnsafeApprovedImplementingState(state: WorkflowState): { state: Wo
 			planApproved: false,
 			sessionMode: "idle",
 		},
-		warning: "Workflow state had unsafe planApproved=true + sessionMode=implementing without active bead; cleared approved/implementing flags because current-session ownership evidence was insufficient.",
+		warning: "Небезопасное workflow-state: planApproved=true + sessionMode=implementing без active bead; флаги approved/implementing сброшены, потому что не хватило evidence владения текущей сессии.",
 	};
 }
 
@@ -732,7 +732,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		description: "Reset Pi session context to idle (optional human UI shortcut; agents can call workflow_reset)",
 		handler: async (_args, ctx) => {
 			await resetWorkflowState(ctx);
-			ctx.ui.notify("Workflow session context reset to idle", "info");
+			ctx.ui.notify("Workflow session context сброшен в idle", "info");
 		},
 	});
 
@@ -772,10 +772,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (workflowState.activeBead && workflowState.activeBead !== bead) {
 			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
 			if (activeStatus === "inreview") {
-				return recordClaimError(ctx, `Cannot claim ${bead}: active bead ${workflowState.activeBead} is inreview. Run review-bead / review_bead for the active bead before claiming unrelated work.`);
+				return recordClaimError(ctx, `Нельзя claim ${bead}: active bead ${workflowState.activeBead} уже в inreview. Сначала запустите review-bead / review_bead для active bead, затем можно брать unrelated work.`);
 			}
 			if (activeStatus && !isTerminalBdStatus(activeStatus)) {
-				return recordClaimError(ctx, `Cannot claim ${bead}: active bead ${workflowState.activeBead} has non-terminal bd status ${activeStatus}. Complete, review, or reset the active workflow before claiming unrelated work.`);
+				return recordClaimError(ctx, `Нельзя claim ${bead}: active bead ${workflowState.activeBead} имеет non-terminal bd status ${activeStatus}. Завершите, отправьте на review или сбросьте active workflow перед claim unrelated work.`);
 			}
 		}
 
@@ -792,7 +792,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		const { status: claimedBdStatus, error: statusFallbackError } = await ensureClaimedBdStatus(pi, bead);
 		if (claimedBdStatus !== "in_progress") {
 			const fallbackDetails = statusFallbackError ? ` ${statusFallbackError}.` : "";
-			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress.${fallbackDetails} Local workflow-state was not changed.`);
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress.${fallbackDetails} Local workflow-state не изменён.`);
 		}
 
 		const branch = await detectBranch(pi, ctx.cwd);
@@ -814,7 +814,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				.join("\n"),
 		]);
 		if (ownershipCommentResult.code !== 0) {
-			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd comments add ${bead} WORKFLOW CLAIM\` exited ${ownershipCommentResult.code}: ${(ownershipCommentResult.stderr || ownershipCommentResult.stdout || "<no output>").trim()}. Local workflow-state was not changed.`);
+			return recordClaimError(ctx, `Failed to claim bead ${bead}: command \`bd comments add ${bead} WORKFLOW CLAIM\` exited ${ownershipCommentResult.code}: ${(ownershipCommentResult.stderr || ownershipCommentResult.stdout || "<no output>").trim()}. Local workflow-state не изменён.`);
 		}
 
 		setState(
@@ -829,7 +829,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			},
 			ctx,
 		);
-		ctx.ui.notify(`Claimed ${bead}; ${formatState(workflowState)}`, "success");
+		ctx.ui.notify(`Claim выполнен для ${bead}; ${formatState(workflowState)}`, "success");
 		return true;
 	}
 
@@ -991,7 +991,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				const error = ok ? undefined : lastClaimError;
 				await ensureReconciled(ctx);
 				const failureDetails = error ? `; reason: ${error}` : "";
-				return toolText(ok ? `workflow_claim completed: ${formatState(workflowState)}` : `workflow_claim failed for ${params.beadId}: ${formatState(workflowState)}${failureDetails}`, { ok, error, ...cloneState(workflowState) });
+				return toolText(ok ? `workflow_claim выполнен: ${formatState(workflowState)}` : `workflow_claim не выполнен для ${params.beadId}: ${formatState(workflowState)}${failureDetails}`, { ok, error, ...cloneState(workflowState) });
 			},
 		});
 
@@ -1002,7 +1002,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			parameters: WorkflowResetParams,
 			async execute(_id: string, params: { reason?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				await resetWorkflowState(ctx);
-				return toolText(`workflow_reset completed${params.reason ? `: ${params.reason}` : ""}. ${formatState(workflowState)}`, cloneState(workflowState));
+				return toolText(`workflow_reset выполнен${params.reason ? `: ${params.reason}` : ""}. ${formatState(workflowState)}`, cloneState(workflowState));
 			},
 		});
 
@@ -1014,7 +1014,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			async execute(_id: string, params: WorkflowUpdateToolParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const rawParams = params as Record<string, unknown>;
 				const validationError = validateWorkflowUpdateParams(rawParams);
-				if (validationError) return toolText(`workflow_update rejected: ${validationError}`, { ok: false, error: validationError, ...cloneState(workflowState) });
+				if (validationError) return toolText(`workflow_update отклонён: ${validationError}`, { ok: false, error: validationError, ...cloneState(workflowState) });
 
 				const next: Partial<WorkflowState> = {};
 				if (params.state !== undefined) next.state = params.state;
@@ -1032,7 +1032,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				if (params.slot !== undefined) next.mergeSlotHeld = params.slot === "held";
 
 				const changed = Object.keys(next).length > 0;
-				if (!changed) return toolText(`workflow_update no-op: no supported parameters provided. ${formatState(workflowState)}`, { ok: true, reason: "no supported parameters provided", ...cloneState(workflowState) });
+				if (!changed) return toolText(`workflow_update no-op: supported parameters не переданы. ${formatState(workflowState)}`, { ok: true, reason: "no supported parameters provided", ...cloneState(workflowState) });
 
 				assignState(next);
 				const unsafeCleared = clearUnsafeApprovedImplementingState(workflowState);
@@ -1055,7 +1055,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					const reconciled = await ensureReconciled(ctx);
 					if (!reconciled) persist(ctx);
 				}
-				return toolText(`workflow_update completed: ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
+				return toolText(`workflow_update выполнен: ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
 			},
 		});
 
@@ -1067,11 +1067,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			async execute(_id: string, params: { beadId: string; reason: string; endCommit?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				await ensureReconciled(ctx);
 				if (workflowState.activeBead && workflowState.activeBead !== params.beadId) {
-					return toolText(`workflow_submit_for_review blocked: active bead is ${workflowState.activeBead}, not ${params.beadId}. Use workflow_reset only after verifying stale/foreign ownership.`, { ok: false, ...cloneState(workflowState) });
+					return toolText(`workflow_submit_for_review заблокирован: active bead = ${workflowState.activeBead}, а не ${params.beadId}. Используйте workflow_reset только после проверки stale/foreign ownership.`, { ok: false, ...cloneState(workflowState) });
 				}
 				const updateResult = await pi.exec("bd", ["update", params.beadId, "--status", "inreview", "--json"]);
 				if (updateResult.code !== 0) {
-					return toolText(`workflow_submit_for_review failed for ${params.beadId}: ${updateResult.stderr || updateResult.stdout}`.trim(), { ok: false, ...cloneState(workflowState) });
+					return toolText(`workflow_submit_for_review не выполнен для ${params.beadId}: ${updateResult.stderr || updateResult.stdout}`.trim(), { ok: false, ...cloneState(workflowState) });
 				}
 				setState(
 					{
@@ -1087,7 +1087,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					},
 					ctx,
 				);
-				return toolText(`workflow_submit_for_review completed for ${params.beadId}: ${params.reason}. Next action is review_bead/review-bead, or workflow_complete state=blocked|deferred with explicit blocker if review cannot run. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
+				return toolText(`workflow_submit_for_review выполнен для ${params.beadId}: ${params.reason}. Следующее действие: review_bead/review-bead, либо workflow_complete state=blocked|deferred с явным blocker, если review нельзя запустить. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
 			},
 		});
 
@@ -1100,12 +1100,12 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				await ensureReconciled(ctx);
 				if (workflowState.activeBead && workflowState.bdStatus === "inreview" && params.state !== "blocked" && params.state !== "deferred") {
 					return toolText(
-						`workflow_complete blocked: active bead ${workflowState.activeBead} is bd:inreview. Next valid action is review_bead/review-bead, or workflow_complete state=blocked|deferred with an explicit blocker if review cannot run.`,
+						`workflow_complete заблокирован: active bead ${workflowState.activeBead} имеет bd:inreview. Следующее допустимое действие: review_bead/review-bead, либо workflow_complete state=blocked|deferred с явным blocker, если review нельзя запустить.`,
 						{ ok: false, ...cloneState(workflowState) },
 					);
 				}
 				setState({ state: params.state, sessionMode: params.state, endCommit: params.endCommit ?? (await detectStartCommit(pi, ctx.cwd)), activeBead: undefined, bdStatus: undefined, planMode: "off", planApproved: false }, ctx);
-				return toolText(`workflow_complete recorded ${params.state}: ${params.reason}. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
+				return toolText(`workflow_complete записал ${params.state}: ${params.reason}. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
 			},
 		});
 	}
@@ -1128,12 +1128,12 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (ctx) await ensureReconciled(ctx);
 		const inreviewGuard = workflowState.activeBead && workflowState.bdStatus === "inreview"
-			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} is bdStatus=inreview. Do not stop with a normal final report. The next action is review-bead / review_bead for ${workflowState.activeBead}. If review cannot run because of tool unavailability or stale/foreign ownership, return BLOCKED with the exact blocker and next action; workflow_complete is only valid with state=blocked|deferred for that explicit blocker.`
+			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} имеет bdStatus=inreview. Не останавливайся с обычным final report. Следующее действие: review-bead / review_bead для ${workflowState.activeBead}. Если review нельзя запустить из-за недоступности tool или stale/foreign ownership, верни BLOCKED с точным blocker и next action; workflow_complete допустим только с state=blocked|deferred для этого явного blocker.`
 			: "";
 		return {
 			message: {
 				customType: "workflow-state-context",
-				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nAgents use workflow_status/workflow_update typed tools for session context; /workflow-status and /workflow-update are optional human UI shortcuts. bdStatus is live read-only issue status.${inreviewGuard}`,
+				content: `[PI SESSION CONTEXT]\n${formatState(workflowState)}\n\nAgents используют workflow_status/workflow_update typed tools для session context; /workflow-status и /workflow-update — опциональные human UI shortcuts. bdStatus — live read-only issue status.${inreviewGuard}`,
 				display: false,
 			},
 		};

@@ -1015,7 +1015,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('planApproved=false')
     expect(context.message.content).toContain('sessionMode=idle')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'idle' })
-    expect(notifications.at(-1)?.message).toContain('unsafe planApproved=true + sessionMode=implementing without active bead')
+    expect(notifications.at(-1)?.message).toContain('Небезопасное workflow-state')
   })
 
   it('clears unsafe approved implementing state and reports unbound when only foreign-session scope evidence remains', async () => {
@@ -1052,6 +1052,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('sessionMode=UNBOUND_WORKFLOW_STATE')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'UNBOUND_WORKFLOW_STATE' })
     expect(notifications.at(-1)?.message).toContain('foreign session marker')
+    expect(notifications.at(-1)?.message).toContain('восстановитесь через workflow_status/workflow_update/workflow_reset')
   })
 
   it('prevents workflow-update command from persisting approved implementing state without active bead', async () => {
@@ -1085,7 +1086,7 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'beads-task-issue-tracker-zzkb', state: 'claimed', planMode: 'off' })
     expect(statuses['workflow-state']).toContain('session:claimed')
     expect(statuses['workflow-state']).toContain('bead:beads-task-issue-tracker-zzkb')
-    expect(notifications.at(-1)?.message).toContain('Claimed beads-task-issue-tracker-zzkb')
+    expect(notifications.at(-1)?.message).toContain('Claim выполнен для beads-task-issue-tracker-zzkb')
   })
 
   it('requires explicit current-session marker in comments for session ownership evidence', () => {
@@ -1108,7 +1109,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(appended.at(-1)?.data).toMatchObject({
       activeBead: 'bead-next',
       state: 'claimed',
@@ -1148,9 +1149,9 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-current' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-current', state: 'claimed', bdStatus: 'in_progress' })
-    expect(notifications.at(-1)?.message).toContain('Claimed bead-current')
+    expect(notifications.at(-1)?.message).toContain('Claim выполнен для bead-current')
   })
 
   it('workflow_claim recovers when bd claim leaves an already-assigned open bead open', async () => {
@@ -1165,13 +1166,13 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(execCalls).toEqual(expect.arrayContaining([
       { command: 'bd', args: ['update', 'bead-next', '--claim', '--json'] },
       { command: 'bd', args: ['update', 'bead-next', '--status', 'in_progress', '--json'] },
     ]))
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', bdStatus: 'in_progress' })
-    expect(notifications.at(-1)?.message).toContain('Claimed bead-next')
+    expect(notifications.at(-1)?.message).toContain('Claim выполнен для bead-next')
   })
 
   it('workflow_claim fails without local claimed state when bd status remains open after claim fallback', async () => {
@@ -1187,7 +1188,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
+    expect(result.content[0].text).toContain('workflow_claim не выполнен для bead-next')
     expect(result.content[0].text).toContain('bdStatus=-')
     expect(result.content[0].text).toContain('reason: Failed to claim bead bead-next')
     expect(result.content[0].text).toContain('bd update bead-next --claim --json')
@@ -1208,7 +1209,7 @@ describe('Pi workflow-state typed tools', () => {
     const claim = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
     const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
 
-    expect(claim.content[0].text).toContain('workflow_claim completed')
+    expect(claim.content[0].text).toContain('workflow_claim выполнен')
     expect(status.content[0].text).toContain('bead=bead-next')
     expect(status.content[0].text).toContain('bdStatus=in_progress')
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', bdStatus: 'in_progress' })
@@ -1226,9 +1227,9 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
+    expect(result.content[0].text).toContain('workflow_claim не выполнен для bead-next')
     expect(result.content[0].text).toContain('bd comments add bead-next WORKFLOW CLAIM')
-    expect(notifications.at(-1)?.message).toContain('Local workflow-state was not changed')
+    expect(notifications.at(-1)?.message).toContain('Local workflow-state не изменён')
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
   })
 
@@ -1263,7 +1264,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
+    expect(result.content[0].text).toContain('workflow_claim не выполнен для bead-next')
     expect(notifications.at(-1)?.message).toContain('non-terminal bd status in_progress')
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-current', state: 'implementing', bdStatus: 'in_progress' })
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'bead-next' && call.args.includes('--claim'))).toBe(false)
@@ -1300,8 +1301,8 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim failed for bead-next')
-    expect(notifications.at(-1)?.message).toContain('Run review-bead / review_bead')
+    expect(result.content[0].text).toContain('workflow_claim не выполнен для bead-next')
+    expect(notifications.at(-1)?.message).toContain('запустите review-bead / review_bead')
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'bead-next' && call.args.includes('--claim'))).toBe(false)
   })
 
@@ -1336,7 +1337,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(notifications.some((notification) => notification.message.includes('terminal bd status closed'))).toBe(true)
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed' })
   })
@@ -1372,7 +1373,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_claim completed')
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(notifications.some((notification) => notification.message.includes('stale or foreign'))).toBe(true)
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed' })
   })
@@ -1441,7 +1442,7 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('planApproved=false')
     expect(result.content[0].text).toContain('sessionMode=idle')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle', planApproved: false, sessionMode: 'idle' })
-    expect(notifications.at(-1)?.message).toContain('unsafe planApproved=true + sessionMode=implementing without active bead')
+    expect(notifications.at(-1)?.message).toContain('Небезопасное workflow-state')
   })
 
   it('workflow_update records a task worktree over an existing main checkout session context', async () => {
@@ -1534,7 +1535,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_update')?.execute('call-1', { state: 'not-a-state', slot: 'busy' } as any, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_update rejected')
+    expect(result.content[0].text).toContain('workflow_update отклонён')
     expect(result.details).toMatchObject({ ok: false, error: 'Invalid state: not-a-state', state: 'idle' })
     expect(appended).toHaveLength(0)
   })
@@ -1549,7 +1550,7 @@ describe('Pi workflow-state typed tools', () => {
 
     const result = await toolHandlers.get('workflow_update')?.execute('call-1', {}, undefined, undefined, ctx)
 
-    expect(result.content[0].text).toContain('workflow_update no-op: no supported parameters provided')
+    expect(result.content[0].text).toContain('workflow_update no-op: supported parameters не переданы')
     expect(result.details).toMatchObject({ ok: true, reason: 'no supported parameters provided', state: 'idle' })
     expect(appended).toHaveLength(0)
   })
@@ -1572,8 +1573,8 @@ describe('Pi workflow-state typed tools', () => {
     )
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(result.content[0].text).toContain('workflow_submit_for_review completed')
-    expect(result.content[0].text).toContain('Next action is review_bead/review-bead')
+    expect(result.content[0].text).toContain('workflow_submit_for_review выполнен')
+    expect(result.content[0].text).toContain('Следующее действие: review_bead/review-bead')
     expect(execCalls.some((call) => call.command === 'bd' && call.args.join(' ') === 'update bead-current --status inreview --json')).toBe(true)
     expect(appended.at(-1)?.data).toMatchObject({
       activeBead: 'bead-current',
@@ -1616,10 +1617,10 @@ describe('Pi workflow-state typed tools', () => {
     const blocked = await toolHandlers.get('workflow_complete')?.execute('call-1', { state: 'closed', reason: 'done' }, undefined, undefined, ctx)
     const explicitBlocker = await toolHandlers.get('workflow_complete')?.execute('call-2', { state: 'blocked', reason: 'review_bead tool unavailable' }, undefined, undefined, ctx)
 
-    expect(blocked.content[0].text).toContain('workflow_complete blocked')
+    expect(blocked.content[0].text).toContain('workflow_complete заблокирован')
     expect(blocked.content[0].text).toContain('review_bead/review-bead')
     expect(blocked.details).toMatchObject({ ok: false, activeBead: 'bead-current', state: 'inreview', sessionMode: 'inreview', bdStatus: 'inreview' })
-    expect(explicitBlocker.content[0].text).toContain('workflow_complete recorded blocked')
+    expect(explicitBlocker.content[0].text).toContain('workflow_complete записал blocked')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'blocked', sessionMode: 'blocked' })
   })
 

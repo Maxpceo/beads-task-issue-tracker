@@ -60,10 +60,10 @@ const FRONTEND_REVIEW_CHECKLIST = [
 
 export function validateReviewTransition(from: string, to: string, comments = ""): string | undefined {
 	const allowed = REVIEW_TRANSITIONS[from] ?? [];
-	if (!allowed.includes(to)) return `invalid review transition ${from} -> ${to}`;
-	if (to === "reviewed" && !/CODE REVIEW:\s*APPROVED|VERDICT:\s*APPROVED/i.test(comments)) return "reviewed requires CODE REVIEW APPROVED evidence";
-	if (to === "accepted" && !/ACCEPTANCE|Acceptance evidence|human acceptance/i.test(comments)) return "accepted requires acceptance evidence";
-	if (to === "closed" && from !== "accepted" && !/NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments)) return "closed requires accepted status or documented no-acceptance shortcut";
+	if (!allowed.includes(to)) return `недопустимый review transition ${from} -> ${to}`;
+	if (to === "reviewed" && !/CODE REVIEW:\s*APPROVED|VERDICT:\s*APPROVED/i.test(comments)) return "reviewed требует evidence CODE REVIEW: APPROVED или VERDICT: APPROVED";
+	if (to === "accepted" && !/ACCEPTANCE|Acceptance evidence|human acceptance/i.test(comments)) return "accepted требует acceptance evidence";
+	if (to === "closed" && from !== "accepted" && !/NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments)) return "closed требует status accepted или documented no-acceptance shortcut";
 	return undefined;
 }
 
@@ -228,7 +228,7 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): Promise<{ code: number; output: string; stderr: string }> {
 	const agentPath = path.join(cwd, ".pi", "agents", "code-reviewer.md");
-	if (!fs.existsSync(agentPath)) throw new Error("Missing .pi/agents/code-reviewer.md");
+	if (!fs.existsSync(agentPath)) throw new Error("Отсутствует .pi/agents/code-reviewer.md");
 	const parsed = parseFrontmatter(fs.readFileSync(agentPath, "utf8"));
 	const system = await writeTempFile("code-reviewer-system", parsed.body);
 	const args = ["--mode", "json", "-p", "--no-session", "--append-system-prompt", system.file];
@@ -289,16 +289,16 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
 			try {
 				const bead = await getBead(pi, params.beadId);
-				if (bead.status !== "inreview") throw new Error(`review_bead requires status inreview, got ${bead.status}`);
+				if (bead.status !== "inreview") throw new Error(`review_bead требует status inreview, получен ${bead.status}`);
 				const comments = await getComments(pi, params.beadId);
 				const startCommit = params.startCommit || findStartCommit(comments);
-				if (!startCommit) throw new Error("No startCommit provided and no START_COMMIT found in comments.");
+				if (!startCommit) throw new Error("startCommit не передан и START_COMMIT не найден в comments.");
 				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
 				const reviewCwd = params.worktreePath || ctx.cwd;
 				const branch = await execRequired(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
 				const worktreePath = await execRequired(pi, "git", ["-C", reviewCwd, "rev-parse", "--show-toplevel"]);
 				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit, endCommit })) {
-					throw new Error(`review_bead refused ${params.beadId}: no matching branch/worktree/start ownership evidence for review scope ${worktreePath || reviewCwd}. Agents can inspect bd comments ${params.beadId}, call workflow_reset for stale local state, or explicitly confirm takeover and bind verified dispatch evidence with workflow_update(bead=${params.beadId}, session=reviewing, branch=<branch>, worktree=<worktree>, start=<sha>, end=<sha>) before retrying review_bead with worktreePath=<worktree>.`);
+					throw new Error(`review_bead отклонён для ${params.beadId}: нет совпадающего branch/worktree/start ownership evidence для review scope ${worktreePath || reviewCwd}. Agents могут проверить bd comments ${params.beadId}, вызвать workflow_reset для stale local state или явно подтвердить takeover и привязать verified dispatch evidence через workflow_update(bead=${params.beadId}, session=reviewing, branch=<branch>, worktree=<worktree>, start=<sha>, end=<sha>) перед повторным review_bead с worktreePath=<worktree>.`);
 				}
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
 				const changedRaw = await execRequired(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
@@ -338,7 +338,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				}
 				return { content: [{ type: "text", text: render(result) }], details: result };
 			} catch (error) {
-				return { content: [{ type: "text", text: `review_bead failed: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+				return { content: [{ type: "text", text: `review_bead не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
 			}
 		},
 	});
@@ -349,8 +349,8 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 			const beadId = args.trim();
 			ctx.ui.notify(
 				beadId
-					? `Ask the agent to call review_bead with beadId=${beadId}. The tool will guard status, run checks, and invoke code-reviewer.`
-					: "Usage: /review-bead <bead-id> then ask the agent to call review_bead.",
+					? `Попросите агента вызвать review_bead с beadId=${beadId}. Tool проверит status, запустит checks и вызовет code-reviewer.`
+					: "Usage: /review-bead <bead-id>, затем попросите агента вызвать review_bead.",
 				"info",
 			);
 		},

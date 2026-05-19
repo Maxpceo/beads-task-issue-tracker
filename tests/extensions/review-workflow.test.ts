@@ -117,7 +117,7 @@ describe('review_workflow scoped review', () => {
 
     expect(execCalls).toContainEqual({ command: 'pnpm', args: ['--dir', '/repo/worktrees/bead-a', 'test'] })
     expect(execCalls).toContainEqual({ command: 'npx', args: ['--prefix', '/repo/worktrees/bead-a', 'vue-tsc', '--noEmit'] })
-    expect(result.content[0].text).toContain('Missing .pi/agents/code-reviewer.md')
+    expect(result.content[0].text).toContain('Отсутствует .pi/agents/code-reviewer.md')
   })
 
   it('refuses task worktree review when branch and worktree match but start commit is stale', async () => {
@@ -143,7 +143,7 @@ describe('review_workflow scoped review', () => {
     reviewWorkflowExtension(pi as any)
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', worktreePath: '/repo/worktrees/bead-a', startCommit: 'new2222', endCommit: 'bbb2222', dryRun: true }, undefined, undefined, { cwd: '/repo/main' })
 
-    expect(result.content[0].text).toContain('no matching branch/worktree/start ownership evidence')
+    expect(result.content[0].text).toContain('нет совпадающего branch/worktree/start ownership evidence')
     expect(execCalls).not.toContainEqual({ command: 'git', args: ['-C', '/repo/worktrees/bead-a', 'diff', '--name-only', 'new2222..bbb2222'] })
   })
 
@@ -166,7 +166,7 @@ describe('review_workflow scoped review', () => {
     reviewWorkflowExtension(pi as any)
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, { cwd: process.cwd() })
 
-    expect(result.content[0].text).toContain('no matching branch/worktree/start ownership evidence')
+    expect(result.content[0].text).toContain('нет совпадающего branch/worktree/start ownership evidence')
     expect(result.content[0].text).toContain('workflow_reset')
   })
 
@@ -197,9 +197,9 @@ describe('review_workflow scoped review', () => {
     reviewWorkflowExtension(pi as any)
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, { cwd: process.cwd() })
 
-    expect(result.content[0].text).toContain('no matching branch/worktree/start ownership evidence')
+    expect(result.content[0].text).toContain('нет совпадающего branch/worktree/start ownership evidence')
     expect(result.content[0].text).toContain('workflow_reset')
-    expect(result.content[0].text).toContain('confirm takeover')
+    expect(result.content[0].text).toContain('подтвердить takeover')
     expect(execCalls).not.toContainEqual({ command: 'git', args: ['diff', '--name-only', 'aaa1111..HEAD'] })
   })
 })
