@@ -48,7 +48,8 @@ describe('Pi bead Russian locale policy', () => {
 
     expect(decision?.policy).toBe('enforceBeadRussianLocale')
     expect(decision?.block).toBe(true)
-    expect(decision?.reason).toContain('title is clearly English')
+    expect(decision?.reason).toContain('bead title явно на английском')
+    expect(decision?.reason).not.toContain('title is clearly English')
   })
 
   it('blocks clearly English bead update title', () => {
@@ -63,7 +64,8 @@ describe('Pi bead Russian locale policy', () => {
 
     expect(decision?.policy).toBe('enforceBeadRussianLocale')
     expect(decision?.block).toBe(true)
-    expect(decision?.reason).toContain('description is clearly English')
+    expect(decision?.reason).toContain('bead description явно на английском')
+    expect(decision?.reason).not.toContain('description is clearly English')
   })
 
   it('allows Russian bead content with technical identifiers and required English headings', () => {
@@ -301,7 +303,8 @@ exit 1
       }, { cwd })
 
       expect(decision?.policy).toBe('blockBdCloseWithoutReview')
-      expect(decision?.reason).toContain('requires ACCEPTANCE MATRIX')
+      expect(decision?.reason).toContain('требует ACCEPTANCE MATRIX')
+      expect(decision?.reason).not.toContain('requires ACCEPTANCE MATRIX')
     })
   })
 
@@ -990,8 +993,9 @@ describe('Pi bd-first active bead policy', () => {
     })
 
     expect(reason).toContain('review-bead / review_bead')
-    expect(reason).toContain('confirming current-session branch/worktree ownership')
+    expect(reason).toContain('после подтверждения current-session branch/worktree ownership')
     expect(reason).toContain('/workflow-reset')
+    expect(reason).not.toContain('next valid action')
     expect(reason).toContain('bead-a')
   })
 
@@ -1023,6 +1027,8 @@ describe('Pi bd-first active bead policy', () => {
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.block).toBe(true)
     expect(decision?.reason).toContain('review-bead / review_bead')
+    expect(decision?.reason).toContain('остановит workflow до review')
+    expect(decision?.reason).not.toContain('would stop before review')
 
     const blockerDecision = evaluateToolPolicy('workflow_complete', { state: 'blocked', reason: 'review_bead unavailable' }, {
       activeBead: 'bead-a',
@@ -1592,7 +1598,7 @@ exit 1
       const branchDecision = evaluateBashPolicy('touch smoke.txt', lockedState(wrongBranch), { cwd: wrongBranch })
 
       expect(missingDecision?.policy).toBe('enforceActiveWorktreeCwd')
-      expect(missingDecision?.reason).toContain('missing worktree')
+      expect(missingDecision?.reason).toContain('отсутствующему worktree')
       expect(missingDecision?.reason).toContain('workflow_reset')
       expect(branchDecision?.policy).toBe('enforceActiveWorktreeCwd')
       expect(branchDecision?.reason).toContain('branch task/current')
@@ -1611,12 +1617,13 @@ exit 1
     const readOnlyDecision = evaluateBashPolicy('bd show bead-a --json', stateWithoutWorktree, { cwd: tmpdir() })
 
     expect(bashDecision?.policy).toBe('enforceActiveWorktreeCwd')
-    expect(bashDecision?.reason).toContain('no recorded worktree path')
+    expect(bashDecision?.reason).toContain('recorded worktree path отсутствует')
     expect(bashDecision?.reason).toContain('workflow_reset')
+    expect(bashDecision?.reason).not.toContain('no recorded worktree path')
     expect(editDecision?.policy).toBe('enforceActiveWorktreeCwd')
-    expect(editDecision?.reason).toContain('no recorded worktree path')
+    expect(editDecision?.reason).toContain('recorded worktree path отсутствует')
     expect(writeDecision?.policy).toBe('enforceActiveWorktreeCwd')
-    expect(writeDecision?.reason).toContain('no recorded worktree path')
+    expect(writeDecision?.reason).toContain('recorded worktree path отсутствует')
     expect(readOnlyDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
   })
 
@@ -1671,7 +1678,7 @@ exit 1
       const decision = evaluateToolPolicy(toolName, { beadId: 'bead-a', cwd: tmpdir() }, lockedState('', { worktreePath: undefined }))
 
       expect(decision?.policy).toBe('enforceActiveWorktreeCwd')
-      expect(decision?.reason).toContain('no recorded worktree path')
+      expect(decision?.reason).toContain('recorded worktree path отсутствует')
       expect(decision?.reason).toContain('workflow_reset')
       expect(decision?.reason).toContain(toolName)
     },
@@ -1778,11 +1785,11 @@ exit 1
       const writeDecision = await toolCallHandler({ toolName: 'write', input: { path: join(main, 'smoke.txt') } }, { ...baseCtx, cwd: main })
 
       expect(bashDecision.reason).toContain('enforceActiveWorktreeCwd')
-      expect(bashDecision.reason).toContain('no recorded worktree path')
+      expect(bashDecision.reason).toContain('recorded worktree path отсутствует')
       expect(bashDecision.reason).toContain('workflow_reset')
       expect(bashDecision.reason).not.toContain('blockMainMutation')
       expect(writeDecision.reason).toContain('enforceActiveWorktreeCwd')
-      expect(writeDecision.reason).toContain('no recorded worktree path')
+      expect(writeDecision.reason).toContain('recorded worktree path отсутствует')
       expect(writeDecision.reason).toContain('workflow_reset')
     } finally {
       rmSync(main, { recursive: true, force: true })
