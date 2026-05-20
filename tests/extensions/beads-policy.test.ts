@@ -1524,17 +1524,14 @@ exit 1
     try {
       const decision = evaluateBashPolicy(`env -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
       const longOptionDecision = evaluateBashPolicy(`env --chdir=${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
-      const unsetDecision = evaluateBashPolicy(`env -u FOO -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
-      const longUnsetDecision = evaluateBashPolicy(`env --unset FOO --chdir=${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const assignmentDecision = evaluateBashPolicy(`env FOO=bar -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
 
       expect(decision?.policy).not.toBe('enforceActiveWorktreeCwd')
       expect(decision?.policy).not.toBe('blockMainMutation')
       expect(longOptionDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
       expect(longOptionDecision?.policy).not.toBe('blockMainMutation')
-      expect(unsetDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
-      expect(unsetDecision?.policy).not.toBe('blockMainMutation')
-      expect(longUnsetDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
-      expect(longUnsetDecision?.policy).not.toBe('blockMainMutation')
+      expect(assignmentDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(assignmentDecision?.policy).not.toBe('blockMainMutation')
     } finally {
       rmSync(main, { recursive: true, force: true })
       rmSync(worktree, { recursive: true, force: true })
@@ -1548,13 +1545,11 @@ exit 1
     try {
       const mainDecision = evaluateBashPolicy(`env -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
       const otherDecision = evaluateBashPolicy(`env -C ${other} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
-      const unsetMainDecision = evaluateBashPolicy(`env -u FOO -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
-      const longUnsetOtherDecision = evaluateBashPolicy(`env --unset FOO --chdir=${other} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const assignmentMainDecision = evaluateBashPolicy(`env FOO=bar -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
 
       expect(mainDecision?.policy).toBe('enforceActiveWorktreeCwd')
       expect(otherDecision?.policy).toBe('enforceActiveWorktreeCwd')
-      expect(unsetMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
-      expect(longUnsetOtherDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(assignmentMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
     } finally {
       rmSync(main, { recursive: true, force: true })
       rmSync(worktree, { recursive: true, force: true })
@@ -1562,6 +1557,30 @@ exit 1
     }
   })
 
+
+  it('keeps unsupported env option forms fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const unsetActiveDecision = evaluateBashPolicy(`env -u FOO -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const unsetMainDecision = evaluateBashPolicy(`env -u FOO -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const splitStringDecision = evaluateBashPolicy(`env -S 'git -C ${main} add tracked.txt'`, lockedState(worktree), { cwd: worktree })
+      const longSplitStringDecision = evaluateBashPolicy(`env --split-string='git -C ${other} add tracked.txt'`, lockedState(worktree), { cwd: worktree })
+      const unknownOptionDecision = evaluateBashPolicy(`env --unknown-option -C ${main} git add tracked.txt`, lockedState(worktree), { cwd: worktree })
+
+      expect(unsetActiveDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(unsetActiveDecision?.reason).toContain('unsupported env options')
+      expect(unsetMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(splitStringDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(longSplitStringDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(unknownOptionDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
 
 
   it('allows supported leading cd bd writes but keeps nested bash -c cd fail-closed', () => {

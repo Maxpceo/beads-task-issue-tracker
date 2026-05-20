@@ -309,14 +309,6 @@ function parseEnvPrefix(words: string[], base?: string): EnvPrefixParse {
 			continue;
 		}
 		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-		if (word === "-u" || word === "--unset") {
-			if (!words[index + 1]) return { cwd, unsupportedOption: word };
-			index += 1;
-			continue;
-		}
-		if (word.startsWith("--unset=")) continue;
-		if (word === "-i" || word === "--ignore-environment" || word === "-0" || word === "--null" || /^-[i0]+$/.test(word)) continue;
-		if (word === "-S" || word === "--split-string" || word.startsWith("--split-string=")) return { cwd, unsupportedOption: word };
 		if (word.startsWith("-")) return { cwd, unsupportedOption: word };
 		return { commandIndex: index, cwd };
 	}
@@ -392,9 +384,10 @@ function hasShellCommandSubstitution(command: string): boolean {
 
 function hasAmbiguousEnvShellCommand(command: string): boolean {
 	const words = shellWords(command);
+	if (hasUnsupportedEnvOption(command)) return true;
 	const commandIndex = envWrappedCommandIndex(words);
 	if (commandIndex === undefined) return false;
-	if (hasUnquotedShellOperator(command) || hasShellCommandSubstitution(command) || hasUnsupportedEnvOption(command)) return true;
+	if (hasUnquotedShellOperator(command) || hasShellCommandSubstitution(command)) return true;
 	const commandWord = words[commandIndex];
 	if (!commandWord) return false;
 	return isShellInterpreter(commandWord) && hasShellCommandOption(words, commandIndex);
