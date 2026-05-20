@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { renderPathRulesLoaded } from "../path-rules/index";
+import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard } from "../subagent/dashboard";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	registerTool(tool: any): void;
@@ -333,7 +334,26 @@ export function isReviewApproved(output: string): boolean {
 	return APPROVED_MARKER.test(output);
 }
 
-async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): Promise<{ code: number; output: string; stderr: string }> {
+function refreshDashboardWidget(ctx?: { ui?: any }): void {
+	const state = getSharedDashboardState();
+	if (!state?.visible || !ctx?.ui) return;
+	ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => getSharedDashboardState()!, theme));
+}
+
+function publishReviewerDashboardCard(ctx: { ui?: any } | undefined, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
+	publishDashboardCard({
+		agent: "code-reviewer",
+		description: "workflow review: code-reviewer",
+		source: "project",
+		status: "running",
+		startedAt: Date.now(),
+		toolCount: 0,
+		...card,
+	});
+	refreshDashboardWidget(ctx);
+}
+
+async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal, ctx?: { ui?: any }): Promise<{ code: number; output: string; stderr: string }> {
 	const agentPath = path.join(cwd, ".pi", "agents", "code-reviewer.md");
 	if (!fs.existsSync(agentPath)) throw new Error("Отсутствует .pi/agents/code-reviewer.md");
 	const parsed = parseFrontmatter(fs.readFileSync(agentPath, "utf8"));
@@ -344,16 +364,39 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): P
 	args.push(`Task: ${prompt}`);
 	try {
 		const invocation = getPiInvocation(args);
+		const startedAt = Date.now();
+		publishReviewerDashboardCard(ctx, { status: "running", task: prompt.split("\n")[0] || "Review bead", startedAt, lastPreview: "starting code-reviewer..." });
 		return await new Promise((resolve) => {
 			const proc = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 			let output = "";
 			let stderr = "";
-			proc.stdout.on("data", (data) => (output += data.toString()));
+			let wasAborted = false;
+			let settled = false;
+			const finish = (code: number, finalStderr = stderr) => {
+				if (settled) return;
+				settled = true;
+				const status = wasAborted ? "aborted" : code === 0 ? "completed" : "failed";
+				publishReviewerDashboardCard(ctx, {
+					status,
+					startedAt,
+					completedAt: Date.now(),
+					lastPreview: output.trim().split("\n").at(-1)?.slice(0, 160) || "reviewer finished",
+					errorMessage: finalStderr.trim() || undefined,
+				});
+				resolve({ code, output, stderr: finalStderr });
+			};
+			proc.stdout.on("data", (data) => {
+				output += data.toString();
+				publishReviewerDashboardCard(ctx, { status: "running", startedAt, lastPreview: output.trim().split("\n").at(-1)?.slice(0, 160) || "receiving output..." });
+			});
 			proc.stderr.on("data", (data) => (stderr += data.toString()));
-			proc.on("close", (code) => resolve({ code: code ?? 0, output, stderr }));
-			proc.on("error", (error) => resolve({ code: 1, output, stderr: `${stderr}\n${error.message}` }));
+			proc.on("close", (code) => finish(code ?? 0));
+			proc.on("error", (error) => finish(1, `${stderr}\n${error.message}`));
 			if (signal) {
-				const kill = () => proc.kill("SIGTERM");
+				const kill = () => {
+					wasAborted = true;
+					proc.kill("SIGTERM");
+				};
 				if (signal.aborted) kill();
 				else signal.addEventListener("abort", kill, { once: true });
 			}
@@ -393,7 +436,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 		label: "Review Bead",
 		description: "Executable Pi review workflow: guard inreview, run relevant checks, then run code-reviewer agent.",
 		parameters: ReviewParams,
-		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
+		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
 			try {
 				const bead = await getBead(pi, params.beadId);
 				if (bead.status !== "inreview") throw new Error(`review_bead требует status inreview, получен ${bead.status}`);
@@ -426,7 +469,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
 					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\nReview status note: review_bead temporarily moves the bead to bd status simplified while the reviewer runs. Do not reject solely because bd show reports simplified during this review; if the final verdict is not approved, review_bead must restore status inreview after reviewer exit.\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
-					const reviewer = await runReviewer(reviewCwd, prompt, signal);
+					const reviewer = await runReviewer(reviewCwd, prompt, signal, ctx);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
