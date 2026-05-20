@@ -45,6 +45,7 @@
 
 ### Fixed
 
+- **Pi review NOT_APPROVED status handling** (`beads-task-issue-tracker-kq47`): `review_bead` now recognizes exact approved verdict markers only, preserves reviewer output for non-approved reviews, and restores the bead to `inreview` after a `NOT_APPROVED` verdict instead of advancing the review lifecycle.
 - **Pi workflow resume binding recovery** (`beads-task-issue-tracker-32da`): `workflow-state` now recovers a unique non-terminal bead from current task branch/worktree evidence after resume, refuses foreign session markers, and reports `UNBOUND_WORKFLOW_STATE` instead of silently showing `bdStatus=-` when protected-branch or ambiguous evidence requires explicit recovery.
 - **Pi plan-mode tool surface restoration** (`beads-task-issue-tracker-dsl8`): exiting or approving plan mode now restores the pre-plan active tool surface plus registered mandatory workflow tools, keeping dispatch/review/workflow typed tools available after plan-mode cancellation or approval.
 - **Pi workflow-state plan approval recovery** (`beads-task-issue-tracker-s913`): plan approval now preserves active bead/worktree scope, rejects unsafe same-session recovery with foreign branch/worktree evidence, and clears impossible approved/implementing states when no safe active bead can be recovered.
