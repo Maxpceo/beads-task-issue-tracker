@@ -271,7 +271,38 @@ function hasFinalAnswerSignature(record: Record<string, unknown>): boolean {
 	}
 }
 
+const TOOL_LIKE_DENYLIST = new Set([
+	"tool",
+	"tool_result",
+	"toolresult",
+	"toolcall",
+	"tool_call",
+	"function_call",
+	"function_result",
+	"log",
+	"debug",
+	"thinking",
+]);
+
+function normalizeRecordKind(value: string): string {
+	return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function isToolLikeRecord(record: Record<string, unknown>): boolean {
+	for (const key of ["role", "type", "customType", "name"] as const) {
+		const value = record[key];
+		if (typeof value !== "string") continue;
+		const normalized = normalizeRecordKind(value);
+		if (TOOL_LIKE_DENYLIST.has(normalized)) return true;
+		for (const denied of TOOL_LIKE_DENYLIST) {
+			if (normalized.includes(denied)) return true;
+		}
+	}
+	return false;
+}
+
 function isAssistantFinalRecord(record: Record<string, unknown>): boolean {
+	if (isToolLikeRecord(record)) return false;
 	const role = typeof record.role === "string" ? record.role.toLowerCase() : undefined;
 	const type = typeof record.type === "string" ? record.type.toLowerCase() : undefined;
 	if (role === "assistant") return true;
@@ -284,32 +315,57 @@ function isAssistantFinalRecord(record: Record<string, unknown>): boolean {
 	return false;
 }
 
-function collectTextBlocks(value: unknown): string[] {
+function collectTextBlocks(value: unknown, blocked = false): string[] {
+	if (blocked) return [];
 	if (typeof value === "string") return [value];
-	if (Array.isArray(value)) return value.flatMap((item) => collectTextBlocks(item));
+	if (Array.isArray(value)) return value.flatMap((item) => collectTextBlocks(item, blocked));
 	if (!isRecordObject(value)) return [];
+	const nextBlocked = isToolLikeRecord(value);
+	if (nextBlocked) return [];
 
 	const texts: string[] = [];
 	for (const key of ["text", "output_text", "response"] as const) {
 		const candidate = value[key];
 		if (typeof candidate === "string") texts.push(candidate);
 	}
-	for (const key of ["content", "output"] as const) {
-		if (key in value) texts.push(...collectTextBlocks(value[key]));
+	for (const key of ["content", "output", "message"] as const) {
+		if (key in value) texts.push(...collectTextBlocks(value[key], nextBlocked));
+	}
+	return texts;
+}
+
+function collectSignedFinalAnswerTexts(value: unknown, blocked = false): string[] {
+	if (blocked) return [];
+	if (Array.isArray(value)) return value.flatMap((item) => collectSignedFinalAnswerTexts(item, blocked));
+	if (!isRecordObject(value)) return [];
+	const nextBlocked = isToolLikeRecord(value);
+	if (nextBlocked) return [];
+
+	const texts: string[] = [];
+	if (hasFinalAnswerSignature(value)) {
+		for (const key of ["text", "output_text", "response"] as const) {
+			const candidate = value[key];
+			if (typeof candidate === "string") texts.push(candidate);
+		}
+	}
+	for (const key of ["content", "output", "message"] as const) {
+		if (key in value) texts.push(...collectSignedFinalAnswerTexts(value[key], nextBlocked));
 	}
 	return texts;
 }
 
 function authoritativeReviewTexts(record: unknown): string[] {
 	if (!isRecordObject(record)) return [];
-	if (!isAssistantFinalRecord(record)) return [];
 	const texts: string[] = [];
-	const message = record.message;
-	if (isRecordObject(message)) texts.push(...collectTextBlocks(message.content));
-	texts.push(...collectTextBlocks(record.content));
-	texts.push(...collectTextBlocks(record.output));
-	texts.push(...collectTextBlocks(record.text));
-	texts.push(...collectTextBlocks(record.response));
+	if (isAssistantFinalRecord(record)) {
+		const message = record.message;
+		if (isRecordObject(message)) texts.push(...collectTextBlocks(message.content));
+		texts.push(...collectTextBlocks(record.content));
+		texts.push(...collectTextBlocks(record.output));
+		texts.push(...collectTextBlocks(record.text));
+		texts.push(...collectTextBlocks(record.response));
+	}
+	texts.push(...collectSignedFinalAnswerTexts(record));
 	return texts.filter((text) => text.trim());
 }
 
