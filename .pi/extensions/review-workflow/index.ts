@@ -226,8 +226,111 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: process.execPath, args };
 }
 
+type StructuredReviewOutput = { records: unknown[]; structured: boolean };
+
+const APPROVED_MARKER = /(?:^|\n)\s*(?:[-*>]\s*)?(?:VERDICT|CODE REVIEW)\s*:\s*APPROVED\s*(?=\n|$)/i;
+const VERDICT_MARKER = /(?:^|\n)\s*(?:[-*>]\s*)?(VERDICT|CODE REVIEW)\s*:\s*(APPROVED|NOT[_ ]APPROVED)\s*(?=\n|$)/gi;
+
+function parseStructuredReviewOutput(output: string): StructuredReviewOutput {
+	const trimmed = output.trim();
+	if (!trimmed) return { records: [], structured: false };
+	try {
+		const parsed = JSON.parse(trimmed);
+		return { records: Array.isArray(parsed) ? parsed : [parsed], structured: true };
+	} catch {
+		// Fall through to JSONL parsing.
+	}
+
+	const lines = trimmed.split(/\r?\n/).filter((line) => line.trim());
+	if (lines.length === 0) return { records: [], structured: false };
+	const records: unknown[] = [];
+	for (const line of lines) {
+		try {
+			records.push(JSON.parse(line));
+		} catch {
+			return { records: [], structured: false };
+		}
+	}
+	return { records, structured: true };
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function hasFinalAnswerSignature(record: Record<string, unknown>): boolean {
+	const signature = record.textSignature;
+	if (isRecordObject(signature)) return signature.phase === "final_answer";
+	if (typeof signature !== "string") return false;
+	try {
+		const parsed = JSON.parse(signature);
+		return isRecordObject(parsed) && parsed.phase === "final_answer";
+	} catch {
+		return /"phase"\s*:\s*"final_answer"/.test(signature);
+	}
+}
+
+function isAssistantFinalRecord(record: Record<string, unknown>): boolean {
+	const role = typeof record.role === "string" ? record.role.toLowerCase() : undefined;
+	const type = typeof record.type === "string" ? record.type.toLowerCase() : undefined;
+	if (role === "assistant") return true;
+	if (type === "text" && hasFinalAnswerSignature(record)) return true;
+	if (type && ["message", "message_end", "response", "final"].includes(type)) {
+		const message = record.message;
+		if (isRecordObject(message) && typeof message.role === "string" && message.role.toLowerCase() === "assistant") return true;
+		if (typeof record.role === "string" && record.role.toLowerCase() === "assistant") return true;
+	}
+	return false;
+}
+
+function collectTextBlocks(value: unknown): string[] {
+	if (typeof value === "string") return [value];
+	if (Array.isArray(value)) return value.flatMap((item) => collectTextBlocks(item));
+	if (!isRecordObject(value)) return [];
+
+	const texts: string[] = [];
+	for (const key of ["text", "output_text", "response"] as const) {
+		const candidate = value[key];
+		if (typeof candidate === "string") texts.push(candidate);
+	}
+	for (const key of ["content", "output"] as const) {
+		if (key in value) texts.push(...collectTextBlocks(value[key]));
+	}
+	return texts;
+}
+
+function authoritativeReviewTexts(record: unknown): string[] {
+	if (!isRecordObject(record)) return [];
+	if (!isAssistantFinalRecord(record)) return [];
+	const texts: string[] = [];
+	const message = record.message;
+	if (isRecordObject(message)) texts.push(...collectTextBlocks(message.content));
+	texts.push(...collectTextBlocks(record.content));
+	texts.push(...collectTextBlocks(record.output));
+	texts.push(...collectTextBlocks(record.text));
+	texts.push(...collectTextBlocks(record.response));
+	return texts.filter((text) => text.trim());
+}
+
+function latestVerdictIsApproved(texts: string[]): boolean {
+	let latest: string | undefined;
+	for (const text of texts) {
+		VERDICT_MARKER.lastIndex = 0;
+		for (const match of text.matchAll(VERDICT_MARKER)) {
+			latest = match[2]?.toUpperCase().replace(" ", "_");
+		}
+	}
+	return latest === "APPROVED";
+}
+
 export function isReviewApproved(output: string): boolean {
-	return /(?:^|\n)\s*(?:VERDICT|CODE REVIEW)\s*:\s*APPROVED\s*(?:\n|$)/i.test(output);
+	const structured = parseStructuredReviewOutput(output);
+	if (structured.structured) {
+		const texts = structured.records.flatMap((record) => authoritativeReviewTexts(record));
+		if (texts.length === 0) return false;
+		return latestVerdictIsApproved(texts);
+	}
+	return APPROVED_MARKER.test(output);
 }
 
 async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): Promise<{ code: number; output: string; stderr: string }> {

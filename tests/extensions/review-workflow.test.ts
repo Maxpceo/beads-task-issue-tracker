@@ -313,7 +313,72 @@ describe('review_workflow reviewer verdict handling', () => {
   it('matches exact approved review markers only', () => {
     expect(isReviewApproved('VERDICT: APPROVED')).toBe(true)
     expect(isReviewApproved('CODE REVIEW: APPROVED')).toBe(true)
+    expect(isReviewApproved('- CODE REVIEW: APPROVED')).toBe(true)
     expect(isReviewApproved('prefix CODE REVIEW: APPROVED')).toBe(false)
+  })
+
+  it('uses final assistant verdict from JSONL transcript with nested content blocks', () => {
+    const output = [
+      { type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nintermediate wrapper' }] } },
+      { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED' }] } },
+    ].map((record) => JSON.stringify(record)).join('\n')
+
+    expect(isReviewApproved(output)).toBe(true)
+  })
+
+  it('uses the latest adjacent assistant verdict marker', () => {
+    expect(isReviewApproved(JSON.stringify({ role: 'assistant', content: 'CODE REVIEW: APPROVED\nVERDICT: NOT_APPROVED' }))).toBe(false)
+    expect(isReviewApproved(JSON.stringify({ role: 'assistant', content: 'CODE REVIEW: NOT APPROVED\nVERDICT: APPROVED' }))).toBe(true)
+  })
+
+  it('uses Pi final-answer text records as authoritative reviewer output', () => {
+    const textSignature = JSON.stringify({ v: 1, phase: 'final_answer' })
+    const output = JSON.stringify([
+      { type: 'toolResult', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nintermediate tool output' }] },
+      { type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED', textSignature },
+    ])
+
+    expect(isReviewApproved(output)).toBe(true)
+  })
+
+  it('does not fall back to tool/log approval when structured final verdict is not approved or missing', () => {
+    const toolApprovedAssistantRejected = [
+      { type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED' }] } },
+      { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nVERDICT: NOT_APPROVED' }] } },
+    ].map((record) => JSON.stringify(record)).join('\n')
+    const toolApprovedNoAssistant = JSON.stringify({ type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED' }] } })
+
+    expect(isReviewApproved(toolApprovedAssistantRejected)).toBe(false)
+    expect(isReviewApproved(toolApprovedNoAssistant)).toBe(false)
+  })
+
+  it('records APPROVED when main-start parent receives task-worktree JSONL final assistant verdict', async () => {
+    const output = [
+      { type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nintermediate wrapper' }] } },
+      { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED' }] } },
+    ].map((record) => JSON.stringify(record)).join('\n')
+    const { result, execCalls } = await runNonDryReview(output)
+    const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add').map((call) => call.args.join(' '))
+
+    expect(statusUpdates).toEqual(['update bead-a --status simplified', 'update bead-a --status reviewed', 'update bead-a --status accepted'])
+    expect(comments.some((args) => args.includes('CODE REVIEW: APPROVED'))).toBe(true)
+    expect(comments.some((args) => args.includes('CODE REVIEW: NOT APPROVED'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'git' && call.args[0] === '-C' && call.args[1]?.includes('review-workflow-cwd-') === true && call.args.slice(2).join(' ') === 'diff --name-only aaa1111..bbb2222')).toBe(true)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('records NOT APPROVED when structured transcript has only tool approval', async () => {
+    const output = JSON.stringify({ type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED' }] } })
+    const { result, execCalls, workflowEvents } = await runNonDryReview(output)
+    const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add').map((call) => call.args.join(' '))
+
+    expect(statusUpdates).toEqual(['update bead-a --status simplified', 'update bead-a --status inreview'])
+    expect(comments.some((args) => args.includes('CODE REVIEW: NOT APPROVED'))).toBe(true)
+    expect(result.details.reviewerOutput).toContain('CODE REVIEW: APPROVED')
+    expect(workflowEvents.at(-1)).toMatchObject({ sessionMode: 'inreview' })
   })
 
   it('restores inreview after reviewer returns NOT_APPROVED and preserves reviewer output', async () => {
