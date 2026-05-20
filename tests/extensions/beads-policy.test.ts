@@ -1518,6 +1518,248 @@ exit 1
     }
   })
 
+  it('allows supported env -C and path-qualified env bd writes when explicit cwd is the active worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const decision = evaluateBashPolicy(`env -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const longOptionDecision = evaluateBashPolicy(`env --chdir=${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const assignmentDecision = evaluateBashPolicy(`env FOO=bar -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const pathQualifiedDecision = evaluateBashPolicy(`/usr/bin/env -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+
+      expect(decision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(decision?.policy).not.toBe('blockMainMutation')
+      expect(longOptionDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(longOptionDecision?.policy).not.toBe('blockMainMutation')
+      expect(assignmentDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(assignmentDecision?.policy).not.toBe('blockMainMutation')
+      expect(pathQualifiedDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedDecision?.policy).not.toBe('blockMainMutation')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks supported env -C and path-qualified env bd writes when explicit cwd is outside the active worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const mainDecision = evaluateBashPolicy(`env -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const otherDecision = evaluateBashPolicy(`env -C ${other} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const assignmentMainDecision = evaluateBashPolicy(`env FOO=bar -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const pathQualifiedMainDecision = evaluateBashPolicy(`/usr/bin/env -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const pathQualifiedOtherDecision = evaluateBashPolicy(`/opt/homebrew/bin/env -C ${other} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+
+      expect(mainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(otherDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(assignmentMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedOtherDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+
+  it('keeps unsupported env option forms fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const unsetActiveDecision = evaluateBashPolicy(`env -u FOO -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const unsetMainDecision = evaluateBashPolicy(`env -u FOO -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const splitStringDecision = evaluateBashPolicy(`env -S 'git -C ${main} add tracked.txt'`, lockedState(worktree), { cwd: worktree })
+      const longSplitStringDecision = evaluateBashPolicy(`env --split-string='git -C ${other} add tracked.txt'`, lockedState(worktree), { cwd: worktree })
+      const unknownOptionDecision = evaluateBashPolicy(`env --unknown-option -C ${main} git add tracked.txt`, lockedState(worktree), { cwd: worktree })
+
+      expect(unsetActiveDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(unsetActiveDecision?.reason).toContain('unsupported env options')
+      expect(unsetMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(splitStringDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(longSplitStringDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(unknownOptionDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+
+  it('allows supported leading cd bd writes but keeps nested bash -c cd fail-closed', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const leadingCdDecision = evaluateBashPolicy(`cd ${worktree} && bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const quotedShellOperatorDecision = evaluateBashPolicy(`cd ${worktree} && echo "literal ; && | >"`, lockedState(worktree), { cwd: main })
+      const nestedShellDecision = evaluateBashPolicy(`bash -c 'cd ${worktree} && bd comments add bead-a smoke --json'`, lockedState(worktree), { cwd: main })
+
+      expect(leadingCdDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(leadingCdDecision?.policy).not.toBe('blockMainMutation')
+      expect(quotedShellOperatorDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(nestedShellDecision?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps leading cd shell operators and shell -c fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const semicolonDecision = evaluateBashPolicy(`cd ${worktree} && bd comments add bead-a smoke;git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const andDecision = evaluateBashPolicy(`cd ${worktree} && bd comments add bead-a smoke&&git -C ${other} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const pipeDecision = evaluateBashPolicy(`cd ${worktree} && printf smoke|tee evidence.txt`, lockedState(worktree), { cwd: main })
+      const redirectDecision = evaluateBashPolicy(`cd ${worktree} && printf smoke > evidence.txt`, lockedState(worktree), { cwd: main })
+      const shellCommandDecision = evaluateBashPolicy(`cd ${worktree} && sh -c 'git -C ${main} add tracked.txt'`, lockedState(worktree), { cwd: main })
+
+      expect(semicolonDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(semicolonDecision?.reason).toContain('leading cd')
+      expect(semicolonDecision?.reason).toContain('shell operators')
+      expect(andDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pipeDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(redirectDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(shellCommandDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(shellCommandDecision?.reason).toContain('shell -c')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps leading cd command substitution fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const dollarDecision = evaluateBashPolicy(`cd ${worktree} && echo $(git -C ${main} add tracked.txt)`, lockedState(worktree), { cwd: main })
+      const backtickDecision = evaluateBashPolicy(`cd ${worktree} && echo \`git -C ${other} add tracked.txt\``, lockedState(worktree), { cwd: main })
+      const arithmeticDecision = evaluateBashPolicy(`cd ${worktree} && touch $((1 + 2))`, lockedState(worktree), { cwd: main })
+      const singleQuotedLiteralDecision = evaluateBashPolicy(`cd ${worktree} && touch 'literal $(git -C ${main} add tracked.txt)'`, lockedState(worktree), { cwd: main })
+      const escapedDollarLiteralDecision = evaluateBashPolicy(`cd ${worktree} && touch "\\$(git -C ${main} add tracked.txt)"`, lockedState(worktree), { cwd: main })
+      const escapedBacktickLiteralDecision = evaluateBashPolicy('cd ' + worktree + ' && touch "\\`git -C ' + main + ' add tracked.txt\\`"', lockedState(worktree), { cwd: main })
+
+      expect(dollarDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(dollarDecision?.reason).toContain('command substitution')
+      expect(backtickDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(arithmeticDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(singleQuotedLiteralDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(singleQuotedLiteralDecision?.policy).not.toBe('blockMainMutation')
+      expect(escapedDollarLiteralDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(escapedDollarLiteralDecision?.policy).not.toBe('blockMainMutation')
+      expect(escapedBacktickLiteralDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(escapedBacktickLiteralDecision?.policy).not.toBe('blockMainMutation')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks env -C commands that redirect git -C outside the active worktree', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const mainDecision = evaluateBashPolicy(`env -C ${worktree} git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const otherDecision = evaluateBashPolicy(`env -C ${worktree} git -C ${other} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const insideDecision = evaluateBashPolicy(`env -C ${worktree} git -C ${worktree} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const pathQualifiedMainDecision = evaluateBashPolicy(`env -C ${worktree} /usr/bin/git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const pathQualifiedOtherDecision = evaluateBashPolicy(`env -C ${worktree} /opt/homebrew/bin/git -C ${other} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const pathQualifiedInsideDecision = evaluateBashPolicy(`env -C ${worktree} /usr/bin/git -C ${worktree} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const echoDecision = evaluateBashPolicy(`env -C ${worktree} echo /usr/bin/git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: main })
+
+      expect(mainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(otherDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(insideDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(insideDecision?.policy).not.toBe('blockMainMutation')
+      expect(pathQualifiedMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedOtherDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedInsideDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedInsideDecision?.policy).not.toBe('blockMainMutation')
+      expect(echoDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps env -C shell -c commands fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const nestedGitDecision = evaluateBashPolicy(`env -C ${worktree} bash -c 'git -C ${main} add tracked.txt'`, lockedState(worktree), { cwd: main })
+      const nestedBdDecision = evaluateBashPolicy(`env -C ${worktree} sh -c 'bd comments add bead-a smoke --json'`, lockedState(worktree), { cwd: main })
+
+      expect(nestedGitDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(nestedGitDecision?.reason).toContain('shell -c')
+      expect(nestedBdDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(nestedBdDecision?.reason).toContain('shell -c')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps env -C shell operators fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    try {
+      const semicolonDecision = evaluateBashPolicy(`env -C ${worktree} bd comments add bead-a smoke;git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const andDecision = evaluateBashPolicy(`env -C ${worktree} bd comments add bead-a smoke&&git -C ${main} add tracked.txt`, lockedState(worktree), { cwd: main })
+      const pipeDecision = evaluateBashPolicy(`env -C ${worktree} printf smoke|tee evidence.txt`, lockedState(worktree), { cwd: main })
+      const redirectDecision = evaluateBashPolicy(`env -C ${worktree} printf smoke > evidence.txt`, lockedState(worktree), { cwd: main })
+      const quotedDecision = evaluateBashPolicy(`env -C ${worktree} echo \"literal ; && | >\"`, lockedState(worktree), { cwd: main })
+
+      expect(semicolonDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(semicolonDecision?.reason).toContain('shell operators')
+      expect(andDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pipeDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(redirectDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(quotedDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps env -C command substitution fail-closed under the active worktree lock', () => {
+    const main = createRepo('main')
+    const worktree = createRepo('task/current')
+    const other = createRepo('task/other')
+    try {
+      const dollarDecision = evaluateBashPolicy(`env -C ${worktree} echo $(git -C ${main} add tracked.txt)`, lockedState(worktree), { cwd: main })
+      const backtickDecision = evaluateBashPolicy(`env -C ${worktree} echo \`git -C ${other} add tracked.txt\``, lockedState(worktree), { cwd: main })
+      const arithmeticDecision = evaluateBashPolicy(`env -C ${worktree} touch $((1 + 2))`, lockedState(worktree), { cwd: main })
+      const singleQuotedLiteralDecision = evaluateBashPolicy(`env -C ${worktree} touch 'literal $(git -C ${main} add tracked.txt)'`, lockedState(worktree), { cwd: main })
+      const escapedDollarLiteralDecision = evaluateBashPolicy(`env -C ${worktree} touch "\\$(git -C ${main} add tracked.txt)"`, lockedState(worktree), { cwd: main })
+      const escapedBacktickLiteralDecision = evaluateBashPolicy('env -C ' + worktree + ' touch "\\`git -C ' + main + ' add tracked.txt\\`"', lockedState(worktree), { cwd: main })
+
+      expect(dollarDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(dollarDecision?.reason).toContain('command substitution')
+      expect(backtickDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(arithmeticDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(singleQuotedLiteralDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(singleQuotedLiteralDecision?.policy).not.toBe('blockMainMutation')
+      expect(escapedDollarLiteralDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(escapedDollarLiteralDecision?.policy).not.toBe('blockMainMutation')
+      expect(escapedBacktickLiteralDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(escapedBacktickLiteralDecision?.policy).not.toBe('blockMainMutation')
+    } finally {
+      rmSync(main, { recursive: true, force: true })
+      rmSync(worktree, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+
   it('allows read-only inspection from main while mutating work is locked to the task worktree', () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')

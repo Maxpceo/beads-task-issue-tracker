@@ -274,14 +274,196 @@ function isProtectedBranch(cwd: string): boolean {
 	return branch ? PROTECTED_BRANCHES.has(branch) : false;
 }
 
-function inferCommandCwd(command: string, defaultCwd?: string): string {
-	const base = defaultCwd ?? process.cwd();
-	const match = command.match(/^\s*cd\s+([^;&|]+?)\s*&&/);
-	const cdPath = match?.[1];
-	if (!cdPath) return base;
-	return normalizeFsPath(cdPath.trim(), base);
+function shellWords(command: string): string[] {
+	const words: string[] = [];
+	const pattern = /"((?:\\.|[^"])*)"|'([^']*)'|(\S+)/g;
+	let match: RegExpExecArray | null;
+	while ((match = pattern.exec(command)) && words.length < 24) {
+		words.push(match[1] ?? match[2] ?? match[3] ?? "");
+	}
+	return words;
 }
 
+type EnvPrefixParse = {
+	commandIndex?: number;
+	cwd?: string;
+	unsupportedOption?: string;
+};
+
+function isEnvExecutableWord(word: string): boolean {
+	return /(^|\/)env$/.test(word);
+}
+
+function parseEnvPrefix(words: string[], base?: string): EnvPrefixParse {
+	const executable = words[0];
+	if (!executable || !isEnvExecutableWord(executable)) return {};
+	let cwd: string | undefined;
+	for (let index = 1; index < words.length; index += 1) {
+		const word = words[index];
+		if (!word) continue;
+		if (word === "-C" || word === "--chdir") {
+			const chdirPath = words[index + 1];
+			if (!chdirPath) return { cwd, unsupportedOption: word };
+			cwd = base ? normalizeFsPath(chdirPath, base) : chdirPath;
+			index += 1;
+			continue;
+		}
+		if (word.startsWith("--chdir=")) {
+			const chdirPath = word.slice("--chdir=".length);
+			cwd = base ? normalizeFsPath(chdirPath, base) : chdirPath;
+			continue;
+		}
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+		if (word.startsWith("-")) return { cwd, unsupportedOption: word };
+		return { commandIndex: index, cwd };
+	}
+	return { cwd };
+}
+
+function envWrappedCommandIndex(words: string[]): number | undefined {
+	return parseEnvPrefix(words).commandIndex;
+}
+
+function envCommandCwd(words: string[], base: string): string | undefined {
+	return parseEnvPrefix(words, base).cwd;
+}
+
+function hasUnsupportedEnvOption(command: string): boolean {
+	return Boolean(parseEnvPrefix(shellWords(command)).unsupportedOption);
+}
+
+function isShellInterpreter(word: string): boolean {
+	return /(^|\/)(?:bash|sh|zsh|dash|fish)$/.test(word);
+}
+
+function hasShellCommandOption(words: string[], commandIndex: number): boolean {
+	return words.slice(commandIndex + 1).some((word) => word === "-c" || /^-[^-]*c/.test(word));
+}
+
+function hasUnquotedShellOperator(command: string): boolean {
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (!char) continue;
+		if (char === "\\" && !singleQuoted) {
+			index += 1;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (!singleQuoted && !doubleQuoted && /[;&|<>]/.test(char)) return true;
+	}
+	return false;
+}
+
+function hasShellCommandSubstitution(command: string): boolean {
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (!char) continue;
+		if (char === "\\" && !singleQuoted) {
+			index += 1;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted) continue;
+		if (char === "`" || (char === "$" && command[index + 1] === "(")) return true;
+	}
+	return false;
+}
+
+function hasAmbiguousEnvShellCommand(command: string): boolean {
+	const words = shellWords(command);
+	if (hasUnsupportedEnvOption(command)) return true;
+	const commandIndex = envWrappedCommandIndex(words);
+	if (commandIndex === undefined) return false;
+	if (hasUnquotedShellOperator(command) || hasShellCommandSubstitution(command)) return true;
+	const commandWord = words[commandIndex];
+	if (!commandWord) return false;
+	return isShellInterpreter(commandWord) && hasShellCommandOption(words, commandIndex);
+}
+
+function leadingCdMatch(command: string): RegExpMatchArray | null {
+	return command.match(/^\s*cd\s+([^;&|]+?)\s*&&\s*/);
+}
+
+function leadingCdSuffix(command: string): string | undefined {
+	const match = leadingCdMatch(command);
+	return match ? command.slice(match[0].length) : undefined;
+}
+
+function hasAmbiguousLeadingCdShellCommand(command: string): boolean {
+	const suffix = leadingCdSuffix(command);
+	if (suffix === undefined) return false;
+	if (hasUnquotedShellOperator(suffix) || hasShellCommandSubstitution(suffix)) return true;
+	const words = shellWords(suffix);
+	const commandWord = words[0];
+	if (!commandWord) return false;
+	return isShellInterpreter(commandWord) && hasShellCommandOption(words, 0);
+}
+
+function inferCommandCwdInfo(command: string, defaultCwd?: string): { cwd: string; explicit: boolean } {
+	const base = defaultCwd ?? process.cwd();
+	const cdMatch = leadingCdMatch(command);
+	const cdPath = cdMatch?.[1];
+	if (cdPath) return { cwd: normalizeFsPath(cdPath.trim(), base), explicit: true };
+
+	const words = shellWords(command);
+	const envCwd = envCommandCwd(words, base);
+	if (envCwd) return { cwd: envCwd, explicit: true };
+
+	return { cwd: base, explicit: false };
+}
+
+function inferCommandCwd(command: string, defaultCwd?: string): string {
+	return inferCommandCwdInfo(command, defaultCwd).cwd;
+}
+
+function isGitExecutableWord(word: string): boolean {
+	return path.basename(word) === "git";
+}
+
+function isShellSeparatorWord(word: string): boolean {
+	return word === "&&" || word === ";" || word === "||" || word === "|";
+}
+
+function findGitCommandIndex(words: string[]): number {
+	if (words[0] && isGitExecutableWord(words[0])) return 0;
+
+	const wrappedCommandIndex = envWrappedCommandIndex(words);
+	const wrappedCommand = wrappedCommandIndex === undefined ? undefined : words[wrappedCommandIndex];
+	if (wrappedCommand && isGitExecutableWord(wrappedCommand)) return wrappedCommandIndex ?? -1;
+
+	const separatorCommandIndex = words.findIndex((word, index) => {
+		const previousWord = words[index - 1];
+		return Boolean(word && previousWord && index > 0 && isShellSeparatorWord(previousWord) && isGitExecutableWord(word));
+	});
+	return separatorCommandIndex;
+}
+
+function inferExplicitGitCwd(command: string, defaultCwd: string): string | undefined {
+	const words = shellWords(command);
+	const gitIndex = findGitCommandIndex(words);
+	if (gitIndex === -1) return undefined;
+	const cwdOptionIndex = words.findIndex((word, index) => index > gitIndex && word === "-C");
+	const gitCwd = cwdOptionIndex === -1 ? undefined : words[cwdOptionIndex + 1];
+	return gitCwd ? normalizeFsPath(gitCwd, defaultCwd) : undefined;
+}
 
 function isPathInsideOrEqual(targetPath: string, rootPath: string): boolean {
 	const resolvedTarget = realpathExistingOrParent(targetPath);
@@ -349,10 +531,25 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 			reason: `Заблокировано: активный bead ${workflowState.activeBead} привязан к отсутствующему worktree ${required}. Пересоздай worktree, используй workflow_reset для stale state или явно подтверди takeover перед изменениями.`,
 		};
 	}
-	const effectiveCwd = inferCommandCwd(command, processCwd);
-	const gitCwdMatch = command.match(/(^|[;&|]\s*)git\s+-C\s+(\S+)/);
-	const explicitGitCwd = gitCwdMatch?.[2] ? normalizeFsPath(gitCwdMatch[2], processCwd) : undefined;
-	const outsideCwd = [processCwd, effectiveCwd, explicitGitCwd].filter(Boolean).find((cwd) => !isPathInsideOrEqual(String(cwd), required));
+	if (hasAmbiguousEnvShellCommand(command)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. env -C with shell operators, command substitution, unsupported env options, or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command env -C form.`,
+		};
+	}
+	if (hasAmbiguousLeadingCdShellCommand(command)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. leading cd with shell operators, command substitution, or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command leading cd form.`,
+		};
+	}
+	const effectiveCwdInfo = inferCommandCwdInfo(command, processCwd);
+	const effectiveCwd = effectiveCwdInfo.cwd;
+	const explicitGitCwd = inferExplicitGitCwd(command, effectiveCwd);
+	const cwdCandidates = effectiveCwdInfo.explicit ? [effectiveCwd, explicitGitCwd] : [processCwd, effectiveCwd, explicitGitCwd];
+	const outsideCwd = cwdCandidates.filter(Boolean).find((cwd) => !isPathInsideOrEqual(String(cwd), required));
 	if (outsideCwd) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
