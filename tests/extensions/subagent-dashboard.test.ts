@@ -1,9 +1,13 @@
 import { visibleWidth } from '@earendil-works/pi-tui'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import {
+  clearObservedDashboardCards,
   createDashboardState,
+  publishDashboardCard,
   renderDashboardLines,
   selectDashboardAgents,
+  setSharedDashboardState,
+  getSharedDashboardState,
   upsertDashboardCard,
 } from '../../.pi/extensions/subagent/dashboard'
 interface TestAgentConfig {
@@ -67,6 +71,11 @@ function createTheme() {
 }
 
 describe('subagent dashboard helpers', () => {
+  beforeEach(() => {
+    clearObservedDashboardCards()
+    setSharedDashboardState(null)
+  })
+
   it('falls back to all project-local agents when no team is configured', () => {
     const selection = selectDashboardAgents(agents, noTeams)
 
@@ -86,7 +95,44 @@ describe('subagent dashboard helpers', () => {
     expect(brokenSelection.warnings).toContain('Unknown agent: missing')
   })
 
-  it('renders live running and error cards with a close hint within narrow widths', () => {
+  it('renders active empty state without idle project agents', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    const { theme } = createTheme()
+    const lines = renderDashboardLines(state, 80, theme, 1_000)
+
+    expect(state.cards.size).toBe(0)
+    expect(lines.join('\n')).toContain('[active]')
+    expect(lines.join('\n')).toContain('No active agents observed in this Pi session.')
+    expect(lines.join('\n')).not.toContain('reviewer')
+    expect(lines.join('\n')).not.toContain('supervisor')
+  })
+
+  it('renders all mode with idle selected project agents', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'all')
+    const { theme } = createTheme()
+    const lines = renderDashboardLines(state, 80, theme, 1_000)
+
+    expect(Array.from(state.cards.keys()).sort()).toEqual(['reviewer', 'supervisor'])
+    expect(lines.join('\n')).toContain('[all]')
+    expect(lines.join('\n')).toContain('[idle]')
+    expect(lines.join('\n')).toContain('reviewer')
+    expect(lines.join('\n')).toContain('supervisor')
+  })
+
+  it('publishes generic and workflow cards into the shared active dashboard store', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    setSharedDashboardState(state)
+
+    publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'running', task: 'Implement bead', startedAt: 1_000, toolCount: 1, lastPreview: 'reading files' })
+    publishDashboardCard({ agent: 'code-reviewer', source: 'project', status: 'completed', task: 'Review bead', startedAt: 1_000, completedAt: 2_000, toolCount: 0, lastPreview: 'VERDICT: APPROVED' })
+
+    const shared = getSharedDashboardState()
+    expect(shared?.cards.get('supervisor')?.status).toBe('running')
+    expect(shared?.cards.get('code-reviewer')?.status).toBe('completed')
+    expect(shared?.cards.has('reviewer')).toBe(false)
+  })
+
+  it('renders live running and error cards with a mode/help hint within narrow widths', () => {
     const state = createDashboardState(selectDashboardAgents(agents, teams))
     upsertDashboardCard(state, {
       agent: 'supervisor',
@@ -113,7 +159,7 @@ describe('subagent dashboard helpers', () => {
     const lines = renderDashboardLines(state, 52, theme, 4_000)
     const supervisorLine = lines.find((line) => line.includes('supervisor'))
 
-    expect(lines.join('\n')).toContain('Close: /agents-dashboard hide')
+    expect(lines.join('\n')).toContain('Modes: active/all')
     expect(lines.join('\n')).toContain('supervisor')
     expect(lines.join('\n')).toContain('[running]')
     expect(lines.join('\n')).toContain('ctx:12k in:3k out:900')
@@ -158,7 +204,7 @@ describe('subagent dashboard helpers', () => {
     const { theme } = createTheme()
     const lines = renderDashboardLines(state, 138, theme, 17_000)
 
-    expect(lines.join('\n')).toContain('Close: /agents-dashboard hide or clear')
+    expect(lines.join('\n')).toContain('Modes: active/all/refresh')
     expect(lines.some((line) => line.includes('⏳'))).toBe(true)
     expect(lines.every((line) => visibleWidth(line) <= 138)).toBe(true)
   })

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent } from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 
 interface ExtensionAPI {
@@ -328,7 +329,26 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: process.execPath, args };
 }
 
-async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signal?: AbortSignal): Promise<{ exitCode: number; output: string; stderr: string }> {
+function refreshDashboardWidget(ctx?: { ui?: any }): void {
+	const state = getSharedDashboardState();
+	if (!state?.visible || !ctx?.ui) return;
+	ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => getSharedDashboardState()!, theme));
+}
+
+function publishWorkflowDashboardCard(ctx: { ui?: any } | undefined, agent: AgentConfig, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
+	publishDashboardCard({
+		agent: agent.name,
+		description: `workflow dispatch: ${agent.name}`,
+		source: "project",
+		status: "running",
+		startedAt: Date.now(),
+		toolCount: 0,
+		...card,
+	});
+	refreshDashboardWidget(ctx);
+}
+
+async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signal?: AbortSignal, ctx?: { ui?: any }): Promise<{ exitCode: number; output: string; stderr: string }> {
 	const systemPrompt = await writeTempPrompt(agent.name, agent.systemPrompt);
 	const args = ["--mode", "json", "-p", "--no-session", "--append-system-prompt", systemPrompt.file];
 	if (agent.model) args.push("--model", agent.model);
@@ -337,16 +357,39 @@ async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signa
 
 	try {
 		const invocation = getPiInvocation(args);
+		const startedAt = Date.now();
+		publishWorkflowDashboardCard(ctx, agent, { status: "running", task: prompt.split("\n")[0] || "Workflow dispatch", startedAt, lastPreview: "starting Pi workflow agent..." });
 		return await new Promise((resolve) => {
 			const proc = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 			let output = "";
 			let stderr = "";
-			proc.stdout.on("data", (data) => (output += data.toString()));
+			let wasAborted = false;
+			let settled = false;
+			const finish = (exitCode: number, finalStderr = stderr) => {
+				if (settled) return;
+				settled = true;
+				const status = wasAborted ? "aborted" : exitCode === 0 ? "completed" : "failed";
+				publishWorkflowDashboardCard(ctx, agent, {
+					status,
+					startedAt,
+					completedAt: Date.now(),
+					lastPreview: output.trim().split("\n").at(-1)?.slice(0, 160) || "workflow agent finished",
+					errorMessage: finalStderr.trim() || undefined,
+				});
+				resolve({ exitCode, output, stderr: finalStderr });
+			};
+			proc.stdout.on("data", (data) => {
+				output += data.toString();
+				publishWorkflowDashboardCard(ctx, agent, { status: "running", startedAt, lastPreview: output.trim().split("\n").at(-1)?.slice(0, 160) || "receiving output..." });
+			});
 			proc.stderr.on("data", (data) => (stderr += data.toString()));
-			proc.on("close", (code) => resolve({ exitCode: code ?? 0, output, stderr }));
-			proc.on("error", (error) => resolve({ exitCode: 1, output, stderr: `${stderr}\n${error.message}` }));
+			proc.on("close", (code) => finish(code ?? 0));
+			proc.on("error", (error) => finish(1, `${stderr}\n${error.message}`));
 			if (signal) {
-				const kill = () => proc.kill("SIGTERM");
+				const kill = () => {
+					wasAborted = true;
+					proc.kill("SIGTERM");
+				};
 				if (signal.aborted) kill();
 				else signal.addEventListener("abort", kill, { once: true });
 			}
@@ -373,6 +416,7 @@ async function dispatch(
 	params: { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean },
 	signal?: AbortSignal,
 	defaultCwd?: string,
+	ctx?: { ui?: any },
 ): Promise<DispatchResult> {
 	const cwd = params.cwd ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
@@ -408,7 +452,7 @@ async function dispatch(
 	}
 	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, exitCode: 0, output: prompt, stderr: "" };
 
-	const result = await runPiAgent(agent, prompt, cwd, signal);
+	const result = await runPiAgent(agent, prompt, cwd, signal, ctx);
 	if (mode === "supervisor") {
 		const endCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 		const updatedBead = await getBead(pi, bead.id);
@@ -450,9 +494,9 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Supervisor",
 		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
 			try {
-				const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd);
+				const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd, ctx);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `dispatch_supervisor не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
@@ -465,9 +509,9 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Reviewer",
 		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
 			try {
-				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd);
+				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd, ctx);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `dispatch_reviewer не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
@@ -480,9 +524,9 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Docs Agent",
 		description: "Typed beads workflow dispatch to the Pi documentation-expert agent.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string }) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
 			try {
-				const result = await dispatch(pi, "docs", params, signal, ctx.cwd);
+				const result = await dispatch(pi, "docs", params, signal, ctx.cwd, ctx);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `dispatch_docs_agent не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };

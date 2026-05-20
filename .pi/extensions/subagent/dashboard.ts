@@ -27,9 +27,13 @@ export interface AgentDashboardCard {
 	errorMessage?: string;
 }
 
+export type AgentDashboardMode = "active" | "all";
+
 export interface AgentDashboardState {
 	visible: boolean;
+	mode: AgentDashboardMode;
 	teamName?: string;
+	selectedAgents: DashboardAgentConfig[];
 	cards: Map<string, AgentDashboardCard>;
 	warnings: string[];
 	updatedAt: number;
@@ -118,24 +122,72 @@ export function selectDashboardAgents(
 	};
 }
 
-export function createDashboardState(selection: DashboardTeamSelection): AgentDashboardState {
+const observedCards = new Map<string, AgentDashboardCard>();
+let sharedDashboardState: AgentDashboardState | null = null;
+
+function idleCard(agent: DashboardAgentConfig): AgentDashboardCard {
+	return {
+		agent: agent.name,
+		description: agent.description,
+		source: agent.source,
+		status: "idle",
+		toolCount: 0,
+	};
+}
+
+function rebuildCards(selection: DashboardTeamSelection, mode: AgentDashboardMode): Map<string, AgentDashboardCard> {
 	const cards = new Map<string, AgentDashboardCard>();
-	for (const agent of selection.agents) {
-		cards.set(agent.name, {
-			agent: agent.name,
-			description: agent.description,
-			source: agent.source,
-			status: "idle",
-			toolCount: 0,
+	if (mode === "all") {
+		for (const agent of selection.agents) cards.set(agent.name, idleCard(agent));
+	}
+	for (const card of observedCards.values()) {
+		const selected = selection.agents.find((agent) => agent.name === card.agent);
+		cards.set(card.agent, {
+			...(selected ? idleCard(selected) : undefined),
+			...card,
+			description: card.description ?? selected?.description,
+			source: card.source === "unknown" && selected ? selected.source : card.source,
 		});
 	}
-	return { visible: true, teamName: selection.teamName, cards, warnings: selection.warnings, updatedAt: Date.now() };
+	return cards;
+}
+
+export function createDashboardState(selection: DashboardTeamSelection, mode: AgentDashboardMode = "all"): AgentDashboardState {
+	return {
+		visible: true,
+		mode,
+		teamName: selection.teamName,
+		selectedAgents: selection.agents,
+		cards: rebuildCards(selection, mode),
+		warnings: selection.warnings,
+		updatedAt: Date.now(),
+	};
+}
+
+export function setSharedDashboardState(state: AgentDashboardState | null): void {
+	sharedDashboardState = state;
+}
+
+export function getSharedDashboardState(): AgentDashboardState | null {
+	return sharedDashboardState;
 }
 
 export function upsertDashboardCard(state: AgentDashboardState, card: AgentDashboardCard): void {
 	const previous = state.cards.get(card.agent);
 	state.cards.set(card.agent, { ...previous, ...card });
 	state.updatedAt = Date.now();
+}
+
+export function publishDashboardCard(card: AgentDashboardCard): AgentDashboardState | null {
+	const previousObserved = observedCards.get(card.agent);
+	observedCards.set(card.agent, { ...previousObserved, ...card });
+	if (!sharedDashboardState?.visible) return sharedDashboardState;
+	upsertDashboardCard(sharedDashboardState, observedCards.get(card.agent)!);
+	return sharedDashboardState;
+}
+
+export function clearObservedDashboardCards(): void {
+	observedCards.clear();
 }
 
 function elapsedText(card: AgentDashboardCard, now: number): string {
@@ -185,15 +237,15 @@ export function renderDashboardLines(
 	const failed = cards.filter((card) => card.status === "failed" || card.status === "aborted").length;
 	const done = cards.filter((card) => card.status === "completed").length;
 	const title = state.teamName ? `Pi agent-team dashboard: ${state.teamName}` : "Pi agent-team dashboard";
-	const closeHint = safeWidth >= 72 ? "Close: /agents-dashboard hide or clear" : "Close: /agents-dashboard hide";
+	const closeHint = safeWidth >= 72 ? "Modes: active/all/refresh · Close: hide or clear" : "Modes: active/all · hide";
 	const lines = [
-		truncate(theme.fg("accent", (theme.bold ?? ((text: string) => text))(title)), safeWidth),
+		truncate(theme.fg("accent", (theme.bold ?? ((text: string) => text))(`${title} [${state.mode}]`)), safeWidth),
 		truncate(theme.fg("dim", `${cards.length} agents · ${running} running · ${done} done · ${failed} error`), safeWidth),
 		truncate(theme.fg("dim", closeHint), safeWidth),
 	];
 	for (const warning of state.warnings) lines.push(truncate(theme.fg("warning", `! ${warning}`), safeWidth));
 	if (cards.length === 0) {
-		lines.push(theme.fg("muted", "No project-local agents selected."));
+		lines.push(theme.fg("muted", state.mode === "active" ? "No active agents observed in this Pi session." : "No project-local agents selected."));
 		return lines.map((line) => truncate(line, safeWidth));
 	}
 

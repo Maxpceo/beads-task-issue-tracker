@@ -26,10 +26,13 @@ import { type AgentConfig, type AgentScope, discoverAgents, loadProjectAgentTeam
 import {
 	AgentDashboardComponent,
 	type AgentDashboardCard,
-	type AgentDashboardState,
+	type AgentDashboardMode,
+	clearObservedDashboardCards,
 	createDashboardState,
+	getSharedDashboardState,
+	publishDashboardCard,
 	selectDashboardAgents,
-	upsertDashboardCard,
+	setSharedDashboardState,
 } from "./dashboard.js";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -505,40 +508,45 @@ const SubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
-	let dashboardState: AgentDashboardState | null = null;
-
 	const renderDashboardWidget = (ctx: { ui: any }) => {
+		const dashboardState = getSharedDashboardState();
 		if (!dashboardState?.visible) return;
-		ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => dashboardState!, theme));
+		ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => getSharedDashboardState()!, theme));
 	};
 
 	const updateDashboardFromResults = (results: SingleResult[], ctx: { ui: any }) => {
-		if (!dashboardState?.visible) return;
-		for (const result of results) upsertDashboardCard(dashboardState, resultToDashboardCard(result));
+		if (!getSharedDashboardState()?.visible) return;
+		for (const result of results) publishDashboardCard(resultToDashboardCard(result));
 		renderDashboardWidget(ctx);
 	};
 
 	pi.registerCommand("agents-dashboard", {
 		description:
-			"Show a persistent project-local agent-team grid dashboard. Optional: /agents-dashboard <team>, refresh, hide, or clear.",
+			"Show a persistent project-local agent dashboard. Usage: /agents-dashboard [active|all] [team], refresh, hide, or clear.",
 		handler: async (args, ctx) => {
-			const requested = args.trim();
-			if (requested === "clear" || requested === "hide") {
-				dashboardState = null;
+			const tokens = args.trim().split(/\s+/).filter(Boolean);
+			const action = tokens.find((token) => token === "clear" || token === "hide");
+			if (action) {
+				if (action === "clear") clearObservedDashboardCards();
+				setSharedDashboardState(null);
 				ctx.ui.setWidget("subagent-dashboard", undefined);
 				ctx.ui.notify("Agent dashboard hidden.", "info");
 				return;
 			}
 
+			const current = getSharedDashboardState();
+			const explicitMode = tokens.find((token): token is AgentDashboardMode => token === "active" || token === "all");
+			const mode = explicitMode ?? current?.mode ?? "all";
+			const teamName = tokens.find((token) => token !== "refresh" && token !== "active" && token !== "all") ?? current?.teamName;
 			const discovery = discoverAgents(ctx.cwd, "project");
 			const teams = loadProjectAgentTeams(ctx.cwd, discovery.agents);
-			const teamName = requested && requested !== "refresh" ? requested : dashboardState?.teamName;
 			const selection = selectDashboardAgents(discovery.agents, teams, teamName);
-			dashboardState = createDashboardState(selection);
+			const state = createDashboardState(selection, mode);
+			setSharedDashboardState(state);
 			renderDashboardWidget(ctx);
 			ctx.ui.notify(
-				`Agent dashboard shown for ${selection.agents.length} project-local agent(s).`,
-				selection.agents.length > 0 ? "info" : "warning",
+				`Agent dashboard shown in ${mode} mode for ${state.cards.size} displayed agent(s).`,
+				selection.warnings.length > 0 || (state.cards.size === 0 && mode === "all") ? "warning" : "info",
 			);
 		},
 	});
