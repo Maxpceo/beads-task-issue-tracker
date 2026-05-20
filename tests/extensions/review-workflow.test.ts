@@ -341,6 +341,44 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(isReviewApproved(output)).toBe(true)
   })
 
+  it('uses nested Pi final-answer text blocks from non-tool wrappers as authoritative reviewer output', () => {
+    const output = JSON.stringify([
+      { type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nintermediate tool output' }] } },
+      {
+        type: 'message_update',
+        output: [
+          { type: 'thinking_delta', text: 'internal reasoning without verdict' },
+          { type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED', textSignature: { v: 1, phase: 'final_answer' } },
+        ],
+      },
+    ])
+
+    expect(isReviewApproved(output)).toBe(true)
+  })
+
+  it('ignores signed-looking final-answer text nested under tool or log records', () => {
+    const output = JSON.stringify([
+      { type: 'toolResult', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED', textSignature: { phase: 'final_answer' } }] },
+      { type: 'log', output: [{ type: 'text', text: 'VERDICT: APPROVED', textSignature: { phase: 'final_answer' } }] },
+    ])
+
+    expect(isReviewApproved(output)).toBe(false)
+  })
+
+  it('uses the latest verdict from the global authoritative structured stream', () => {
+    const earlierApprovedLaterRejected = JSON.stringify([
+      { type: 'message_update', output: [{ type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED', textSignature: { phase: 'final_answer' } }] },
+      { type: 'message_update', output: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nVERDICT: NOT APPROVED', textSignature: { phase: 'final_answer' } }] },
+    ])
+    const assistantRejectedLaterSignedApproved = JSON.stringify([
+      { type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nVERDICT: NOT APPROVED' }] } },
+      { type: 'message_update', output: [{ type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED', textSignature: { phase: 'final_answer' } }] },
+    ])
+
+    expect(isReviewApproved(earlierApprovedLaterRejected)).toBe(false)
+    expect(isReviewApproved(assistantRejectedLaterSignedApproved)).toBe(true)
+  })
+
   it('does not fall back to tool/log approval when structured final verdict is not approved or missing', () => {
     const toolApprovedAssistantRejected = [
       { type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED' }] } },
