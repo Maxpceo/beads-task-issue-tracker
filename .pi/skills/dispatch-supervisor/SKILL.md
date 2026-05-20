@@ -50,7 +50,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    ```text
    workflow_submit_for_review(beadId=<ID>, reason=<fresh evidence summary>, endCommit=<sha>)
    ```
-   This synchronizes `bdStatus=inreview` with `state/sessionMode=inreview`. If a supervisor used raw bd update, immediately repair the session with `workflow_update(bead=<ID>, state=inreview, session=inreview, end=<sha>)` before any final report.
+   This synchronizes `bdStatus=inreview` with `state/sessionMode=inreview`, preserves the task branch/worktree/start scope recorded in workflow-state, and writes durable `WORKFLOW SUBMIT FOR REVIEW` evidence for main-start review routing. If a supervisor used raw bd update, immediately repair the session with `workflow_update(bead=<ID>, state=inreview, session=inreview, branch=<branch>, worktree=<task-worktree>, start=<sha>, end=<sha>)` before any final report.
 8. Continue with `review-bead` automatically; do not start another bead or stop with a normal final report while this one is `inreview`. If review cannot run, return an explicit `BLOCKED` report with the blocker and exact next action.
 
 ## Supervisor selection

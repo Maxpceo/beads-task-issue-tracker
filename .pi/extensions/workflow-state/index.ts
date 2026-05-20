@@ -438,7 +438,13 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 		const commentsText = await readBdComments(pi, state.activeBead);
 		const hasCurrentScope = workflowStateHasCurrentScopeEvidence(state, scope);
 		const hasRecordedTaskScope = await workflowStateHasValidRecordedTaskScope(pi, state);
-		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, scope)
+		const ownershipScope = hasRecordedTaskScope && !hasCurrentScope ? {
+			branch: state.branch,
+			worktreePath: state.worktreePath,
+			startCommit: state.startCommit,
+			sessionKey: scope.sessionKey,
+		} : scope;
+		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)
 			&& hasCurrentSessionOwnership(state, ctx)
 			&& (hasCurrentScope || hasRecordedTaskScope);
 		if (!hasOwnership) {
@@ -579,7 +585,7 @@ const WorkflowSubmitForReviewParams = {
 	properties: {
 		beadId: { type: "string", description: "Active bead ID to move to bd status inreview" },
 		reason: { type: "string", description: "Evidence summary for why implementation is ready for review" },
-		endCommit: { type: "string", description: "Implementation commit SHA, defaults to current HEAD" },
+		endCommit: { type: "string", description: "Implementation commit SHA, defaults to current HEAD in the resolved review worktree" },
 	},
 	required: ["beadId", "reason"],
 	additionalProperties: false,
@@ -598,6 +604,21 @@ const WorkflowCompleteParams = {
 
 function toolText(text: string, details: unknown = {}) {
 	return { content: [{ type: "text", text }], details };
+}
+
+async function resolvedTaskScope(pi: ExtensionAPI, state: WorkflowState, ctx: ExtensionContext): Promise<{ branch?: string; worktreePath?: string; startCommit?: string }> {
+	if (await workflowStateHasValidRecordedTaskScope(pi, state)) {
+		return {
+			branch: state.branch,
+			worktreePath: state.worktreePath,
+			startCommit: state.startCommit ?? (await detectStartCommit(pi, state.worktreePath)),
+		};
+	}
+	return {
+		branch: await detectBranch(pi, ctx.cwd),
+		worktreePath: await detectWorktreePath(pi, ctx.cwd),
+		startCommit: state.startCommit ?? (await detectStartCommit(pi, ctx.cwd)),
+	};
 }
 
 const WORKFLOW_UPDATE_KEYS = ["bead", "state", "session", "branch", "worktree", "start", "end", "plan", "approved", "slot"] as const;
@@ -1048,6 +1069,20 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 							assignState({ activeBead: undefined, state: "idle", endCommit: undefined, sessionKey: undefined, bdStatus: undefined });
 						} else if (bdStatus) {
 							assignState({ bdStatus });
+							const ownershipComment = [
+								"PI WORKFLOW UPDATE",
+								"",
+								workflowState.branch ? `BRANCH: ${workflowState.branch}` : undefined,
+								workflowState.worktreePath ? `WORKTREE: ${workflowState.worktreePath}` : undefined,
+								workflowState.startCommit ? `START_COMMIT: ${workflowState.startCommit}` : undefined,
+								workflowState.endCommit ? `END_COMMIT: ${workflowState.endCommit}` : undefined,
+								workflowState.sessionKey ? `PI_SESSION_KEY: ${workflowState.sessionKey}` : undefined,
+								workflowState.sessionMode ? `SESSION_MODE: ${workflowState.sessionMode}` : undefined,
+							].filter((line) => line !== undefined).join("\n");
+							const ownershipCommentResult = await pi.exec("bd", ["comments", "add", workflowState.activeBead, ownershipComment]);
+							if (ownershipCommentResult.code !== 0) {
+								return toolText(`workflow_update не выполнен для ${workflowState.activeBead}: не удалось записать branch/worktree ownership evidence: ${ownershipCommentResult.stderr || ownershipCommentResult.stdout}`.trim(), { ok: false, ...cloneState(workflowState) });
+							}
 						}
 					}
 					persist(ctx);
@@ -1069,6 +1104,23 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				if (workflowState.activeBead && workflowState.activeBead !== params.beadId) {
 					return toolText(`workflow_submit_for_review заблокирован: active bead = ${workflowState.activeBead}, а не ${params.beadId}. Используйте workflow_reset только после проверки stale/foreign ownership.`, { ok: false, ...cloneState(workflowState) });
 				}
+				const reviewScope = await resolvedTaskScope(pi, workflowState, ctx);
+				const endCommit = params.endCommit ?? (await detectStartCommit(pi, reviewScope.worktreePath ?? ctx.cwd));
+				const submitComment = [
+					"WORKFLOW SUBMIT FOR REVIEW",
+					"",
+					reviewScope.branch ? `BRANCH: ${reviewScope.branch}` : undefined,
+					reviewScope.worktreePath ? `WORKTREE: ${reviewScope.worktreePath}` : undefined,
+					reviewScope.startCommit ? `START_COMMIT: ${reviewScope.startCommit}` : undefined,
+					endCommit ? `END_COMMIT: ${endCommit}` : undefined,
+					currentSessionKey(ctx) ? `PI_SESSION_KEY: ${currentSessionKey(ctx)}` : undefined,
+					"",
+					params.reason,
+				].filter((line) => line !== undefined).join("\n");
+				const commentResult = await pi.exec("bd", ["comments", "add", params.beadId, submitComment]);
+				if (commentResult.code !== 0) {
+					return toolText(`workflow_submit_for_review не выполнен для ${params.beadId}: не удалось записать durable review scope evidence: ${commentResult.stderr || commentResult.stdout}`.trim(), { ok: false, ...cloneState(workflowState) });
+				}
 				const updateResult = await pi.exec("bd", ["update", params.beadId, "--status", "inreview", "--json"]);
 				if (updateResult.code !== 0) {
 					return toolText(`workflow_submit_for_review не выполнен для ${params.beadId}: ${updateResult.stderr || updateResult.stdout}`.trim(), { ok: false, ...cloneState(workflowState) });
@@ -1078,10 +1130,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 						activeBead: params.beadId,
 						state: "inreview",
 						sessionMode: "inreview",
-						branch: await detectBranch(pi, ctx.cwd),
-						worktreePath: await detectWorktreePath(pi, ctx.cwd),
-						startCommit: workflowState.startCommit ?? (await detectStartCommit(pi, ctx.cwd)),
-						endCommit: params.endCommit ?? (await detectStartCommit(pi, ctx.cwd)),
+						branch: reviewScope.branch,
+						worktreePath: reviewScope.worktreePath,
+						startCommit: reviewScope.startCommit,
+						endCommit,
 						sessionKey: currentSessionKey(ctx),
 						bdStatus: "inreview",
 					},

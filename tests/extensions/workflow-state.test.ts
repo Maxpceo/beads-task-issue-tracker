@@ -1555,6 +1555,54 @@ describe('Pi workflow-state typed tools', () => {
     expect(appended).toHaveLength(0)
   })
 
+  it('workflow_submit_for_review from main preserves explicit task worktree review scope and records durable evidence', async () => {
+    const { toolHandlers, ctx, appended, execCalls } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      gitScopes: { '/repo/worktrees/bead-task': { branch: 'task/bead-task', worktreePath: '/repo/worktrees/bead-task', startCommit: 'task-head' } },
+      issues: { 'bead-task': { status: 'in_progress', comments: 'WORKFLOW CLAIM\nBRANCH: task/bead-task\nWORKTREE: /repo/worktrees/bead-task\nSTART_COMMIT: task-head\nPI_SESSION_KEY: id:session-current' } },
+    })
+
+    await toolHandlers.get('workflow_update')?.execute('call-1', {
+      bead: 'bead-task',
+      state: 'implementing',
+      session: 'implementing',
+      branch: 'task/bead-task',
+      worktree: '/repo/worktrees/bead-task',
+      start: 'task-head',
+    }, undefined, undefined, ctx)
+
+    const result = await toolHandlers.get('workflow_submit_for_review')?.execute(
+      'call-2',
+      { beadId: 'bead-task', reason: 'tests passed', endCommit: 'task-end' },
+      undefined,
+      undefined,
+      ctx,
+    )
+
+    expect(result.content[0].text).toContain('branch=task/bead-task')
+    expect(result.content[0].text).toContain('worktree=/repo/worktrees/bead-task')
+    expect(result.content[0].text).not.toContain('branch=main')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-task',
+      state: 'inreview',
+      sessionMode: 'inreview',
+      branch: 'task/bead-task',
+      worktreePath: '/repo/worktrees/bead-task',
+      startCommit: 'task-head',
+      endCommit: 'task-end',
+      bdStatus: 'inreview',
+    })
+    const commentAdd = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args[2] === 'bead-task' && call.args[3]?.includes('WORKFLOW SUBMIT FOR REVIEW'))
+    expect(commentAdd?.args[3]).toContain('WORKFLOW SUBMIT FOR REVIEW')
+    expect(commentAdd?.args[3]).toContain('BRANCH: task/bead-task')
+    expect(commentAdd?.args[3]).toContain('WORKTREE: /repo/worktrees/bead-task')
+    expect(commentAdd?.args[3]).toContain('START_COMMIT: task-head')
+    expect(commentAdd?.args[3]).toContain('END_COMMIT: task-end')
+  })
+
   it('workflow_submit_for_review syncs bd inreview and exposes review guard', async () => {
     const { toolHandlers, eventHandlers, ctx, appended, execCalls } = makeHarness({
       branch: 'task/current',

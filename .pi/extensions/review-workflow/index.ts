@@ -145,7 +145,7 @@ function hasForeignReviewOwnershipEvidence(comments: string, scope: { branch?: s
 }
 
 function reviewOwnershipBlocks(comments: string): string[] {
-	const marker = /^.*(?:PLAN APPROVED|DISPATCH(?: RESULT)?|REVIEW START|review_bead|PI WORKFLOW).*$/gim;
+	const marker = /^.*(?:PLAN APPROVED|DISPATCH(?: RESULT)?|WORKFLOW SUBMIT FOR REVIEW|REVIEW START|review_bead|PI WORKFLOW).*$/gim;
 	const starts = [...comments.matchAll(marker)].map((match) => match.index ?? 0);
 	if (starts.length === 0) return [comments];
 	return starts.map((start, index) => comments.slice(start, starts[index + 1]).trim()).filter(Boolean);

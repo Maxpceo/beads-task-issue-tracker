@@ -15,7 +15,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    bd comments <ID> --json
    workflow_status
    ```
-   Required: status `inreview` and explicit ownership evidence. Prefer current-session ownership (matching branch/worktree/start), but after typed supervisor dispatch a durable `DISPATCH RESULT` comment with matching branch/worktree/start/end may establish the task worktree review scope. If ownership is stale, foreign, or ambiguous, do not launch `review_bead` or `dispatch_reviewer`; agents can call `workflow_reset` for stale local state, or after explicit takeover/verified dispatch evidence call `workflow_update(bead=<ID>, session=reviewing, branch=<branch>, worktree=<path>, start=<sha>, end=<sha>)`.
+   Required: status `inreview` and explicit ownership evidence. Prefer current-session ownership (matching branch/worktree/start), but after typed supervisor dispatch/submit a durable `DISPATCH RESULT` or `WORKFLOW SUBMIT FOR REVIEW` comment with matching branch/worktree/start/end may establish the task worktree review scope. If ownership is stale, foreign, or ambiguous, do not launch `review_bead` or `dispatch_reviewer`; agents can call `workflow_reset` for stale local state, or after explicit takeover/verified dispatch evidence call `workflow_update(bead=<ID>, session=reviewing, branch=<branch>, worktree=<path>, start=<sha>, end=<sha>)`.
 2. Update session context:
    ```text
    workflow_update(bead=<ID>, state=reviewing, session=reviewing)
@@ -25,7 +25,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```text
    review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>, worktreePath=<task-worktree-path>)
    ```
-4. Run review from the task worktree. If `workflowState.worktreePath` is present, the current tool cwd must already be that worktree or a subdirectory; pass `worktreePath=<task-worktree-path>` so `review_bead` runs git diff/checks/reviewer from that worktree and validates it against durable dispatch evidence. Do not orchestrate mutating review/check commands from `main`; only read-only inspection may happen there. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
+4. Run review through typed task-worktree routing. In a main-start session, pass `worktreePath=<task-worktree-path>` so `review_bead` runs git diff/checks/reviewer from that worktree and validates it against current-session or durable dispatch/submit evidence; no manual shell cwd override is required for this typed path. Do not run raw mutating review/check shell commands from `main`; only read-only inspection may happen there. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
    ```text
    dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
