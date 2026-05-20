@@ -125,6 +125,134 @@ describe('Pi protected branch mutation policy', () => {
 
     expect(decision?.policy).not.toBe('blockMainMutation')
   })
+
+  it('allows self-contained bd create from main even when a risky code file is dirty', () => {
+    const repo = createMainRepo()
+    mkdirSync(join(repo, '.pi/extensions/review-workflow'), { recursive: true })
+    writeFileSync(join(repo, '.pi/extensions/review-workflow/index.ts'), 'export const dirty = true\n')
+
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "${russianHandoffDescription}" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('blockMainMutation')
+    expect(decision?.policy).not.toBe('fastPathDiscipline')
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+  })
+
+  it('allows the create-bead skill inline heredoc description pattern from main', () => {
+    const repo = createMainRepo()
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('blockMainMutation')
+    expect(decision?.policy).not.toBe('fastPathDiscipline')
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+  })
+
+  it('allows inline heredoc bd create descriptions that mention git commands as text', () => {
+    const repo = createMainRepo()
+    mkdirSync(join(repo, '.pi/extensions/review-workflow'), { recursive: true })
+    writeFileSync(join(repo, '.pi/extensions/review-workflow/index.ts'), 'export const dirty = true\n')
+    const description = `${russianHandoffDescription}\n- Текст \`git commit\` в description не является repo mutation.`
+    expect(description).toContain('`git commit`')
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(cat <<'HEREDOC_EOF'
+${description}
+HEREDOC_EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('blockMainMutation')
+    expect(decision?.policy).not.toBe('fastPathDiscipline')
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+  })
+
+  it('blocks raw bd claim hidden inside the create-bead inline heredoc command substitution', () => {
+    const repo = createMainRepo()
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(bd update bead-b --claim; cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockRawBdClaim')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('/workflow-claim bead-b')
+  })
+
+  it('blocks git commit hidden inside the create-bead inline heredoc command substitution', () => {
+    const repo = createMainRepo()
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(git commit -m x; cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks bash -c git commit hidden inside the create-bead inline heredoc command substitution', () => {
+    const repo = createMainRepo()
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(bash -c 'git commit -m x'; cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks backtick git commit hidden inside the create-bead inline heredoc pattern', () => {
+    const repo = createMainRepo()
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "\`git commit -m x\`$(cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it.each(['bash -lc', 'bash -ec', 'bash -o pipefail -c'])(
+    'blocks %s git commit hidden inside the create-bead inline heredoc pattern',
+    (shellPrefix) => {
+      const repo = createMainRepo()
+      const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(${shellPrefix} 'git commit -m x'; cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+      const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+      expect(decision?.policy).toBe('blockMainMutation')
+      expect(decision?.block).toBe(true)
+    },
+  )
+
+  it('does not classify quoted test filters that mention bd create as tracker mutations', () => {
+    const repo = createMainRepo()
+    mkdirSync(join(repo, '.pi/extensions/review-workflow'), { recursive: true })
+    writeFileSync(join(repo, '.pi/extensions/review-workflow/index.ts'), 'export const dirty = true\n')
+
+    const command = 'pnpm exec vitest run tests/extensions/beads-policy.test.ts -t "bd create|blockMainMutation|raw bd claim|enforceBeadEnrichment"'
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('fastPathDiscipline')
+    expect(decision?.policy).not.toBe('blockMutationsInPlanning')
+  })
+
+  it('still blocks repo filesystem mutation on main when chained with bd create', () => {
+    const repo = createMainRepo()
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "${russianHandoffDescription}" --json && printf evidence > AGENTS.md`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
 })
 
 describe('Pi merge-slot push policy', () => {
@@ -1085,6 +1213,82 @@ describe('Pi bd-first active bead policy', () => {
     expect(decision?.block).toBe(true)
     expect(decision?.reason).toContain('/workflow-claim bead-b')
   })
+
+  it('blocks raw bd claim hidden inside shell command substitution', () => {
+    const decision = evaluateBashPolicy('echo "$(bd update bead-b --claim --json)"', {
+      state: 'idle',
+    })
+
+    expect(decision?.policy).toBe('blockRawBdClaim')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('/workflow-claim bead-b')
+  })
+
+  it('blocks raw bd claim even when workflow-claim appears elsewhere in the shell command', () => {
+    const decision = evaluateBashPolicy('/workflow-claim bead-a && bd update bead-b --claim', {
+      state: 'idle',
+    })
+
+    expect(decision?.policy).toBe('blockRawBdClaim')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('/workflow-claim bead-b')
+  })
+
+  it.each([
+    '/workflow-claim bead-a && echo "$(bd update bead-b --claim)"',
+    'echo "$(/workflow-claim bead-a; bd update bead-b --claim)"',
+  ])('blocks raw bd claim hidden with workflow-claim in shell command: %s', (command) => {
+    const decision = evaluateBashPolicy(command, {
+      state: 'idle',
+    })
+
+    expect(decision?.policy).toBe('blockRawBdClaim')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('/workflow-claim bead-b')
+  })
+
+  it('blocks git commit hidden inside shell command substitution', () => {
+    const repo = createMainRepo()
+    const decision = evaluateBashPolicy('echo "$(git commit -m x)"', {
+      state: 'idle',
+    }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks bash -c git commit on protected branches', () => {
+    const repo = createMainRepo()
+    const decision = evaluateBashPolicy("bash -c 'git commit -m x'", {
+      state: 'idle',
+    }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks backtick git commit hidden inside shell command substitution', () => {
+    const repo = createMainRepo()
+    const decision = evaluateBashPolicy('echo "`git commit -m x`"', {
+      state: 'idle',
+    }, { cwd: repo })
+
+    expect(decision?.policy).toBe('blockMainMutation')
+    expect(decision?.block).toBe(true)
+  })
+
+  it.each(['bash -lc', 'bash -ec', 'bash -o pipefail -c'])(
+    'blocks %s git commit on protected branches',
+    (shellPrefix) => {
+      const repo = createMainRepo()
+      const decision = evaluateBashPolicy(`${shellPrefix} 'git commit -m x'`, {
+        state: 'idle',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('blockMainMutation')
+      expect(decision?.block).toBe(true)
+    },
+  )
 
   it('keeps merge-to-main explicit by not treating land as terminal workflow requirement', () => {
     const decision = evaluateBashPolicy('/workflow-claim bead-b', {

@@ -398,6 +398,12 @@ function hasAmbiguousEnvShellCommand(command: string): boolean {
 	return isShellInterpreter(commandWord) && hasShellCommandOption(words, commandIndex);
 }
 
+function hasDirectShellCommand(command: string): boolean {
+	const words = shellWords(command);
+	const commandWord = words[0];
+	return Boolean(commandWord && isShellInterpreter(commandWord) && hasShellCommandOption(words, 0));
+}
+
 function leadingCdMatch(command: string): RegExpMatchArray | null {
 	return command.match(/^\s*cd\s+([^;&|]+?)\s*&&\s*/);
 }
@@ -510,7 +516,15 @@ function commandHasTestOrGateOperation(command: string): boolean {
 }
 
 function commandRequiresActiveWorktreeCwd(command: string, processCwd: string): boolean {
-	return commandHasMutatingBd(command) || commandHasMutatingGitOrFs(command) || commandHasTestOrGateOperation(command) || commandHasRepoContainedRedirection(command, processCwd);
+	return (
+		commandHasMutatingBd(command) ||
+		commandHasMutatingGitOrFs(command) ||
+		commandHasTestOrGateOperation(command) ||
+		commandHasRepoContainedRedirection(command, processCwd) ||
+		hasAmbiguousEnvShellCommand(command) ||
+		hasAmbiguousLeadingCdShellCommand(command) ||
+		hasDirectShellCommand(command)
+	);
 }
 
 function activeWorktreeCwdDecision(command: string, processCwd: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
@@ -543,6 +557,13 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
 			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. leading cd with shell operators, command substitution, or shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use a supported single-command leading cd form.`,
+		};
+	}
+	if (hasDirectShellCommand(command)) {
+		return {
+			policy: "enforceActiveWorktreeCwd",
+			block: true,
+			reason: `Blocked: active bead ${workflowState.activeBead} has WORKTREE_LOCK. shell -c is ambiguous and remains fail-closed; run the command directly from cwd ${required} or use supported env -C/leading cd single-command forms.`,
 		};
 	}
 	const effectiveCwdInfo = inferCommandCwdInfo(command, processCwd);
@@ -654,34 +675,105 @@ function commandAcquiresMergeSlotBeforePush(command: string): boolean {
 	return acquireIndex >= 0 && pushIndex >= 0 && acquireIndex < pushIndex;
 }
 
+function segmentHasMutatingBdCommand(segment: string): boolean {
+	const tokens = shellTokens(segment);
+	return tokens.some((token, index) => {
+		if (token !== "bd") return false;
+		const command = tokens[index + 1];
+		const subcommand = tokens[index + 2];
+		if (!command) return false;
+		if (["create", "new", "update", "close", "reopen", "delete"].includes(command)) return true;
+		if (command === "comments" && ["add", "delete", "rm"].includes(subcommand ?? "")) return true;
+		if (command === "dep" && ["add", "remove", "rm"].includes(subcommand ?? "")) return true;
+		if (command === "merge-slot" && ["acquire", "release"].includes(subcommand ?? "")) return true;
+		if (command === "dolt" && ["commit", "push", "pull"].includes(subcommand ?? "")) return true;
+		return false;
+	});
+}
+
 function commandHasMutatingBd(command: string): boolean {
-	return /\bbd\s+(create|new|update|close|reopen|delete|comments\s+(add|delete|rm)|dep\s+(add|remove|rm)|merge-slot\s+(acquire|release)|dolt\s+(commit|push|pull))\b/.test(
-		command,
+	return shellCommandInspectionParts(command).some((part) => splitShellSegments(part).some(segmentHasMutatingBdCommand));
+}
+
+function commandHasBdIssueCreate(command: string): boolean {
+	return splitShellSegments(command).some((segment) => segmentHasBdCommand(segment, new Set(["create", "new"])));
+}
+
+function segmentHasNonCreateBdMutation(segment: string): boolean {
+	const tokens = shellTokens(segment);
+	return tokens.some((token, index) => {
+		if (token !== "bd") return false;
+		const command = tokens[index + 1];
+		const subcommand = tokens[index + 2];
+		if (!command || command === "create" || command === "new") return false;
+		if (["update", "close", "reopen", "delete"].includes(command)) return true;
+		if (command === "comments" && ["add", "delete", "rm"].includes(subcommand ?? "")) return true;
+		if (command === "dep" && ["add", "remove", "rm"].includes(subcommand ?? "")) return true;
+		if (command === "merge-slot" && ["acquire", "release"].includes(subcommand ?? "")) return true;
+		if (command === "dolt" && ["commit", "push", "pull"].includes(subcommand ?? "")) return true;
+		return false;
+	});
+}
+
+function commandHasNonCreateBdMutation(command: string): boolean {
+	return shellCommandInspectionParts(command).some((part) => splitShellSegments(part).some(segmentHasNonCreateBdMutation));
+}
+
+function commandIsTrackerOnlyBdCreate(command: string, cwd: string): boolean {
+	return (
+		commandHasBdIssueCreate(command) &&
+		!commandHasNonCreateBdMutation(command) &&
+		!commandHasMutatingGitOrFs(command) &&
+		!commandHasRepoContainedRedirection(command, cwd)
 	);
 }
 
 function commandHasMutatingGitOrFs(command: string): boolean {
-	return /\b(git\s+(?:-C\s+\S+\s+)?(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag)|rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(
-		command,
+	return shellExecutableInspectionParts(command).some((part) =>
+		/\b(git\s+(?:-C\s+\S+\s+)?(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag)|rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(
+			part,
+		),
 	);
 }
 
+function maskQuotedShellContent(command: string): string {
+	let result = "";
+	let quote: '"' | "'" | undefined;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			result += " ";
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			result += " ";
+			continue;
+		}
+		result += char;
+	}
+	return result;
+}
+
 function commandHasMainLocalMutation(command: string): boolean {
-	return /(^|[;&|]\s*)git\s+(add|stage|commit)\b/.test(command);
+	return shellExecutableInspectionParts(command).some((part) => /(^|[;&|]\s*)git\s+(add|stage|commit)\b/.test(part));
 }
 
 function commandHasProtectedBranchFsMutation(command: string, cwd: string): boolean {
-	return /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(command) || commandHasRepoContainedRedirection(command, cwd);
+	return shellExecutableInspectionParts(command).some((part) => /\b(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(part)) || commandHasRepoContainedRedirection(command, cwd);
 }
 
 function commandHasRepoContainedRedirection(command: string, cwd: string): boolean {
 	const repoRoot = getRepoRoot(cwd);
 	if (!repoRoot) return false;
 	const resolvedRepoRoot = realpathExistingOrParent(repoRoot);
-	return extractShellRedirectionTargets(command).some((target) => {
-		const resolvedTarget = realpathExistingOrParent(normalizeFsPath(target, cwd));
-		return resolvedTarget === resolvedRepoRoot || resolvedTarget.startsWith(`${resolvedRepoRoot}${path.sep}`);
-	});
+	return shellRedirectionInspectionParts(command).some((part) =>
+		extractShellRedirectionTargets(part).some((target) => {
+			const resolvedTarget = realpathExistingOrParent(normalizeFsPath(target, cwd));
+			return resolvedTarget === resolvedRepoRoot || resolvedTarget.startsWith(`${resolvedRepoRoot}${path.sep}`);
+		}),
+	);
 }
 
 function extractShellRedirectionTargets(command: string): string[] {
@@ -978,6 +1070,176 @@ function shellTokens(input: string): string[] {
 	return input.match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(stripQuotes) ?? [];
 }
 
+function shellCommandInspectionParts(command: string): string[] {
+	const parts: string[] = [];
+	const queue = [command];
+	const seen = new Set<string>();
+	while (queue.length > 0 && parts.length < 100) {
+		const part = queue.shift() ?? "";
+		if (!part || seen.has(part)) continue;
+		seen.add(part);
+		parts.push(part);
+		const inspectablePart = maskHeredocBodies(part);
+		for (const nested of [...extractCommandSubstitutions(inspectablePart), ...extractShellInterpreterCommandBodies(inspectablePart)]) {
+			if (nested && !seen.has(nested)) queue.push(nested);
+		}
+	}
+	return parts;
+}
+
+function extractShellInterpreterCommandBodies(command: string): string[] {
+	const bodies: string[] = [];
+	for (const segment of splitShellSegments(command)) {
+		const tokens = shellTokens(segment);
+		for (let index = 0; index < tokens.length; index += 1) {
+			const token = tokens[index];
+			if (!token || !isShellInterpreterWord(token)) continue;
+			let cursor = index + 1;
+			while (cursor < tokens.length) {
+				const option = tokens[cursor];
+				if (!option) break;
+				if (option === "--") {
+					cursor += 1;
+					continue;
+				}
+				if (option.startsWith("-") && option !== "-") {
+					const flags = option.replace(/^-+/, "");
+					if (flags.includes("c")) {
+						const body = tokens[cursor + 1];
+						if (body) bodies.push(body);
+						break;
+					}
+					cursor += shellInterpreterOptionConsumesArgument(option) ? 2 : 1;
+					continue;
+				}
+				break;
+			}
+		}
+	}
+	return bodies;
+}
+
+function isShellInterpreterWord(word: string): boolean {
+	const command = path.basename(word);
+	return ["bash", "sh", "zsh", "fish", "dash", "ksh"].includes(command);
+}
+
+function shellInterpreterOptionConsumesArgument(option: string): boolean {
+	return ["-o", "+o", "-O", "+O", "--init-file", "--rcfile"].includes(option);
+}
+
+function shellExecutableInspectionParts(command: string): string[] {
+	return shellCommandInspectionParts(command).map(maskHeredocBodies).map(maskQuotedShellContent);
+}
+
+function shellRedirectionInspectionParts(command: string): string[] {
+	return shellCommandInspectionParts(command).map(maskHeredocBodies);
+}
+
+function maskHeredocBodies(command: string): string {
+	const lines = command.split(/(\n)/);
+	let result = "";
+	let heredocDelimiter: string | undefined;
+	for (let index = 0; index < lines.length; index += 2) {
+		const line = lines[index] ?? "";
+		const newline = lines[index + 1] ?? "";
+		if (heredocDelimiter) {
+			if (line.trim() === heredocDelimiter) {
+				heredocDelimiter = undefined;
+				result += line + newline;
+			} else {
+				result += " ".repeat(line.length) + newline;
+			}
+			continue;
+		}
+		const match = line.match(/<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1/);
+		if (match?.[2]) heredocDelimiter = match[2];
+		result += line + newline;
+	}
+	return maskNormalizedQuotedHeredocBodies(result);
+}
+
+function maskNormalizedQuotedHeredocBodies(command: string): string {
+	return command.replace(/(<<-?\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\2)([\s\S]*?)(\s+\3)(?=\s|["')]|$)/g, (_match, opener: string, _quote: string, _delimiter: string, body: string, closer: string) => {
+		return `${opener}${" ".repeat(body.length)}${closer}`;
+	});
+}
+
+function extractCommandSubstitutions(command: string): string[] {
+	const parts: string[] = [];
+	let quote: '"' | "'" | undefined;
+	for (let index = 0; index < command.length; index += 1) {
+		const char = command[index];
+		if (quote === "'") {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (quote === '"') {
+			if (char === quote) {
+				quote = undefined;
+				continue;
+			}
+		} else if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "`") {
+			const end = findBacktickCommandSubstitutionEnd(command, index + 1);
+			if (end === undefined) continue;
+			const body = command.slice(index + 1, end);
+			const inspectableBody = maskHeredocBodies(body);
+			parts.push(inspectableBody, ...extractCommandSubstitutions(inspectableBody));
+			index = end;
+			continue;
+		}
+		if (char !== "$" || command[index + 1] !== "(") continue;
+		const end = findCommandSubstitutionEnd(command, index + 2);
+		if (end === undefined) continue;
+		const body = command.slice(index + 2, end);
+		const inspectableBody = maskHeredocBodies(body);
+		parts.push(inspectableBody, ...extractCommandSubstitutions(inspectableBody));
+		index = end;
+	}
+	return parts;
+}
+
+function findCommandSubstitutionEnd(command: string, start: number): number | undefined {
+	let quote: '"' | "'" | undefined;
+	let depth = 1;
+	for (let index = start; index < command.length; index += 1) {
+		const char = command[index];
+		if (quote) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "$" && command[index + 1] === "(") {
+			depth += 1;
+			index += 1;
+			continue;
+		}
+		if (char !== ")") continue;
+		depth -= 1;
+		if (depth === 0) return index;
+	}
+	return undefined;
+}
+
+function findBacktickCommandSubstitutionEnd(command: string, start: number): number | undefined {
+	for (let index = start; index < command.length; index += 1) {
+		const char = command[index];
+		if (char === "\\") {
+			index += 1;
+			continue;
+		}
+		if (char === "`") return index;
+	}
+	return undefined;
+}
+
 function parseBdUpdateStatus(command: string): { id: string; status: string } | undefined {
 	const valueFlags = new Set([
 		"--priority",
@@ -1061,23 +1323,25 @@ function commandHasReviewCheckpointTransition(command: string): boolean {
 }
 
 function parseBdClaimId(command: string): string | undefined {
-	for (const segment of splitShellSegments(command)) {
-		const tokens = shellTokens(segment);
-		const updateIndex = tokens.findIndex((token, index) => token === "update" && tokens[index - 1] === "bd");
-		if (updateIndex < 0) continue;
-		let id: string | undefined;
-		let hasClaim = false;
-		for (let index = updateIndex + 1; index < tokens.length; index += 1) {
-			const token = tokens[index];
-			if (!token) continue;
-			if (token === "--claim") {
-				hasClaim = true;
-				continue;
+	for (const part of shellCommandInspectionParts(command)) {
+		for (const segment of splitShellSegments(part)) {
+			const tokens = shellTokens(segment);
+			const updateIndex = tokens.findIndex((token, index) => token === "update" && tokens[index - 1] === "bd");
+			if (updateIndex < 0) continue;
+			let id: string | undefined;
+			let hasClaim = false;
+			for (let index = updateIndex + 1; index < tokens.length; index += 1) {
+				const token = tokens[index];
+				if (!token) continue;
+				if (token === "--claim") {
+					hasClaim = true;
+					continue;
+				}
+				if (token.startsWith("-")) continue;
+				id = id ?? token;
 			}
-			if (token.startsWith("-")) continue;
-			id = id ?? token;
+			if (id && hasClaim) return id;
 		}
-		if (id && hasClaim) return id;
 	}
 	return undefined;
 }
@@ -1782,6 +2046,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 
 	if (risky && !supervisorPath) {
 		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
+		if (commandIsTrackerOnlyBdCreate(command, cwd)) return undefined;
 		const scope = currentRecoveryScope(cwd, workflowState.sessionKey);
 		const recoveredBead =
 			recoverableApprovedPlanBead(cwd, scope) ??
@@ -1962,7 +2227,7 @@ export function evaluateBashPolicy(
 	if (lifecycleDecision) return lifecycleDecision;
 
 	const rawClaimId = parseBdClaimId(command);
-	if (rawClaimId && !parseWorkflowCommandBead(command)) {
+	if (rawClaimId) {
 		return {
 			policy: "blockRawBdClaim",
 			block: true,
