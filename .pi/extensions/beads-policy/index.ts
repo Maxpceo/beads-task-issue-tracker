@@ -290,8 +290,13 @@ type EnvPrefixParse = {
 	unsupportedOption?: string;
 };
 
+function isEnvExecutableWord(word: string): boolean {
+	return /(^|\/)env$/.test(word);
+}
+
 function parseEnvPrefix(words: string[], base?: string): EnvPrefixParse {
-	if (words[0] !== "env") return {};
+	const executable = words[0];
+	if (!executable || !isEnvExecutableWord(executable)) return {};
 	let cwd: string | undefined;
 	for (let index = 1; index < words.length; index += 1) {
 		const word = words[index];

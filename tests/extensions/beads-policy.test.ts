@@ -1518,13 +1518,14 @@ exit 1
     }
   })
 
-  it('allows supported env -C bd writes when explicit cwd is the active worktree', () => {
+  it('allows supported env -C and path-qualified env bd writes when explicit cwd is the active worktree', () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')
     try {
       const decision = evaluateBashPolicy(`env -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
       const longOptionDecision = evaluateBashPolicy(`env --chdir=${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
       const assignmentDecision = evaluateBashPolicy(`env FOO=bar -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
+      const pathQualifiedDecision = evaluateBashPolicy(`/usr/bin/env -C ${worktree} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
 
       expect(decision?.policy).not.toBe('enforceActiveWorktreeCwd')
       expect(decision?.policy).not.toBe('blockMainMutation')
@@ -1532,13 +1533,15 @@ exit 1
       expect(longOptionDecision?.policy).not.toBe('blockMainMutation')
       expect(assignmentDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
       expect(assignmentDecision?.policy).not.toBe('blockMainMutation')
+      expect(pathQualifiedDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedDecision?.policy).not.toBe('blockMainMutation')
     } finally {
       rmSync(main, { recursive: true, force: true })
       rmSync(worktree, { recursive: true, force: true })
     }
   })
 
-  it('blocks supported env -C bd writes when explicit cwd is outside the active worktree', () => {
+  it('blocks supported env -C and path-qualified env bd writes when explicit cwd is outside the active worktree', () => {
     const main = createRepo('main')
     const worktree = createRepo('task/current')
     const other = createRepo('task/other')
@@ -1546,10 +1549,14 @@ exit 1
       const mainDecision = evaluateBashPolicy(`env -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
       const otherDecision = evaluateBashPolicy(`env -C ${other} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: main })
       const assignmentMainDecision = evaluateBashPolicy(`env FOO=bar -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const pathQualifiedMainDecision = evaluateBashPolicy(`/usr/bin/env -C ${main} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
+      const pathQualifiedOtherDecision = evaluateBashPolicy(`/opt/homebrew/bin/env -C ${other} bd comments add bead-a smoke --json`, lockedState(worktree), { cwd: worktree })
 
       expect(mainDecision?.policy).toBe('enforceActiveWorktreeCwd')
       expect(otherDecision?.policy).toBe('enforceActiveWorktreeCwd')
       expect(assignmentMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedMainDecision?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(pathQualifiedOtherDecision?.policy).toBe('enforceActiveWorktreeCwd')
     } finally {
       rmSync(main, { recursive: true, force: true })
       rmSync(worktree, { recursive: true, force: true })
