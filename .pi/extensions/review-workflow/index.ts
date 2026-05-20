@@ -226,6 +226,10 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: process.execPath, args };
 }
 
+export function isReviewApproved(output: string): boolean {
+	return /(?:^|\n)\s*(?:VERDICT|CODE REVIEW)\s*:\s*APPROVED\s*(?:\n|$)/i.test(output);
+}
+
 async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal): Promise<{ code: number; output: string; stderr: string }> {
 	const agentPath = path.join(cwd, ".pi", "agents", "code-reviewer.md");
 	if (!fs.existsSync(agentPath)) throw new Error("Отсутствует .pi/agents/code-reviewer.md");
@@ -318,12 +322,12 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				if (!params.dryRun) {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
-					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
+					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\nReview status note: review_bead temporarily moves the bead to bd status simplified while the reviewer runs. Do not reject solely because bd show reports simplified during this review; if the final verdict is not approved, review_bead must restore status inreview after reviewer exit.\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
 					const reviewer = await runReviewer(reviewCwd, prompt, signal);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
-					if (/VERDICT:\s*APPROVED|CODE REVIEW:\s*APPROVED/i.test(reviewer.output)) {
+					if (isReviewApproved(reviewer.output)) {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
 						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\n${automatedChecks.join("\n\n")}`]);
