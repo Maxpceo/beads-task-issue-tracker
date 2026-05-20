@@ -228,7 +228,7 @@ describe('review_workflow reviewer verdict handling', () => {
   async function runNonDryReview(reviewerOutput: string, options: { failRestore?: boolean } = {}) {
     const fixture = createFakeReviewerWorktree(reviewerOutput)
     const oldPath = process.env.PATH
-    const oldArgv1 = process.argv[1]
+    const oldArgv1 = process.argv[1] ?? ''
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
     const workflowEvents: Array<Record<string, unknown>> = []
