@@ -305,11 +305,11 @@ function isAssistantFinalRecord(record: Record<string, unknown>): boolean {
 	if (isToolLikeRecord(record)) return false;
 	const role = typeof record.role === "string" ? record.role.toLowerCase() : undefined;
 	const type = typeof record.type === "string" ? record.type.toLowerCase() : undefined;
+	const message = record.message;
 	if (role === "assistant") return true;
+	if (isRecordObject(message) && typeof message.role === "string" && message.role.toLowerCase() === "assistant") return true;
 	if (type === "text" && hasFinalAnswerSignature(record)) return true;
 	if (type && ["message", "message_end", "response", "final"].includes(type)) {
-		const message = record.message;
-		if (isRecordObject(message) && typeof message.role === "string" && message.role.toLowerCase() === "assistant") return true;
 		if (typeof record.role === "string" && record.role.toLowerCase() === "assistant") return true;
 	}
 	return false;

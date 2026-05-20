@@ -356,6 +356,25 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(isReviewApproved(output)).toBe(true)
   })
 
+  it('uses assistant message_update content when final text is surrounded by encrypted/thinking/tool noise', () => {
+    const output = JSON.stringify([
+      { type: 'tool_result_end', message: { role: 'tool', content: [{ type: 'text', text: 'CODE REVIEW: NOT APPROVED\nintermediate tool output' }] } },
+      {
+        type: 'message_update',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'encrypted_thinking', text: 'opaque transcript chunk with CODE REVIEW: NOT APPROVED' },
+            { type: 'thinking_delta', text: 'reasoning with VERDICT: NOT APPROVED' },
+            { type: 'text', text: 'CODE REVIEW: APPROVED\nVERDICT: APPROVED' },
+          ],
+        },
+      },
+    ])
+
+    expect(isReviewApproved(output)).toBe(true)
+  })
+
   it('ignores signed-looking final-answer text nested under tool or log records', () => {
     const output = JSON.stringify([
       { type: 'toolResult', content: [{ type: 'text', text: 'CODE REVIEW: APPROVED', textSignature: { phase: 'final_answer' } }] },
