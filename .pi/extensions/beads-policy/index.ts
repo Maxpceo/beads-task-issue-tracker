@@ -166,7 +166,123 @@ function commandHasUnsafeForcePush(command: string): boolean {
 }
 
 function commandHasRemoteBranchDeletion(command: string): boolean {
-	return /(^|[;&|]\s*)git\s+push\b[^;&|]*(?:--delete\b|\s:[^\s;&|]+)/.test(command);
+	return splitShellSegments(command).some((segment) => {
+		const tokens = shellTokens(segment);
+		const pushIndex = tokens.findIndex((token, index) => token === "push" && tokens[index - 1] === "git");
+		if (pushIndex < 1) return false;
+		return tokens.slice(pushIndex + 1).some((token) => token === "--delete" || token === "-d" || token.startsWith(":") || token.startsWith("+:"));
+	});
+}
+
+
+interface RemoteBranchDeletionPush {
+	branch: string;
+	leaseOid: string;
+}
+
+const GIT_OID_PATTERN = /^[0-9a-f]{40}$/i;
+
+function isSafeTaskBranchName(branch: string): boolean {
+	return /^task\/[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(branch) && !branch.includes("..") && !branch.endsWith("/") && !branch.includes("//");
+}
+
+function normalizeDeletedBranchRef(value: string): string | undefined {
+	const ref = stripQuotes(value).replace(/^refs\/heads\//, "");
+	if (!ref || ref.startsWith("-") || ref.includes(":")) return undefined;
+	return ref;
+}
+
+function parseRemoteDeletionPushSegment(segment: string): RemoteBranchDeletionPush | undefined {
+	const tokens = shellTokens(segment);
+	const pushIndex = tokens.findIndex((token, index) => token === "push" && tokens[index - 1] === "git");
+	if (pushIndex !== 1 || tokens[0] !== "git") return undefined;
+
+	let remote: string | undefined;
+	let deleteMode = false;
+	const deletionTargets: string[] = [];
+	let leaseBranch: string | undefined;
+	let leaseOid: string | undefined;
+
+	for (let index = pushIndex + 1; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token) continue;
+		if (token === "--") continue;
+		if (token === "--delete" || token === "-d") {
+			deleteMode = true;
+			continue;
+		}
+		if (token === "--force-with-lease") return undefined;
+		if (token.startsWith("--force-with-lease=")) {
+			const lease = stripQuotes(token.slice("--force-with-lease=".length));
+			const match = lease.match(/^refs\/heads\/(.+):([0-9a-f]{40})$/i);
+			if (!match) return undefined;
+			leaseBranch = match[1];
+			leaseOid = match[2];
+			continue;
+		}
+		if (token.startsWith("--")) return undefined;
+		if (token.startsWith("-")) return undefined;
+		if (!remote) {
+			remote = token;
+			continue;
+		}
+		if (deleteMode) {
+			const branch = normalizeDeletedBranchRef(token);
+			if (!branch) return undefined;
+			deletionTargets.push(branch);
+			continue;
+		}
+		if (token.startsWith(":")) {
+			const branch = normalizeDeletedBranchRef(token.slice(1));
+			if (!branch) return undefined;
+			deletionTargets.push(branch);
+			continue;
+		}
+		return undefined;
+	}
+
+	if (remote !== "origin" || deletionTargets.length !== 1 || !leaseBranch || !leaseOid) return undefined;
+	const branch = deletionTargets[0];
+	if (branch !== leaseBranch) return undefined;
+	return { branch, leaseOid };
+}
+
+function parseSafeRemoteDeletionCommand(command: string): RemoteBranchDeletionPush | undefined {
+	const segments = splitShellSegments(command);
+	const deletionSegments = segments.filter(commandHasRemoteBranchDeletion);
+	if (deletionSegments.length !== 1) return undefined;
+	const segment = deletionSegments[0];
+	if (!segment || segment.includes("|") || /[`$()]/.test(segment)) return undefined;
+	return parseRemoteDeletionPushSegment(segment);
+}
+
+function remoteHeadOid(cwd: string, remote: string, branch: string): string | undefined {
+	const output = runGit(cwd, ["ls-remote", "--heads", remote, branch]);
+	const [oid, ref, extra] = output?.split(/\s+/) ?? [];
+	if (!oid || !ref || extra || ref !== `refs/heads/${branch}` || !GIT_OID_PATTERN.test(oid)) return undefined;
+	return oid;
+}
+
+function remoteOidAncestorOfMain(cwd: string, branchOid: string, mainOid: string): boolean {
+	return commandSucceeds(cwd, "git", ["merge-base", "--is-ancestor", branchOid, mainOid]);
+}
+
+function hasObservableMergeSlotEvidence(workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): boolean {
+	return workflowState.mergeSlotHeld === true || currentActorHoldsBdMergeSlot(cwd, options);
+}
+
+function isSafeMergedRemoteBranchCleanup(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): boolean {
+	const parsed = parseSafeRemoteDeletionCommand(command);
+	if (!parsed) return false;
+	const branch = parsed.branch;
+	if (!workflowState.branch || branch !== workflowState.branch) return false;
+	if (!isSafeTaskBranchName(branch) || PROTECTED_BRANCHES.has(branch)) return false;
+	if (!hasObservableMergeSlotEvidence(workflowState, options, cwd)) return false;
+
+	const branchOid = remoteHeadOid(cwd, "origin", branch);
+	const mainOid = remoteHeadOid(cwd, "origin", "main");
+	if (!branchOid || !mainOid || branchOid !== parsed.leaseOid) return false;
+	return remoteOidAncestorOfMain(cwd, branchOid, mainOid);
 }
 
 function commandHasStashDeletion(command: string): boolean {
@@ -181,14 +297,14 @@ function commandHasDestructiveSql(command: string): boolean {
 	return /\bDROP\s+(?:DATABASE|SCHEMA|TABLE)\b/i.test(command) || /\bTRUNCATE\s+TABLE\b/i.test(command) || /\bDELETE\s+FROM\b(?![^;&|]*\bWHERE\b)/i.test(command);
 }
 
-function destructiveCommandReason(command: string): string | undefined {
+function destructiveCommandReason(command: string, workflowState: WorkflowStateSnapshot = {}, options: BashPolicyOptions = {}, cwd = process.cwd()): string | undefined {
 	const sensitivePathReason = commandTouchesSensitivePath(command);
 	if (sensitivePathReason) return `Заблокировано: command ссылается на protected path (${sensitivePathReason}).`;
 	if (commandHasRecursiveForceDelete(command)) return "Заблокировано: recursive force delete запрещён из Pi bash.";
 	if (commandHasHardReset(command)) return "Заблокировано: git reset --hard является destructive. Используй explicit documented override только после approval.";
 	if (commandHasForcedClean(command)) return "Заблокировано: forced git clean может удалить untracked work.";
 	if (commandHasUnsafeForcePush(command)) return "Заблокировано: unsafe force push запрещён; --force-with-lease — более безопасная explicit form.";
-	if (commandHasRemoteBranchDeletion(command)) return "Заблокировано: remote branch deletion требует explicit confirmation вне обычного Pi bash flow.";
+	if (commandHasRemoteBranchDeletion(command) && !isSafeMergedRemoteBranchCleanup(command, workflowState, options, cwd)) return "Заблокировано: remote branch deletion требует explicit confirmation вне обычного Pi bash flow.";
 	if (commandHasStashDeletion(command)) return "Заблокировано: stash deletion может уничтожить recovery points.";
 	if (commandHasCloudResourceDeletion(command)) return "Заблокировано: cloud/infrastructure resource deletion является destructive.";
 	if (commandHasDestructiveSql(command)) return "Заблокировано: destructive SQL требует explicit human approval и rollback plan.";
@@ -2243,7 +2359,7 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	const destructiveReason = destructiveCommandReason(command);
+	const destructiveReason = destructiveCommandReason(command, workflowState, options, commandCwd);
 	if (destructiveReason) {
 		return {
 			policy: "blockDestructiveCommand",
