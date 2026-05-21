@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import planReviewExtension, {
   evaluatePlanReviewGate,
+  findInvalidSequentialReasons,
   missingRevisedPlanSections,
   parsePlanReviewOutput,
   runPlanReviewers,
@@ -60,6 +61,19 @@ Risks / rollback:
 `)
 
     expect(missing).toEqual(['AUTO_EXECUTE_ALLOWED: true'])
+  })
+
+  it('rejects vague sequential reasons and accepts whitelisted ones in the matrix', () => {
+    const invalidPlan = `| Stream | Goal | Agent | Write zone | Dependencies | Verification | Decision | Reason |
+|---|---|---|---|---|---|---|---|
+| A | Update docs | docs supervisor | .pi/skills/plan-bead/SKILL.md | none | rg matrix | sequential | files are related |`
+    const validPlan = invalidPlan.replace('files are related', 'dependency chain: tests consume the docs contract')
+
+    expect(findInvalidSequentialReasons(invalidPlan)).toEqual([
+      'Sequential stream row 3 has unsupported reason: files are related',
+    ])
+    expect(missingRevisedPlanSections(invalidPlan)).toContain('Sequential stream row 3 has unsupported reason: files are related')
+    expect(findInvalidSequentialReasons(validPlan)).toEqual([])
   })
 
   it('runs required reviewers through pi json mode and parses assistant output', async () => {

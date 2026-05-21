@@ -44,6 +44,36 @@ export interface PlanReviewExecAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 }
 
+
+const ACCEPTED_SEQUENTIAL_REASON = /dependency\s+chain|write\s+conflict|shared\s+verification\s+bottleneck|shared\s+external\s+resource|uncertain\s+scope|repo\/?policy\s+limit|repo\s+limit|policy\s+limit/i;
+const VAGUE_SEQUENTIAL_REASON = /files?\s+(?:are\s+)?related|related\s+files?|related\s+changes?|changes?\s+(?:are\s+)?related|same\s+(?:area|domain|feature)/i;
+
+function splitMarkdownRow(line: string): string[] {
+	return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+export function findInvalidSequentialReasons(planText: string): string[] {
+	const findings: string[] = [];
+	const lines = planText.split("\n");
+	for (let index = 0; index < lines.length; index += 1) {
+		const headers = splitMarkdownRow(lines[index] ?? "").map((cell) => cell.toLowerCase().replace(/[*_`]/g, ""));
+		const decisionIndex = headers.indexOf("decision");
+		const reasonIndex = headers.indexOf("reason");
+		if (decisionIndex === -1 || reasonIndex === -1) continue;
+		for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+			const rowLine = lines[rowIndex] ?? "";
+			if (!rowLine.includes("|") || /^\s*$/.test(rowLine)) break;
+			const cells = splitMarkdownRow(rowLine);
+			const decision = cells[decisionIndex] ?? "";
+			const reason = cells[reasonIndex] ?? "";
+			if (/sequential|последоват/i.test(decision) && (!reason || VAGUE_SEQUENTIAL_REASON.test(reason) || !ACCEPTED_SEQUENTIAL_REASON.test(reason))) {
+				findings.push(`Sequential stream row ${rowIndex + 1} has unsupported reason: ${reason || "<empty>"}`);
+			}
+		}
+	}
+	return findings;
+}
+
 export const REQUIRED_REVISED_PLAN_SECTIONS = [
 	{ label: "Reviewer findings summary", pattern: /(^|\n)\s*\*{0,2}Reviewer findings summary:\*{0,2}\s*\n/i },
 	{ label: "Accepted findings", pattern: /(^|\n)\s*\*{0,2}Accepted findings:\*{0,2}\s*\n/i },
@@ -57,7 +87,10 @@ export const REQUIRED_REVISED_PLAN_SECTIONS = [
 ];
 
 export function missingRevisedPlanSections(message: string): string[] {
-	return REQUIRED_REVISED_PLAN_SECTIONS.filter((section) => !section.pattern.test(message)).map((section) => section.label);
+	return [
+		...REQUIRED_REVISED_PLAN_SECTIONS.filter((section) => !section.pattern.test(message)).map((section) => section.label),
+		...findInvalidSequentialReasons(message),
+	];
 }
 
 function normalizeListValue(value: string): string[] {

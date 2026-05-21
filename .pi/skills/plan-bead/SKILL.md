@@ -27,3 +27,14 @@ Use a full `Где мы в workflow` block when strict planning stops for user a
 - Follow-up beads created during planning must use the full `AGENTS.md` template, labels, and known dependencies.
 - Decide Fast Path explicitly; risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work requires approved plan/supervisor path unless a documented exception applies.
 - Edge cases are required for non-trivial work.
+- Non-trivial plans (anything beyond tiny, low-risk Fast Path work) must include a `Parallel Decomposition Matrix` before approval. Required columns: `Stream`, `Goal`, `Agent`, `Write zone`, `Dependencies`, `Verification`, `Decision`, `Reason`. These fields must map directly to the supervisor execution contract: stream/goal selects the work package, agent selects the supervisor type, write zone scopes file ownership, dependencies order streams, verification defines evidence, decision says `parallel` or `sequential`, and reason explains the routing decision.
+- Fast Path exception: simple/trivial work may omit the matrix only when the plan includes `FAST_PATH_RATIONALE:` with why direct execution is lower-risk/cheaper than supervisor dispatch, expected touched files/line budget, and focused verification. Workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work still requires approved plan/supervisor path unless the exception is explicit.
+- Sequential streams are allowed only with one of these reason classes: dependency chain, write conflict, shared verification bottleneck, shared external resource, uncertain scope, or repo/policy limit. Vague reasons such as “files are related”, “same area”, or “related changes” are not accepted.
+
+## Parallel Decomposition Matrix example
+
+| Stream | Goal | Agent | Write zone | Dependencies | Verification | Decision | Reason |
+|---|---|---|---|---|---|---|---|
+| A | Update plan-bead planning contract docs | docs/workflow supervisor | `.pi/skills/plan-bead/SKILL.md` | none | `rg "Parallel Decomposition Matrix" .pi/skills/plan-bead/SKILL.md` | parallel | independent write zone and docs-only verification |
+| B | Add plan-review guard and focused tests | test/DX supervisor | `.pi/extensions/plan-review/index.ts`, `tests/extensions/plan-review.test.ts` | none | `pnpm exec vitest run tests/extensions/plan-review.test.ts --reporter dot` | parallel | independent write zone and focused test verification |
+| C | Align plan-mode fixture after guard exists | test/DX supervisor | `tests/extensions/plan-mode.test.ts` | B | `pnpm exec vitest run tests/extensions/plan-mode.test.ts --reporter dot` | sequential | dependency chain: plan-mode fixture consumes the plan-review guard behavior from stream B |
