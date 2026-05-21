@@ -47,6 +47,7 @@
 
 ### Fixed
 
+- **Pi structured task worktree routing** (`beads-task-issue-tracker-xl6v`): shared worktree-scope validation now routes `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, and `review_bead` to the recorded task worktree/branch, rejects stale or mismatched targets with actionable policy errors, and keeps protected-branch workflow operations from silently falling back to the wrong checkout.
 - **Pi plan approval task worktree scope** (`beads-task-issue-tracker-q4gb`): `workflow_plan_approved` now reads explicit approved-plan `Worktree`, `Branch`, and `START_COMMIT` evidence before updating workflow state, preserving task-worktree scope when approval is recorded from a main checkout and blocking invalid or mismatched evidence without writing bd comments or session state.
 - **Pi merged branch cleanup policy** (`beads-task-issue-tracker-zaha`): `beads-policy` now allows the narrow merge-to-main fallback that deletes an already-merged `task/...` remote branch only with observable merge-slot evidence, fresh `origin/main` ancestry checks, and a matching `--force-with-lease` OID, while preserving destructive-command blocks for unsafe remote branch deletion.
 - **Pi tracker-only bead creation guard** (`beads-task-issue-tracker-qw1u`): `beads-policy` now allows safe `bd create` / `bd todo add` tracker writes from protected branches while preserving guards for repository mutations, raw claims, lifecycle transitions, incomplete bead descriptions, and unsafe wrapper/file-substitution patterns.
