@@ -21,7 +21,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    git branch --show-current
    git rev-parse HEAD
    ```
-   Required: status `in_progress`, assignee is this session/user, no unresolved blockers, self-contained handoff sections from `AGENTS.md`, concrete acceptance/verification bullets, labels, and an approved plan comment for non-fast-path work.
+   Required: status `in_progress`, assignee is this session/user, no unresolved blockers, self-contained handoff sections from `AGENTS.md`, concrete acceptance/verification bullets, labels, canonical task scope (`BRANCH` is `<type>/<bead-suffix>-<domain-or-component>-<purpose>` and worktree basename exactly equals the branch suffix), and an approved plan comment for non-fast-path work.
 3. Approved plan marker: use `PLAN APPROVED` with the same readiness matrix as `.pi/extensions/beads-dispatch/index.ts`:
    ```text
    PLAN APPROVED
@@ -47,7 +47,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    dispatch_supervisor(beadId=<ID>)
    # optional explicit override when needed: dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
-5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
+5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 6. After supervisor returns, inspect status/report.
 7. If completed and bead is ready for review, use the typed transition guard instead of raw `bd update --status inreview` when available:
    ```bash

@@ -18,6 +18,16 @@ Pi domain rules for logging, locale sync, UI constraints, frontend review, and s
 Pi agent contracts, reporting vocabulary, and model guidance: `.pi/agents/README.md`.
 Progress is tracked in bd, not as markdown task lists.
 
+## Pi branch naming and worktree naming
+
+Canonical Pi task branch naming is `<type>/<bead-suffix>-<domain-or-component>-<purpose>`. `type` maps work intent to `feat` for feature work, `fix` for bugs, `docs` for docs-only changes, `test` for tests/benchmarks, `ci` for CI automation, `refactor` for refactors, `task` for workflow/general tasks, and `chore` for maintenance. The `bead-suffix` is the short suffix after the last hyphen in the bd id (`beads-task-issue-tracker-lgok` → `lgok`), not the full project bead id.
+
+Canonical Pi worktree directory naming is the branch suffix without `<type>/`, and it must exactly match the branch suffix: branch `task/lgok-branch-worktree-naming` uses worktree basename `lgok-branch-worktree-naming`. Worktree basenames are lowercase, filesystem-safe, and descriptive enough to understand the task without opening bd.
+
+Good examples: `feat/lgok-frontend-filtering`, `fix/lgok-sync-status`, `docs/lgok-workflow-contract`, `refactor/lgok-policy-parser`, `test/lgok-policy-coverage`, `chore/lgok-dependency-maintenance`, `ci/lgok-vitest-workflow`, `task/lgok-branch-worktree-naming`. Bad examples: `task/lgok` (missing domain/purpose), `task/beads-task-issue-tracker-lgok-branch-worktree-naming` (full bead id), `task/work` (not descriptive), worktree basename `other-name` for branch `task/lgok-branch-worktree-naming` (suffix mismatch).
+
+This is enforced by targeted `.pi/extensions/beads-policy` validation for new task-like worktree creation under the project worktree root: `feat|fix|docs|refactor|test|chore|ci|task` branches must use the canonical branch suffix and matching worktree basename. List/remove/prune/info and non-task smoke/orphan worktrees without a task-like branch prefix remain outside this naming enforcement.
+
 ## Evidence Before Claims (Iron Law)
 
 Completion reports and status claims must be backed by fresh evidence in the same message. Do not write hedging claims like “should work”, “probably”, “seems”, “looks correct”, “выглядит корректно”, “должно работать”, “наверное”, or “вроде проходит”.

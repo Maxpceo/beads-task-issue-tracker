@@ -1919,22 +1919,66 @@ function splitShellSegments(command: string): string[] {
 	return segments;
 }
 
-function extractWorktreePathFromSegment(segment: string): string | undefined {
-	const match = segment.match(/\b(?:bd\s+worktree\s+create|git\s+worktree\s+add)\s+(.+)$/);
-	const args = match?.[1];
-	if (!args) return undefined;
-	const tokens = args.match(/(?:"[^"]+"|'[^']+'|\S+)/g) ?? [];
-	for (let index = 0; index < tokens.length; index += 1) {
-		const token = tokens[index];
-		if (!token) continue;
-		if (["--branch", "-b", "-B", "--orphan", "--reason"].includes(token)) {
-			index += 1;
-			continue;
+interface WorktreeCreateCommand {
+	kind: "bd" | "git";
+	path?: string;
+	branch?: string;
+}
+
+const TASK_WORKTREE_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
+
+function parseWorktreeCreateSegment(segment: string): WorktreeCreateCommand | undefined {
+	const tokens = shellTokens(segment);
+	const bdIndex = tokens.findIndex((token, index) => token === "bd" && tokens[index + 1] === "worktree" && tokens[index + 2] === "create");
+	if (bdIndex !== -1) {
+		let worktreePath: string | undefined;
+		let branch: string | undefined;
+		for (let index = bdIndex + 3; index < tokens.length; index += 1) {
+			const token = tokens[index];
+			if (!token) continue;
+			if (token === "--branch") {
+				branch = tokens[index + 1];
+				index += 1;
+				continue;
+			}
+			if (token.startsWith("--branch=")) {
+				branch = token.slice("--branch=".length);
+				continue;
+			}
+			if (["--orphan", "--reason"].includes(token)) {
+				index += 1;
+				continue;
+			}
+			if (token.startsWith("-")) continue;
+			if (!worktreePath) worktreePath = token;
 		}
-		if (token.startsWith("-")) continue;
-		return token;
+		return { kind: "bd", path: worktreePath, branch };
 	}
+
+	const gitIndex = tokens.findIndex((token, index) => token === "git" && tokens[index + 1] === "worktree" && tokens[index + 2] === "add");
+	if (gitIndex !== -1) {
+		let worktreePath: string | undefined;
+		let branch: string | undefined;
+		for (let index = gitIndex + 3; index < tokens.length; index += 1) {
+			const token = tokens[index];
+			if (!token) continue;
+			if (token === "-b" || token === "-B") {
+				branch = tokens[index + 1];
+				index += 1;
+				continue;
+			}
+			if (token === "--detach" || token === "--force" || token === "--guess-remote" || token === "--no-guess-remote") continue;
+			if (token.startsWith("-")) continue;
+			if (!worktreePath) worktreePath = token;
+		}
+		return { kind: "git", path: worktreePath, branch };
+	}
+
 	return undefined;
+}
+
+function extractWorktreePathFromSegment(segment: string): string | undefined {
+	return parseWorktreeCreateSegment(segment)?.path;
 }
 
 function invalidWorktreePath(command: string, cwd?: string): string | undefined {
@@ -1948,6 +1992,29 @@ function invalidWorktreePath(command: string, cwd?: string): string | undefined 
 		const resolved = realpathExistingOrParent(normalizeFsPath(unquoted, cwd));
 		const allowedRoot = realpathExistingOrParent(WORKTREE_ROOT);
 		if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) return unquoted;
+	}
+	return undefined;
+}
+
+
+function worktreeNamingBlockReason(command: string, cwd?: string, workflowState: WorkflowStateSnapshot = {}): string | undefined {
+	for (const segment of splitShellSegments(command)) {
+		const parsed = parseWorktreeCreateSegment(segment);
+		if (!parsed?.path || !parsed.branch) continue;
+		const [prefix, ...suffixParts] = parsed.branch.split("/");
+		const suffix = suffixParts.join("/");
+		if (!TASK_WORKTREE_BRANCH_PREFIXES.has(prefix) || !suffix) continue;
+		const resolvedPath = realpathExistingOrParent(normalizeFsPath(parsed.path, cwd));
+		if (!isPathInsideOrEqual(resolvedPath, WORKTREE_ROOT)) continue;
+		const basename = path.basename(resolvedPath);
+		const expectedFormat = "<type>/<bead-suffix>-<domain-or-component>-<purpose> with worktree basename equal to branch suffix";
+		if (basename !== suffix) return `Заблокировано: canonical worktree naming требует, чтобы worktree basename (${basename}) точно совпадал с branch suffix (${suffix}) для ${parsed.branch}. Формат: ${expectedFormat}.`;
+		if (/^beads-task-issue-tracker-[a-z0-9]+(?:-|$)/i.test(suffix)) return `Заблокировано: branch/worktree suffix не должен использовать полный project bead id (${suffix}); используй короткий bead suffix, например lgok-branch-worktree-naming.`;
+		if (!/^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$/.test(suffix)) return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
+		if (workflowState.activeBead) {
+			const activeSuffix = workflowState.activeBead.split("-").pop();
+			if (activeSuffix && !suffix.startsWith(`${activeSuffix}-`)) return `Заблокировано: active bead ${workflowState.activeBead} требует branch/worktree suffix с префиксом ${activeSuffix}-; получен ${suffix}.`;
+		}
 	}
 	return undefined;
 }
@@ -2489,6 +2556,15 @@ export function evaluateBashPolicy(
 			policy: "blockWorktreeInsideRepo",
 			block: true,
 			reason: `Заблокировано: worktree path должен находиться внутри ${WORKTREE_ROOT}; получен ${invalidWorktree}.`,
+		};
+	}
+
+	const worktreeNamingReason = worktreeNamingBlockReason(command, commandCwd, workflowState);
+	if (worktreeNamingReason) {
+		return {
+			policy: "blockWorktreeInsideRepo",
+			block: true,
+			reason: worktreeNamingReason,
 		};
 	}
 
