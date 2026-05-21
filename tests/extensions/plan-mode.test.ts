@@ -60,7 +60,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean } = {}) {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean } = {}) {
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
@@ -103,7 +103,13 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       if (command === 'bd' && args[0] === 'show') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"open"}]', stderr: '', code: 0 }
       if (command === 'bd' && args[0] === 'update') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"in_progress"}]', stderr: '', code: 0 }
       if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '{"ok":true}', stderr: '', code: 0 }
-      if (command === 'git' && args.includes('branch')) return { stdout: 'task/test\n', stderr: '', code: 0 }
+      if (command === 'git' && options.taskScopeGit && args[0] === '-C') {
+        if (args[1] !== '/tmp/task') return { stdout: '', stderr: 'not a git repository', code: 128 }
+        if (args.includes('branch')) return { stdout: 'task/plan-approved\n', stderr: '', code: 0 }
+        if (args.includes('--show-toplevel')) return { stdout: '/tmp/task\n', stderr: '', code: 0 }
+        if (args.includes('HEAD')) return { stdout: 'task123\n', stderr: '', code: 0 }
+      }
+      if (command === 'git' && args.includes('branch')) return { stdout: 'main\n', stderr: '', code: 0 }
       if (command === 'git' && args.includes('--show-toplevel')) return { stdout: '/tmp/project\n', stderr: '', code: 0 }
       if (command === 'git' && args.includes('HEAD')) return { stdout: 'abc123\n', stderr: '', code: 0 }
       return { stdout: '', stderr: '', code: 0 }
@@ -359,6 +365,82 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ state: 'implementing', activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(activeTools.at(-1)).toEqual(expectedNormalTools)
     expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
+  })
+
+  it('workflow_plan_approved prefers explicit approved task worktree scope over main ctx cwd', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-task-scope', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: continue in the approved task worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow state keeps task scope.',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/task',
+        'START_COMMIT: task123',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    const commentCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(commentCall?.args[3]).toContain('BRANCH: task/plan-approved')
+    expect(commentCall?.args[3]).toContain('WORKTREE: /tmp/task')
+    expect(commentCall?.args[3]).toContain('START_COMMIT: task123')
+    expect(workflowUpdates.at(-1)).toMatchObject({
+      state: 'implementing',
+      activeBead: 'bead-plan',
+      branch: 'task/plan-approved',
+      worktreePath: '/tmp/task',
+      startCommit: 'task123',
+      planMode: 'off',
+      sessionMode: 'implementing',
+      planApproved: true,
+    })
+  })
+
+  it('workflow_plan_approved blocks explicit invalid evidence worktree without bd comment or state update', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-invalid-worktree', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: continue in the approved task worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow state keeps task scope.',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/missing',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('not a readable git worktree')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+  })
+
+  it('workflow_plan_approved blocks explicit evidence branch mismatch without bd comment or state update', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-branch-mismatch', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: continue in the approved task worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow state keeps task scope.',
+        'Branch: task/wrong',
+        'Worktree: /tmp/task',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('does not match worktree branch task/plan-approved')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
   })
 
   it('/plan-auto runs plan-review gate before execution and asks for a revised plan', async () => {

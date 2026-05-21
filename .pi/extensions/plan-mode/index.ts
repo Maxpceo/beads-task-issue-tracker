@@ -232,6 +232,48 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
 	}
 
+	async function detectGitValueAt(cwd: string | undefined, args: string[]): Promise<string | undefined> {
+		const fullArgs = cwd ? ["-C", cwd, ...args] : args;
+		const result = await pi.exec("git", fullArgs);
+		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
+	}
+
+	function latestPlanField(text: string, names: string[]): string | undefined {
+		const namePattern = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+		const regex = new RegExp(`(^|\\n)\\s*(?:${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
+		let value: string | undefined;
+		for (const match of text.matchAll(regex)) {
+			value = match[2]?.trim();
+		}
+		return value;
+	}
+
+	async function approvalScope(ctx: ExtensionContext, planEvidence: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
+		const ctxBranch = await detectGitValue(ctx, ["branch", "--show-current"]);
+		const ctxWorktreePath = await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]);
+		const ctxStartCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+		const evidenceWorktreePath = latestPlanField(planEvidence, ["WORKTREE", "Worktree", "worktree", "worktreePath", "Worktree / cwd"]);
+		const evidenceBranch = latestPlanField(planEvidence, ["BRANCH", "Branch", "branch"]);
+		const evidenceStartCommit = latestPlanField(planEvidence, ["START_COMMIT", "Start-commit", "Start commit", "startCommit", "start"]);
+
+		if (!evidenceWorktreePath) {
+			if (evidenceBranch) return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
+			return { branch: ctxBranch, worktreePath: ctxWorktreePath, startCommit: ctxStartCommit };
+		}
+
+		const worktreePath = await detectGitValueAt(evidenceWorktreePath, ["rev-parse", "--show-toplevel"]);
+		if (worktreePath !== evidenceWorktreePath) return { error: `approved plan evidence worktree is not a readable git worktree: ${evidenceWorktreePath}` };
+
+		const branch = await detectGitValueAt(worktreePath, ["branch", "--show-current"]);
+		if (evidenceBranch && branch !== evidenceBranch) return { error: `approved plan evidence branch ${evidenceBranch} does not match worktree branch ${branch ?? "<unknown>"}` };
+
+		return {
+			branch: branch ?? evidenceBranch ?? ctxBranch,
+			worktreePath,
+			startCommit: evidenceStartCommit ?? await detectGitValueAt(worktreePath, ["rev-parse", "HEAD"]) ?? ctxStartCommit,
+		};
+	}
+
 	function currentSessionKey(ctx: ExtensionContext): string | undefined {
 		const manager = ctx.sessionManager;
 		const sessionId = manager?.getSessionId?.();
@@ -277,9 +319,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const evidenceError = validatePlanEvidence(params.planEvidence);
 		if (evidenceError) return toolText(`workflow_plan_approved blocked: ${evidenceError}`, { ok: false, error: evidenceError });
 
-		const branch = await detectGitValue(ctx, ["branch", "--show-current"]);
-		const worktreePath = await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]);
-		const startCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+		const { branch, worktreePath, startCommit, error: approvalScopeError } = await approvalScope(ctx, params.planEvidence);
+		if (approvalScopeError) return toolText(`workflow_plan_approved blocked: ${approvalScopeError}`, { ok: false, error: approvalScopeError });
 		const sessionKey = currentSessionKey(ctx);
 		const approvedAt = new Date().toISOString();
 		const comment = [
