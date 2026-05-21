@@ -1159,6 +1159,65 @@ REASON: Recovery fix for merge quality gate
     }
   })
 
+
+  function createRepoWithLargeNonRiskyDiff(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-active-large-'))
+    execFileSync('git', ['init', '-b', 'task/current-active'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    mkdirSync(join(repo, 'tests/utils'), { recursive: true })
+    for (let i = 0; i < 4; i += 1) writeFileSync(join(repo, `tests/utils/active-${i}.test.ts`), `export const before${i} = true\n`)
+    execFileSync('git', ['add', 'tests/utils/active-0.test.ts', 'tests/utils/active-1.test.ts', 'tests/utils/active-2.test.ts', 'tests/utils/active-3.test.ts'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: repo, stdio: 'ignore' })
+    for (let i = 0; i < 4; i += 1) writeFileSync(join(repo, `tests/utils/active-${i}.test.ts`), `export const after${i} = true\n`)
+    execFileSync('git', ['add', 'tests/utils/active-0.test.ts', 'tests/utils/active-1.test.ts', 'tests/utils/active-2.test.ts', 'tests/utils/active-3.test.ts'], { cwd: repo, stdio: 'ignore' })
+    return repo
+  }
+
+  async function evaluateCommitWithEntries(repo: string, entries: Array<Record<string, unknown>>) {
+    let handler: any
+    const pi = { on: (event: string, h: any) => { if (event === 'tool_call') handler = h }, registerCommand() {} }
+    const ctx = {
+      cwd: repo,
+      sessionManager: { getSessionId: () => 'session-current', getEntries: () => entries },
+      ui: { notify() {}, setStatus() {}, theme: { fg: (_style: string, value: string) => value } },
+    }
+    beadsPolicyExtension(pi as any)
+    return handler({ toolName: 'bash', input: { command: 'git commit -m "test"' } }, ctx)
+  }
+
+  it('allows fastPathDiscipline commit-like command with current-session active bead typed workflow-state', async () => {
+    const repo = createRepoWithLargeNonRiskyDiff()
+    const startCommit = execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+    try {
+      const result = await evaluateCommitWithEntries(repo, [{ type: 'custom', customType: 'workflow-state', data: {
+        activeBead: 'bead-active', state: 'implementing', branch: 'task/current-active', worktreePath: repo,
+        startCommit, sessionKey: 'id:session-current', runtimeOwnerKey, planApproved: true, bdStatus: 'in_progress',
+      } }])
+
+      expect(result?.reason ?? '').not.toContain('fastPathDiscipline')
+      expect(result?.reason ?? '').not.toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['without active bead', { state: 'idle', runtimeOwnerKey }],
+    ['stale active bead', { activeBead: 'bead-active', state: 'implementing', startCommit: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef', sessionKey: 'id:session-current', runtimeOwnerKey, planApproved: true, bdStatus: 'in_progress' }],
+    ['foreign active bead', { activeBead: 'bead-active', state: 'implementing', branch: 'task/foreign-active', worktreePath: '/repo/foreign', sessionKey: 'id:foreign-session', runtimeOwnerKey: 'runtime:foreign', planApproved: true, bdStatus: 'in_progress' }],
+  ])('blocks fastPathDiscipline commit-like command for %s typed workflow-state', async (_name, data) => {
+    const repo = createRepoWithLargeNonRiskyDiff()
+    try {
+      const result = await evaluateCommitWithEntries(repo, [{ type: 'custom', customType: 'workflow-state', data }])
+      expect(result?.reason).toContain('fastPathDiscipline')
+      expect(result?.reason).toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
   it('blocks risky mutation when same-session comments only have dispatch evidence', () => {
     const repo = createRepoWithRiskyPolicyDiff()
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
