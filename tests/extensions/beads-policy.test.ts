@@ -386,6 +386,22 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
+  it('allows safe merged remote task branch cleanup after merge flow returns to main', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+        { branch: 'main', mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).not.toBe('blockDestructiveCommand')
+      expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
   it.each([
     ['wrong remote', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} upstream :refs/heads/${f.branch}`],
     ['other branch', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/task/other:${f.branchOid} origin :refs/heads/task/other`],
@@ -433,6 +449,60 @@ describe('Pi safe merged remote branch cleanup policy', () => {
 
       expect(decision?.policy).toBe('blockDestructiveCommand')
       expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('merge-slot evidence')
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('reports stale lease for safe-shaped remote task branch deletion', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.mainOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('lease stale/mismatched')
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('reports missing remote task branch for safe-shaped deletion', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      execFileSync('git', ['push', 'origin', `:refs/heads/${fixture.branch}`], { cwd: fixture.repo, stdio: 'ignore' })
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain(`не видит origin/${fixture.branch}`)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('reports missing origin/main for safe-shaped deletion', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      execFileSync('git', ['update-ref', '-d', 'refs/heads/main'], { cwd: fixture.remote, stdio: 'ignore' })
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('не видит origin/main')
     } finally {
       cleanupFixture(fixture)
     }
@@ -456,6 +526,7 @@ describe('Pi safe merged remote branch cleanup policy', () => {
 
       expect(decision?.policy).toBe('blockDestructiveCommand')
       expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('ancestor of origin/main')
     } finally {
       cleanupFixture(fixture)
     }
