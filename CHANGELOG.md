@@ -46,6 +46,7 @@
 
 ### Fixed
 
+- **Pi PLAN APPROVED dispatch readiness** (`beads-task-issue-tracker-zzpo`): `dispatch_supervisor` now accepts the current `plan-bead` auto-execute contract (`START_COMMIT:` plus `Plan:` intent) while preserving the legacy `Start-commit:` plus `Problem:`/`Approach:` contract, and reports missing readiness fields with actionable alias-aware messages.
 - **Pi review approved verdict parsing** (`beads-task-issue-tracker-qjf2`): `review_bead` now treats assistant `message_update` final text as the authoritative reviewer answer even when encrypted thinking, reasoning deltas, or tool output contain earlier `NOT APPROVED` markers, so approved reviews record durable `CODE REVIEW: APPROVED` evidence and follow the approved lifecycle path.
 - **Pi main-start review routing** (`beads-task-issue-tracker-77mr`): `workflow_submit_for_review` now writes durable `WORKFLOW SUBMIT FOR REVIEW` branch/worktree/start/end evidence, preserves the recorded task scope when launched from `main`, and lets `review_bead` route typed reviews to the task worktree without manual cwd overrides.
 - **Pi review NOT_APPROVED status handling** (`beads-task-issue-tracker-kq47`): `review_bead` now recognizes exact approved verdict markers only, preserves reviewer output for non-approved reviews, and restores the bead to `inreview` after a `NOT_APPROVED` verdict instead of advancing the review lifecycle.
