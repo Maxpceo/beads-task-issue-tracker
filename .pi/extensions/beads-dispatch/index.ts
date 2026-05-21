@@ -153,18 +153,31 @@ const TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred"]);
 const ALLOWED_SUPERVISOR_STATUSES = new Set(["in_progress"]);
 
 const VAGUE_ACCEPTANCE_PATTERN = /\b(done|works|fixed|complete|completed|ok|looks good|as expected|готово|работает|исправлено|завершено|нормально)\b/i;
-const REQUIRED_PLAN_FIELDS = [
-	"PLAN APPROVED",
-	"Approved-by:",
-	"Approved-at:",
-	"Start-commit:",
-	"Problem:",
-	"Approach:",
-	"Rejected alternatives:",
-	"Files to change:",
-	"Acceptance:",
-	"Verification / acceptance checks:",
-];
+export const PLAN_APPROVED_READINESS_MATRIX = {
+	marker: "PLAN APPROVED",
+	fields: [
+		{ name: "Approved-by", aliases: ["Approved-by:"] },
+		{ name: "Approved-at", aliases: ["Approved-at:"] },
+		{ name: "Start commit", aliases: ["Start-commit:", "START_COMMIT:"] },
+		{ name: "Files to change", aliases: ["Files to change:"] },
+		{ name: "Acceptance", aliases: ["Acceptance:"] },
+		{ name: "Verification / acceptance checks", aliases: ["Verification / acceptance checks:"] },
+	],
+	intent: [
+		{ name: "current Plan", aliases: ["Plan:"] },
+		{ name: "legacy Problem + Approach", aliases: ["Problem:", "Approach:"] },
+	],
+	acceptedContextFields: [
+		"Problem:",
+		"Approach:",
+		"Rejected alternatives:",
+		"Edge-case review:",
+		"Worktree / cwd:",
+		"WORKTREE_LOCK:",
+		"Risks / rollback:",
+		"AUTO_EXECUTE_ALLOWED: true",
+	],
+} as const;
 
 function hasBullet(section: string): boolean {
 	return /(^|\n)\s*([-*]|\d+\.)\s+\S+/.test(section);
@@ -194,9 +207,27 @@ function getPlanComment(comments: BeadComment[]): string | undefined {
 	return comments.map((comment) => comment.text ?? "").reverse().find((text) => /PLAN APPROVED/.test(text));
 }
 
+function hasPlanAlias(plan: string, alias: string): boolean {
+	const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(`(^|\\n)\\s*${escaped}`).test(plan);
+}
+
 function missingPlanFields(plan: string | undefined): string[] {
-	if (!plan) return REQUIRED_PLAN_FIELDS;
-	return REQUIRED_PLAN_FIELDS.filter((field) => !plan.includes(field));
+	if (!plan) {
+		return [
+			PLAN_APPROVED_READINESS_MATRIX.marker,
+			...PLAN_APPROVED_READINESS_MATRIX.fields.map((field) => `${field.name} (${field.aliases.join(" or ")})`),
+			"Implementation intent (Plan: or Problem: + Approach:)",
+		];
+	}
+	const missing: string[] = [];
+	if (!plan.includes(PLAN_APPROVED_READINESS_MATRIX.marker)) missing.push(PLAN_APPROVED_READINESS_MATRIX.marker);
+	for (const field of PLAN_APPROVED_READINESS_MATRIX.fields) {
+		if (!field.aliases.some((alias) => hasPlanAlias(plan, alias))) missing.push(`${field.name} (${field.aliases.join(" or ")})`);
+	}
+	const hasIntent = PLAN_APPROVED_READINESS_MATRIX.intent.some((group) => group.aliases.every((alias) => hasPlanAlias(plan, alias)));
+	if (!hasIntent) missing.push("Implementation intent (Plan: or Problem: + Approach:)");
+	return missing;
 }
 
 function dependencyId(dep: DependencyInfo): string | undefined {

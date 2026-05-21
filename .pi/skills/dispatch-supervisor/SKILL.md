@@ -22,20 +22,26 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    git rev-parse HEAD
    ```
    Required: status `in_progress`, assignee is this session/user, no unresolved blockers, self-contained handoff sections from `AGENTS.md`, concrete acceptance/verification bullets, labels, and an approved plan comment for non-fast-path work.
-3. Approved plan marker: use `PLAN APPROVED` with these fields so `.pi/extensions/beads-dispatch/index.ts` can validate readiness:
+3. Approved plan marker: use `PLAN APPROVED` with the same readiness matrix as `.pi/extensions/beads-dispatch/index.ts`:
    ```text
    PLAN APPROVED
    Approved-by: <user/orchestrator>
    Approved-at: <ISO/date>
-   Start-commit: <git sha>
+   Start-commit: <git sha> # or START_COMMIT: <git sha>
+   Files to change: <paths>
+   Plan: <implementation steps> # or legacy Problem: + Approach:
    Problem: <summary>
    Approach: <summary>
    Rejected alternatives: <summary>
-   Files to change: <paths>
+   Edge-case review: <edge cases>
+   Worktree / cwd: <path>
+   WORKTREE_LOCK: <mutation scope>
    Acceptance: <observable checks>
    Verification / acceptance checks: <commands/manual checks>
+   Risks / rollback: <risks and rollback>
+   AUTO_EXECUTE_ALLOWED: true
    ```
-   Legacy comments like `PLAN (approved ...)` are not sufficient for typed dispatch unless a compatibility change is intentionally implemented.
+   Required readiness fields are the marker, approval metadata, start commit, files, acceptance, verification, and implementation intent (`Plan:` or `Problem:` + `Approach:`). The other listed fields are accepted context fields and should stay synchronized with `plan-bead`. Legacy comments like `PLAN (approved ...)` are not sufficient for typed dispatch.
 4. Call typed tool, not raw subagent:
    ```text
    dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
