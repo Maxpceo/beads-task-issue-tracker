@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { requireTaskToolTarget, taskScopeErrorToPolicyReason } from "../worktree-scope/index";
 interface ExtensionAPI {
 	on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: any): void;
@@ -746,36 +747,12 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 function requiredToolCwdDecision(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
 	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	if (!["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].includes(toolName)) return undefined;
-	const required = workflowState.worktreePath;
-	if (!required) {
+	const target = requireTaskToolTarget(toolName, input, workflowState);
+	if (!target.ok) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: `Заблокировано: активный bead ${workflowState.activeBead} имеет WORKTREE_LOCK, но recorded worktree path отсутствует. Используй workflow_reset для stale state, пересоздай worktree или явно подтверди takeover перед запуском ${toolName}.`,
-		};
-	}
-	if (!fs.existsSync(required)) {
-		return {
-			policy: "enforceActiveWorktreeCwd",
-			block: true,
-			reason: `Заблокировано: активный bead ${workflowState.activeBead} привязан к отсутствующему worktree ${required}. Пересоздай worktree, используй workflow_reset для stale state или явно подтверди takeover перед запуском ${toolName}.`,
-		};
-	}
-	const provided = String(input.cwd ?? input.worktreePath ?? "");
-	if (!provided || !isPathInsideOrEqual(normalizeFsPath(provided), required)) {
-		return {
-			policy: "enforceActiveWorktreeCwd",
-			block: true,
-			reason: `Заблокировано: ${toolName} для active bead ${workflowState.activeBead} должен запускаться с cwd/worktreePath ${required}.`,
-		};
-	}
-	const expectedBranch = workflowState.branch;
-	const actualBranch = getCurrentBranch(required);
-	if (expectedBranch && actualBranch && actualBranch !== expectedBranch) {
-		return {
-			policy: "enforceActiveWorktreeCwd",
-			block: true,
-			reason: `Заблокировано: активный bead ${workflowState.activeBead} привязан к branch ${expectedBranch}, но worktree ${required} находится на ${actualBranch}. Используй workflow_reset для stale state, пересоздай worktree или явно подтверди takeover перед запуском ${toolName}.`,
+			reason: taskScopeErrorToPolicyReason(target.error, workflowState.activeBead, `запуском ${toolName}`),
 		};
 	}
 	return undefined;

@@ -132,6 +132,12 @@ Terminal bd statuses for per-task blocking are `closed`, `blocked`, or explicit 
 
 Stacked branches must review exact per-task scopes. `review_bead` accepts `startCommit` and `endCommit`; if `endCommit` is absent it uses the latest `END_COMMIT:` comment or `HEAD`. Supervisors/orchestrators should record `/workflow-update end=<sha>` or an `END_COMMIT: <sha>` comment before moving from implementation to review when later commits may be added for other beads.
 
+## Structured task worktree routing
+
+Main checkout is a supported Pi entrypoint. For an active bead, workflow-state records the structured task scope (`activeBead`, `branch`, `worktreePath`, `startCommit`, optional `endCommit`). Typed workflow tools (`dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, `review_bead`) resolve that scope via `.pi/extensions/worktree-scope/index.ts` and route their subprocesses/checks to the task worktree even when the Pi session started from `main`.
+
+`WORKTREE_LOCK` remains a raw-shell safety fallback, not the primary routing mechanism. Raw mutating shell commands, tests, bd writes, and git operations must still execute from the task worktree or a supported explicit cwd form (`env -C`, leading `cd`, tool path options). Ambiguous shell constructs, missing/deleted worktrees, branch mismatches, protected-branch task scopes, and outside explicit typed targets fail closed with actionable policy reasons.
+
 ## Workflow state responsibility split
 
 | Component | Responsibility |

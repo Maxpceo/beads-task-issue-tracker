@@ -60,6 +60,40 @@ describe('review_workflow scoped review', () => {
   })
 
 
+  it('routes review_bead from main-start context to structured task worktree without explicit worktreePath', async () => {
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const taskWorktree = process.cwd()
+    const branch = 'task/xl6v-structured-cwd-routing'
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') return { stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: ${branch}\nWORKTREE: ${taskWorktree}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse --show-toplevel`) return { stdout: `${taskWorktree}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} diff --name-only aaa1111..bbb2222`) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    reviewWorkflowExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, {
+      cwd: '/repo/main',
+      sessionManager: {
+        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, startCommit: 'aaa1111', endCommit: 'bbb2222', sessionKey: 'session:test' } }],
+      },
+    })
+
+    expect(execCalls).toContainEqual({ command: 'git', args: ['-C', taskWorktree, 'diff', '--name-only', 'aaa1111..bbb2222'] })
+    expect(result.details.worktreePath).toBe(taskWorktree)
+  })
+
   it('accepts explicit task worktree dispatch evidence from a main-session orchestrator', async () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []

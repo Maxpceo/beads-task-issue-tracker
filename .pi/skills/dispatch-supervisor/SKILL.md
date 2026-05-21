@@ -44,9 +44,10 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    Required readiness fields are the marker, approval metadata, start commit, files, acceptance, verification, and implementation intent (`Plan:` or `Problem:` + `Approach:`). The other listed fields are accepted context fields and should stay synchronized with `plan-bead`. Legacy comments like `PLAN (approved ...)` are not sufficient for typed dispatch.
 4. Call typed tool, not raw subagent:
    ```text
-   dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
+   dispatch_supervisor(beadId=<ID>)
+   # optional explicit override when needed: dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
-5. The tool fail-closes readiness, requires/uses `cwd=workflowState.worktreePath` when a task worktree lock exists, collects cwd branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
+5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 6. After supervisor returns, inspect status/report.
 7. If completed and bead is ready for review, use the typed transition guard instead of raw `bd update --status inreview` when available:
    ```bash

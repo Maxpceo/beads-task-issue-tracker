@@ -23,11 +23,13 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    If `workflow_status` shows `bdStatus=inreview`, do not stop with a normal final report before this review workflow completes. If `review_bead`/`dispatch_reviewer` is unavailable or ownership is ambiguous, return an explicit `BLOCKED` report with the exact blocker and next action; `workflow_complete(state=blocked|deferred, reason=<...>)` is the only terminal local state allowed before review in that case.
 3. Prefer executable review workflow when available. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
    ```text
-   review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>, worktreePath=<task-worktree-path>)
+   review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>)
+   # optional explicit override when needed: review_bead(beadId=<ID>, worktreePath=<task-worktree-path>)
    ```
-4. Run review through typed task-worktree routing. In a main-start session, pass `worktreePath=<task-worktree-path>` so `review_bead` runs git diff/checks/reviewer from that worktree and validates it against current-session or durable dispatch/submit evidence; no manual shell cwd override is required for this typed path. Do not run raw mutating review/check shell commands from `main`; only read-only inspection may happen there. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
+4. Run review through typed task-worktree routing. In a main-start session, `review_bead` resolves `workflowState.worktreePath`, runs git diff/checks/reviewer from that worktree, and validates it against current-session or durable dispatch/submit evidence; no manual shell cwd override is required for this typed path. Do not run raw mutating review/check shell commands from `main`; only read-only inspection may happen there. Until `review_bead` covers another needed scenario, use typed reviewer dispatch:
    ```text
-   dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>)
+   dispatch_reviewer(beadId=<ID>)
+   # optional explicit override when needed: dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
 5. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.
 6. Simplify/reuse pass:

@@ -4,11 +4,18 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent } from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
+import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	registerTool(tool: any): void;
 	events: { emit(name: string, event: Record<string, unknown>): void };
+}
+
+interface ToolContext {
+	cwd: string;
+	ui?: any;
+	sessionManager?: { getEntries?: () => Array<{ type: string; customType?: string; data?: unknown }> };
 }
 
 interface BeadInfo {
@@ -447,9 +454,10 @@ async function dispatch(
 	params: { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean },
 	signal?: AbortSignal,
 	defaultCwd?: string,
-	ctx?: { ui?: any },
+	ctx?: ToolContext,
 ): Promise<DispatchResult> {
-	const cwd = params.cwd ?? defaultCwd ?? process.cwd();
+	const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
+	const cwd = params.cwd ?? (stateScope.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
 	if (mode === "supervisor") {
@@ -525,7 +533,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Supervisor",
 		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd, ctx);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
@@ -540,7 +548,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Reviewer",
 		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd, ctx);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
@@ -555,7 +563,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Docs Agent",
 		description: "Typed beads workflow dispatch to the Pi documentation-expert agent.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
+		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const result = await dispatch(pi, "docs", params, signal, ctx.cwd, ctx);
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
