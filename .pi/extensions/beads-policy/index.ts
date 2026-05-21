@@ -844,6 +844,100 @@ function commandIsTrackerOnlyBdCreate(command: string, cwd: string): boolean {
 	);
 }
 
+function segmentHasAnyMutatingBdCommand(segment: string): boolean {
+	return /\bbd\s+(create|new|update|close|reopen|delete|comments\s+(add|delete|rm)|dep\s+(add|remove|rm)|merge-slot\s+(acquire|release)|dolt\s+(commit|push|pull))\b/.test(
+		segment,
+	);
+}
+
+function dependencyValueReferencesActiveBead(value: string | undefined, activeBead: string): boolean {
+	if (!value) return false;
+	return value
+		.split(/[\s,]+/)
+		.map((part) => part.trim())
+		.filter(Boolean)
+		.some((part) => part === activeBead || part.endsWith(`:${activeBead}`));
+}
+
+function createRelationshipReferencesActiveBead(segment: string, activeBead: string): boolean {
+	const tokens = shellTokens(segment);
+	const createIndex = tokens.findIndex((token, index) => (token === "create" || token === "new") && tokens[index - 1] === "bd");
+	if (createIndex < 0) return false;
+	for (let index = createIndex + 1; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token) continue;
+		if (token === "--deps" || token === "--parent") {
+			if (dependencyValueReferencesActiveBead(tokens[index + 1], activeBead)) return true;
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--deps=") && dependencyValueReferencesActiveBead(token.slice("--deps=".length), activeBead)) return true;
+		if (token.startsWith("--parent=") && dependencyValueReferencesActiveBead(token.slice("--parent=".length), activeBead)) return true;
+	}
+	return false;
+}
+
+function segmentHasSelfContainedCreateForActiveBead(segment: string, activeBead: string): boolean {
+	if (!segmentHasBdCommand(segment, new Set(["create", "new"]))) return false;
+	if (!hasLabel(segment)) return false;
+	const hasDescription = /\s(?:--description|-d)(?:\s|=)|\s--body-file(?:\s|=)|\s--stdin\b/.test(segment);
+	if (!hasDescription) return false;
+	return createRelationshipReferencesActiveBead(segment, activeBead);
+}
+
+function segmentHasCommentAddForActiveBead(segment: string, activeBead: string): boolean {
+	const tokens = shellTokens(segment);
+	const addIndex = tokens.findIndex((token, index) => token === "add" && tokens[index - 1] === "comments" && tokens[index - 2] === "bd");
+	return addIndex >= 0 && tokens[addIndex + 1] === activeBead;
+}
+
+function segmentHasDepAddInvolvingActiveBead(segment: string, activeBead: string): boolean {
+	const tokens = shellTokens(segment);
+	const addIndex = tokens.findIndex((token, index) => token === "add" && tokens[index - 1] === "dep" && tokens[index - 2] === "bd");
+	if (addIndex >= 0) return tokens[addIndex + 1] === activeBead || tokens[addIndex + 2] === activeBead;
+	const depIndex = tokens.findIndex((token, index) => token === "dep" && tokens[index - 1] === "bd");
+	if (depIndex < 0) return false;
+	const issueId = tokens[depIndex + 1];
+	const blocksIndex = tokens.findIndex((token, index) => index > depIndex && (token === "--blocks" || token === "-b"));
+	const blocksId = blocksIndex >= 0 ? tokens[blocksIndex + 1] : undefined;
+	return issueId === activeBead || blocksId === activeBead;
+}
+
+function segmentHasActualMutatingGitOrFs(segment: string): boolean {
+	const tokens = shellTokens(segment);
+	if (tokens.length === 0) return false;
+	const envIndex = envWrappedCommandIndex(tokens);
+	const commandIndex = envIndex ?? 0;
+	const command = tokens[commandIndex] ?? "";
+	if (/^(?:bash|sh|zsh)$/.test(command) && hasShellCommandOption(tokens, commandIndex)) return true;
+	if (command === "git" || /\/git$/.test(command)) {
+		const subcommandIndex = tokens[commandIndex + 1] === "-C" ? commandIndex + 3 : commandIndex + 1;
+		return /^(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag)$/.test(tokens[subcommandIndex] ?? "");
+	}
+	return /^(rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)$/.test(command);
+}
+
+function commandHasActualMutatingGitOrFs(command: string): boolean {
+	return splitShellSegments(command).some(segmentHasActualMutatingGitOrFs);
+}
+
+function commandIsDirtySafeBdEvidenceMutation(command: string, workflowState: WorkflowStateSnapshot): boolean {
+	const activeBead = workflowState.activeBead;
+	if (!activeBead) return false;
+	if (!commandHasMutatingBd(command)) return false;
+	if (hasUnquotedShellOperator(command)) return false;
+	if (hasShellCommandSubstitution(command)) return false;
+	if (commandHasActualMutatingGitOrFs(command)) return false;
+	const mutatingSegments = splitShellSegments(command).filter(segmentHasAnyMutatingBdCommand);
+	if (mutatingSegments.length === 0) return false;
+	return mutatingSegments.every(
+		(segment) =>
+			segmentHasSelfContainedCreateForActiveBead(segment, activeBead) ||
+			segmentHasCommentAddForActiveBead(segment, activeBead) ||
+			segmentHasDepAddInvolvingActiveBead(segment, activeBead),
+	);
+}
+
 function commandHasMutatingGitOrFs(command: string): boolean {
 	return shellExecutableInspectionParts(command).some((part) =>
 		/\b(git\s+(?:-C\s+\S+\s+)?(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag)|rm|rmdir|mv|cp|mkdir|touch|chmod|chown|ln|tee|truncate)\b/.test(
@@ -2162,7 +2256,8 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 
 	if (risky && !supervisorPath) {
 		if (!commandHasMutatingBd(command) && !commandHasMutatingGitOrFs(command)) return undefined;
-		if (commandIsTrackerOnlyBdCreate(command, cwd)) return undefined;
+		if (commandIsDirtySafeBdEvidenceMutation(command, workflowState)) return undefined;
+		if (!activeBead && commandIsTrackerOnlyBdCreate(command, cwd)) return undefined;
 		const scope = currentRecoveryScope(cwd, workflowState.sessionKey);
 		const recoveredBead =
 			recoverableApprovedPlanBead(cwd, scope) ??

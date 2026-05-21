@@ -842,6 +842,144 @@ exit 1
     }
   })
 
+  it('allows scoped self-contained blocker or follow-up bd create when active worktree is dirty', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const command = `bd create "Зафиксировать blocker policy guard" -t bug --label workflow --deps discovered-from:bead-a --description "${russianHandoffDescription}" --json`
+      const decision = evaluateBashPolicy(command, {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+      expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('allows scoped bd comments add and bd dep add evidence when active worktree is dirty', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const commentDecision = evaluateBashPolicy('bd comments add bead-a "BLOCKER evidence: dirty active worktree needs follow-up bead" --json', {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+      const commentMentioningGitDecision = evaluateBashPolicy('bd comments add bead-a "BLOCKER evidence: git add .pi/extensions/beads-policy/index.ts was blocked" --json', {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+      const depDecision = evaluateBashPolicy('bd dep add bead-a blocker-1 --json', {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(commentDecision?.policy).not.toBe('fastPathDiscipline')
+      expect(commentMentioningGitDecision?.policy).not.toBe('fastPathDiscipline')
+      expect(depDecision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks unrelated bd create, comments add, and dep add from dirty risky worktree', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    try {
+      const createDecision = evaluateBashPolicy(`bd create "Зафиксировать unrelated blocker" -t bug --label workflow --deps discovered-from:other-bead --description "${russianHandoffDescription}" --json`, {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+      const createWithActiveInDescriptionDecision = evaluateBashPolicy(`bd create "Зафиксировать unrelated blocker" -t bug --label workflow --deps discovered-from:other-bead --description "${russianHandoffDescription}\n- Mentioned active bead-a only in prose, not in --deps." --json`, {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+      const commentDecision = evaluateBashPolicy('bd comments add other-bead "BLOCKER evidence" --json', {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+      const depDecision = evaluateBashPolicy('bd dep add other-bead blocker-1 --json', {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        planApproved: false,
+      }, { cwd: repo })
+
+      expect(createDecision?.policy).toBe('fastPathDiscipline')
+      expect(createDecision?.block).toBe(true)
+      expect(createWithActiveInDescriptionDecision?.policy).toBe('fastPathDiscipline')
+      expect(createWithActiveInDescriptionDecision?.block).toBe(true)
+      expect(commentDecision?.policy).toBe('fastPathDiscipline')
+      expect(commentDecision?.block).toBe(true)
+      expect(depDecision?.policy).toBe('fastPathDiscipline')
+      expect(depDecision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps terminal bd updates blocked from dirty risky worktree without approved evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const state = {
+      activeBead: 'bead-a',
+      state: 'implementing',
+      bdStatus: 'in_progress',
+      planApproved: false,
+    }
+    try {
+      const closeDecision = evaluateBashPolicy('bd close bead-a --reason done --json', state, { cwd: repo })
+      const terminalUpdateDecision = evaluateBashPolicy('bd update bead-a --status closed --json', state, { cwd: repo })
+
+      expect(closeDecision?.block).toBe(true)
+      expect(terminalUpdateDecision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps risky git and shell execution forms blocked from dirty risky worktree without approved evidence', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const state = {
+      activeBead: 'bead-a',
+      state: 'implementing',
+      bdStatus: 'in_progress',
+      planApproved: false,
+    }
+    try {
+      const gitDecision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', state, { cwd: repo })
+      const chainedGitDecision = evaluateBashPolicy('bd comments add bead-a "BLOCKER evidence" --json && git add .pi/extensions/beads-policy/index.ts', state, { cwd: repo })
+      const pipedGitDecision = evaluateBashPolicy('bd comments add bead-a "BLOCKER evidence" --json | git add .pi/extensions/beads-policy/index.ts', state, { cwd: repo })
+      const substitutionGitDecision = evaluateBashPolicy('bd comments add bead-a "BLOCKER evidence: $(git add .pi/extensions/beads-policy/index.ts)" --json', state, { cwd: repo })
+      const redirectionDecision = evaluateBashPolicy('bd comments add bead-a "BLOCKER evidence" --json > .pi/extensions/beads-policy/index.ts', state, { cwd: repo })
+
+      expect(gitDecision?.policy).toBe('fastPathDiscipline')
+      expect(gitDecision?.block).toBe(true)
+      expect(chainedGitDecision?.policy).toBe('fastPathDiscipline')
+      expect(chainedGitDecision?.block).toBe(true)
+      expect(pipedGitDecision?.policy).toBe('fastPathDiscipline')
+      expect(pipedGitDecision?.block).toBe(true)
+      expect(substitutionGitDecision?.policy).toBe('fastPathDiscipline')
+      expect(substitutionGitDecision?.block).toBe(true)
+      expect(redirectionDecision?.policy).toBe('fastPathDiscipline')
+      expect(redirectionDecision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
   it('allows risky mutation when session state has approved plan evidence', () => {
     const repo = createRepoWithRiskyPolicyDiff()
     try {
