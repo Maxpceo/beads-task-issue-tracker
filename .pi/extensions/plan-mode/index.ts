@@ -22,7 +22,7 @@ import {
 	markCompletedSteps,
 	type TodoItem,
 } from "./utils.js";
-import { requestWorkflowClaim } from "../workflow-state/index";
+import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/index";
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 import {
 	evaluatePlanReviewGate,
@@ -71,6 +71,21 @@ const WorkflowPlanApprovedParams = {
 
 function toolText(text: string, details: Record<string, unknown> = {}) {
 	return { content: [{ type: "text", text }], details };
+}
+
+interface WorkflowStateSnapshot {
+	activeBead?: string;
+	branch?: string;
+	worktreePath?: string;
+	startCommit?: string;
+	sessionKey?: string;
+	runtimeOwnerKey?: string;
+}
+
+function isWorkflowStateSnapshot(value: unknown): value is WorkflowStateSnapshot {
+	if (!value || typeof value !== "object") return false;
+	const state = value as WorkflowStateSnapshot;
+	return typeof state.activeBead === "string";
 }
 
 // Type guard for assistant messages
@@ -248,30 +263,70 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return value;
 	}
 
-	async function approvalScope(ctx: ExtensionContext, planEvidence: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
-		const ctxBranch = await detectGitValue(ctx, ["branch", "--show-current"]);
-		const ctxWorktreePath = await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]);
-		const ctxStartCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+	function latestRecordedWorkflowScope(ctx: ExtensionContext, beadId: string): WorkflowStateSnapshot | undefined {
+		const sessionKey = currentSessionKey(ctx);
+		const entries = ctx.sessionManager?.getEntries?.() ?? [];
+		const candidates = entries
+			.map((entry) => {
+				const typedEntry = entry as { type?: string; customType?: string; data?: unknown };
+				if (typedEntry.type !== "workflow-state" && typedEntry.customType !== "workflow-state") return undefined;
+				return isWorkflowStateSnapshot(typedEntry.data) ? typedEntry.data : undefined;
+			})
+			.filter((state): state is WorkflowStateSnapshot => {
+				if (!state || state.activeBead !== beadId) return false;
+				if (state.sessionKey && sessionKey && state.sessionKey !== sessionKey) return false;
+				return true;
+			});
+		if (candidates.length === 0) return undefined;
+
+		const runtimeOwnerKey = currentRuntimeOwnerKey();
+		const currentRuntimeCandidates = candidates.filter((state) => state.runtimeOwnerKey === runtimeOwnerKey);
+		return (currentRuntimeCandidates.length > 0 ? currentRuntimeCandidates : candidates).at(-1);
+	}
+
+	async function validatedWorktreeScope(source: "approved plan evidence" | "recorded workflow-state", worktreePath: string, expectedBranch?: string, startCommit?: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
+		const detectedWorktreePath = await detectGitValueAt(worktreePath, ["rev-parse", "--show-toplevel"]);
+		if (detectedWorktreePath !== worktreePath) return { error: `${source} worktree is not a readable git worktree: ${worktreePath}` };
+
+		const branch = await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]);
+		if (expectedBranch && branch !== expectedBranch) return { error: `${source} branch ${expectedBranch} does not match worktree branch ${branch ?? "<unknown>"}` };
+
+		return {
+			branch: branch ?? expectedBranch,
+			worktreePath: detectedWorktreePath,
+			startCommit: startCommit ?? await detectGitValueAt(detectedWorktreePath, ["rev-parse", "HEAD"]),
+		};
+	}
+
+	async function approvalScope(ctx: ExtensionContext, beadId: string, planEvidence: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
 		const evidenceWorktreePath = latestPlanField(planEvidence, ["WORKTREE", "Worktree", "worktree", "worktreePath", "Worktree / cwd"]);
 		const evidenceBranch = latestPlanField(planEvidence, ["BRANCH", "Branch", "branch"]);
 		const evidenceStartCommit = latestPlanField(planEvidence, ["START_COMMIT", "Start-commit", "Start commit", "startCommit", "start"]);
 
-		if (!evidenceWorktreePath) {
-			if (evidenceBranch) return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
-			return { branch: ctxBranch, worktreePath: ctxWorktreePath, startCommit: ctxStartCommit };
+		if (evidenceWorktreePath) {
+			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit);
+			if (scoped.error) return scoped;
+			if (!scoped.startCommit) scoped.startCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+			return scoped;
 		}
 
-		const worktreePath = await detectGitValueAt(evidenceWorktreePath, ["rev-parse", "--show-toplevel"]);
-		if (worktreePath !== evidenceWorktreePath) return { error: `approved plan evidence worktree is not a readable git worktree: ${evidenceWorktreePath}` };
+		if (evidenceBranch) return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
 
-		const branch = await detectGitValueAt(worktreePath, ["branch", "--show-current"]);
-		if (evidenceBranch && branch !== evidenceBranch) return { error: `approved plan evidence branch ${evidenceBranch} does not match worktree branch ${branch ?? "<unknown>"}` };
+		const recordedScope = latestRecordedWorkflowScope(ctx, beadId);
+		if (recordedScope?.worktreePath) {
+			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit);
+			if (scoped.error) return scoped;
+			if (!scoped.startCommit) scoped.startCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+			return scoped;
+		}
+		if (recordedScope?.branch || recordedScope?.startCommit) {
+			return { error: "recorded workflow-state has branch/start scope but no worktreePath; refusing to approve against ambiguous main-start cwd" };
+		}
 
-		return {
-			branch: branch ?? evidenceBranch ?? ctxBranch,
-			worktreePath,
-			startCommit: evidenceStartCommit ?? await detectGitValueAt(worktreePath, ["rev-parse", "HEAD"]) ?? ctxStartCommit,
-		};
+		const ctxBranch = await detectGitValue(ctx, ["branch", "--show-current"]);
+		const ctxWorktreePath = await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]);
+		const ctxStartCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
+		return { branch: ctxBranch, worktreePath: ctxWorktreePath, startCommit: ctxStartCommit };
 	}
 
 	function currentSessionKey(ctx: ExtensionContext): string | undefined {
@@ -319,7 +374,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const evidenceError = validatePlanEvidence(params.planEvidence);
 		if (evidenceError) return toolText(`workflow_plan_approved blocked: ${evidenceError}`, { ok: false, error: evidenceError });
 
-		const { branch, worktreePath, startCommit, error: approvalScopeError } = await approvalScope(ctx, params.planEvidence);
+		const { branch, worktreePath, startCommit, error: approvalScopeError } = await approvalScope(ctx, params.beadId, params.planEvidence);
 		if (approvalScopeError) return toolText(`workflow_plan_approved blocked: ${approvalScopeError}`, { ok: false, error: approvalScopeError });
 		const sessionKey = currentSessionKey(ctx);
 		const approvedAt = new Date().toISOString();
