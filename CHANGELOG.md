@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Pi create-bead workflow skill** (`beads-task-issue-tracker-qw1u`): added a project-local `create-bead` skill with self-contained bd issue templates, safe inline heredoc command patterns, labels/types/dependency guidance, verification steps, and guard troubleshooting for tracker-only task creation.
 - **Pi multi-agent plan review gate** (`beads-task-issue-tracker-04jl`): `/plan-auto` now runs required plan-review agents before implementation, requires main-agent adjudication of accepted/rejected findings in a revised plan, blocks execution on missing/blocked reviewers or unresolved blockers, and adds `/plan-review` for strict planning critique without approval or file mutations.
 - **Pi destructive-command safety policy** (`beads-task-issue-tracker-47n0`): `beads-policy` now blocks recursive force deletion, hard resets, forced cleans, unsafe force pushes, branch/stash deletion, destructive infrastructure/SQL commands, and direct access to sensitive paths such as env files, SSH/cloud credentials, kube configs, Terraform state, and private key/cert files while allowing safer workflows such as `--force-with-lease`.
 - **Agent-operable Pi workflow tools** (`beads-task-issue-tracker-u2un`): `.pi/extensions/workflow-state` and `.pi/extensions/plan-mode` now expose typed `workflow_status`, `workflow_claim`, `workflow_reset`, `workflow_update`, `workflow_complete`, `workflow_plan_mode`, and `workflow_plan_approved` tools so agents can claim, plan, approve, review, and clean up workflow sessions without relying on human-only slash commands. Workflow policy and Pi skill docs now describe slash commands as optional UI shortcuts and require typed-tool checkpoints for mutating workflow state.
@@ -46,6 +47,7 @@
 
 ### Fixed
 
+- **Pi tracker-only bead creation guard** (`beads-task-issue-tracker-qw1u`): `beads-policy` now allows safe `bd create` / `bd todo add` tracker writes from protected branches while preserving guards for repository mutations, raw claims, lifecycle transitions, incomplete bead descriptions, and unsafe wrapper/file-substitution patterns.
 - **Pi plan-mode bash allowlist** (`beads-task-issue-tracker-z3i4`): strict planning mode now allows read-only history inspection pipelines such as `git log ... -- path | head -80` while still blocking shell control operators, unsafe pipe targets, mutating `git`/`bd` commands, and `bd comments` mutations.
 - **Pi PLAN APPROVED dispatch readiness** (`beads-task-issue-tracker-zzpo`): `dispatch_supervisor` now accepts the current `plan-bead` auto-execute contract (`START_COMMIT:` plus `Plan:` intent) while preserving the legacy `Start-commit:` plus `Problem:`/`Approach:` contract, and reports missing readiness fields with actionable alias-aware messages.
 - **Pi review approved verdict parsing** (`beads-task-issue-tracker-qjf2`): `review_bead` now treats assistant `message_update` final text as the authoritative reviewer answer even when encrypted thinking, reasoning deltas, or tool output contain earlier `NOT APPROVED` markers, so approved reviews record durable `CODE REVIEW: APPROVED` evidence and follow the approved lifecycle path.
