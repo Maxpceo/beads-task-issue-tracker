@@ -170,7 +170,7 @@ function commandHasRemoteBranchDeletion(command: string): boolean {
 		const tokens = shellTokens(segment);
 		const pushIndex = tokens.findIndex((token, index) => token === "push" && tokens[index - 1] === "git");
 		if (pushIndex < 1) return false;
-		return tokens.slice(pushIndex + 1).some((token) => token === "--delete" || token === "-d" || token.startsWith(":"));
+		return tokens.slice(pushIndex + 1).some((token) => token === "--delete" || token === "-d" || token.startsWith(":") || token.startsWith("+:"));
 	});
 }
 

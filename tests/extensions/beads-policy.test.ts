@@ -407,6 +407,21 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
+  it.each([
+    'git push origin +:refs/heads/main',
+    'git push origin +:refs/heads/task/other',
+  ])('blocks forced remote deletion refspec with merge-slot evidence: %s', (command) => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(command, { branch: fixture.branch, mergeSlotHeld: true }, { cwd: fixture.repo })
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
   it('blocks safe-shaped deletion without observable merge-slot evidence', () => {
     const fixture = createMergedRemoteFixture()
     try {
