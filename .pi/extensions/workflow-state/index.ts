@@ -1,4 +1,5 @@
 import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
+import { validateTaskScopePath } from "../worktree-scope/index";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -329,6 +330,13 @@ function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: Recov
 
 async function workflowStateHasValidRecordedTaskScope(pi: ExtensionAPI, state: WorkflowState): Promise<boolean> {
 	if (!state.worktreePath || !state.branch || PROTECTED_BRANCHES.has(state.branch)) return false;
+	const validation = validateTaskScopePath(state.worktreePath, {
+		expectedBranch: state.branch,
+		getRepoRoot: (cwd) => cwd,
+		getBranch: () => undefined,
+		exists: () => true,
+	});
+	if (!validation.ok) return false;
 	const [actualWorktree, actualBranch] = await Promise.all([
 		detectWorktreePath(pi, state.worktreePath),
 		detectBranch(pi, state.worktreePath),

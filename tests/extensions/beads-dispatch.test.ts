@@ -74,6 +74,40 @@ ${files.map((file) => `- ${file}`).join('\n')}
 }
 
 describe('beads-dispatch path rules integration', () => {
+  it('routes main-start dispatch dryRun to structured task worktree from workflow-state', async () => {
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const taskWorktree = process.cwd()
+    const mainCwd = path.dirname(process.cwd())
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'in_progress', labels: ['dx'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: 'task/current\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse --show-toplevel`) return { stdout: `${taskWorktree}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse HEAD`) return { stdout: 'task-head\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, {
+      cwd: mainCwd,
+      sessionManager: {
+        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch: 'task/xl6v-structured-cwd-routing', worktreePath: taskWorktree, sessionKey: 'session:test' } }],
+      },
+    })
+
+    expect(result.details.worktreePath).toBe(taskWorktree)
+    expect(execCalls).toContainEqual({ command: 'git', args: ['-C', taskWorktree, 'branch', '--show-current'] })
+  })
+
   it('includes src-tauri/CLAUDE.md in supervisor dryRun prompts for src-tauri targets', async () => {
     let registeredTool: any
     const pi = {

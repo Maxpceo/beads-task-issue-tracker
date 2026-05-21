@@ -1825,15 +1825,15 @@ exit 1
     }
   })
 
-  it('allows review_bead from the locked inreview task worktree and blocks missing review cwd', () => {
+  it('allows review_bead from the locked inreview task worktree and routes missing review cwd through structured scope', () => {
     const worktree = createRepo('task/current')
     try {
       const state = lockedState(worktree, { state: 'inreview', bdStatus: 'inreview' })
       const matching = evaluateToolPolicy('review_bead', { beadId: 'bead-a', worktreePath: worktree }, state)
-      const missing = evaluateToolPolicy('review_bead', { beadId: 'bead-a' }, state)
+      const omitted = evaluateToolPolicy('review_bead', { beadId: 'bead-a' }, state)
 
       expect(matching).toBeUndefined()
-      expect(missing?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(omitted).toBeUndefined()
     } finally {
       rmSync(worktree, { recursive: true, force: true })
     }
@@ -2252,15 +2252,19 @@ exit 1
     }
   })
 
-  it('requires typed dispatch/review/docs tools to carry the active worktree cwd', () => {
+  it('allows typed dispatch/review/docs tools to omit cwd because structured task scope routes to the active worktree', () => {
     const worktree = createRepo('task/current')
+    const main = createRepo('main')
     try {
-      const missing = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-a' }, lockedState(worktree))
+      const omitted = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-a' }, lockedState(worktree))
       const matching = evaluateToolPolicy('dispatch_docs_agent', { beadId: 'bead-a', cwd: worktree }, lockedState(worktree))
+      const outside = evaluateToolPolicy('review_bead', { beadId: 'bead-a', worktreePath: main }, lockedState(worktree))
 
-      expect(missing?.policy).toBe('enforceActiveWorktreeCwd')
+      expect(omitted).toBeUndefined()
       expect(matching).toBeUndefined()
+      expect(outside?.policy).toBe('enforceActiveWorktreeCwd')
     } finally {
+      rmSync(main, { recursive: true, force: true })
       rmSync(worktree, { recursive: true, force: true })
     }
   })

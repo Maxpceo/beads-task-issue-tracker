@@ -4,11 +4,18 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { renderPathRulesLoaded } from "../path-rules/index";
 import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard } from "../subagent/dashboard";
+import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	registerTool(tool: any): void;
 	registerCommand(name: string, config: any): void;
 	events?: { emit(name: string, event: Record<string, unknown>): void };
+}
+
+interface ToolContext {
+	cwd: string;
+	ui?: any;
+	sessionManager?: { getEntries?: () => Array<{ type: string; customType?: string; data?: unknown }> };
 }
 
 const ReviewParams = {
@@ -27,6 +34,7 @@ const ReviewParams = {
 interface ReviewResult {
 	beadId: string;
 	branch: string;
+	worktreePath: string;
 	startCommit: string;
 	endCommit: string;
 	changedFiles: string[];
@@ -467,6 +475,7 @@ function render(result: ReviewResult): string {
 	return [
 		`bead=${result.beadId}`,
 		`branch=${result.branch}`,
+		`worktree=${result.worktreePath}`,
 		`startCommit=${result.startCommit}`,
 		`endCommit=${result.endCommit}`,
 		`diff=${result.startCommit}..${result.endCommit}`,
@@ -492,15 +501,17 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 		label: "Review Bead",
 		description: "Executable Pi review workflow: guard inreview, run relevant checks, then run code-reviewer agent.",
 		parameters: ReviewParams,
-		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: { cwd: string; ui?: any }) {
+		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const bead = await getBead(pi, params.beadId);
 				if (bead.status !== "inreview") throw new Error(`review_bead требует status inreview, получен ${bead.status}`);
 				const comments = await getComments(pi, params.beadId);
-				const startCommit = params.startCommit || findStartCommit(comments);
+				const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
+				const matchingStateScope = stateScope.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope : undefined;
+				const startCommit = params.startCommit || findStartCommit(comments) || matchingStateScope?.startCommit;
 				if (!startCommit) throw new Error("startCommit не передан и START_COMMIT не найден в comments.");
-				const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
-				const reviewCwd = params.worktreePath || ctx.cwd;
+				const endCommit = params.endCommit || findEndCommit(comments) || matchingStateScope?.endCommit || "HEAD";
+				const reviewCwd = params.worktreePath || matchingStateScope?.worktreePath || ctx.cwd;
 				const branch = await execRequired(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
 				const worktreePath = await execRequired(pi, "git", ["-C", reviewCwd, "rev-parse", "--show-toplevel"]);
 				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit, endCommit })) {
@@ -520,7 +531,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
 					"Merge validation: per-task bead close may happen before merge; explicit merge-to-main performs PR/origin-main evidence and final session verdict checks.",
 				];
-				const result: ReviewResult = { beadId: params.beadId, branch, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, pathRulesLoaded };
+				const result: ReviewResult = { beadId: params.beadId, branch, worktreePath, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, pathRulesLoaded };
 				if (!params.dryRun) {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
