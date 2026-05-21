@@ -40,6 +40,23 @@ Good candidates include: accessibility labels/tooltips for icon-only controls, d
 
 Do not raise style-only or naming-only preferences unless they have a clear maintainability, accessibility, correctness, or user-impact benefit. Avoid flooding the user with minor suggestions.
 
+## Workflow Friction / Improvement Capture
+
+During workflow execution (`claim`, `plan`, `dispatch`, `review`, `land`, `merge-to-main`, `release`), actively watch for workflow friction that indicates the process contract can be improved. Examples:
+
+- raw third-party stderr/warnings shown to Maxim instead of a Russian actionable workflow message;
+- repeated manual recovery steps that should be a documented preflight or typed tool behavior;
+- policy blocks that reveal a missing earlier guard or unclear instruction;
+- mismatches between skill docs, policy behavior, typed tools, and actual command behavior;
+- stale/foreign/ambiguous worktree or session-state situations that the workflow did not prevent;
+- places where a command sequence had to be manually corrected during execution.
+
+If the friction blocks the current workflow, stop with a blocker report and a concrete next action. If it does not block the current workflow, do not expand scope silently; after the current step is stable, propose it in this format:
+
+`Заметил: <что>. Почему: <workflow impact>. Делать сейчас / отдельным bead / пропустить?`
+
+When Maxim chooses a follow-up, create a self-contained bd issue with the relevant evidence, labels, dependencies, and out-of-scope boundaries. Keep technical command names, file paths, statuses, labels, and identifiers unchanged; user-facing explanations should be in Russian.
+
 ## Workflow Execution Style
 
 For workflow/task execution, proceed through approved steps without intermediate permission prompts. Do not ask “continue?”, “run review?”, “push now?”, or similar when the next step is already part of the approved workflow.
