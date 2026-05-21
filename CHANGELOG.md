@@ -47,6 +47,7 @@
 
 ### Fixed
 
+- **Pi plan approval task worktree scope** (`beads-task-issue-tracker-q4gb`): `workflow_plan_approved` now reads explicit approved-plan `Worktree`, `Branch`, and `START_COMMIT` evidence before updating workflow state, preserving task-worktree scope when approval is recorded from a main checkout and blocking invalid or mismatched evidence without writing bd comments or session state.
 - **Pi merged branch cleanup policy** (`beads-task-issue-tracker-zaha`): `beads-policy` now allows the narrow merge-to-main fallback that deletes an already-merged `task/...` remote branch only with observable merge-slot evidence, fresh `origin/main` ancestry checks, and a matching `--force-with-lease` OID, while preserving destructive-command blocks for unsafe remote branch deletion.
 - **Pi tracker-only bead creation guard** (`beads-task-issue-tracker-qw1u`): `beads-policy` now allows safe `bd create` / `bd todo add` tracker writes from protected branches while preserving guards for repository mutations, raw claims, lifecycle transitions, incomplete bead descriptions, and unsafe wrapper/file-substitution patterns.
 - **Pi plan-mode bash allowlist** (`beads-task-issue-tracker-z3i4`): strict planning mode now allows read-only history inspection pipelines such as `git log ... -- path | head -80` while still blocking shell control operators, unsafe pipe targets, mutating `git`/`bd` commands, and `bd comments` mutations.
