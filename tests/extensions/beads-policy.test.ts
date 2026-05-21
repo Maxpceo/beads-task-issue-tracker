@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -348,6 +348,33 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     try {
       const decision = evaluateBashPolicy(
         `git push --force-with-lease="refs/heads/${fixture.branch}:${fixture.branchOid}" origin ":refs/heads/${fixture.branch}"`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).not.toBe('blockDestructiveCommand')
+      expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('allows documented literal fallback deletion shape without shell variables', () => {
+    const docs = readFileSync('.pi/skills/merge-to-main/SKILL.md', 'utf8')
+    const documentedDeletionLines = docs
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('git push --force-with-lease=') && line.includes(':refs/heads/'))
+
+    expect(documentedDeletionLines).toContain(
+      'git push --force-with-lease=refs/heads/task/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/task/example-branch',
+    )
+    expect(documentedDeletionLines.every((line) => !line.includes('$'))).toBe(true)
+
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
         { branch: fixture.branch, mergeSlotHeld: true },
         { cwd: fixture.repo },
       )

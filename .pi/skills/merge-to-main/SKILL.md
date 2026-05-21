@@ -85,9 +85,10 @@ EOF
     BRANCH_OID=$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')
     MAIN_OID=$(git ls-remote --heads origin main | awk '{print $1}')
     git merge-base --is-ancestor "$BRANCH_OID" "$MAIN_OID"
-    git push --force-with-lease="refs/heads/${BRANCH}:${BRANCH_OID}" origin ":refs/heads/${BRANCH}"
+    # Run the final deletion with literal observed values only; do not use $BRANCH or $BRANCH_OID in this git push.
+    git push --force-with-lease=refs/heads/task/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/task/example-branch
     ```
-    Stop instead of fallback deletion if any condition is false: `BRANCH` is not the active session branch, branch is not canonical `task/...`, branch is missing on `origin`, `origin/main` is missing, branch OID is not an ancestor of main OID, lease OID does not match fresh `git ls-remote` output, merge-slot evidence is not currently held/observable, more than one deletion target would be pushed, or the target is protected/unsafe (`main`, `master`, non-`task/...`). Release merge-slot after successful fallback cleanup or before the blocker report.
+    Replace `task/example-branch` and `0123456789abcdef0123456789abcdef01234567` in the final `git push` with the exact branch name and branch OID observed above. Stop instead of fallback deletion if any condition is false: `BRANCH` is not the active session branch, branch is not canonical `task/...`, branch is missing on `origin`, `origin/main` is missing, branch OID is not an ancestor of main OID, lease OID does not match fresh `git ls-remote` output, merge-slot evidence is not currently held/observable, more than one deletion target would be pushed, or the target is protected/unsafe (`main`, `master`, non-`task/...`). Release merge-slot after successful fallback cleanup or before the blocker report.
 12. Switch to main, pull, and release slot:
     ```bash
     git checkout main
