@@ -53,14 +53,16 @@ EOF
    ```bash
    pnpm test && npx vue-tsc --noEmit
    ```
-7. Push branch via merge-slot:
+7. Push branch via merge-slot. Сначала один раз сохраните имя ветки, затем синхронизируйтесь с `origin/main` явно; не используйте неявный pull+rebase, потому что у новой ветки может не быть upstream:
    ```bash
+   BRANCH=$(git branch --show-current)
    bd merge-slot acquire
-   git pull --rebase
-   git push -u origin "$(git branch --show-current)"
+   git fetch origin main
+   git rebase origin/main
+   git push -u origin "$BRANCH"
    bd merge-slot release
    ```
-   If any error happens after acquire, release merge-slot before reporting.
+   Если любая команда после `bd merge-slot acquire` завершается ошибкой, сначала выполните `bd merge-slot release`, затем остановитесь с русскоязычным отчётом: какая команда упала, её exit code, что уже сделано и следующий безопасный шаг. При конфликте rebase не выполняйте push; сообщите, что нужно разрешить конфликты в текущей ветке, затем продолжить `git rebase --continue` или отменить через `git rebase --abort`.
 8. Create PR with `gh pr create`.
 9. Dispatch docs agent for documentation coverage before merge:
    ```text
