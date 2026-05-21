@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -64,7 +65,7 @@ describe('review_workflow scoped review', () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
     const taskWorktree = process.cwd()
-    const branch = 'task/xl6v-structured-cwd-routing'
+    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim()
     const pi = {
       events: { emit() {} },
       registerTool(tool: any) {

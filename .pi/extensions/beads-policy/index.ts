@@ -272,18 +272,38 @@ function hasObservableMergeSlotEvidence(workflowState: WorkflowStateSnapshot, op
 	return workflowState.mergeSlotHeld === true || currentActorHoldsBdMergeSlot(cwd, options);
 }
 
-function isSafeMergedRemoteBranchCleanup(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): boolean {
+function mergedRemoteBranchCleanupBlockReason(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): string | undefined {
 	const parsed = parseSafeRemoteDeletionCommand(command);
-	if (!parsed) return false;
+	if (!parsed) {
+		return "Заблокировано: remote branch deletion разрешён только для exact merge-to-main fallback формы `git push --force-with-lease=refs/heads/task/<branch>:<oid> origin :refs/heads/task/<branch>`.";
+	}
 	const branch = parsed.branch;
-	if (!workflowState.branch || branch !== workflowState.branch) return false;
-	if (!isSafeTaskBranchName(branch) || PROTECTED_BRANCHES.has(branch)) return false;
-	if (!hasObservableMergeSlotEvidence(workflowState, options, cwd)) return false;
+	const activeBranch = workflowState.branch;
+	if (activeBranch && !PROTECTED_BRANCHES.has(activeBranch) && branch !== activeBranch) {
+		return `Заблокировано: remote branch deletion target ${branch} не совпадает с active workflow branch ${activeBranch}.`;
+	}
+	if (!isSafeTaskBranchName(branch) || PROTECTED_BRANCHES.has(branch)) {
+		return `Заблокировано: remote branch deletion разрешён только для canonical task/... branch; получен ${branch}.`;
+	}
+	if (!hasObservableMergeSlotEvidence(workflowState, options, cwd)) {
+		return "Заблокировано: remote branch deletion fallback требует observable merge-slot evidence текущего actor/session.";
+	}
 
 	const branchOid = remoteHeadOid(cwd, "origin", branch);
 	const mainOid = remoteHeadOid(cwd, "origin", "main");
-	if (!branchOid || !mainOid || branchOid !== parsed.leaseOid) return false;
-	return remoteOidAncestorOfMain(cwd, branchOid, mainOid);
+	if (!branchOid) return `Заблокировано: remote branch deletion fallback не видит origin/${branch}; branch отсутствует или ls-remote вернул неоднозначный результат.`;
+	if (!mainOid) return "Заблокировано: remote branch deletion fallback не видит origin/main; нельзя проверить merged ancestry.";
+	if (branchOid !== parsed.leaseOid) {
+		return `Заблокировано: remote branch deletion fallback lease stale/mismatched для ${branch}; expected ${branchOid}, got ${parsed.leaseOid}.`;
+	}
+	if (!remoteOidAncestorOfMain(cwd, branchOid, mainOid)) {
+		return `Заблокировано: remote branch deletion fallback требует, чтобы ${branch}@${branchOid} был ancestor of origin/main@${mainOid}.`;
+	}
+	return undefined;
+}
+
+function isSafeMergedRemoteBranchCleanup(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): boolean {
+	return mergedRemoteBranchCleanupBlockReason(command, workflowState, options, cwd) === undefined;
 }
 
 function commandHasStashDeletion(command: string): boolean {
@@ -305,7 +325,10 @@ function destructiveCommandReason(command: string, workflowState: WorkflowStateS
 	if (commandHasHardReset(command)) return "Заблокировано: git reset --hard является destructive. Используй explicit documented override только после approval.";
 	if (commandHasForcedClean(command)) return "Заблокировано: forced git clean может удалить untracked work.";
 	if (commandHasUnsafeForcePush(command)) return "Заблокировано: unsafe force push запрещён; --force-with-lease — более безопасная explicit form.";
-	if (commandHasRemoteBranchDeletion(command) && !isSafeMergedRemoteBranchCleanup(command, workflowState, options, cwd)) return "Заблокировано: remote branch deletion требует explicit confirmation вне обычного Pi bash flow.";
+	if (commandHasRemoteBranchDeletion(command)) {
+		const cleanupReason = mergedRemoteBranchCleanupBlockReason(command, workflowState, options, cwd);
+		if (cleanupReason) return cleanupReason;
+	}
 	if (commandHasStashDeletion(command)) return "Заблокировано: stash deletion может уничтожить recovery points.";
 	if (commandHasCloudResourceDeletion(command)) return "Заблокировано: cloud/infrastructure resource deletion является destructive.";
 	if (commandHasDestructiveSql(command)) return "Заблокировано: destructive SQL требует explicit human approval и rollback plan.";
