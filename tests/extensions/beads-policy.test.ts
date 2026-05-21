@@ -392,7 +392,9 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     ['missing lease', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push origin :refs/heads/${f.branch}`],
     ['mismatched lease', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.mainOid} origin :refs/heads/${f.branch}`],
     ['multiple targets', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} origin :refs/heads/${f.branch} :refs/heads/task/other`],
+    ['quoted other branch', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/task/other:${f.branchOid} origin ":refs/heads/task/other"`],
     ['unsafe name', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/main:${f.branchOid} origin :refs/heads/main`],
+    ['quoted protected name without lease', () => 'git push origin ":refs/heads/main"'],
   ])('blocks unsafe remote deletion variant: %s', (_name, commandFor) => {
     const fixture = createMergedRemoteFixture()
     try {

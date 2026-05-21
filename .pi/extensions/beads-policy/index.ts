@@ -166,7 +166,12 @@ function commandHasUnsafeForcePush(command: string): boolean {
 }
 
 function commandHasRemoteBranchDeletion(command: string): boolean {
-	return /(^|[;&|]\s*)git\s+push\b[^;&|]*(?:--delete\b|\s:[^\s;&|]+)/.test(command);
+	return splitShellSegments(command).some((segment) => {
+		const tokens = shellTokens(segment);
+		const pushIndex = tokens.findIndex((token, index) => token === "push" && tokens[index - 1] === "git");
+		if (pushIndex < 1) return false;
+		return tokens.slice(pushIndex + 1).some((token) => token === "--delete" || token === "-d" || token.startsWith(":"));
+	});
 }
 
 
