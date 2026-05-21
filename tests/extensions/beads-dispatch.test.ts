@@ -177,6 +177,54 @@ describe('beads-dispatch path rules integration', () => {
 })
 
 
+describe('beads-dispatch supervisor execution contract', () => {
+  it('renders execution contract sections with explicit N/A compatibility defaults', async () => {
+    let registeredTool: any
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-contract', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/contract\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-contract', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const output = result.details.output
+
+    expect(output).toContain('EXECUTION CONTRACT:')
+    expect(output).toContain('Write zone:')
+    expect(output).toContain('- .pi/extensions/beads-dispatch/index.ts')
+    expect(output).toContain('Do not touch:')
+    expect(output).toContain('- Running a real subagent.')
+    expect(output).toContain('Sibling streams:\nN/A')
+    expect(output).toContain('Stop rules:')
+    expect(output).toContain('Verification:')
+    expect(output).toContain('- pnpm test -- tests/extensions/beads-dispatch.test.ts exits 0.')
+    expect(output).toContain('SUPERVISOR ARTIFACT:')
+    expect(output).toContain('- Artifact status: <complete | incomplete, with reason if incomplete>')
+  })
+
+  it('documents the execution contract in dispatch skill and agent docs', async () => {
+    const dispatchSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+    const agentDocs = await fs.readFile(path.join(process.cwd(), '.pi/agents/README.md'), 'utf8')
+    const docs = `${dispatchSkill}\n${agentDocs}`
+
+    for (const heading of ['Write zone', 'Do not touch', 'Sibling streams', 'Stop rules', 'Verification', 'SUPERVISOR ARTIFACT']) {
+      expect(docs).toContain(heading)
+    }
+    expect(docs).toContain('explicit `N/A`')
+  })
+})
+
+
 describe('beads-dispatch PLAN APPROVED readiness contract', () => {
   it('accepts the current plan-bead auto-execute contract with START_COMMIT alias and Plan intent', () => {
     expect(validateSupervisorReadiness(validBead(), [{ text: currentPlan }])).toEqual([])
