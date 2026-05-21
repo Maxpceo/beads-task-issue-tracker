@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension from '../../.pi/extensions/beads-dispatch/index'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
 
 const plan = `PLAN APPROVED
 Approved-by: Test
@@ -20,6 +20,33 @@ Acceptance:
 - PATH_RULES_LOADED includes matching rules.
 Verification / acceptance checks:
 - Vitest dry run verifies sentinel.`
+
+
+const currentPlan = `PLAN APPROVED
+Approved-by: Test
+Approved-at: 2026-05-10T00:00:00Z
+START_COMMIT: 68241c7309542b76eff49c3360514fb4110f0a83
+Files to change:
+- .pi/extensions/beads-dispatch/index.ts
+Plan:
+1. Align readiness matrix.
+Edge-case review:
+- Incomplete approved comments still fail.
+Worktree / cwd:
+- /tmp/project
+WORKTREE_LOCK:
+- Mutating commands stay inside /tmp/project.
+Acceptance:
+- Current plan-bead contract passes dispatch readiness.
+Verification / acceptance checks:
+- pnpm test -- tests/extensions/beads-dispatch.test.ts exits 0.
+Risks / rollback:
+- Revert readiness matrix changes.
+AUTO_EXECUTE_ALLOWED: true`
+
+function validBead(descriptionText = description(['.pi/extensions/beads-dispatch/index.ts'])) {
+  return { id: 'bead-current', status: 'in_progress', labels: ['pi', 'workflow'], description: descriptionText }
+}
 
 function description(files: string[]) {
   return `### Origin
@@ -56,7 +83,7 @@ describe('beads-dispatch path rules integration', () => {
       },
       exec: async (command: string, args: string[]) => {
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'in_progress', labels: ['dx'], description: description(['src-tauri/src/lib.rs']) }), stderr: '', code: 0 }
-        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: plan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
         if (command === 'git' && args.includes('branch')) return { stdout: 'feature/path-rules\n', stderr: '', code: 0 }
         if (command === 'git' && args.includes('rev-parse')) return { stdout: 'abc1234\n', stderr: '', code: 0 }
@@ -108,5 +135,45 @@ describe('beads-dispatch path rules integration', () => {
     }
 
     await expect(fs.stat(absoluteDir)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+
+describe('beads-dispatch PLAN APPROVED readiness contract', () => {
+  it('accepts the current plan-bead auto-execute contract with START_COMMIT alias and Plan intent', () => {
+    expect(validateSupervisorReadiness(validBead(), [{ text: currentPlan }])).toEqual([])
+  })
+
+  it('accepts the legacy dispatch contract with Start-commit and Problem/Approach intent', () => {
+    expect(validateSupervisorReadiness(validBead(), [{ text: plan }])).toEqual([])
+  })
+
+  it('rejects incomplete PLAN APPROVED comments with actionable missing-field messages', () => {
+    const errors = validateSupervisorReadiness(validBead(), [{ text: 'PLAN APPROVED\nApproved-by: Test' }])
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('Approved-at (Approved-at:)')
+    expect(errors[0]).toContain('Start commit (Start-commit: or START_COMMIT:)')
+    expect(errors[0]).toContain('Files to change (Files to change:)')
+    expect(errors[0]).toContain('Acceptance (Acceptance:)')
+    expect(errors[0]).toContain('Verification / acceptance checks (Verification / acceptance checks:)')
+    expect(errors[0]).toContain('Implementation intent (Plan: or Problem: + Approach:)')
+  })
+
+  it('keeps plan-bead and dispatch-supervisor docs synchronized with the readiness matrix aliases', async () => {
+    const planSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/plan-bead/SKILL.md'), 'utf8')
+    const dispatchSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+    const docs = `${planSkill}\n${dispatchSkill}`
+
+    expect(docs).toContain(PLAN_APPROVED_READINESS_MATRIX.marker)
+    for (const field of PLAN_APPROVED_READINESS_MATRIX.fields) {
+      for (const alias of field.aliases) expect(docs).toContain(alias)
+    }
+    expect(docs).toContain('Plan:')
+    expect(docs).toContain('Problem:')
+    expect(docs).toContain('Approach:')
+    for (const field of PLAN_APPROVED_READINESS_MATRIX.acceptedContextFields) {
+      expect(docs).toContain(field)
+    }
   })
 })
