@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -78,6 +79,7 @@ describe('beads-dispatch path rules integration', () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
     const taskWorktree = process.cwd()
+    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim()
     const mainCwd = path.dirname(process.cwd())
     const pi = {
       events: { emit() {} },
@@ -100,7 +102,7 @@ describe('beads-dispatch path rules integration', () => {
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, {
       cwd: mainCwd,
       sessionManager: {
-        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch: 'task/xl6v-structured-cwd-routing', worktreePath: taskWorktree, sessionKey: 'session:test' } }],
+        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, sessionKey: 'session:test' } }],
       },
     })
 
