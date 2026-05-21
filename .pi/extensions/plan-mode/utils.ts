@@ -96,10 +96,21 @@ const SAFE_PATTERNS = [
 	/^\s*eza\b/,
 ];
 
+function isSafeCommandSegment(command: string): boolean {
+	return SAFE_PATTERNS.some((p) => p.test(command));
+}
+
 export function isSafeCommand(command: string): boolean {
 	const isDestructive = DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
-	const isSafe = SAFE_PATTERNS.some((p) => p.test(command));
-	return !isDestructive && isSafe;
+	if (isDestructive) return false;
+
+	const hasShellControlOperator = /(?:&&|\|\||;)/.test(command);
+	if (hasShellControlOperator) return false;
+
+	return command
+		.split("|")
+		.map((segment) => segment.trim())
+		.every((segment) => segment.length > 0 && isSafeCommandSegment(segment));
 }
 
 export interface TodoItem {
@@ -137,7 +148,9 @@ export function extractTodoItems(message: string): TodoItem[] {
 	const numberedPattern = /^\s*(\d+)[.)]\s+\*{0,2}([^*\n]+)/gm;
 
 	for (const match of planSection.matchAll(numberedPattern)) {
-		const text = match[2]
+		const rawText = match[2];
+		if (!rawText) continue;
+		const text = rawText
 			.trim()
 			.replace(/\*{1,2}$/, "")
 			.trim();
