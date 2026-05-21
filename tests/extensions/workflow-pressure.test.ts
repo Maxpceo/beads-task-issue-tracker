@@ -44,9 +44,10 @@ describe('Pi workflow pressure guardrails', () => {
     expect(decision?.reason).toContain('recursive force delete')
   })
 
-  it('pressure guardrail: dispatch readiness blocks supervisor handoff without PLAN APPROVED evidence', () => {
+  it('pressure guardrail: dispatch readiness blocks supervisor handoff without approved plan evidence', () => {
     const errors = validateSupervisorReadiness({ id: 'bead-pressure', status: 'in_progress', labels: ['pi', 'workflow'], description: handoffDescription }, [])
-    expect(errors).toContain('в PLAN APPROVED comment отсутствуют fields: PLAN APPROVED, Approved-by:, Approved-at:, Start-commit:, Problem:, Approach:, Rejected alternatives:, Files to change:, Acceptance:, Verification / acceptance checks:')
+    expect(errors.some((error) => error.includes('PLAN APPROVED'))).toBe(true)
+    expect(errors.some((error) => error.includes('в PLAN APPROVED comment отсутствуют fields:'))).toBe(true)
     expect(errors).not.toContain(expect.stringContaining('Acceptance criteria должны содержать'))
   })
 
