@@ -8,7 +8,7 @@ Project-local Pi plan mode adapted for the beads workflow.
 - Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation.
 - Agent-operable `workflow_plan_review` typed tool for autonomous strict plan mode.
 - Tool restriction to read-only tools while planning.
-- Bash allowlist for read-only commands.
+- Bash allowlist for read-only commands, including `git status`/`git log`/`git diff`/`git show` history inspection and pipelines where every segment is allowlisted read-only (for example `git log ... -- path | head -80`); shell control operators such as `&&`, `||`, and `;` remain blocked.
 - bd-aware allowlist/blocklist:
   - allowed: `bd show`, `bd comments`, `bd list`, `bd ready`, selected read-only `bd dep`/`bd dolt` commands;
   - blocked: `bd create`, `bd update`, `bd close`, mutating comments, merge-slot acquire/release, Dolt commit/push/pull.

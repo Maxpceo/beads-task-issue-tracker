@@ -5,6 +5,7 @@ import ts from 'typescript'
 
 import { registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
+import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
 const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review']
@@ -151,6 +152,48 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   loadPlanModeExtension()(pi)
   return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sendMessages, execCalls, delayedClaimEvents, ctx }
 }
+
+describe('Pi plan-mode bash allowlist', () => {
+  it('allows read-only bd comments inspection commands', () => {
+    expect(isSafeCommand('bd comments beads-task-issue-tracker-z3i4')).toBe(true)
+    expect(isSafeCommand('bd comments beads-task-issue-tracker-z3i4 --json')).toBe(true)
+  })
+
+  it('blocks mutating bd comments commands', () => {
+    for (const command of [
+      'bd comments add beads-task-issue-tracker-z3i4 test',
+      'bd comments delete beads-task-issue-tracker-z3i4 comment-1',
+      'bd comments rm beads-task-issue-tracker-z3i4 comment-1',
+    ]) {
+      expect(isSafeCommand(command)).toBe(false)
+    }
+  })
+
+  it('allows git log history inspection with pathspec and read-only head pipe', () => {
+    expect(isSafeCommand("git log --oneline --since='2026-05-15 03:06:06 +0000' -- .pi AGENTS.md tests/extensions | head -80")).toBe(true)
+  })
+
+  it('blocks unsafe shell composition after an allowlisted read-only command', () => {
+    for (const command of [
+      'git log --oneline | sh',
+      'bd comments beads-task-issue-tracker-z3i4 && sh',
+      'git log --oneline; sh',
+    ]) {
+      expect(isSafeCommand(command)).toBe(false)
+    }
+  })
+
+  it('blocks mutating git and bd commands even when they include safe-looking arguments', () => {
+    for (const command of [
+      'git commit --dry-run -- .pi/extensions/plan-mode/utils.ts',
+      'git push --dry-run origin task/z3i4-plan-mode-allowlist',
+      'bd update beads-task-issue-tracker-z3i4 --priority 1 --json',
+      'bd dolt pull',
+    ]) {
+      expect(isSafeCommand(command)).toBe(false)
+    }
+  })
+})
 
 describe('Pi plan-mode workflow synchronization', () => {
   it('plan-cancel publishes plan=off and clears visible plan status', async () => {
