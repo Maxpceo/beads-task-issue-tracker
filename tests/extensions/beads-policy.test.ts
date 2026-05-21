@@ -315,6 +315,109 @@ describe('Pi merge-slot push policy', () => {
   })
 })
 
+describe('Pi safe merged remote branch cleanup policy', () => {
+  function createMergedRemoteFixture() {
+    const remote = mkdtempSync(join(tmpdir(), 'beads-policy-remote-'))
+    const repo = createMainRepo()
+    execFileSync('git', ['init', '--bare'], { cwd: remote, stdio: 'ignore' })
+    writeFileSync(join(repo, 'README.md'), 'main\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['push', 'origin', 'main'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['checkout', '-b', 'task/safe-cleanup'], { cwd: repo, stdio: 'ignore' })
+    writeFileSync(join(repo, 'feature.txt'), 'feature\n')
+    execFileSync('git', ['add', 'feature.txt'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'feature'], { cwd: repo, stdio: 'ignore' })
+    const branchOid = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+    execFileSync('git', ['push', 'origin', 'task/safe-cleanup'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['checkout', 'main'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['merge', '--no-ff', 'task/safe-cleanup', '-m', 'merge feature'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['push', 'origin', 'main'], { cwd: repo, stdio: 'ignore' })
+    const mainOid = execFileSync('git', ['rev-parse', 'main'], { cwd: repo, encoding: 'utf8' }).trim()
+    return { repo, remote, branch: 'task/safe-cleanup', branchOid, mainOid }
+  }
+
+  function cleanupFixture(fixture: { repo: string; remote: string }) {
+    rmSync(fixture.repo, { recursive: true, force: true })
+    rmSync(fixture.remote, { recursive: true, force: true })
+  }
+
+  it('allows safe merged remote task branch deletion with matching lease and merge-slot evidence', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease="refs/heads/${fixture.branch}:${fixture.branchOid}" origin ":refs/heads/${fixture.branch}"`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).not.toBe('blockDestructiveCommand')
+      expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it.each([
+    ['wrong remote', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} upstream :refs/heads/${f.branch}`],
+    ['other branch', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/task/other:${f.branchOid} origin :refs/heads/task/other`],
+    ['missing lease', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push origin :refs/heads/${f.branch}`],
+    ['mismatched lease', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.mainOid} origin :refs/heads/${f.branch}`],
+    ['multiple targets', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} origin :refs/heads/${f.branch} :refs/heads/task/other`],
+    ['unsafe name', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/main:${f.branchOid} origin :refs/heads/main`],
+  ])('blocks unsafe remote deletion variant: %s', (_name, commandFor) => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(commandFor(fixture), { branch: fixture.branch, mergeSlotHeld: true }, { cwd: fixture.repo })
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('blocks safe-shaped deletion without observable merge-slot evidence', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: false },
+        { cwd: fixture.repo, bdMergeSlotIssue: null, currentActor: 'Maxpceo' },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('blocks unmerged remote task branch deletion', () => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      execFileSync('git', ['checkout', fixture.branch], { cwd: fixture.repo, stdio: 'ignore' })
+      writeFileSync(join(fixture.repo, 'unmerged.txt'), 'unmerged\n')
+      execFileSync('git', ['add', 'unmerged.txt'], { cwd: fixture.repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'unmerged'], { cwd: fixture.repo, stdio: 'ignore' })
+      execFileSync('git', ['push', 'origin', fixture.branch], { cwd: fixture.repo, stdio: 'ignore' })
+      const unmergedOid = execFileSync('git', ['rev-parse', fixture.branch], { cwd: fixture.repo, encoding: 'utf8' }).trim()
+
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${unmergedOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+})
+
 describe('Pi terminal close policy', () => {
   const policyOnlyOptions = { cwd: tmpdir() }
 

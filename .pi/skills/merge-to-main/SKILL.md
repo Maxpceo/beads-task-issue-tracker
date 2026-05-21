@@ -79,7 +79,15 @@ EOF
     bd merge-slot acquire
     gh pr merge <PR_NUMBER> --merge --delete-branch
     ```
-    If merge fails after acquire, release merge-slot before reporting.
+    If `gh pr merge` returns non-zero after acquire, first check whether the PR was nevertheless merged. If the PR is not merged, release merge-slot before reporting. If the PR is merged but remote branch cleanup failed, keep the merge-slot held and run the narrow fallback cleanup only when all stop conditions below pass:
+    ```bash
+    BRANCH=<session task/... branch>
+    BRANCH_OID=$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')
+    MAIN_OID=$(git ls-remote --heads origin main | awk '{print $1}')
+    git merge-base --is-ancestor "$BRANCH_OID" "$MAIN_OID"
+    git push --force-with-lease="refs/heads/${BRANCH}:${BRANCH_OID}" origin ":refs/heads/${BRANCH}"
+    ```
+    Stop instead of fallback deletion if any condition is false: `BRANCH` is not the active session branch, branch is not canonical `task/...`, branch is missing on `origin`, `origin/main` is missing, branch OID is not an ancestor of main OID, lease OID does not match fresh `git ls-remote` output, merge-slot evidence is not currently held/observable, more than one deletion target would be pushed, or the target is protected/unsafe (`main`, `master`, non-`task/...`). Release merge-slot after successful fallback cleanup or before the blocker report.
 12. Switch to main, pull, and release slot:
     ```bash
     git checkout main
