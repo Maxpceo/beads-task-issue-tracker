@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import reviewWorkflowExtension, { isReviewApproved } from '../../.pi/extensions/review-workflow/index'
@@ -65,6 +65,7 @@ describe('review_workflow scoped review', () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
     const taskWorktree = process.cwd()
+    const mainCwd = dirname(taskWorktree)
     const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || process.env.GITHUB_HEAD_REF || 'task/current'
     const pi = {
       events: { emit() {} },
@@ -76,6 +77,8 @@ describe('review_workflow scoped review', () => {
         execCalls.push({ command, args })
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments') return { stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: ${branch}\nWORKTREE: ${taskWorktree}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} branch --show-current`) return { stdout: 'main\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} rev-parse --show-toplevel`) return { stdout: `${mainCwd}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: `${branch}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse --show-toplevel`) return { stdout: `${taskWorktree}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${taskWorktree} diff --name-only aaa1111..bbb2222`) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
@@ -85,7 +88,7 @@ describe('review_workflow scoped review', () => {
 
     reviewWorkflowExtension(pi as any)
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, {
-      cwd: '/repo/main',
+      cwd: mainCwd,
       sessionManager: {
         getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, startCommit: 'aaa1111', endCommit: 'bbb2222', sessionKey: 'session:test' } }],
       },
