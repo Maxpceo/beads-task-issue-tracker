@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Pi supervisor artifact handoff** (`beads-task-issue-tracker-eo44`): typed supervisor dispatch prompts now include a stable execution contract and `SUPERVISOR ARTIFACT` format; review workflow surfaces the latest supervisor artifact status as evidence-only handoff data in dry-run output and durable review comments, and plan review rejects vague sequential-stream rationale in decomposition matrices.
 - **Pi create-bead workflow skill** (`beads-task-issue-tracker-qw1u`): added a project-local `create-bead` skill with self-contained bd issue templates, safe inline heredoc command patterns, labels/types/dependency guidance, verification steps, and guard troubleshooting for tracker-only task creation.
 - **Pi multi-agent plan review gate** (`beads-task-issue-tracker-04jl`): `/plan-auto` now runs required plan-review agents before implementation, requires main-agent adjudication of accepted/rejected findings in a revised plan, blocks execution on missing/blocked reviewers or unresolved blockers, and adds `/plan-review` for strict planning critique without approval or file mutations.
 - **Pi destructive-command safety policy** (`beads-task-issue-tracker-47n0`): `beads-policy` now blocks recursive force deletion, hard resets, forced cleans, unsafe force pushes, branch/stash deletion, destructive infrastructure/SQL commands, and direct access to sensitive paths such as env files, SSH/cloud credentials, kube configs, Terraform state, and private key/cert files while allowing safer workflows such as `--force-with-lease`.
