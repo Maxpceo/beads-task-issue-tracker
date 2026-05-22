@@ -275,8 +275,9 @@ describe('Pi worktree naming policy', () => {
     ['ci', 'ci/lgok-vitest-workflow'],
     ['task', 'task/lgok-branch-worktree-naming'],
   ])('allows canonical %s branch/worktree names', (_type, branch) => {
-    const suffix = branch.split('/')[1]
-    const decision = evaluateBashPolicy(`${bdWtCreate} ${join(worktreeRoot, suffix)} --branch ${branch}`, {
+    const branchName = String(branch)
+    const suffix = branchName.split('/')[1] ?? ''
+    const decision = evaluateBashPolicy(`${bdWtCreate} ${join(worktreeRoot, suffix)} --branch ${branchName}`, {
       activeBead: 'beads-task-issue-tracker-lgok',
     }, { cwd: tmpdir() })
 

@@ -2013,7 +2013,8 @@ function worktreeNamingBlockReason(command: string, cwd?: string, workflowState:
 	for (const segment of splitShellSegments(command)) {
 		const parsed = parseWorktreeCreateSegment(segment);
 		if (!parsed?.path || !parsed.branch) continue;
-		const [prefix, ...suffixParts] = parsed.branch.split("/");
+		const [rawPrefix, ...suffixParts] = parsed.branch.split("/");
+		const prefix = rawPrefix ?? "";
 		const suffix = suffixParts.join("/");
 		if (!TASK_WORKTREE_BRANCH_PREFIXES.has(prefix) || !suffix) continue;
 		const resolvedPath = realpathExistingOrParent(normalizeFsPath(parsed.path, cwd));
@@ -2024,7 +2025,7 @@ function worktreeNamingBlockReason(command: string, cwd?: string, workflowState:
 		if (/^beads-task-issue-tracker-[a-z0-9]+(?:-|$)/i.test(suffix)) return `Заблокировано: branch/worktree suffix не должен использовать полный project bead id (${suffix}); используй короткий bead suffix, например lgok-branch-worktree-naming.`;
 		if (!/^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$/.test(suffix)) return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
 		if (workflowState.activeBead) {
-			const activeSuffix = workflowState.activeBead.split("-").pop();
+			const activeSuffix = workflowState.activeBead.split("-").pop() ?? "";
 			if (activeSuffix && !suffix.startsWith(`${activeSuffix}-`)) return `Заблокировано: active bead ${workflowState.activeBead} требует branch/worktree suffix с префиксом ${activeSuffix}-; получен ${suffix}.`;
 		}
 	}
