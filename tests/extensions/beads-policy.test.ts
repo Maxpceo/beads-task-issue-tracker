@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -252,6 +252,110 @@ EOF
 
     expect(decision?.policy).toBe('blockMainMutation')
     expect(decision?.block).toBe(true)
+  })
+})
+
+
+describe('Pi worktree naming policy', () => {
+  const worktreeRoot = join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker')
+  const goodSuffix = 'lgok-branch-worktree-naming'
+  const goodPath = join(worktreeRoot, goodSuffix)
+  const wt = 'worktree'
+  const create = 'create'
+  const bdWtCreate = `bd ${wt} ${create}`
+  const gitWtAdd = `git ${wt} add`
+
+  it.each([
+    ['feat', 'feat/lgok-frontend-filtering'],
+    ['fix', 'fix/lgok-sync-status'],
+    ['docs', 'docs/lgok-workflow-contract'],
+    ['refactor', 'refactor/lgok-policy-parser'],
+    ['test', 'test/lgok-policy-coverage'],
+    ['chore', 'chore/lgok-dependency-maintenance'],
+    ['ci', 'ci/lgok-vitest-workflow'],
+    ['task', 'task/lgok-branch-worktree-naming'],
+  ])('allows canonical %s branch/worktree names', (_type, branch) => {
+    const branchName = String(branch)
+    const suffix = branchName.split('/')[1] ?? ''
+    const decision = evaluateBashPolicy(`${bdWtCreate} ${join(worktreeRoot, suffix)} --branch ${branchName}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+
+    expect(decision?.policy).not.toBe('blockWorktreeInsideRepo')
+  })
+
+  it('allows the approved bd worktree create example', () => {
+    const decision = evaluateBashPolicy(`${bdWtCreate} ${goodPath} --branch task/${goodSuffix}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+
+    expect(decision).toBeUndefined()
+  })
+
+  it('supports --branch=, quoted paths, and home-expanded paths', () => {
+    const quotedDecision = evaluateBashPolicy(`${bdWtCreate} "${goodPath}" --branch=task/${goodSuffix}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+    const homePath = `~/Projects/worktrees/beads-task-issue-tracker/${goodSuffix}`
+    const homeDecision = evaluateBashPolicy(`${bdWtCreate} '${homePath}' --branch task/${goodSuffix}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+
+    expect(quotedDecision).toBeUndefined()
+    expect(homeDecision).toBeUndefined()
+  })
+
+  it('supports git worktree add -b/-B parser variants and existing task branches', () => {
+    const lowerDecision = evaluateBashPolicy(`${gitWtAdd} -b task/${goodSuffix} ${goodPath}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+    const upperDecision = evaluateBashPolicy(`${gitWtAdd} ${goodPath} -B task/${goodSuffix}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+    const existingBranchDecision = evaluateBashPolicy(`${gitWtAdd} ${goodPath} task/${goodSuffix}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+
+    expect(lowerDecision).toBeUndefined()
+    expect(upperDecision).toBeUndefined()
+    expect(existingBranchDecision).toBeUndefined()
+  })
+
+  it.each([
+    [`${bdWtCreate} ${join(worktreeRoot, 'different-name')} --branch task/${goodSuffix}`, 'точно совпадал'],
+    [`${gitWtAdd} ${join(worktreeRoot, 'different-name')} task/${goodSuffix}`, 'точно совпадал'],
+    [`${bdWtCreate} ${join(worktreeRoot, 'beads-task-issue-tracker-lgok-branch-worktree-naming')} --branch task/beads-task-issue-tracker-lgok-branch-worktree-naming`, 'полный project bead id'],
+    [`${bdWtCreate} ${join(worktreeRoot, 'lgok')} --branch task/lgok`, '<bead-suffix>-<domain-or-component>-<purpose>'],
+    [`${bdWtCreate} ${join(worktreeRoot, 'v495-branch-worktree-naming')} --branch task/v495-branch-worktree-naming`, 'active bead'],
+  ])('blocks invalid canonical task worktree names: %s', (command, reason) => {
+    const decision = evaluateBashPolicy(command, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+
+    expect(decision?.policy).toBe('blockWorktreeInsideRepo')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain(reason)
+  })
+
+  it('does not enforce naming for list/remove/prune/info or non-task orphan branches', () => {
+    const listDecision = evaluateBashPolicy(`${gitWtAdd.replace('add', 'list')}`, {}, { cwd: tmpdir() })
+    const removeDecision = evaluateBashPolicy(`bd ${wt} remove ${goodPath}`, {}, { cwd: tmpdir() })
+    const nonTaskDecision = evaluateBashPolicy(`${bdWtCreate} ${join(worktreeRoot, 'smoke')} --branch smoke`, {}, { cwd: tmpdir() })
+    const gitNonTaskDecision = evaluateBashPolicy(`${gitWtAdd} ${join(worktreeRoot, 'smoke')} smoke`, {}, { cwd: tmpdir() })
+    const detachedDecision = evaluateBashPolicy(`${gitWtAdd} --detach ${join(worktreeRoot, 'detached')} task/${goodSuffix}`, {}, { cwd: tmpdir() })
+
+    expect(listDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    expect(removeDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    expect(nonTaskDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    expect(gitNonTaskDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    expect(detachedDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+  })
+
+  it('does not inspect quoted bd comment examples as worktree create commands', () => {
+    const bdComments = `bd comments add bead-a`
+    const decision = evaluateBashPolicy(`${bdComments} 'example: ${bdWtCreate} ${join(worktreeRoot, 'bad')} --branch task/lgok'`, {}, { cwd: tmpdir() })
+
+    expect(decision?.policy).not.toBe('blockWorktreeInsideRepo')
   })
 })
 

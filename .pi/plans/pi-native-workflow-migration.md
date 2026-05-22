@@ -132,6 +132,14 @@ Terminal bd statuses for per-task blocking are `closed`, `blocked`, or explicit 
 
 Stacked branches must review exact per-task scopes. `review_bead` accepts `startCommit` and `endCommit`; if `endCommit` is absent it uses the latest `END_COMMIT:` comment or `HEAD`. Supervisors/orchestrators should record `/workflow-update end=<sha>` or an `END_COMMIT: <sha>` comment before moving from implementation to review when later commits may be added for other beads.
 
+## Branch naming and worktree naming contract
+
+Pi task scopes use canonical branch naming `<type>/<bead-suffix>-<domain-or-component>-<purpose>`. `type` maps intent as follows: bug→`fix`, feature→`feat`, docs-only→`docs`, tests/bench→`test`, CI→`ci`, refactor→`refactor`, workflow/task→`task`, maintenance→`chore`. `bead-suffix` is the short suffix after the last hyphen in the bd id, never the full project bead id.
+
+The canonical worktree basename is exactly the branch suffix without `<type>/`: branch `task/lgok-branch-worktree-naming` uses worktree directory `lgok-branch-worktree-naming`. Good examples: `feat/lgok-frontend-filtering`, `fix/lgok-sync-status`, `docs/lgok-workflow-contract`, `refactor/lgok-policy-parser`, `test/lgok-policy-coverage`, `chore/lgok-dependency-maintenance`, `ci/lgok-vitest-workflow`, `task/lgok-branch-worktree-naming`. Bad examples: `task/lgok`, `task/beads-task-issue-tracker-lgok-branch-worktree-naming`, `task/work`, or a worktree basename that differs from the branch suffix.
+
+Naming is not advisory-only: `.pi/extensions/beads-policy` enforces it for `bd worktree create` and `git worktree add` when the target path is under the project worktree root and the explicit branch prefix is one of `feat|fix|docs|refactor|test|chore|ci|task`. The targeted guard preserves task worktree scope while avoiding smoke/orphan maintenance worktrees without task-like branch prefixes and non-create operations such as list/remove/prune/info.
+
 ## Structured task worktree routing
 
 Main checkout is a supported Pi entrypoint. For an active bead, workflow-state records the structured task scope (`activeBead`, `branch`, `worktreePath`, `startCommit`, optional `endCommit`). Typed workflow tools (`dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, `review_bead`) resolve that scope via `.pi/extensions/worktree-scope/index.ts` and route their subprocesses/checks to the task worktree even when the Pi session started from `main`.
@@ -234,6 +242,8 @@ Standard Pi/theme footer owns path/branch, selected model, thinking level, conte
 | worktree inside repo | Blocked |
 | worktree under `.claude/worktrees` or path containing `..` | Blocked |
 | worktree under `~/Projects/worktrees/beads-task-issue-tracker/<name>` | Allowed |
+| canonical worktree create with branch `task/lgok-branch-worktree-naming` and basename `lgok-branch-worktree-naming` | Allowed |
+| task-like worktree create where branch suffix differs from basename, uses full bead id, or omits domain/purpose | Blocked by targeted naming validation |
 | stale worktree commit with overlapping staged code | Blocked |
 | dashboard after worktree creation | Shows worktree path |
 | `review_bead(beadId, startCommit, endCommit)` on stacked branch | Reviews only `startCommit..endCommit`, excluding later unrelated commits |
