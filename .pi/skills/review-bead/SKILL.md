@@ -71,6 +71,22 @@ next action: fix | ask Maxim | follow-up | override request
 - The stop report must be a delta report: failed criterion, last one/two attempts, why automatic retry stopped, and 2-4 concrete options. Do not re-summarize the whole bead.
 - Do not launch another supervisor/reviewer silently after the loop breaker triggers. Valid options are an approved expanded plan, a follow-up/scope cut, marking the bead blocked/deferred, or a human override with approver and reason.
 
+
+## Parent epic sweep
+
+Before closing or terminalizing a child bead, inspect `parent-child` relations. If this child is the last required child for any parent epic, record before terminalization:
+
+```text
+PARENT EPIC SWEEP
+PARENT_EPIC: <EPIC_ID>
+TERMINAL_CHILD: <CHILD_ID>
+TARGET_TERMINAL_STATUS: <closed|blocked|deferred>
+REQUIRED_CHILDREN_STATUS: <child-a=status,child-b=status>
+NEXT_ACTION: finalize-epic|epic-handoff
+```
+
+and a matching parent `EPIC HANDOFF` with `REASON:`. After the child is terminal, immediately run `finalize-epic` or keep the parent handoff active with exact next action. If required children remain, write `EPIC PROGRESS` instead.
+
 ## Follow-up sweep
 
 After simplify, code review, frontend checklist, and acceptance, scan returned summaries for out-of-scope findings:

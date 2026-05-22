@@ -30,6 +30,7 @@ type PolicyName =
 	| "blockDestructiveCommand"
 	| "blockBdCloseWithoutReview"
 	| "blockEpicCloseWithIncompleteChildren"
+	| "requireEpicFinalizationSweep"
 	| "blockUnmergedBranchCompletion"
 	| "validateReviewChain"
 	| "enforceBeadEnrichment"
@@ -1513,17 +1514,35 @@ function normalizeStatusValue(value: string | undefined): string | undefined {
 	return value ? stripQuotes(value).toLowerCase() : undefined;
 }
 
-function directClosedTransition(command: string): { id: string; status: string } | undefined {
+function directTerminalTransition(command: string): { id: string; status: string } | undefined {
 	const parsed = parseBdUpdateStatus(command);
-	if (!parsed || normalizeStatusValue(parsed.status) !== "closed") return undefined;
-	return { ...parsed, status: "closed" };
+	const status = normalizeStatusValue(parsed?.status);
+	if (!parsed || !status || !TERMINAL_BD_STATUSES.has(status)) return undefined;
+	return { ...parsed, status };
+}
+
+function directClosedTransition(command: string): { id: string; status: string } | undefined {
+	const parsed = directTerminalTransition(command);
+	if (!parsed || parsed.status !== "closed") return undefined;
+	return parsed;
 }
 
 function closeCommandId(command: string): string | undefined {
+	const valueFlags = new Set(["--reason", "--actor", "--db", "--dolt-auto-commit"]);
 	for (const segment of splitShellSegments(command)) {
 		const tokens = shellTokens(segment);
 		const closeIndex = tokens.findIndex((token, index) => token === "close" && tokens[index - 1] === "bd");
-		if (closeIndex >= 0) return tokens[closeIndex + 1];
+		if (closeIndex < 0) continue;
+		const ids: string[] = [];
+		for (let index = closeIndex + 1; index < tokens.length; index += 1) {
+			const token = tokens[index];
+			if (!token) continue;
+			if (valueFlags.has(token)) { index += 1; continue; }
+			if (token.startsWith("--") && token.includes("=")) continue;
+			if (token.startsWith("-")) continue;
+			ids.push(token);
+		}
+		if (ids.length === 1) return ids[0];
 	}
 	return undefined;
 }
@@ -1706,6 +1725,141 @@ function formatIncompleteChildren(children: BdIssueSummary[]): string {
 		.join(", ");
 }
 
+function getBdComments(cwd: string, id: string): Array<{ text?: string; created_at?: string }> | undefined {
+	try {
+		const raw = execFileSync("bd", ["comments", id, "--json"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return undefined;
+	}
+}
+
+function getParentChildDeps(cwd: string, id: string): Array<{ id?: string; dependency_id?: string; depends_on_id?: string; dependency_type?: string; type?: string }> | undefined {
+	try {
+		const raw = execFileSync("bd", ["dep", "list", id, "--type", "parent-child", "--json"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed) ? parsed : [];
+	} catch {
+		return undefined;
+	}
+}
+
+function latestCommentMatching(comments: Array<{ text?: string; created_at?: string }>, predicate: (text: string) => boolean): string | undefined {
+	return comments
+		.map((comment, index) => ({ text: String(comment.text ?? ""), index, time: Date.parse(String(comment.created_at ?? "")) }))
+		.filter((entry) => entry.text && predicate(entry.text))
+		.sort((a, b) => {
+			const at = Number.isFinite(a.time) ? a.time : Number.NEGATIVE_INFINITY;
+			const bt = Number.isFinite(b.time) ? b.time : Number.NEGATIVE_INFINITY;
+			return at - bt || a.index - b.index;
+		})
+		.at(-1)?.text;
+}
+
+function issueStatus(issue: BdIssueSummary): string | undefined {
+	return typeof issue.status === "string" ? issue.status : undefined;
+}
+
+function isKnownBdStatus(status: string | undefined): boolean {
+	return Boolean(status && (TERMINAL_BD_STATUSES.has(status) || NON_TERMINAL_BD_STATUSES.has(status)));
+}
+
+function statusSnapshot(children: BdIssueSummary[]): string | undefined {
+	const pairs: string[] = [];
+	for (const child of children) {
+		if (!child.id || !isKnownBdStatus(child.status)) return undefined;
+		pairs.push(`${child.id}=${child.status}`);
+	}
+	return pairs.sort().join(",");
+}
+
+function markerHasLine(text: string, key: string, value: string): boolean {
+	return new RegExp(`^${key}:\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m").test(text);
+}
+
+function hasValidParentHandoff(text: string, epicId: string, childId: string, targetStatus: string): boolean {
+	return text.includes("EPIC HANDOFF")
+		&& markerHasLine(text, "PARENT_EPIC", epicId)
+		&& markerHasLine(text, "TERMINAL_CHILD", childId)
+		&& markerHasLine(text, "TARGET_TERMINAL_STATUS", targetStatus)
+		&& /^REASON:\s*\S+/m.test(text)
+		&& /^NEXT_ACTION:\s*\S+/m.test(text);
+}
+
+function hasValidChildSweep(text: string, epicId: string, childId: string, targetStatus: string, snapshot: string): boolean {
+	return text.includes("PARENT EPIC SWEEP")
+		&& markerHasLine(text, "PARENT_EPIC", epicId)
+		&& markerHasLine(text, "TERMINAL_CHILD", childId)
+		&& markerHasLine(text, "TARGET_TERMINAL_STATUS", targetStatus)
+		&& markerHasLine(text, "REQUIRED_CHILDREN_STATUS", snapshot)
+		&& /^NEXT_ACTION:\s*(?:finalize-epic|epic-handoff)\s*$/m.test(text);
+}
+
+function hasValidEpicAcceptanceMatrix(text: string, epicId: string): boolean {
+	if (!text.includes("EPIC ACCEPTANCE MATRIX") || !markerHasLine(text, "PARENT_EPIC", epicId)) return false;
+	const results = Array.from(text.matchAll(/^\s*result:\s*(.+?)\s*$/gim), (match) => match[1]?.trim().toUpperCase());
+	return results.length > 0 && results.every((result) => result === "PASS" || result === "N/A");
+}
+
+function parentIdsFromChild(cwd: string, childId: string): string[] | undefined {
+	const deps = getParentChildDeps(cwd, childId);
+	if (deps === undefined) return undefined;
+	const ids = new Set<string>();
+	for (const dep of deps) {
+		const candidate = dep.dependency_id ?? dep.depends_on_id ?? dep.id;
+		if (typeof candidate === "string" && candidate !== childId) ids.add(candidate);
+	}
+	if (ids.size === 0) {
+		const child = getBdIssue(cwd, childId) as (BdIssueSummary & { dependencies?: Array<{ id?: string; dependency_type?: string }> }) | undefined;
+		for (const dep of child?.dependencies ?? []) {
+			if (dep.dependency_type === "parent-child" && dep.id) ids.add(dep.id);
+		}
+	}
+	return Array.from(ids);
+}
+
+function validateLastChildEpicSweep(cwd: string, childId: string, targetStatus: string): string | undefined {
+	const parentIds = parentIdsFromChild(cwd, childId);
+	if (parentIds === undefined) return `Заблокировано: не удалось прочитать parent-child связи для ${childId}; нужен PARENT EPIC SWEEP / EPIC HANDOFF или исправление bd relationship lookup.`;
+	for (const parentId of parentIds) {
+		const parent = getBdIssue(cwd, parentId);
+		if (!parent || parent.issue_type !== "epic" || !isKnownBdStatus(parent.status)) return `Заблокировано: не удалось подтвердить parent epic/status для ${parentId}.`;
+		if (TERMINAL_BD_STATUSES.has(parent.status!)) continue;
+		const children = getEpicChildren(cwd, parentId);
+		if (!children) return `Заблокировано: не удалось прочитать children epic ${parentId}.`;
+		const matching = children.filter((child) => child.id === childId);
+		if (matching.length !== 1 || !isKnownBdStatus(matching[0]?.status)) return `Заблокировано: epic ${parentId} snapshot не содержит target child ${childId} ровно один раз с known status.`;
+		const siblings = children.filter((child) => child.id !== childId);
+		if (siblings.some((child) => !isKnownBdStatus(child.status))) return `Заблокировано: epic ${parentId} содержит child с unknown status; невозможно безопасно определить last-child.`;
+		if (siblings.some((child) => !TERMINAL_BD_STATUSES.has(child.status!))) continue;
+		const snapshot = statusSnapshot(children);
+		if (!snapshot) return `Заблокировано: не удалось построить REQUIRED_CHILDREN_STATUS для epic ${parentId}.`;
+		const childComments = getBdComments(cwd, childId);
+		const parentComments = getBdComments(cwd, parentId);
+		if (!childComments || !parentComments) return `Заблокировано: не удалось прочитать comments для parent epic sweep (${childId}, ${parentId}).`;
+		const childMarker = latestCommentMatching(childComments, (text) => text.includes("PARENT EPIC SWEEP") && markerHasLine(text, "PARENT_EPIC", parentId));
+		const parentMarker = latestCommentMatching(parentComments, (text) => text.includes("EPIC HANDOFF") && markerHasLine(text, "PARENT_EPIC", parentId));
+		if (!childMarker || !hasValidChildSweep(childMarker, parentId, childId, targetStatus, snapshot) || !parentMarker || !hasValidParentHandoff(parentMarker, parentId, childId, targetStatus)) {
+			return `Заблокировано: last child ${childId} для epic ${parentId} требует свежие PARENT EPIC SWEEP и EPIC HANDOFF перед terminalization.`;
+		}
+	}
+	return undefined;
+}
+
+function validateEpicCloseMatrix(cwd: string, id: string): string | undefined {
+	const issue = getBdIssue(cwd, id);
+	if (issue?.issue_type !== "epic") return undefined;
+	const children = getEpicChildren(cwd, id);
+	if (!children) return `Заблокировано: не удалось прочитать children epic ${id} для EPIC ACCEPTANCE MATRIX.`;
+	if (children.some((child) => child.id !== id && child.status !== "closed")) return undefined;
+	const comments = getBdComments(cwd, id);
+	if (!comments) return `Заблокировано: не удалось прочитать comments epic ${id} для EPIC ACCEPTANCE MATRIX.`;
+	const matrix = latestCommentMatching(comments, (text) => text.includes("EPIC ACCEPTANCE MATRIX") && markerHasLine(text, "PARENT_EPIC", id));
+	if (!matrix || !hasValidEpicAcceptanceMatrix(matrix, id)) return `Заблокировано: epic ${id} требует post-terminal EPIC ACCEPTANCE MATRIX перед close.`;
+	return undefined;
+}
+
 function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
 	const id = terminalCloseId(command);
 	if (!id) return false;
@@ -1724,7 +1878,10 @@ function descriptionAcceptanceChecks(description?: string): string[] {
 }
 
 function latestAcceptanceMatrix(commentsText: string): string | undefined {
-	const index = commentsText.toUpperCase().lastIndexOf("ACCEPTANCE MATRIX:");
+	const upper = commentsText.toUpperCase();
+	const standardIndex = upper.lastIndexOf("ACCEPTANCE MATRIX:");
+	const epicIndex = upper.lastIndexOf("EPIC ACCEPTANCE MATRIX");
+	const index = Math.max(standardIndex, epicIndex);
 	if (index < 0) return undefined;
 	return commentsText.slice(index).trim();
 }
@@ -2639,6 +2796,14 @@ export function evaluateBashPolicy(
 	// Per-task bead closure is allowed before merge-to-main in multi-task sessions.
 	// Session-final merge evidence is enforced by merge-to-main/final verdict workflows,
 	// not by blocking every accepted bead close on a feature branch.
+	const nonClosedTerminalTransition = directTerminalTransition(command);
+	if (nonClosedTerminalTransition && nonClosedTerminalTransition.status !== "closed") {
+		const sweepError = validateLastChildEpicSweep(commandCwd, nonClosedTerminalTransition.id, nonClosedTerminalTransition.status);
+		if (sweepError) {
+			return { policy: "requireEpicFinalizationSweep", block: true, reason: sweepError };
+		}
+	}
+
 	if (commandClosesBead(command) || commandDirectlySetsClosed(command)) {
 		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId) : undefined;
 		if (matrixError) {
@@ -2654,6 +2819,15 @@ export function evaluateBashPolicy(
 				block: true,
 				reason: "Заблокировано: terminal close требует bd status accepted, либо bd status reviewed с documented no-acceptance shortcut, либо explicit policy override.",
 			};
+		}
+		const terminalTransition = directTerminalTransition(command) ?? (closeCommandId(command) ? { id: closeCommandId(command)!, status: "closed" } : undefined);
+		const sweepError = terminalTransition ? validateLastChildEpicSweep(commandCwd, terminalTransition.id, terminalTransition.status) : undefined;
+		if (sweepError) {
+			return { policy: "requireEpicFinalizationSweep", block: true, reason: sweepError };
+		}
+		const epicMatrixError = closeId ? validateEpicCloseMatrix(commandCwd, closeId) : undefined;
+		if (epicMatrixError) {
+			return { policy: "requireEpicFinalizationSweep", block: true, reason: epicMatrixError };
 		}
 	}
 

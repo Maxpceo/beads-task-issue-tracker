@@ -87,6 +87,16 @@ An epic is an organizational group. Prefer one feature branch for the whole epic
    ```
    `beads-policy` blocks standard and direct epic close while child beads are incomplete.
 
+
+## Epic finalization contract
+
+- Children must be durable `parent-child:<EPIC_ID>` bd relationships, not only text mentions in descriptions.
+- Required children are the beads returned by `bd list --parent <EPIC_ID> --json`; `discovered-from` follow-ups are non-blocking unless explicitly converted to required/blocking work.
+- After each child review/close/merge, run a parent epic sweep.
+- Before terminalizing the last required child, write machine-parseable `PARENT EPIC SWEEP` on the child and `EPIC HANDOFF` on the parent when finalization cannot happen in the same workflow.
+- After the last required child is terminal, run `finalize-epic`: write `EPIC ACCEPTANCE MATRIX` on the parent and close only on PASS, or keep a fresh `EPIC HANDOFF` with reason and next action.
+- Use `EPIC PROGRESS` only when required children remain. Do not leave a parent epic silently non-terminal when all required children are terminal.
+
 ## Rules
 
 - Do not dispatch an epic child without a parent/EPIC_ID context, labels, concrete acceptance, verification checks, and approved plan.
