@@ -1959,6 +1959,8 @@ function parseWorktreeCreateSegment(segment: string): WorktreeCreateCommand | un
 	if (gitIndex !== -1) {
 		let worktreePath: string | undefined;
 		let branch: string | undefined;
+		let detached = false;
+		const positional: string[] = [];
 		for (let index = gitIndex + 3; index < tokens.length; index += 1) {
 			const token = tokens[index];
 			if (!token) continue;
@@ -1967,9 +1969,19 @@ function parseWorktreeCreateSegment(segment: string): WorktreeCreateCommand | un
 				index += 1;
 				continue;
 			}
-			if (token === "--detach" || token === "--force" || token === "--guess-remote" || token === "--no-guess-remote") continue;
+			if (token === "--detach") {
+				detached = true;
+				continue;
+			}
+			if (token === "--force" || token === "--guess-remote" || token === "--no-guess-remote") continue;
 			if (token.startsWith("-")) continue;
+			positional.push(token);
 			if (!worktreePath) worktreePath = token;
+		}
+		const existingBranch = positional[1];
+		const existingBranchPrefix = existingBranch?.split("/", 1)[0];
+		if (!branch && !detached && existingBranchPrefix && TASK_WORKTREE_BRANCH_PREFIXES.has(existingBranchPrefix)) {
+			branch = existingBranch;
 		}
 		return { kind: "git", path: worktreePath, branch };
 	}

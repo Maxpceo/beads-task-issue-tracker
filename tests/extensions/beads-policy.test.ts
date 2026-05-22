@@ -304,20 +304,25 @@ describe('Pi worktree naming policy', () => {
     expect(homeDecision).toBeUndefined()
   })
 
-  it('supports git worktree add -b/-B parser variants', () => {
+  it('supports git worktree add -b/-B parser variants and existing task branches', () => {
     const lowerDecision = evaluateBashPolicy(`${gitWtAdd} -b task/${goodSuffix} ${goodPath}`, {
       activeBead: 'beads-task-issue-tracker-lgok',
     }, { cwd: tmpdir() })
     const upperDecision = evaluateBashPolicy(`${gitWtAdd} ${goodPath} -B task/${goodSuffix}`, {
       activeBead: 'beads-task-issue-tracker-lgok',
     }, { cwd: tmpdir() })
+    const existingBranchDecision = evaluateBashPolicy(`${gitWtAdd} ${goodPath} task/${goodSuffix}`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
 
     expect(lowerDecision).toBeUndefined()
     expect(upperDecision).toBeUndefined()
+    expect(existingBranchDecision).toBeUndefined()
   })
 
   it.each([
     [`${bdWtCreate} ${join(worktreeRoot, 'different-name')} --branch task/${goodSuffix}`, 'точно совпадал'],
+    [`${gitWtAdd} ${join(worktreeRoot, 'different-name')} task/${goodSuffix}`, 'точно совпадал'],
     [`${bdWtCreate} ${join(worktreeRoot, 'beads-task-issue-tracker-lgok-branch-worktree-naming')} --branch task/beads-task-issue-tracker-lgok-branch-worktree-naming`, 'полный project bead id'],
     [`${bdWtCreate} ${join(worktreeRoot, 'lgok')} --branch task/lgok`, '<bead-suffix>-<domain-or-component>-<purpose>'],
     [`${bdWtCreate} ${join(worktreeRoot, 'v495-branch-worktree-naming')} --branch task/v495-branch-worktree-naming`, 'active bead'],
@@ -335,10 +340,14 @@ describe('Pi worktree naming policy', () => {
     const listDecision = evaluateBashPolicy(`${gitWtAdd.replace('add', 'list')}`, {}, { cwd: tmpdir() })
     const removeDecision = evaluateBashPolicy(`bd ${wt} remove ${goodPath}`, {}, { cwd: tmpdir() })
     const nonTaskDecision = evaluateBashPolicy(`${bdWtCreate} ${join(worktreeRoot, 'smoke')} --branch smoke`, {}, { cwd: tmpdir() })
+    const gitNonTaskDecision = evaluateBashPolicy(`${gitWtAdd} ${join(worktreeRoot, 'smoke')} smoke`, {}, { cwd: tmpdir() })
+    const detachedDecision = evaluateBashPolicy(`${gitWtAdd} --detach ${join(worktreeRoot, 'detached')} task/${goodSuffix}`, {}, { cwd: tmpdir() })
 
     expect(listDecision?.policy).not.toBe('blockWorktreeInsideRepo')
     expect(removeDecision?.policy).not.toBe('blockWorktreeInsideRepo')
     expect(nonTaskDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    expect(gitNonTaskDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    expect(detachedDecision?.policy).not.toBe('blockWorktreeInsideRepo')
   })
 
   it('does not inspect quoted bd comment examples as worktree create commands', () => {
