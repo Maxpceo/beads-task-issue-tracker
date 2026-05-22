@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import ts from 'typescript'
 
-import { registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
+import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
 
@@ -42,7 +42,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         validateAutoExecutePlan: () => ({ valid: true, reason: '' }),
       }
     }
-    if (id === '../workflow-state/index') return { requestWorkflowClaim }
+    if (id === '../workflow-state/index') return { currentRuntimeOwnerKey, requestWorkflowClaim }
     if (id === '../workflow-intent/index') return { parseWorkflowIntent, shouldAutoClaimAndPlan }
     if (id === '../plan-review/index') {
       return {
@@ -60,7 +60,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean } = {}) {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, entries?: Array<{ type?: string; customType?: string; data?: unknown }> } = {}) {
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
@@ -128,7 +128,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   }
   const ctx: any = {
     cwd: '/tmp/project',
-    sessionManager: { getSessionId: () => 'session-current' },
+    sessionManager: { getSessionId: () => 'session-current', getEntries: () => options.entries ?? [] },
     hasUI: true,
     ui: {
       notify() {},
@@ -437,6 +437,113 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
     expect(blocked.content[0].text).toContain('does not match worktree branch task/plan-approved')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+  })
+
+  it('workflow_plan_approved preserves recorded task worktree scope when ctx cwd is main', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      taskScopeGit: true,
+      entries: [{
+        type: 'workflow-state',
+        data: {
+          activeBead: 'bead-plan',
+          branch: 'task/plan-approved',
+          worktreePath: '/tmp/task',
+          startCommit: 'task123',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+        },
+      }],
+    })
+
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-recorded-task-scope', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: continue using the recorded workflow-state task worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow state keeps task scope.',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    const commentCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(commentCall?.args[3]).toContain('BRANCH: task/plan-approved')
+    expect(commentCall?.args[3]).toContain('WORKTREE: /tmp/task')
+    expect(commentCall?.args[3]).toContain('START_COMMIT: task123')
+    expect(workflowUpdates.at(-1)).toMatchObject({
+      state: 'implementing',
+      activeBead: 'bead-plan',
+      branch: 'task/plan-approved',
+      worktreePath: '/tmp/task',
+      startCommit: 'task123',
+      planMode: 'off',
+      sessionMode: 'implementing',
+      planApproved: true,
+    })
+  })
+
+  it('workflow_plan_approved falls back to ctx cwd when no recorded task worktree scope exists', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ entries: [] })
+
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-ctx-fallback', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: approve without a recorded task worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow state uses current ctx cwd scope.',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    const commentCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(commentCall?.args[3]).toContain('BRANCH: main')
+    expect(commentCall?.args[3]).toContain('WORKTREE: /tmp/project')
+    expect(commentCall?.args[3]).toContain('START_COMMIT: abc123')
+    expect(workflowUpdates.at(-1)).toMatchObject({ branch: 'main', worktreePath: '/tmp/project', startCommit: 'abc123' })
+  })
+
+  it('workflow_plan_approved blocks recorded branch scope without worktree before bd comment', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      entries: [{ type: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', sessionKey: 'id:session-current' } }],
+    })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-recorded-incomplete-scope', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: reject incomplete recorded scope.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow approval blocks ambiguous scope.',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('no worktreePath')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+  })
+
+  it('workflow_plan_approved blocks recorded invalid task worktree before bd comment', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      taskScopeGit: true,
+      entries: [{ type: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', worktreePath: '/tmp/missing', sessionKey: 'id:session-current' } }],
+    })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-recorded-invalid-scope', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: reject invalid recorded worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow approval blocks invalid scope.',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('recorded workflow-state worktree is not a readable git worktree')
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
