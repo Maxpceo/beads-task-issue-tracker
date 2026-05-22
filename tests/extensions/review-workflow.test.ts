@@ -129,6 +129,72 @@ describe('review_workflow scoped review', () => {
     expect(result.details.error).toBeUndefined()
   })
 
+  it('renders accepted SUPERVISOR ARTIFACT evidence in review dryRun context', async () => {
+    let registeredTool: any
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') {
+          return {
+            stdout: 'DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: /repo/worktrees/bead-a\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222\n\nSUPERVISOR ARTIFACT\nStatus: DONE\nFiles changed: tests/extensions/review-workflow.test.ts\nVerification: pnpm test -- tests/extensions/review-workflow.test.ts\nExit code: 0\nArtifact status: accepted',
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a branch --show-current') return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a rev-parse --show-toplevel') return { stdout: '/repo/worktrees/bead-a\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a diff --name-only aaa1111..bbb2222') return { stdout: 'tests/extensions/review-workflow.test.ts\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    reviewWorkflowExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', worktreePath: '/repo/worktrees/bead-a', dryRun: true }, undefined, undefined, { cwd: '/repo/main' })
+
+    expect(result.content[0].text).toContain('SUPERVISOR ARTIFACT:')
+    expect(result.content[0].text).toContain('ARTIFACT STATUS: accepted')
+    expect(result.content[0].text).toContain('Artifact status: accepted')
+    expect(result.content[0].text).toContain('artifact evidence may be cited in acceptance matrix, but it is not acceptance by itself')
+    expect(result.details.supervisorArtifact.status).toBe('accepted')
+  })
+
+  it('renders missing and insufficient SUPERVISOR ARTIFACT status in review handoff', async () => {
+    async function runWithComments(comments: string) {
+      let registeredTool: any
+      const pi = {
+        events: { emit() {} },
+        registerTool(tool: any) {
+          if (tool.name === 'review_bead') registeredTool = tool
+        },
+        registerCommand() {},
+        exec: async (command: string, args: string[]) => {
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments') return { stdout: comments, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a branch --show-current') return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a rev-parse --show-toplevel') return { stdout: '/repo/worktrees/bead-a\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a diff --name-only aaa1111..bbb2222') return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+      reviewWorkflowExtension(pi as any)
+      return registeredTool.execute('call-1', { beadId: 'bead-a', worktreePath: '/repo/worktrees/bead-a', dryRun: true }, undefined, undefined, { cwd: '/repo/main' })
+    }
+
+    const base = 'DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: /repo/worktrees/bead-a\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222'
+    const missing = await runWithComments(base)
+    const insufficient = await runWithComments(`${base}\n\nSUPERVISOR ARTIFACT\nStatus: DONE\nVerification: not run\nArtifact status: insufficient`)
+
+    expect(missing.content[0].text).toContain('ARTIFACT STATUS: N/A')
+    expect(missing.details.supervisorArtifact.status).toBe('n/a')
+    expect(insufficient.content[0].text).toContain('ARTIFACT STATUS: insufficient')
+    expect(insufficient.details.supervisorArtifact.status).toBe('insufficient')
+  })
+
   it('accepts workflow_submit_for_review durable task worktree evidence from a main-session orchestrator', async () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
@@ -459,6 +525,7 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(statusUpdates).toEqual(['update bead-a --status simplified', 'update bead-a --status reviewed', 'update bead-a --status accepted'])
     expect(comments.some((args) => args.includes('CODE REVIEW: APPROVED'))).toBe(true)
     expect(comments.some((args) => args.includes('CODE REVIEW: NOT APPROVED'))).toBe(false)
+    expect(comments.some((args) => args.includes('ARTIFACT STATUS: N/A'))).toBe(true)
     expect(execCalls.some((call) => call.command === 'git' && call.args[0] === '-C' && call.args[1]?.includes('review-workflow-cwd-') === true && call.args.slice(2).join(' ') === 'diff --name-only aaa1111..bbb2222')).toBe(true)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
     expect(result.details.error).toBeUndefined()
@@ -485,6 +552,7 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(statusUpdates.some((args) => args.includes('--status reviewed') || args.includes('--status accepted') || args.includes('--status closed'))).toBe(false)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
     expect(comments.some((args) => args.includes('CODE REVIEW: NOT APPROVED'))).toBe(true)
+    expect(comments.some((args) => args.includes('ARTIFACT STATUS: N/A'))).toBe(true)
     expect(result.details.reviewerOutput).toContain('VERDICT: NOT_APPROVED')
     expect(result.content[0].text).toContain('reviewerOutput:')
     expect(workflowEvents.at(-1)).toMatchObject({ sessionMode: 'inreview' })
