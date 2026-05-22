@@ -276,6 +276,72 @@ function getParentId(bead: BeadInfo): string | undefined {
 	return bead.parent ?? (bead.dependencies ?? []).find((dep) => dependencyType(dep) === "parent-child")?.depends_on_id;
 }
 
+
+function firstNonEmptyLine(section: string): string | undefined {
+	return section.split("\n").map((line) => line.trim()).find((line) => line.length > 0);
+}
+
+function extractPlanField(plan: string, heading: string): string {
+	const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const match = new RegExp(`(^|\\n)\\s*${escaped}\\s*`).exec(plan);
+	if (!match) return "";
+	const start = (match.index ?? 0) + match[0].length;
+	const rest = plan.slice(start);
+	const next = rest.search(/\n\s*[A-Za-z][A-Za-z0-9 /_-]*:\s*/);
+	return (next >= 0 ? rest.slice(0, next) : rest).trim();
+}
+
+function sectionOrNa(plan: string, heading: string): string {
+	const section = extractPlanField(plan, heading).trim();
+	return section.length > 0 ? section : "N/A";
+}
+
+function normalizeListSection(section: string): string {
+	const lines = section
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+	return lines.length > 0 ? lines.join("\n") : "N/A";
+}
+
+function buildExecutionContract(bead: BeadInfo, plan: string): string {
+	const planFiles = normalizeListSection(sectionOrNa(plan, "Files to change:"));
+	const beadFiles = normalizeListSection(extractSection(bead.description ?? "", "### Files"));
+	const outOfScope = normalizeListSection(extractSection(bead.description ?? "", "### Out of scope"));
+	const verification = normalizeListSection(sectionOrNa(plan, "Verification / acceptance checks:"));
+	const worktreeLock = sectionOrNa(plan, "WORKTREE_LOCK:");
+	const siblingStreams = sectionOrNa(plan, "Sibling streams:");
+	const explicitDoNotTouch = sectionOrNa(plan, "Do not touch:");
+	const doNotTouch = explicitDoNotTouch !== "N/A" ? explicitDoNotTouch : outOfScope;
+
+	return `EXECUTION CONTRACT:
+
+Write zone:
+${planFiles !== "N/A" ? planFiles : beadFiles}
+
+Do not touch:
+${doNotTouch}
+
+Sibling streams:
+${siblingStreams}
+
+Stop rules:
+- Stop with NEEDS_CONTEXT if requirements, acceptance, dependencies, write zone, or verification are unclear.
+- Stop with BLOCKED if branch/worktree/start commit are unsafe, required dependencies are unresolved, checks fail without a scoped local fix, or policy/tooling blocks required work.
+- Do not edit outside Write zone without explicit approval; if the approved plan needs expansion, stop and report the exact scope gap.
+- Worktree lock: ${firstNonEmptyLine(worktreeLock) ?? "N/A"}
+
+Verification:
+${verification}
+
+SUPERVISOR ARTIFACT:
+- Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
+- Files changed: <paths or N/A>
+- Verification: <command/manual check, exit code or observed result, output excerpt; use N/A only with reason>
+- Concerns: <risks/follow-ups or N/A>
+- Artifact status: <complete | incomplete, with reason if incomplete>`;
+}
+
 function summarizeContext(bead: BeadInfo): string {
 	const parent = getParentId(bead) ?? "-";
 	return [`Title: ${bead.title ?? bead.id}`, `Status: ${bead.status ?? "unknown"}`, `Labels: ${(bead.labels ?? []).join(", ") || "-"}`, `EPIC_ID: ${parent}`].join("\n");
@@ -296,6 +362,8 @@ ${summarizeContext(bead)}
 
 APPROVED PLAN:
 ${plan}
+
+${buildExecutionContract(bead, plan)}
 
 ${pathRules}
 

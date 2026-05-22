@@ -31,6 +31,12 @@ const ReviewParams = {
 	additionalProperties: false,
 } as const;
 
+interface SupervisorArtifactEvidence {
+	status: "accepted" | "insufficient" | "missing" | "n/a";
+	statusLine: string;
+	evidence: string;
+}
+
 interface ReviewResult {
 	beadId: string;
 	branch: string;
@@ -41,6 +47,7 @@ interface ReviewResult {
 	automatedChecks: string[];
 	checkpoints: string[];
 	frontendChecklist: string[];
+	supervisorArtifact: SupervisorArtifactEvidence;
 	reviewerExitCode?: number;
 	reviewerOutput?: string;
 	reviewerStderr?: string;
@@ -398,6 +405,39 @@ export function isReviewApproved(output: string): boolean {
 	return APPROVED_MARKER.test(output);
 }
 
+
+function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence {
+	const marker = /(^|\n)\s*SUPERVISOR ARTIFACT\s*:?\s*(?:\n|$)/gi;
+	const matches = [...comments.matchAll(marker)];
+	if (matches.length === 0) {
+		return {
+			status: "n/a",
+			statusLine: "ARTIFACT STATUS: N/A (SUPERVISOR ARTIFACT absent)",
+			evidence: "SUPERVISOR ARTIFACT: N/A — no durable supervisor artifact was found in bd comments. Treat this as missing implementation evidence, not acceptance.",
+		};
+	}
+	const start = matches.at(-1)?.index ?? 0;
+	const nextMarker = comments.slice(start + 1).search(/\n\s*(?:PI WORKFLOW UPDATE|WORKFLOW CLAIM|PLAN APPROVED|DISPATCH(?: RESULT)?|WORKFLOW SUBMIT FOR REVIEW|REVIEW START|CODE REVIEW|ACCEPTANCE|ACCEPTANCE MATRIX)\b/i);
+	const raw = (nextMarker >= 0 ? comments.slice(start, start + 1 + nextMarker) : comments.slice(start)).trim();
+	const evidence = raw.split("\n").slice(0, 80).join("\n").slice(0, 4000);
+	const explicit = raw.match(/(^|\n)\s*(?:Artifact status|ARTIFACT STATUS)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
+	const verificationExit = raw.match(/(^|\n)\s*(?:exit code|exit|code)\s*[:=]\s*(-?\d+)/i)?.[2];
+	const verificationResult = raw.match(/(^|\n)\s*(?:verification result|result)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
+	const explicitReject = explicit !== undefined && /\b(rejected|reject|insufficient|missing|fail(?:ed)?|not[_ -]?approved|blocked|needs_context)\b/i.test(explicit);
+	const explicitAccept = explicit !== undefined && /\b(accepted|approved|sufficient)\b/i.test(explicit);
+	const hasVerificationReject = (verificationExit !== undefined && verificationExit !== "0")
+		|| /\b(fail(?:ed)?|not[_ -]?run|not[_ -]?approved|blocked)\b/i.test(verificationResult ?? "");
+	const hasVerificationAccept = verificationExit === "0"
+		|| /\b(pass(?:ed)?|success(?:ful)?|ok)\b/i.test(verificationResult ?? "");
+	const status: SupervisorArtifactEvidence["status"] = explicitReject || hasVerificationReject ? "insufficient" : explicitAccept || hasVerificationAccept ? "accepted" : "missing";
+	const statusLine = status === "accepted"
+		? "ARTIFACT STATUS: accepted (SUPERVISOR ARTIFACT present; evidence only, not acceptance)"
+		: status === "insufficient"
+			? "ARTIFACT STATUS: insufficient (SUPERVISOR ARTIFACT present but rejected/failed/missing required evidence)"
+			: "ARTIFACT STATUS: missing (SUPERVISOR ARTIFACT present but lacks sufficient Artifact status/verification evidence)";
+	return { status, statusLine, evidence };
+}
+
 function refreshDashboardWidget(ctx?: { ui?: any }): void {
 	const state = getSharedDashboardState();
 	if (!state?.visible || !ctx?.ui) return;
@@ -484,6 +524,10 @@ function render(result: ReviewResult): string {
 		...result.checkpoints.map((item) => `- ${item}`),
 		result.frontendChecklist.length > 0 ? "frontendReviewChecklist:" : "frontendReviewChecklist: not applicable",
 		...result.frontendChecklist.map((item) => `- ${item}`),
+		"SUPERVISOR ARTIFACT:",
+		result.supervisorArtifact.statusLine,
+		result.supervisorArtifact.evidence,
+		"SUPERVISOR ARTIFACT NOTE: artifact evidence may be cited in acceptance matrix, but it is not acceptance by itself.",
 		result.pathRulesLoaded ?? "PATH_RULES_LOADED:\nNot evaluated.",
 		"automatedChecks:",
 		...result.automatedChecks.map((item) => `---\n${item}`),
@@ -523,32 +567,40 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles, reviewCwd);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
 				const pathRulesLoaded = await renderPathRulesLoaded(reviewCwd, changedFiles);
+				const supervisorArtifact = extractSupervisorArtifact(comments);
 				const checkpoints = [
 					"Selected model: bd statuses inreview -> simplified -> reviewed -> accepted -> closed with structured comments as audit evidence.",
+					`Supervisor artifact handoff: ${supervisorArtifact.statusLine}; artifact is evidence only and must not auto-accept work.`,
 					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
 					"APPROVED path: record CODE REVIEW APPROVED evidence, run acceptance checks, then move reviewed -> accepted -> closed.",
 					"Terminal guard: standard and direct closed transitions require accepted/reviewing workflow state and policy evidence; direct bypass is blocked by beads-policy.",
 					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
 					"Merge validation: per-task bead close may happen before merge; explicit merge-to-main performs PR/origin-main evidence and final session verdict checks.",
 				];
-				const result: ReviewResult = { beadId: params.beadId, branch, worktreePath, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, pathRulesLoaded };
+				const result: ReviewResult = { beadId: params.beadId, branch, worktreePath, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, supervisorArtifact, pathRulesLoaded };
 				if (!params.dryRun) {
-					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.`]);
+					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.
+
+SUPERVISOR ARTIFACT HANDOFF
+${supervisorArtifact.statusLine}
+${supervisorArtifact.evidence}
+
+Artifact evidence may be cited in acceptance matrix, but it is not acceptance by itself.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
-					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\nReview status note: review_bead temporarily moves the bead to bd status simplified while the reviewer runs. Do not reject solely because bd show reports simplified during this review; if the final verdict is not approved, review_bead must restore status inreview after reviewer exit.\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
+					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\nReview status note: review_bead temporarily moves the bead to bd status simplified while the reviewer runs. Do not reject solely because bd show reports simplified during this review; if the final verdict is not approved, review_bead must restore status inreview after reviewer exit.\n\nSUPERVISOR ARTIFACT HANDOFF:\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\nArtifact evidence may be cited in acceptance matrix, but it is not acceptance by itself.\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
 					const reviewer = await runReviewer(reviewCwd, prompt, signal, ctx);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;
 					if (isReviewApproved(reviewer.output)) {
-						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
+						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
-						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\n${automatedChecks.join("\n\n")}`]);
+						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\nArtifact evidence may be cited in ACCEPTANCE MATRIX when mapped to criteria with fresh verification; artifact is not acceptance by itself.\n\n${automatedChecks.join("\n\n")}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
 						await exec(pi, "bd", ["close", params.beadId, "--reason", "Reviewed and accepted by review_bead"]);
 						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "closed", branch, worktreePath, startCommit, endCommit });
 					} else {
-						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: NOT APPROVED\n\nRedispatch required before completion.\n\n${reviewer.output.slice(-4000)}`]);
+						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: NOT APPROVED\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\n\nRedispatch required before completion.\n\n${reviewer.output.slice(-4000)}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "inreview"]);
 						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "inreview", branch, worktreePath, startCommit, endCommit });
 					}

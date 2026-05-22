@@ -47,7 +47,18 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    dispatch_supervisor(beadId=<ID>)
    # optional explicit override when needed: dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
-5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, do-not-guess guidance, over-your-head guidance, and status vocabulary.
+5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, execution contract, do-not-guess guidance, over-your-head guidance, and status vocabulary.
+
+## Supervisor execution contract
+
+Every `dispatch_supervisor` prompt must render the same section names, even for older approved plans. Compatibility defaults are explicit `N/A`, not silent omission; this does not weaken existing readiness checks for the PLAN APPROVED marker, approval metadata, start commit, files, acceptance, verification, and implementation intent.
+
+- `Write zone`: paths from approved `Files to change:`; if unavailable, use bead `### Files`; do not infer broader zones.
+- `Do not touch`: explicit plan `Do not touch:` when present, otherwise bead `### Out of scope`, otherwise `N/A`.
+- `Sibling streams`: explicit plan `Sibling streams:` when present; until Parallel Decomposition Matrix fields exist, render `N/A` for older plans.
+- `Stop rules`: stop with `NEEDS_CONTEXT` for unclear requirements/acceptance/dependencies/write zone/verification, `BLOCKED` for unsafe branch/worktree/start commit, unresolved dependencies, failing required checks without scoped fix, or policy/tooling blockers; stop before editing outside `Write zone`.
+- `Verification`: approved `Verification / acceptance checks:` commands/manual checks, or explicit `N/A` only when the compatibility path applies.
+- `SUPERVISOR ARTIFACT`: final supervisor report section with `Status`, `Files changed`, `Verification` command/exit/output excerpt or observed result, `Concerns`, and `Artifact status`. This artifact is implementation evidence for review; it is not acceptance and must not imply bead closure. Review handoff records the artifact as accepted / insufficient / missing / N/A so acceptance matrix rows can cite it only when mapped to criteria and fresh verification.
 6. After supervisor returns, inspect status/report.
 7. If completed and bead is ready for review, use the typed transition guard instead of raw `bd update --status inreview` when available:
    ```bash

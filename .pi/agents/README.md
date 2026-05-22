@@ -34,6 +34,17 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
 - Keep reports concise and factual. Do not include celebratory wording before evidence.
 - Non-orchestrator agents must not close beads, push, acquire/release merge-slot, or set orchestrator-only bd statuses (`simplified`, `reviewed`, `accepted`, `closed`) unless the dispatch prompt explicitly grants that authority.
 
+## Supervisor execution contract
+
+Typed `dispatch_supervisor` prompts define a structured implementation contract for all implementation supervisors. The section names are stable and must appear even when older approved plans do not yet provide stream-specific fields; compatibility uses explicit `N/A` defaults rather than silent omission.
+
+- `Write zone`: approved paths to edit, derived from `Files to change:` or bead `### Files`; supervisors must not broaden it without approval.
+- `Do not touch`: explicit protected paths/scope, or `### Out of scope`, or `N/A`.
+- `Sibling streams`: parallel stream context when available; `N/A` until matrix fields are defined.
+- `Stop rules`: stop with `NEEDS_CONTEXT` for unclear requirements/acceptance/dependencies/write zone/verification, and `BLOCKED` for unsafe branch/worktree/start commit, unresolved dependencies, failing required checks without scoped fix, or policy/tooling blockers.
+- `Verification`: required commands/manual checks with exit codes or observed results.
+- `SUPERVISOR ARTIFACT`: completion evidence with `Status`, `Files changed`, `Verification`, `Concerns`, and `Artifact status`; it supports later review/acceptance but does not itself accept or close the bead.
+
 ## Role boundaries
 
 - Implementation supervisors (`vue-supervisor`, `tauri-supervisor`, `test-supervisor`) may implement within the dispatched bead scope and may set `inreview` only when their prompt/workflow permits it and evidence exists.
