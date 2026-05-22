@@ -91,7 +91,9 @@ describe('beads-dispatch path rules integration', () => {
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'in_progress', labels: ['dx'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: 'task/current\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} branch --show-current`) return { stdout: 'main\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} rev-parse --show-toplevel`) return { stdout: `${mainCwd}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: `${branch}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse --show-toplevel`) return { stdout: `${taskWorktree}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse HEAD`) return { stdout: 'task-head\n', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
