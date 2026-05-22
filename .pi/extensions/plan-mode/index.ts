@@ -253,12 +253,22 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
 	}
 
+	function normalizePlanFieldValue(value: string): string {
+		let normalized = value.trim();
+		normalized = normalized.replace(/^(?:[-*+]\s+|\d+[.)]\s+)/u, "").trim();
+		normalized = normalized.replace(/^`([^`]+)`$/u, "$1").trim();
+		normalized = normalized.replace(/^["'“”‘’]([^"'“”‘’]+)["'“”‘’]$/u, "$1").trim();
+		normalized = normalized.replace(/[.,;:]$/u, "").trim();
+		return normalized;
+	}
+
 	function latestPlanField(text: string, names: string[]): string | undefined {
 		const namePattern = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 		const regex = new RegExp(`(^|\\n)\\s*(?:${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
 		let value: string | undefined;
 		for (const match of text.matchAll(regex)) {
-			value = match[2]?.trim();
+			const rawValue = match[2]?.trim();
+			if (rawValue) value = normalizePlanFieldValue(rawValue);
 		}
 		return value;
 	}
@@ -392,7 +402,28 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return sections.join("\n\n");
 	}
 
-	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<boolean> {
+	function buildPlanExecutionPrompt(beadId: string, worktreePath?: string, revised = false): string {
+		const action = worktreePath ? `dispatch_supervisor(beadId=${beadId}, cwd=${worktreePath})` : `dispatch_supervisor(beadId=${beadId})`;
+		return [
+			revised ? "Execute the revised approved plan now." : "Execute the approved plan now.",
+			`Next typed workflow action: ${action}`,
+			"Do not ask for another confirmation; the plan is already approved.",
+		].join("\n");
+	}
+
+	function triggerPlanExecutionTurn(message: string): void {
+		const maybePi = pi as typeof pi & { sendUserMessage?: (text: string) => void };
+		if (typeof maybePi.sendUserMessage === "function") {
+			maybePi.sendUserMessage(message);
+			return;
+		}
+		pi.sendMessage(
+			{ customType: "plan-mode-execute", content: message, display: true },
+			{ triggerTurn: true },
+		);
+	}
+
+	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<{ approved: boolean; beadId?: string; worktreePath?: string }> {
 		const workflowState = latestWorkflowStateEntry(ctx);
 		const beadId = workflowState?.activeBead;
 		if (!beadId) {
@@ -405,7 +436,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				},
 				{ triggerTurn: false },
 			);
-			return false;
+			return { approved: false };
 		}
 
 		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy: "Максим" }, ctx);
@@ -419,9 +450,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				},
 				{ triggerTurn: false },
 			);
-			return false;
+			return { approved: false };
 		}
-		return true;
+		return { approved: true, beadId, worktreePath: result.details?.worktreePath as string | undefined };
 	}
 
 	async function planReviewTool(params: { draftPlan: string }, ctx: ExtensionContext) {
@@ -853,8 +884,8 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 			const missing = missingRevisedPlanSections(lastAssistantText);
 			if (missing.length === 0) {
-				const approved = await approvePlanForExecution(ctx, lastAssistantText);
-				if (!approved) {
+				const approval = await approvePlanForExecution(ctx, lastAssistantText);
+				if (!approval.approved) {
 					persistState();
 					return;
 				}
@@ -863,14 +894,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				updateStatus(ctx);
 				persistState();
 
-				const execMessage =
-					todoItems.length > 0
-						? `Execute the revised plan after successful multi-agent review. Start with: ${todoItems[0].text}`
-						: "Execute the revised plan after successful multi-agent review.";
-				pi.sendMessage(
-					{ customType: "plan-mode-execute", content: execMessage, display: true },
-					{ triggerTurn: true },
-				);
+				triggerPlanExecutionTurn(buildPlanExecutionPrompt(approval.beadId ?? "<active>", approval.worktreePath, true));
 				return;
 			}
 
@@ -909,22 +933,15 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		]);
 
 		if (choice?.startsWith("Execute")) {
-			const approved = await approvePlanForExecution(ctx, lastAssistantText);
-			if (!approved) {
+			const approval = await approvePlanForExecution(ctx, lastAssistantText);
+			if (!approval.approved) {
 				persistState();
 				return;
 			}
 			executionMode = todoItems.length > 0;
 			updateStatus(ctx);
 
-			const execMessage =
-				todoItems.length > 0
-					? `Execute the plan. Start with: ${todoItems[0].text}`
-					: "Execute the plan you just created.";
-			pi.sendMessage(
-				{ customType: "plan-mode-execute", content: execMessage, display: true },
-				{ triggerTurn: true },
-			);
+			triggerPlanExecutionTurn(buildPlanExecutionPrompt(approval.beadId ?? "<active>", approval.worktreePath));
 		} else if (choice === "Refine the plan") {
 			const refinement = await ctx.ui.editor("Refine the plan:", "");
 			if (refinement?.trim()) {
