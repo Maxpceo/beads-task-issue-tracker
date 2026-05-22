@@ -188,11 +188,14 @@ describe('review_workflow scoped review', () => {
     const base = 'DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: /repo/worktrees/bead-a\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222'
     const missing = await runWithComments(base)
     const insufficient = await runWithComments(`${base}\n\nSUPERVISOR ARTIFACT\nStatus: DONE\nVerification: not run\nArtifact status: insufficient`)
+    const doneWithoutEvidence = await runWithComments(`${base}\n\nSUPERVISOR ARTIFACT\nStatus: DONE\nVerification: not run`)
 
     expect(missing.content[0].text).toContain('ARTIFACT STATUS: N/A')
     expect(missing.details.supervisorArtifact.status).toBe('n/a')
     expect(insufficient.content[0].text).toContain('ARTIFACT STATUS: insufficient')
     expect(insufficient.details.supervisorArtifact.status).toBe('insufficient')
+    expect(doneWithoutEvidence.content[0].text).toContain('ARTIFACT STATUS: missing')
+    expect(doneWithoutEvidence.details.supervisorArtifact.status).toBe('missing')
   })
 
   it('accepts workflow_submit_for_review durable task worktree evidence from a main-session orchestrator', async () => {

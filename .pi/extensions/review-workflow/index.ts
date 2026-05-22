@@ -422,11 +422,14 @@ function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence
 	const evidence = raw.split("\n").slice(0, 80).join("\n").slice(0, 4000);
 	const explicit = raw.match(/(^|\n)\s*(?:Artifact status|ARTIFACT STATUS)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
 	const verificationExit = raw.match(/(^|\n)\s*(?:exit code|exit|code)\s*[:=]\s*(-?\d+)/i)?.[2];
-	const statusField = raw.match(/(^|\n)\s*Status\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
-	const statusText = [explicit, statusField, raw].filter(Boolean).join("\n");
-	const hasReject = /\b(rejected|reject|insufficient|missing|fail(?:ed)?|not[_ -]?approved|blocked|needs_context)\b/i.test(statusText) || (verificationExit !== undefined && verificationExit !== "0");
-	const hasAccept = /\b(accepted|approved|sufficient|present|done|pass(?:ed)?)\b/i.test(statusText) || verificationExit === "0";
-	const status: SupervisorArtifactEvidence["status"] = hasReject ? "insufficient" : hasAccept ? "accepted" : "missing";
+	const verificationResult = raw.match(/(^|\n)\s*(?:verification result|result)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
+	const explicitReject = explicit !== undefined && /\b(rejected|reject|insufficient|missing|fail(?:ed)?|not[_ -]?approved|blocked|needs_context)\b/i.test(explicit);
+	const explicitAccept = explicit !== undefined && /\b(accepted|approved|sufficient)\b/i.test(explicit);
+	const hasVerificationReject = (verificationExit !== undefined && verificationExit !== "0")
+		|| /\b(fail(?:ed)?|not[_ -]?run|not[_ -]?approved|blocked)\b/i.test(verificationResult ?? "");
+	const hasVerificationAccept = verificationExit === "0"
+		|| /\b(pass(?:ed)?|success(?:ful)?|ok)\b/i.test(verificationResult ?? "");
+	const status: SupervisorArtifactEvidence["status"] = explicitReject || hasVerificationReject ? "insufficient" : explicitAccept || hasVerificationAccept ? "accepted" : "missing";
 	const statusLine = status === "accepted"
 		? "ARTIFACT STATUS: accepted (SUPERVISOR ARTIFACT present; evidence only, not acceptance)"
 		: status === "insufficient"
