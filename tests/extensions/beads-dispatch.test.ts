@@ -79,7 +79,7 @@ describe('beads-dispatch path rules integration', () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
     const taskWorktree = process.cwd()
-    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim()
+    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || process.env.GITHUB_HEAD_REF || 'task/current'
     const mainCwd = path.dirname(process.cwd())
     const pi = {
       events: { emit() {} },

@@ -65,7 +65,7 @@ describe('review_workflow scoped review', () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
     const taskWorktree = process.cwd()
-    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim()
+    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || process.env.GITHUB_HEAD_REF || 'task/current'
     const pi = {
       events: { emit() {} },
       registerTool(tool: any) {
