@@ -347,6 +347,83 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
+	type WorkflowStateEntry = {
+		activeBead?: string;
+		branch?: string;
+		worktreePath?: string;
+		startCommit?: string;
+	};
+
+	function latestWorkflowStateEntry(ctx: ExtensionContext): WorkflowStateEntry | undefined {
+		const entries = ctx.sessionManager?.getEntries?.() ?? [];
+		for (const entry of [...entries].reverse()) {
+			const isWorkflowState = entry.type === "workflow-state" || (entry.type === "custom" && entry.customType === "workflow-state");
+			if (!isWorkflowState) continue;
+			const data = entry.data as WorkflowStateEntry | undefined;
+			if (data?.activeBead) return data;
+		}
+		return undefined;
+	}
+
+	function planEvidenceHasLinePrefix(planEvidence: string, alias: string): boolean {
+		const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		return new RegExp(`(^|\\n)\\s*${escaped}`).test(planEvidence);
+	}
+
+	function hasEvidenceAlias(planEvidence: string, aliases: string[]): boolean {
+		return aliases.some((alias) => planEvidenceHasLinePrefix(planEvidence, alias));
+	}
+
+	function normalizedApprovalEvidence(planEvidence: string): string {
+		const trimmed = planEvidence.trim();
+		const sections = [trimmed];
+		if (!hasEvidenceAlias(trimmed, ["Plan:", "Problem:"])) {
+			sections.unshift("Plan:");
+		}
+		if (!hasEvidenceAlias(trimmed, ["Files to change:"])) {
+			sections.push("Files to change:\n- See approved plan above and bead files/context.");
+		}
+		if (!hasEvidenceAlias(trimmed, ["Acceptance:"])) {
+			sections.push("Acceptance:\n- Execute the approved plan and satisfy bead acceptance criteria.");
+		}
+		if (!hasEvidenceAlias(trimmed, ["Verification / acceptance checks:"])) {
+			sections.push("Verification / acceptance checks:\n- Run checks listed in the approved plan and bead verification section.");
+		}
+		return sections.join("\n\n");
+	}
+
+	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<boolean> {
+		const workflowState = latestWorkflowStateEntry(ctx);
+		const beadId = workflowState?.activeBead;
+		if (!beadId) {
+			syncWorkflowPlanMode(ctx, planModeEnabled ? (autoExecuteEnabled ? "auto" : "strict") : "off", "blocked", { planApproved: false });
+			pi.sendMessage(
+				{
+					customType: "plan-approval-recovery",
+					content: "План не запущен: не найден active bead в workflow-state, поэтому нельзя записать durable `PLAN APPROVED` comment. Recovery: вызовите `workflow_update(bead=<id>, state=planning)` и затем `workflow_plan_approved(beadId=<id>, planEvidence=<approved plan>)`.",
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+			return false;
+		}
+
+		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy: "Максим" }, ctx);
+		if (!result.details?.ok) {
+			syncWorkflowPlanMode(ctx, planModeEnabled ? (autoExecuteEnabled ? "auto" : "strict") : "off", "blocked", { activeBead: beadId, planApproved: false });
+			pi.sendMessage(
+				{
+					customType: "plan-approval-recovery",
+					content: `План не запущен: durable \`PLAN APPROVED\` comment не записан. ${result.content[0].text} Recovery: выполните \`workflow_plan_approved(beadId=${beadId}, planEvidence=<approved plan>)\` после устранения причины.`,
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+			return false;
+		}
+		return true;
+	}
+
 	async function planReviewTool(params: { draftPlan: string }, ctx: ExtensionContext) {
 		const draftPlan = params.draftPlan.trim();
 		if (!draftPlan) {
@@ -776,12 +853,13 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 			const missing = missingRevisedPlanSections(lastAssistantText);
 			if (missing.length === 0) {
-				planModeEnabled = false;
-				autoExecuteEnabled = false;
+				const approved = await approvePlanForExecution(ctx, lastAssistantText);
+				if (!approved) {
+					persistState();
+					return;
+				}
 				autoPlanReviewState = "idle";
 				executionMode = todoItems.length > 0;
-				restoreNormalToolSurface();
-				syncWorkflowPlanMode(ctx, "off", "implementing", { planApproved: true });
 				updateStatus(ctx);
 				persistState();
 
@@ -831,11 +909,12 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		]);
 
 		if (choice?.startsWith("Execute")) {
-			planModeEnabled = false;
-			autoExecuteEnabled = false;
+			const approved = await approvePlanForExecution(ctx, lastAssistantText);
+			if (!approved) {
+				persistState();
+				return;
+			}
 			executionMode = todoItems.length > 0;
-			restoreNormalToolSurface();
-			syncWorkflowPlanMode(ctx, "off", "implementing", { planApproved: true });
 			updateStatus(ctx);
 
 			const execMessage =

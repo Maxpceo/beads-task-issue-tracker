@@ -60,7 +60,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, entries?: Array<{ type?: string; customType?: string; data?: unknown }> } = {}) {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }> } = {}) {
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
@@ -79,6 +79,10 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const sendMessages: Array<{ message: any, options?: any }> = []
   const execCalls: Array<{ command: string, args: string[] }> = []
   const delayedClaimEvents: unknown[] = []
+  const trace: string[] = []
+  const sessionEntries: Array<{ type?: string, customType?: string, data?: unknown }> = options.entries ?? [
+    { type: 'custom', customType: 'workflow-state', data: { activeBead: options.activeBead ?? 'bead-plan', branch: 'main', worktreePath: '/tmp/project', startCommit: 'abc123' } },
+  ]
 
   const pi: any = {
     registerFlag() {},
@@ -90,7 +94,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       if (event === 'tool_call') toolCallHandlers.push(handler)
       if (event === 'agent_end') agentEndHandlers.push(handler)
     },
-    appendEntry() {},
+    appendEntry: (type: string, data: unknown) => { sessionEntries.push({ type, data }) },
     sendMessage: (message: any, options?: any) => sendMessages.push({ message, options }),
     getActiveTools: () => currentActiveTools.map((name) => ({ name })),
     getAllTools: () => allTools,
@@ -102,7 +106,11 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       execCalls.push({ command, args })
       if (command === 'bd' && args[0] === 'show') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"open"}]', stderr: '', code: 0 }
       if (command === 'bd' && args[0] === 'update') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"in_progress"}]', stderr: '', code: 0 }
-      if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '{"ok":true}', stderr: '', code: 0 }
+      if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
+        trace.push('bd-comments-add')
+        if (options.commentAddFails) return { stdout: '', stderr: 'comment write failed', code: 1 }
+        return { stdout: '{"ok":true}', stderr: '', code: 0 }
+      }
       if (command === 'git' && options.taskScopeGit && args[0] === '-C') {
         if (args[1] !== '/tmp/task') return { stdout: '', stderr: 'not a git repository', code: 128 }
         if (args.includes('branch')) return { stdout: 'task/plan-approved\n', stderr: '', code: 0 }
@@ -116,7 +124,10 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
     },
     events: {
       emit: (name: string, event: any) => {
-        if (name === 'workflow-state:update') workflowUpdates.push(event)
+        if (name === 'workflow-state:update') {
+          if (event.planApproved === true) trace.push('workflow-plan-approved')
+          workflowUpdates.push(event)
+        }
         if (name === 'workflow-state:claim') {
           void Promise.resolve().then(() => {
             delayedClaimEvents.push(event)
@@ -128,10 +139,11 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   }
   const ctx: any = {
     cwd: '/tmp/project',
-    sessionManager: { getSessionId: () => 'session-current', getEntries: () => options.entries ?? [] },
+    sessionManager: { getSessionId: () => 'session-current', getEntries: () => sessionEntries },
     hasUI: true,
     ui: {
       notify() {},
+      select: async () => 'Execute the plan',
       setStatus: (key: string, value: string | undefined) => { statuses[key] = value },
       setWidget: (key: string, value: string[] | undefined) => { widgets[key] = value },
       theme: {
@@ -156,7 +168,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   })
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sendMessages, execCalls, delayedClaimEvents, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sendMessages, execCalls, delayedClaimEvents, trace, ctx }
 }
 
 describe('Pi plan-mode bash allowlist', () => {
@@ -548,6 +560,45 @@ describe('Pi plan-mode typed workflow tools', () => {
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
     expect(workflowUpdates).toHaveLength(0)
+  })
+
+  it('UI Execute writes durable PLAN APPROVED comment before planApproved=true and triggers implementation', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, ctx } = makeHarness({ activeBead: 'bead-ui' })
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+
+    const commentCallIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    const approvedUpdateIndex = workflowUpdates.findIndex((update: any) => update.planApproved === true)
+    const comment = execCalls[commentCallIndex]?.args[3] ?? ''
+    expect(commentCallIndex).toBeGreaterThanOrEqual(0)
+    expect(approvedUpdateIndex).toBeGreaterThanOrEqual(0)
+    expect(trace.indexOf('bd-comments-add')).toBeLessThan(trace.indexOf('workflow-plan-approved'))
+    expect(execCalls[commentCallIndex]?.args[2]).toBe('bead-ui')
+    expect(comment).toContain('PLAN APPROVED')
+    expect(comment).toContain('Approved-by: Максим')
+    expect(comment).toContain('START_COMMIT: abc123')
+    expect(comment).toContain('Files to change:')
+    expect(comment).toContain('Acceptance:')
+    expect(comment).toContain('Verification / acceptance checks:')
+    expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-mode-execute')
+    expect(sendMessages.at(-1)?.options).toMatchObject({ triggerTurn: true })
+  })
+
+  it('UI Execute does not set planApproved=true when durable PLAN APPROVED comment fails', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, activeTools, ctx } = makeHarness({ activeBead: 'bead-ui', commentAddFails: true })
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(true)
+    expect(workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+    expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', sessionMode: 'blocked', planApproved: false })
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-approval-recovery')
+    expect(sendMessages.at(-1)?.message.content).toContain('workflow_plan_approved')
+    expect(sendMessages.some((message) => message.message.customType === 'plan-mode-execute')).toBe(false)
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
   })
 
   it('/plan-auto runs plan-review gate before execution and asks for a revised plan', async () => {
