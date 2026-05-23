@@ -66,6 +66,45 @@ interface DispatchResult {
 
 type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean };
 
+interface SupervisorDispatchApi<Ctx = unknown> {
+	dispatchSupervisor(params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
+}
+
+const SUPERVISOR_DISPATCH_API_KEY = "__piSupervisorDispatchApi";
+
+interface SupervisorDispatchApiRegistryState {
+	byPi: WeakMap<object, SupervisorDispatchApi>;
+	latest?: SupervisorDispatchApi;
+}
+
+function supervisorDispatchApiRegistry(): SupervisorDispatchApiRegistryState {
+	const root = globalThis as typeof globalThis & { [SUPERVISOR_DISPATCH_API_KEY]?: SupervisorDispatchApiRegistryState };
+	root[SUPERVISOR_DISPATCH_API_KEY] ??= { byPi: new WeakMap<object, SupervisorDispatchApi>() };
+	return root[SUPERVISOR_DISPATCH_API_KEY];
+}
+
+export function registerSupervisorDispatchApi<Ctx = unknown>(pi: object, api: SupervisorDispatchApi<Ctx>): void {
+	const registry = supervisorDispatchApiRegistry();
+	const typedApi = api as SupervisorDispatchApi;
+	registry.byPi.set(pi, typedApi);
+	registry.latest = typedApi;
+}
+
+export async function requestSupervisorDispatch<Ctx = unknown>(pi: object, params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ ok: boolean; text: string; details?: unknown; error?: string }> {
+	const registry = supervisorDispatchApiRegistry();
+	const api = registry.byPi.get(pi) ?? registry.latest;
+	if (!api) return { ok: false, text: "", error: "runtime hook missing: dispatch_supervisor API is unavailable" };
+	try {
+		const result = await api.dispatchSupervisor(params, ctx, signal);
+		const text = result.content.map((item) => item.text).join("\n");
+		const details = result.details as { error?: string } | undefined;
+		if (details?.error) return { ok: false, text, details: result.details, error: details.error };
+		return { ok: true, text, details: result.details };
+	} catch (error) {
+		return { ok: false, text: "", error: (error as Error).message };
+	}
+}
+
 const DispatchParams = {
 	type: "object",
 	properties: {
@@ -596,19 +635,27 @@ function renderDispatchResult(result: DispatchResult): string {
 }
 
 export default function beadsDispatchExtension(pi: ExtensionAPI): void {
+	const dispatchSupervisorTool = async (_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) => {
+		try {
+			const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd, ctx);
+			return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
+		} catch (error) {
+			return { content: [{ type: "text", text: `dispatch_supervisor не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+		}
+	};
+
+	registerSupervisorDispatchApi(pi, {
+		dispatchSupervisor(params: DispatchToolParams, ctx: ToolContext, signal?: AbortSignal) {
+			return dispatchSupervisorTool("post-approval-continuation", params, signal, undefined, ctx);
+		},
+	});
+
 	pi.registerTool({
 		name: "dispatch_supervisor",
 		label: "Dispatch Supervisor",
 		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
 		parameters: DispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
-			try {
-				const result = await dispatch(pi, "supervisor", params, signal, ctx.cwd, ctx);
-				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
-			} catch (error) {
-				return { content: [{ type: "text", text: `dispatch_supervisor не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
-			}
-		},
+		execute: dispatchSupervisorTool,
 	});
 
 	pi.registerTool({

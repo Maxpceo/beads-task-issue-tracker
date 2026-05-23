@@ -31,6 +31,7 @@ import {
 	runPlanReviewers,
 	type PlanReviewResult,
 } from "../plan-review/index";
+import { requestSupervisorDispatch } from "../beads-dispatch/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review"];
@@ -402,24 +403,36 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return sections.join("\n\n");
 	}
 
-	function buildPlanExecutionPrompt(beadId: string, worktreePath?: string, revised = false): string {
-		const action = worktreePath ? `dispatch_supervisor(beadId=${beadId}, cwd=${worktreePath})` : `dispatch_supervisor(beadId=${beadId})`;
-		return [
-			revised ? "Execute the revised approved plan now." : "Execute the approved plan now.",
-			`Next typed workflow action: ${action}`,
-			"Do not ask for another confirmation; the plan is already approved.",
-		].join("\n");
+	function renderPlanExecutionAction(beadId: string, worktreePath?: string): string {
+		return worktreePath ? `dispatch_supervisor(beadId=${beadId}, cwd=${worktreePath})` : `dispatch_supervisor(beadId=${beadId})`;
 	}
 
-	function triggerPlanExecutionTurn(message: string): void {
-		const maybePi = pi as typeof pi & { sendUserMessage?: (text: string) => void };
-		if (typeof maybePi.sendUserMessage === "function") {
-			maybePi.sendUserMessage(message);
+	async function recordRuntimeHookMissing(ctx: ExtensionContext, beadId: string, action: string, error: string): Promise<void> {
+		const content = [
+			"BLOCKED: runtime hook missing",
+			`Bead: ${beadId}`,
+			`Action: ${action}`,
+			`Reason: ${error}`,
+			"Немедленный системный blocker: PLAN APPROVED записан, но Pi runtime не смог запустить следующий typed workflow step автономно. Это не silent stall; требуется исправить runtime hook, а не отправлять новое сообщение в чат.",
+		].join("\n");
+		await pi.exec("bd", ["comments", "add", beadId, content]);
+		syncWorkflowPlanMode(ctx, "off", "blocked", { state: "blocked", activeBead: beadId, planApproved: true });
+		pi.sendMessage(
+			{ customType: "post-approval-continuation-blocked", content, display: true },
+			{ triggerTurn: false },
+		);
+	}
+
+	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, worktreePath?: string): Promise<void> {
+		const action = renderPlanExecutionAction(beadId, worktreePath);
+		const result = await requestSupervisorDispatch(pi, { beadId, cwd: worktreePath }, ctx);
+		if (!result.ok) {
+			await recordRuntimeHookMissing(ctx, beadId, action, result.error ?? "typed continuation returned without success");
 			return;
 		}
 		pi.sendMessage(
-			{ customType: "plan-mode-execute", content: message, display: true },
-			{ triggerTurn: true },
+			{ customType: "post-approval-continuation", content: `PLAN APPROVED continuation started: ${action}\n\n${result.text}`, display: true },
+			{ triggerTurn: false },
 		);
 	}
 
@@ -510,7 +523,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
-		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
+		await triggerApprovedPlanContinuation(ctx, params.beadId, worktreePath);
+		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; continuation attempted`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
 	}
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
@@ -890,11 +904,11 @@ After completing a step, include a [DONE:n] tag in your response.`,
 					return;
 				}
 				autoPlanReviewState = "idle";
-				executionMode = todoItems.length > 0;
+				executionMode = false;
+				todoItems = [];
 				updateStatus(ctx);
 				persistState();
 
-				triggerPlanExecutionTurn(buildPlanExecutionPrompt(approval.beadId ?? "<active>", approval.worktreePath, true));
 				return;
 			}
 
@@ -913,19 +927,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 		if (!ctx.hasUI) return;
 
-		// Show plan steps and prompt for next action
-		if (todoItems.length > 0) {
-			const todoListText = todoItems.map((t, i) => `${i + 1}. ☐ ${t.text}`).join("\n");
-			pi.sendMessage(
-				{
-					customType: "plan-todo-list",
-					content: `**Plan Steps (${todoItems.length}):**\n\n${todoListText}`,
-					display: true,
-				},
-				{ triggerTurn: false },
-			);
-		}
-
+		// Bead workflow progress is tracked via bd/workflow-state/typed tools, not plan todo-list UI.
 		const choice = await ctx.ui.select("Plan mode - what next?", [
 			todoItems.length > 0 ? "Execute the plan (track progress)" : "Execute the plan",
 			"Stay in plan mode",
@@ -938,10 +940,10 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				persistState();
 				return;
 			}
-			executionMode = todoItems.length > 0;
+			executionMode = false;
+			todoItems = [];
 			updateStatus(ctx);
 
-			triggerPlanExecutionTurn(buildPlanExecutionPrompt(approval.beadId ?? "<active>", approval.worktreePath));
 		} else if (choice === "Refine the plan") {
 			const refinement = await ctx.ui.editor("Refine the plan:", "");
 			if (refinement?.trim()) {

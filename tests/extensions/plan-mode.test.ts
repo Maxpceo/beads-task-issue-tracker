@@ -26,6 +26,8 @@ let mockPlanReviewGateOk = true
 let mockPlanReviewReasons: string[] = []
 let mockMissingRevisedPlanSections: string[] = []
 let mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
+let mockSupervisorDispatchAvailable = true
+let mockSupervisorDispatchCalls: Array<{ beadId: string; cwd?: string }> = []
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -52,6 +54,15 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         runPlanReviewers: async () => ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({ reviewer, verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: 'PLAN REVIEW: APPROVED' })),
       }
     }
+    if (id === '../beads-dispatch/index') {
+      return {
+        requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string }) => {
+          mockSupervisorDispatchCalls.push(params)
+          if (!mockSupervisorDispatchAvailable) return { ok: false, text: '', error: 'runtime hook missing: test API unavailable' }
+          return { ok: true, text: `agent=test-supervisor\nbead=${params.beadId}\nworktree=${params.cwd ?? '/tmp/project'}\nexit=0`, details: { beadId: params.beadId, worktreePath: params.cwd } }
+        },
+      }
+    }
     if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
     throw new Error(`Unexpected require: ${id}`)
   }
@@ -65,6 +76,8 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
   mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
+  mockSupervisorDispatchAvailable = true
+  mockSupervisorDispatchCalls = []
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -613,7 +626,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute writes durable PLAN APPROVED comment before planApproved=true and triggers deterministic implementation turn', async () => {
-    const { commandHandlers, agentEndHandlers, sendUserMessages, workflowUpdates, execCalls, trace, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
@@ -632,9 +645,27 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(comment).toContain('Acceptance:')
     expect(comment).toContain('Verification / acceptance checks:')
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', planMode: 'off', sessionMode: 'implementing', planApproved: true })
-    expect(sendUserMessages.at(-1)).toContain('Execute the approved plan now.')
-    expect(sendUserMessages.at(-1)).toContain('dispatch_supervisor(beadId=bead-ui, cwd=/tmp/project)')
-    expect(sendUserMessages.at(-1)).toContain('Do not ask for another confirmation')
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project' })
+    expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
+    expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation started')
+    expect(sendMessages.some((message) => message.message.customType === 'plan-todo-list')).toBe(false)
+    expect(statuses['plan-mode']).toBeUndefined()
+    expect(widgets['plan-todos']).toBeUndefined()
+  })
+
+  it('UI Execute records an immediate runtime-hook blocker when typed continuation API is unavailable', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    mockSupervisorDispatchAvailable = false
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
+    expect(comments[1]?.args[3]).toContain('BLOCKED: runtime hook missing')
+    expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', sessionMode: 'blocked', planApproved: true })
+    expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
+    expect(sendMessages.at(-1)?.message.content).toContain('не silent stall')
   })
 
   it('UI Execute does not set planApproved=true when durable PLAN APPROVED comment fails', async () => {
@@ -679,14 +710,15 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('/plan-auto executes a revised plan with review adjudication sections', async () => {
-    const { commandHandlers, agentEndHandlers, sendUserMessages, activeTools, workflowUpdates, ctx } = makeHarness()
+    const { commandHandlers, agentEndHandlers, sendMessages, activeTools, workflowUpdates, ctx } = makeHarness()
 
     await commandHandlers.get('plan-auto')?.handler('', ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- reviewers approved\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement gate\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests pass\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, ctx)
 
-    expect(sendUserMessages.at(-1)).toContain('Execute the revised approved plan now.')
-    expect(sendUserMessages.at(-1)).toContain('dispatch_supervisor(beadId=bead-plan, cwd=/tmp/project)')
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/project' })
+    expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
+    expect(sendMessages.some((message) => message.message.customType === 'plan-todo-list')).toBe(false)
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(activeTools.at(-1)).toEqual(expectedNormalTools)
     expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
