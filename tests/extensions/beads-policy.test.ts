@@ -858,10 +858,10 @@ PARENT_EPIC: epic-a
       const decision = evaluateBashPolicy('bd close epic-a --reason accepted', {
         activeBead: 'epic-a',
         bdStatus: 'accepted',
-      }, { cwd }, [{ id: 'child-a', status: 'closed' }])
+      }, { cwd })
 
       expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
-    })
+    }, [{ id: 'child-a', status: 'closed' }])
   })
 
   it('blocks epic close when EPIC ACCEPTANCE MATRIX contains a non-allowed result', () => {
@@ -887,11 +887,11 @@ PARENT_EPIC: epic-a
       const decision = evaluateBashPolicy('bd close epic-a --reason accepted', {
         activeBead: 'epic-a',
         bdStatus: 'accepted',
-      }, { cwd }, [{ id: 'child-a', status: 'closed' }])
+      }, { cwd })
 
       expect(decision?.policy).toBe('requireEpicFinalizationSweep')
       expect(decision?.reason).toContain('EPIC ACCEPTANCE MATRIX')
-    })
+    }, [{ id: 'child-a', status: 'closed' }])
   })
 
   it('blocks accepted epic close when child list cannot be read', () => {
