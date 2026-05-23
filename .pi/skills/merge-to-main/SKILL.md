@@ -48,6 +48,12 @@ EOF
   ```
 - Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом запуска `pnpm test && npx vue-tsc --noEmit` после правки.
 - Без такого marker, без `FILES:`, или при изменении файлов вне `FILES:` новые risky-изменения в `.pi/extensions` / `workflow` на уже закрытом bead блокируются.
+
+4.2. Parent epic sweep checkpoint for session beads:
+- For every session bead with `parent-child` parent epic evidence, verify the parent has post-terminal `EPIC ACCEPTANCE MATRIX` or active `EPIC HANDOFF` with `REASON:` and `NEXT_ACTION:`.
+- Do not declare merge/session completion while an affected parent epic is silently non-terminal after all required children are terminal.
+- This is a documented workflow checkpoint; typed router/tool enforcement is out of scope for this skill.
+
 5. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
 6. Run quality gates:
    ```bash
