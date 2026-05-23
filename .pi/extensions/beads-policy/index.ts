@@ -1234,7 +1234,7 @@ function getBeadLocaleError(command: string): string | undefined {
 
 		const title = isCreate ? parseBdCreateTitle(segment) : valueAfterFlag(segment, ["--title"]);
 		if (title && isClearlyEnglishBeadText(title, "title")) {
-			return "Заблокировано: bead title явно на английском. Пиши bead titles на русском для Максима; на английском оставляй только technical identifiers.";
+			return "Заблокировано: bead title явно на английском. Перепиши title на русском для Максима; technical identifiers (имена файлов, commands, labels, API names) оставляй без перевода. Перед повтором используй `.pi/skills/create-bead/SKILL.md`.";
 		}
 
 		const description = valueAfterFlag(segment, ["--description", "-d"]);
@@ -1245,6 +1245,17 @@ function getBeadLocaleError(command: string): string | undefined {
 	return undefined;
 }
 
+function hasHiddenBeadDescription(segment: string): boolean {
+	const description = valueAfterFlag(segment, ["--description", "-d"]);
+	if (!description) return false;
+	const trimmed = description.trim();
+	if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) return true;
+	if (/^`[\s\S]*`$/.test(trimmed)) return true;
+	if (/\$\((?!cat\s+<<)[\s\S]*\)/.test(trimmed)) return true;
+	if (/\$\(cat\s+(?:\/tmp\/|[^<][^)]*)\)/.test(trimmed)) return true;
+	return false;
+}
+
 function getBeadEnrichmentError(command: string): string | undefined {
 	for (const segment of splitShellSegments(command)) {
 		if (!segmentHasBdCommand(segment, new Set(["create", "new"]))) continue;
@@ -1252,7 +1263,10 @@ function getBeadEnrichmentError(command: string): string | undefined {
 
 		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !segment.includes(section));
 		if (missing.length > 0) {
-			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Спроси пользователя или создай spike, если context/acceptance неясны.`;
+			if (hasHiddenBeadDescription(segment)) {
+				return "Заблокировано: `bd create` description скрыт от guard (например `$BUG_DESC`, `$(cat /tmp/...)`, backticks или wrapper). Pi проверяет shell-команду до выполнения и не видит hidden content. Используй `.pi/skills/create-bead/SKILL.md` и inline heredoc прямо внутри `--description \"$(cat <<'EOF' ... EOF)\"`, чтобы все required `### ...` sections были видимы.";
+			}
+			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через inline heredoc внутри --description со всеми required ### sections, русским content, type/priority/label/deps и concrete acceptance/verification bullets. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
 		}
 
 		if (!hasLabel(segment)) {

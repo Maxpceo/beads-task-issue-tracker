@@ -49,6 +49,8 @@ describe('Pi bead Russian locale policy', () => {
     expect(decision?.policy).toBe('enforceBeadRussianLocale')
     expect(decision?.block).toBe(true)
     expect(decision?.reason).toContain('bead title явно на английском')
+    expect(decision?.reason).toContain('technical identifiers')
+    expect(decision?.reason).toContain('.pi/skills/create-bead/SKILL.md')
     expect(decision?.reason).not.toContain('title is clearly English')
   })
 
@@ -89,13 +91,42 @@ describe('Pi bead enrichment policy', () => {
     expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
   })
 
-  it('still blocks actual incomplete bead create commands', () => {
+  it('still blocks actual incomplete bead create commands with actionable next step', () => {
     const decision = evaluateBashPolicy('bd create "Исправить тест" -t task --label dx --description "Краткое описание" --json', {
       state: 'idle',
     }, policyOnlyOptions)
 
     expect(decision?.policy).toBe('enforceBeadEnrichment')
     expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('Отсутствует: ### Origin')
+    expect(decision?.reason).toContain('.pi/skills/create-bead/SKILL.md')
+    expect(decision?.reason).toContain('inline heredoc')
+    expect(decision?.reason).toContain('type/priority/label/deps')
+  })
+
+  it('blocks hidden variable descriptions with a guard-visible inline heredoc correction', () => {
+    const decision = evaluateBashPolicy('bd create "Зафиксировать баг" -t bug --label workflow --description "$BUG_DESC" --json', {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('enforceBeadEnrichment')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('description скрыт от guard')
+    expect(decision?.reason).toContain('$BUG_DESC')
+    expect(decision?.reason).toContain('.pi/skills/create-bead/SKILL.md')
+    expect(decision?.reason).toContain('inline heredoc')
+  })
+
+  it('blocks tmp-file description command substitutions with the same visible-content correction', () => {
+    const decision = evaluateBashPolicy('bd create "Зафиксировать баг" -t bug --label workflow --description "$(cat /tmp/bug-desc.md)" --json', {
+      state: 'idle',
+    }, policyOnlyOptions)
+
+    expect(decision?.policy).toBe('enforceBeadEnrichment')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('description скрыт от guard')
+    expect(decision?.reason).toContain('$(cat /tmp/...)')
+    expect(decision?.reason).toContain('inline heredoc')
   })
 })
 

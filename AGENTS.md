@@ -178,6 +178,8 @@ Project-facing open-source text such as `CHANGELOG.md`, `README.md`, release not
 
 Agent-created beads must be self-contained handoff packages. A future session must be able to implement or review the task without chat history.
 
+Before any agent-created `bd create` (new issue, follow-up, discovered bug, split scope, or documented work item), load and apply `.pi/skills/create-bead/SKILL.md`. Hand-written `bd create` commands that skip the skill checklist are not allowed. The command must keep the description visible to Pi guards, normally via inline heredoc inside `--description`; do not hide it in shell variables, wrapper scripts, or temp files.
+
 Required description sections for non-epic, non-exempt agent-created beads:
 
 - `### Origin`
