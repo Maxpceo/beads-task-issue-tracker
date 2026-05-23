@@ -527,6 +527,10 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bdStatus=inreview')
     expect(context.message.content).toContain('[PI INREVIEW GUARD]')
     expect(context.message.content).toContain('review-bead / review_bead')
+    expect(context.message.content).toContain('Не заявляй, что review_bead или dispatch_reviewer недоступны')
+    expect(context.message.content).toContain('tool реально отсутствует в текущем tool surface')
+    expect(context.message.content).toContain('typed call вернул ошибку до запуска review')
+    expect(context.message.content).toContain('BLOCKED на русском с точным evidence')
   })
 
   it('keeps restored current-scope active bead when old foreign comments are followed by current ownership evidence', async () => {
@@ -1522,6 +1526,7 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('bdStatus=inreview')
     expect(context.message.content).toContain('[PI INREVIEW GUARD]')
     expect(context.message.content).toContain('review-bead / review_bead')
+    expect(context.message.content).toContain('Не заявляй, что review_bead или dispatch_reviewer недоступны')
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-task', state: 'reviewing', sessionMode: 'reviewing', branch: 'task/bead-task', worktreePath: '/repo/worktrees/bead-task', bdStatus: 'inreview' })
   })
 
@@ -1633,6 +1638,7 @@ describe('Pi workflow-state typed tools', () => {
     })
     expect(context.message.content).toContain('[PI INREVIEW GUARD]')
     expect(context.message.content).toContain('review-bead / review_bead')
+    expect(context.message.content).toContain('typed call вернул ошибку до запуска review')
   })
 
   it('workflow_complete blocks active inreview normal completion but allows explicit blocker', async () => {
