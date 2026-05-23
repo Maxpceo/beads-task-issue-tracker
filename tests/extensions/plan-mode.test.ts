@@ -28,6 +28,7 @@ let mockMissingRevisedPlanSections: string[] = []
 let mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
 let mockSupervisorDispatchAvailable = true
 let mockSupervisorDispatchCalls: Array<{ beadId: string; cwd?: string }> = []
+let mockSupervisorDispatchGate: Promise<void> | undefined
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -58,6 +59,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
       return {
         requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string }) => {
           mockSupervisorDispatchCalls.push(params)
+          await mockSupervisorDispatchGate
           if (!mockSupervisorDispatchAvailable) return { ok: false, text: '', error: 'runtime hook missing: test API unavailable' }
           return { ok: true, text: `agent=test-supervisor\nbead=${params.beadId}\nworktree=${params.cwd ?? '/tmp/project'}\nexit=0`, details: { beadId: params.beadId, worktreePath: params.cwd } }
         },
@@ -71,13 +73,14 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }> } = {}) {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }>, failPreDispatchProgressMessage?: boolean } = {}) {
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
   mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
   mockSupervisorDispatchAvailable = true
   mockSupervisorDispatchCalls = []
+  mockSupervisorDispatchGate = undefined
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -109,7 +112,10 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       if (event === 'agent_end') agentEndHandlers.push(handler)
     },
     appendEntry: (type: string, data: unknown) => { sessionEntries.push({ type, data }) },
-    sendMessage: (message: any, options?: any) => sendMessages.push({ message, options }),
+    sendMessage: (message: any, sendOptions?: any) => {
+      if (options.failPreDispatchProgressMessage && message.customType === 'post-approval-continuation-started') throw new Error('progress display failed')
+      sendMessages.push({ message, options: sendOptions })
+    },
     sendUserMessage: (message: string) => sendUserMessages.push(message),
     getActiveTools: () => currentActiveTools.map((name) => ({ name })),
     getAllTools: () => allTools,
@@ -625,15 +631,19 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates).toHaveLength(0)
   })
 
-  it('UI Execute writes durable PLAN APPROVED comment before planApproved=true and triggers deterministic implementation turn', async () => {
+  it('UI Execute writes durable PLAN APPROVED comment and shows started/running progress before dispatch resolves', async () => {
     const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    let releaseDispatch!: () => void
+    mockSupervisorDispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve })
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+    const execution = agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx) as Promise<void>
+    for (let i = 0; i < 10 && mockSupervisorDispatchCalls.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 0))
 
     const commentCallIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     const approvedUpdateIndex = workflowUpdates.findIndex((update: any) => update.planApproved === true)
     const comment = execCalls[commentCallIndex]?.args[3] ?? ''
+    const startedMessage = sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')
     expect(commentCallIndex).toBeGreaterThanOrEqual(0)
     expect(approvedUpdateIndex).toBeGreaterThanOrEqual(0)
     expect(trace.indexOf('bd-comments-add')).toBeLessThan(trace.indexOf('workflow-plan-approved'))
@@ -646,8 +656,17 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(comment).toContain('Verification / acceptance checks:')
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project' })
+    expect(startedMessage?.message.content).toContain('PLAN APPROVED: продолжение запущено')
+    expect(startedMessage?.message.content).toContain('Bead: bead-ui')
+    expect(startedMessage?.message.content).toContain('State: started/running')
+    expect(startedMessage?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/project)')
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation')).toBe(false)
+
+    releaseDispatch()
+    await execution
+
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
-    expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation started')
+    expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation completed')
     expect(sendMessages.some((message) => message.message.customType === 'plan-todo-list')).toBe(false)
     expect(statuses['plan-mode']).toBeUndefined()
     expect(widgets['plan-todos']).toBeUndefined()
@@ -664,8 +683,21 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
     expect(comments[1]?.args[3]).toContain('BLOCKED: runtime hook missing')
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', sessionMode: 'blocked', planApproved: true })
+    expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/project)')
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
     expect(sendMessages.at(-1)?.message.content).toContain('не silent stall')
+  })
+
+  it('continues dispatch when best-effort pre-dispatch progress message cannot be displayed', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui', failPreDispatchProgressMessage: true })
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project' })
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
+    expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
+    expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation completed')
   })
 
   it('UI Execute does not set planApproved=true when durable PLAN APPROVED comment fails', async () => {

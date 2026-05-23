@@ -423,15 +423,33 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
+	function sendPreDispatchProgress(beadId: string, action: string): void {
+		const content = [
+			"PLAN APPROVED: продолжение запущено.",
+			`Bead: ${beadId}`,
+			"State: started/running",
+			`Next typed action: ${action}`,
+		].join("\n");
+		try {
+			pi.sendMessage(
+				{ customType: "post-approval-continuation-started", content, display: true },
+				{ triggerTurn: false },
+			);
+		} catch {
+			// Best-effort visible progress only: dispatch continuation must still run.
+		}
+	}
+
 	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, worktreePath?: string): Promise<void> {
 		const action = renderPlanExecutionAction(beadId, worktreePath);
+		sendPreDispatchProgress(beadId, action);
 		const result = await requestSupervisorDispatch(pi, { beadId, cwd: worktreePath }, ctx);
 		if (!result.ok) {
 			await recordRuntimeHookMissing(ctx, beadId, action, result.error ?? "typed continuation returned without success");
 			return;
 		}
 		pi.sendMessage(
-			{ customType: "post-approval-continuation", content: `PLAN APPROVED continuation started: ${action}\n\n${result.text}`, display: true },
+			{ customType: "post-approval-continuation", content: `PLAN APPROVED continuation completed: ${action}\n\n${result.text}`, display: true },
 			{ triggerTurn: false },
 		);
 	}
