@@ -31,6 +31,7 @@ import {
 	runPlanReviewers,
 	type PlanReviewResult,
 } from "../plan-review/index";
+import { requestSupervisorDispatch } from "../beads-dispatch/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review"];
@@ -253,12 +254,22 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
 	}
 
+	function normalizePlanFieldValue(value: string): string {
+		let normalized = value.trim();
+		normalized = normalized.replace(/^(?:[-*+]\s+|\d+[.)]\s+)/u, "").trim();
+		normalized = normalized.replace(/^`([^`]+)`$/u, "$1").trim();
+		normalized = normalized.replace(/^["'“”‘’]([^"'“”‘’]+)["'“”‘’]$/u, "$1").trim();
+		normalized = normalized.replace(/[.,;:]$/u, "").trim();
+		return normalized;
+	}
+
 	function latestPlanField(text: string, names: string[]): string | undefined {
 		const namePattern = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 		const regex = new RegExp(`(^|\\n)\\s*(?:${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
 		let value: string | undefined;
 		for (const match of text.matchAll(regex)) {
-			value = match[2]?.trim();
+			const rawValue = match[2]?.trim();
+			if (rawValue) value = normalizePlanFieldValue(rawValue);
 		}
 		return value;
 	}
@@ -392,7 +403,40 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return sections.join("\n\n");
 	}
 
-	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<boolean> {
+	function renderPlanExecutionAction(beadId: string, worktreePath?: string): string {
+		return worktreePath ? `dispatch_supervisor(beadId=${beadId}, cwd=${worktreePath})` : `dispatch_supervisor(beadId=${beadId})`;
+	}
+
+	async function recordRuntimeHookMissing(ctx: ExtensionContext, beadId: string, action: string, error: string): Promise<void> {
+		const content = [
+			"BLOCKED: runtime hook missing",
+			`Bead: ${beadId}`,
+			`Action: ${action}`,
+			`Reason: ${error}`,
+			"Немедленный системный blocker: PLAN APPROVED записан, но Pi runtime не смог запустить следующий typed workflow step автономно. Это не silent stall; требуется исправить runtime hook, а не отправлять новое сообщение в чат.",
+		].join("\n");
+		await pi.exec("bd", ["comments", "add", beadId, content]);
+		syncWorkflowPlanMode(ctx, "off", "blocked", { state: "blocked", activeBead: beadId, planApproved: true });
+		pi.sendMessage(
+			{ customType: "post-approval-continuation-blocked", content, display: true },
+			{ triggerTurn: false },
+		);
+	}
+
+	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, worktreePath?: string): Promise<void> {
+		const action = renderPlanExecutionAction(beadId, worktreePath);
+		const result = await requestSupervisorDispatch(pi, { beadId, cwd: worktreePath }, ctx);
+		if (!result.ok) {
+			await recordRuntimeHookMissing(ctx, beadId, action, result.error ?? "typed continuation returned without success");
+			return;
+		}
+		pi.sendMessage(
+			{ customType: "post-approval-continuation", content: `PLAN APPROVED continuation started: ${action}\n\n${result.text}`, display: true },
+			{ triggerTurn: false },
+		);
+	}
+
+	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<{ approved: boolean; beadId?: string; worktreePath?: string }> {
 		const workflowState = latestWorkflowStateEntry(ctx);
 		const beadId = workflowState?.activeBead;
 		if (!beadId) {
@@ -405,7 +449,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				},
 				{ triggerTurn: false },
 			);
-			return false;
+			return { approved: false };
 		}
 
 		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy: "Максим" }, ctx);
@@ -419,9 +463,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				},
 				{ triggerTurn: false },
 			);
-			return false;
+			return { approved: false };
 		}
-		return true;
+		return { approved: true, beadId, worktreePath: result.details?.worktreePath as string | undefined };
 	}
 
 	async function planReviewTool(params: { draftPlan: string }, ctx: ExtensionContext) {
@@ -479,7 +523,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
-		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
+		await triggerApprovedPlanContinuation(ctx, params.beadId, worktreePath);
+		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; continuation attempted`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
 	}
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
@@ -853,24 +898,17 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 			const missing = missingRevisedPlanSections(lastAssistantText);
 			if (missing.length === 0) {
-				const approved = await approvePlanForExecution(ctx, lastAssistantText);
-				if (!approved) {
+				const approval = await approvePlanForExecution(ctx, lastAssistantText);
+				if (!approval.approved) {
 					persistState();
 					return;
 				}
 				autoPlanReviewState = "idle";
-				executionMode = todoItems.length > 0;
+				executionMode = false;
+				todoItems = [];
 				updateStatus(ctx);
 				persistState();
 
-				const execMessage =
-					todoItems.length > 0
-						? `Execute the revised plan after successful multi-agent review. Start with: ${todoItems[0].text}`
-						: "Execute the revised plan after successful multi-agent review.";
-				pi.sendMessage(
-					{ customType: "plan-mode-execute", content: execMessage, display: true },
-					{ triggerTurn: true },
-				);
 				return;
 			}
 
@@ -889,19 +927,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 
 		if (!ctx.hasUI) return;
 
-		// Show plan steps and prompt for next action
-		if (todoItems.length > 0) {
-			const todoListText = todoItems.map((t, i) => `${i + 1}. ☐ ${t.text}`).join("\n");
-			pi.sendMessage(
-				{
-					customType: "plan-todo-list",
-					content: `**Plan Steps (${todoItems.length}):**\n\n${todoListText}`,
-					display: true,
-				},
-				{ triggerTurn: false },
-			);
-		}
-
+		// Bead workflow progress is tracked via bd/workflow-state/typed tools, not plan todo-list UI.
 		const choice = await ctx.ui.select("Plan mode - what next?", [
 			todoItems.length > 0 ? "Execute the plan (track progress)" : "Execute the plan",
 			"Stay in plan mode",
@@ -909,22 +935,15 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		]);
 
 		if (choice?.startsWith("Execute")) {
-			const approved = await approvePlanForExecution(ctx, lastAssistantText);
-			if (!approved) {
+			const approval = await approvePlanForExecution(ctx, lastAssistantText);
+			if (!approval.approved) {
 				persistState();
 				return;
 			}
-			executionMode = todoItems.length > 0;
+			executionMode = false;
+			todoItems = [];
 			updateStatus(ctx);
 
-			const execMessage =
-				todoItems.length > 0
-					? `Execute the plan. Start with: ${todoItems[0].text}`
-					: "Execute the plan you just created.";
-			pi.sendMessage(
-				{ customType: "plan-mode-execute", content: execMessage, display: true },
-				{ triggerTurn: true },
-			);
 		} else if (choice === "Refine the plan") {
 			const refinement = await ctx.ui.editor("Refine the plan:", "");
 			if (refinement?.trim()) {
