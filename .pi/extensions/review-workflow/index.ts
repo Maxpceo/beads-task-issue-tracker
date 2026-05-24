@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { renderPathRulesLoaded } from "../path-rules/index";
-import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard } from "../subagent/dashboard";
+import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard, registerDashboardRenderer } from "../subagent/dashboard";
 import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -441,7 +441,10 @@ function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence
 function refreshDashboardWidget(ctx?: { ui?: any }): void {
 	const state = getSharedDashboardState();
 	if (!state?.visible || !ctx?.ui) return;
-	ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => getSharedDashboardState()!, theme));
+	ctx.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: any) => {
+		registerDashboardRenderer(tui);
+		return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+	});
 }
 
 function publishReviewerDashboardCard(ctx: { ui?: any } | undefined, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
@@ -471,7 +474,7 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal, ct
 		const startedAt = Date.now();
 		publishReviewerDashboardCard(ctx, { status: "running", task: prompt.split("\n")[0] || "Review bead", startedAt, lastPreview: "starting code-reviewer..." });
 		return await new Promise((resolve) => {
-			const proc = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+			const proc = spawnForReview(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 			let output = "";
 			let stderr = "";
 			let wasAborted = false;
@@ -509,6 +512,17 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal, ct
 		await fs.promises.rm(system.file, { force: true });
 		await fs.promises.rm(system.dir, { force: true, recursive: true });
 	}
+}
+
+let spawnForReview = spawn;
+let runReviewerForWorkflow = runReviewer;
+
+export function setSpawnForReviewTestOverride(override: typeof spawn | null): void {
+	spawnForReview = override ?? spawn;
+}
+
+export function setRunReviewerForWorkflowTestOverride(override: typeof runReviewer | null): void {
+	runReviewerForWorkflow = override ?? runReviewer;
 }
 
 function render(result: ReviewResult): string {
@@ -588,7 +602,7 @@ ${supervisorArtifact.evidence}
 Artifact evidence may be cited in acceptance matrix, but it is not acceptance by itself.`]);
 					await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
 					const prompt = `BEAD_ID: ${params.beadId}\nBRANCH: ${branch}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nReview git diff ${startCommit}..${endCommit}. Automated checks already run by review_bead:\n${automatedChecks.join("\n\n")}\n\nReview status note: review_bead temporarily moves the bead to bd status simplified while the reviewer runs. Do not reject solely because bd show reports simplified during this review; if the final verdict is not approved, review_bead must restore status inreview after reviewer exit.\n\nSUPERVISOR ARTIFACT HANDOFF:\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\nArtifact evidence may be cited in acceptance matrix, but it is not acceptance by itself.\n\n${frontendChecklist.length > 0 ? `Frontend checklist required:\n- ${frontendChecklist.join("\n- ")}` : "Frontend checklist: not applicable"}\n\n${pathRulesLoaded}`;
-					const reviewer = await runReviewer(reviewCwd, prompt, signal, ctx);
+					const reviewer = await runReviewerForWorkflow(reviewCwd, prompt, signal, ctx);
 					result.reviewerExitCode = reviewer.code;
 					result.reviewerOutput = reviewer.output;
 					result.reviewerStderr = reviewer.stderr;

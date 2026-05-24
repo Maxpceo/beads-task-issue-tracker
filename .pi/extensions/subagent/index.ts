@@ -31,6 +31,7 @@ import {
 	createDashboardState,
 	getSharedDashboardState,
 	publishDashboardCard,
+	registerDashboardRenderer,
 	selectDashboardAgents,
 	setSharedDashboardState,
 } from "./dashboard.js";
@@ -511,7 +512,10 @@ export default function (pi: ExtensionAPI) {
 	const renderDashboardWidget = (ctx: { ui: any }) => {
 		const dashboardState = getSharedDashboardState();
 		if (!dashboardState?.visible) return;
-		ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => getSharedDashboardState()!, theme));
+		ctx.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: any) => {
+			registerDashboardRenderer(tui);
+			return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+		});
 	};
 
 	const updateDashboardFromResults = (results: SingleResult[], ctx: { ui: any }) => {

@@ -49,6 +49,7 @@
 
 ### Fixed
 
+- **Pi agents dashboard typed workflow visibility** (`beads-task-issue-tracker-wa52`): `/agents-dashboard` now repaints from registered dashboard renderers when typed `dispatch_supervisor` or `review_bead` workflow cards publish running and terminal updates, so already-open active/all dashboards show workflow supervisors and reviewers without relying on continuation-local UI context.
 - **Pi review tool availability blockers** (`beads-task-issue-tracker-ndgk`): in-review workflow guards now require current tool-surface or failed typed-call evidence before reporting `review_bead` / `dispatch_reviewer` as unavailable, preventing false blockers while preserving explicit Russian `BLOCKED` reports for real review-tool failures.
 - **Pi post-approval progress visibility** (`beads-task-issue-tracker-yqwo`): plan approval now emits an immediate visible started/running message with the active bead and typed `dispatch_supervisor(...)` action before awaiting supervisor dispatch, while keeping completion/blocker follow-up messages and best-effort progress delivery.
 - **Pi post-approval workflow continuation** (`beads-task-issue-tracker-7buw`): approving a plan now calls the typed supervisor dispatch path directly instead of emitting a follow-up execution prompt, preserves normalized markdown worktree evidence during `workflow_plan_approved`, and records an explicit blocker if the runtime continuation hook is unavailable.

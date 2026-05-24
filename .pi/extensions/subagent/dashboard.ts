@@ -122,8 +122,28 @@ export function selectDashboardAgents(
 	};
 }
 
+export interface DashboardRenderer {
+	requestRender?: () => void;
+}
+
 const observedCards = new Map<string, AgentDashboardCard>();
 let sharedDashboardState: AgentDashboardState | null = null;
+let currentDashboardRenderer: DashboardRenderer | null = null;
+
+export function registerDashboardRenderer(renderer: DashboardRenderer | null | undefined): () => void {
+	currentDashboardRenderer = renderer ?? null;
+	return () => {
+		if (currentDashboardRenderer === renderer) currentDashboardRenderer = null;
+	};
+}
+
+function requestDashboardRender(): void {
+	try {
+		currentDashboardRenderer?.requestRender?.();
+	} catch {
+		// Rendering invalidation is best-effort; dashboard state is already updated.
+	}
+}
 
 function idleCard(agent: DashboardAgentConfig): AgentDashboardCard {
 	return {
@@ -183,6 +203,7 @@ export function publishDashboardCard(card: AgentDashboardCard): AgentDashboardSt
 	observedCards.set(card.agent, { ...previousObserved, ...card });
 	if (!sharedDashboardState?.visible) return sharedDashboardState;
 	upsertDashboardCard(sharedDashboardState, observedCards.get(card.agent)!);
+	requestDashboardRender();
 	return sharedDashboardState;
 }
 
