@@ -472,6 +472,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
     expect(blocked.content[0].text).toContain('not a readable git worktree')
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/missing --branch task/plan-approved')
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
@@ -496,6 +497,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
     expect(blocked.content[0].text).toContain('not a readable git worktree')
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/missing --branch task/plan-approved')
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
@@ -518,6 +520,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
     expect(blocked.content[0].text).toContain('does not match worktree branch task/plan-approved')
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/task --branch task/wrong')
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
@@ -625,6 +628,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
     expect(blocked.content[0].text).toContain('recorded workflow-state worktree is not a readable git worktree')
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/missing --branch task/plan-approved')
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
@@ -698,6 +702,29 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
     expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation completed')
+  })
+
+  it('UI Execute blocks missing explicit worktree before durable comment or planApproved state', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: [
+      'Plan:\n1. Implement durable approval.',
+      'Files to change:\n- .pi/extensions/plan-mode/index.ts',
+      'Acceptance:\n- vitest passes',
+      'BRANCH: task/plan-approved',
+      'Worktree / cwd:',
+      '- `/tmp/missing`',
+    ].join('\n') }] }] }, ctx)
+
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-ui']) }),
+    ]))
+    expect(workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-approval-recovery')
+    expect(sendMessages.at(-1)?.message.content).toContain('durable `PLAN APPROVED` comment не записан')
+    expect(sendMessages.at(-1)?.message.content).toContain('bd worktree create /tmp/missing --branch task/plan-approved')
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
   })
 
   it('UI Execute does not set planApproved=true when durable PLAN APPROVED comment fails', async () => {

@@ -265,13 +265,26 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	function latestPlanField(text: string, names: string[]): string | undefined {
 		const namePattern = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-		const regex = new RegExp(`(^|\\n)\\s*(?:${namePattern})\\s*[:=]\\s*([^\\n]+)`, "gim");
+		const fieldRegex = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${namePattern})\\s*[:=]\\s*(.*)$`, "iu");
+		const lines = text.split(/\r?\n/u);
 		let value: string | undefined;
-		for (const match of text.matchAll(regex)) {
-			const rawValue = match[2]?.trim();
+		for (let index = 0; index < lines.length; index++) {
+			const match = lines[index]?.match(fieldRegex);
+			if (!match) continue;
+
+			let rawValue = match[1]?.trim();
+			if (!rawValue && index + 1 < lines.length) {
+				const nextLine = lines[index + 1]?.trim();
+				if (nextLine && /^[-*]\s+/u.test(nextLine)) rawValue = nextLine.replace(/^[-*]\s+/u, "").trim();
+			}
 			if (rawValue) value = normalizePlanFieldValue(rawValue);
 		}
 		return value;
+	}
+
+	function worktreeRecovery(worktreePath: string, branch?: string): string {
+		const branchFlag = branch ? ` --branch ${branch}` : " --branch <branch>";
+		return `Recovery: create the task worktree with \`bd worktree create ${worktreePath}${branchFlag}\` from the project checkout, or update workflow-state to a readable task worktree before calling \`workflow_plan_approved\`.`;
 	}
 
 	function latestRecordedWorkflowScope(ctx: ExtensionContext, beadId: string): WorkflowStateSnapshot | undefined {
@@ -297,10 +310,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	async function validatedWorktreeScope(source: "approved plan evidence" | "recorded workflow-state", worktreePath: string, expectedBranch?: string, startCommit?: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
 		const detectedWorktreePath = await detectGitValueAt(worktreePath, ["rev-parse", "--show-toplevel"]);
-		if (detectedWorktreePath !== worktreePath) return { error: `${source} worktree is not a readable git worktree: ${worktreePath}` };
+		if (detectedWorktreePath !== worktreePath) return { error: `${source} worktree is not a readable git worktree: ${worktreePath}. ${worktreeRecovery(worktreePath, expectedBranch)}` };
 
 		const branch = await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]);
-		if (expectedBranch && branch !== expectedBranch) return { error: `${source} branch ${expectedBranch} does not match worktree branch ${branch ?? "<unknown>"}` };
+		if (expectedBranch && branch !== expectedBranch) return { error: `${source} branch ${expectedBranch} does not match worktree branch ${branch ?? "<unknown>"}. ${worktreeRecovery(worktreePath, expectedBranch)}` };
 
 		return {
 			branch: branch ?? expectedBranch,
