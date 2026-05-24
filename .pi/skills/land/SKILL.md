@@ -71,6 +71,17 @@ Use a full `Где мы в workflow` block for failed landing commands, policy/m
 
 ## Final report
 
+Start with a short human-readable summary before the evidence table:
+
+```text
+Кратко:
+- Проблема: <why landing was needed / what remained unsaved>
+- Что сделал: <commit/push/save actions in 1-3 bullets>
+- Результат: <saved branch/commit state and what Maxim can do next>
+```
+
+Then include the required evidence table:
+
 | Шаг | Результат |
 |---|---|
 | Commits | sha list / not required |

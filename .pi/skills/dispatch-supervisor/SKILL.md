@@ -97,6 +97,17 @@ Use a full `Где мы в workflow` block for `BLOCKED`, `NEEDS_CONTEXT`, faile
 
 ## Final report
 
+Start with a short human-readable summary before the dispatch evidence table:
+
+```text
+Кратко:
+- Проблема: <what implementation/review handoff was needed>
+- Что сделал: <selected supervisor and dispatch/recovery actions in 1-3 bullets>
+- Результат: <launched/inreview/blocked outcome and next workflow step>
+```
+
+Then include the required evidence table:
+
 | Шаг | Результат |
 |---|---|
 | Guard | status/assignee/blockers |

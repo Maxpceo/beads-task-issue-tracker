@@ -79,9 +79,29 @@ Stop and ask or report status only at real decision points where user attention 
 - workflow state is stale/foreign/ambiguous and takeover is not explicit;
 - an unapproved destructive/hard-to-reverse action is needed.
 
-Final workflow/task reports should use a concise two-column table (`| Шаг | Результат |`) plus a short “Где мы в workflow” / “Текущее состояние” section. Normal Q&A does not need this table format.
+Final workflow/task reports must start with a short human-readable summary before evidence tables:
 
-Use selective workflow reporting. Full `Где мы в workflow` blocks are required when the agent stops for a decision/blocker, reports a failed required check, hands off an unresolved workflow, or finishes a user-visible workflow/task. Routine internal checkpoints while the agent continues automatically should be omitted or compressed into one short sentence.
+```text
+Кратко:
+- Проблема: <what was wrong / why the work was needed>
+- Что сделал: <1-3 concise bullets or one sentence about the change>
+- Результат: <observable outcome for Maxim / workflow / user>
+
+Проверка:
+| Проверка | Результат |
+|---|---|
+| `<command or manual check>` | exit code N / observed result + relevant output excerpt |
+
+Изменённые файлы:
+- `path/file` — <why it changed>
+
+Текущее состояние:
+- <closed / in review / blocked / next step>
+```
+
+For bug/fix and workflow reports, `Проблема`, `Что сделал`, and `Результат` are mandatory unless the report is a tiny acknowledgement with no completed work. The evidence table is still mandatory for claims that checks passed, a fix works, acceptance is met, or workflow state changed. `Изменённые файлы` may be omitted or marked `N/A` when no repository files changed. Normal Q&A does not need this format.
+
+Use selective workflow reporting. Full `Где мы в workflow` blocks are required when the agent stops for a decision/blocker, reports a failed required check, hands off an unresolved workflow, or finishes a user-visible workflow/task. When a full workflow block is required, place it after the `Кратко` and evidence sections; it complements the human summary and must not replace it. Routine internal checkpoints while the agent continues automatically should be omitted or compressed into one short sentence.
 
 Do not duplicate footer state. Do not report normal `plan`, `bdStatus`, branch/worktree, or merge-slot values just because they changed; these are already visible in the Pi footer/session context. Mention them only when they are anomalous, stale/foreign/ambiguous, safety-relevant, or needed as final evidence.
 
