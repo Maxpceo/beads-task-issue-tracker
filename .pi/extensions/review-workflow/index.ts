@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderPathRulesLoaded } from "../path-rules/index";
 import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard, registerDashboardRenderer } from "../subagent/dashboard";
 import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
@@ -37,6 +39,15 @@ interface SupervisorArtifactEvidence {
 	evidence: string;
 }
 
+interface RuntimeHashEvidence {
+	loadedRuntimeSourcePath?: string;
+	loadedRuntimeSha256?: string;
+	reviewWorktreeSourcePath?: string;
+	reviewWorktreeSha256?: string;
+	status: "not-applicable" | "matched" | "mismatch" | "missing";
+	message: string;
+}
+
 interface ReviewResult {
 	beadId: string;
 	branch: string;
@@ -48,6 +59,7 @@ interface ReviewResult {
 	checkpoints: string[];
 	frontendChecklist: string[];
 	supervisorArtifact: SupervisorArtifactEvidence;
+	runtimeHashEvidence?: RuntimeHashEvidence;
 	reviewerExitCode?: number;
 	reviewerOutput?: string;
 	reviewerStderr?: string;
@@ -60,6 +72,69 @@ const REVIEW_TRANSITIONS: Record<string, string[]> = {
 	reviewed: ["accepted", "closed"],
 	accepted: ["closed"],
 };
+
+const REVIEW_WORKFLOW_RUNTIME_RELATIVE_PATH = ".pi/extensions/review-workflow/index.ts";
+
+function sha256(content: string | Buffer): string {
+	return createHash("sha256").update(content).digest("hex");
+}
+
+function readRuntimeSourceAtLoad(): { sourcePath?: string; sha256?: string; error?: string } {
+	try {
+		const sourcePath = fileURLToPath(import.meta.url);
+		return { sourcePath, sha256: sha256(fs.readFileSync(sourcePath)) };
+	} catch (error) {
+		return { error: (error as Error).message };
+	}
+}
+
+const loadedRuntimeHash = readRuntimeSourceAtLoad();
+
+function evaluateReviewWorkflowRuntimeHash(changedFiles: string[], worktreePath: string): RuntimeHashEvidence {
+	if (!changedFiles.includes(REVIEW_WORKFLOW_RUNTIME_RELATIVE_PATH)) {
+		return { status: "not-applicable", message: "review-workflow runtime hash guard: not applicable; reviewed diff does not touch .pi/extensions/review-workflow/index.ts." };
+	}
+	const reviewWorktreeSourcePath = path.join(worktreePath, REVIEW_WORKFLOW_RUNTIME_RELATIVE_PATH);
+	let reviewWorktreeSha256: string | undefined;
+	let readError: string | undefined;
+	try {
+		reviewWorktreeSha256 = sha256(fs.readFileSync(reviewWorktreeSourcePath));
+	} catch (error) {
+		readError = (error as Error).message;
+	}
+	const base = {
+		loadedRuntimeSourcePath: loadedRuntimeHash.sourcePath,
+		loadedRuntimeSha256: loadedRuntimeHash.sha256,
+		reviewWorktreeSourcePath,
+		reviewWorktreeSha256,
+	};
+	if (!loadedRuntimeHash.sha256 || !loadedRuntimeHash.sourcePath) {
+		return {
+			...base,
+			status: "missing",
+			message: `review-workflow runtime hash guard: BLOCKED. Не удалось зафиксировать hash загруженного runtime при старте Pi (${loadedRuntimeHash.error ?? "unknown error"}). Перезапустите Pi/runtime и повторите review_bead из task worktree ${worktreePath}; bead нельзя закрывать старой self-hosted runtime logic.`,
+		};
+	}
+	if (!reviewWorktreeSha256) {
+		return {
+			...base,
+			status: "missing",
+			message: `review-workflow runtime hash guard: BLOCKED. Не удалось прочитать ${reviewWorktreeSourcePath} (${readError ?? "unknown error"}). Проверьте worktreePath и повторите review_bead после reload/restart; bd close заблокирован.`,
+		};
+	}
+	if (loadedRuntimeHash.sha256 !== reviewWorktreeSha256) {
+		return {
+			...base,
+			status: "mismatch",
+			message: `review-workflow runtime hash guard: BLOCKED. Загруженный review_bead runtime не совпадает с ${reviewWorktreeSourcePath}: loadedRuntimeSha256=${loadedRuntimeHash.sha256}, reviewWorktreeSha256=${reviewWorktreeSha256}. Перезапустите Pi/runtime из этого worktree или передайте review handoff свежему процессу; bd close запрещён, чтобы не закрыть bead stale self-hosted logic.`,
+		};
+	}
+	return {
+		...base,
+		status: "matched",
+		message: `review-workflow runtime hash guard: PASS. loadedRuntimeSha256=${loadedRuntimeHash.sha256} matches reviewWorktreeSha256=${reviewWorktreeSha256} for ${reviewWorktreeSourcePath}.`,
+	};
+}
 
 const FRONTEND_REVIEW_CHECKLIST = [
 	"i18n/locale sync: user-visible strings use t()/i18n and en/ru locale files stay synchronized.",
@@ -661,6 +736,7 @@ function render(result: ReviewResult): string {
 		result.supervisorArtifact.statusLine,
 		result.supervisorArtifact.evidence,
 		"SUPERVISOR ARTIFACT NOTE: artifact evidence may be cited in acceptance matrix, but it is not acceptance by itself.",
+		result.runtimeHashEvidence ? `RUNTIME HASH EVIDENCE:\n${result.runtimeHashEvidence.message}` : "RUNTIME HASH EVIDENCE: not evaluated.",
 		result.pathRulesLoaded ?? "PATH_RULES_LOADED:\nNot evaluated.",
 		"automatedChecks:",
 		...result.automatedChecks.map((item) => `---\n${item}`),
@@ -697,12 +773,17 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "reviewing", branch, worktreePath, startCommit, endCommit });
 				const changedRaw = await execRequired(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
+				const runtimeHashEvidence = evaluateReviewWorkflowRuntimeHash(changedFiles, worktreePath);
+				if (!params.dryRun && ["missing", "mismatch"].includes(runtimeHashEvidence.status)) {
+					throw new Error(runtimeHashEvidence.message);
+				}
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles, reviewCwd);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
 				const pathRulesLoaded = await renderPathRulesLoaded(reviewCwd, changedFiles);
 				const supervisorArtifact = extractSupervisorArtifact(comments);
 				const checkpoints = [
 					"Selected model: bd statuses inreview -> simplified -> reviewed -> accepted -> closed with structured comments as audit evidence.",
+					runtimeHashEvidence.message,
 					`Supervisor artifact handoff: ${supervisorArtifact.statusLine}; artifact is evidence only and must not auto-accept work.`,
 					"NOT APPROVED path: keep/return bead inreview and redispatch supervisor with exact fixes; do not advance to reviewed/accepted/closed.",
 					"APPROVED path: record CODE REVIEW APPROVED evidence, run acceptance checks, then move reviewed -> accepted -> closed.",
@@ -710,7 +791,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 					"Epic completion guard: beads-policy blocks standard and direct epic close while any child bead is not closed, unless an explicit documented override is used.",
 					"Merge validation: per-task bead close may happen before merge; explicit merge-to-main performs PR/origin-main evidence and final session verdict checks.",
 				];
-				const result: ReviewResult = { beadId: params.beadId, branch, worktreePath, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, supervisorArtifact, pathRulesLoaded };
+				const result: ReviewResult = { beadId: params.beadId, branch, worktreePath, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, supervisorArtifact, runtimeHashEvidence, pathRulesLoaded };
 				if (!params.dryRun) {
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.
 
@@ -733,7 +814,7 @@ Artifact evidence may be cited in acceptance matrix, but it is not acceptance by
 						if (matrix.blockingRows.length > 0) {
 							throw new Error(`review_bead blocked accepted/close: ACCEPTANCE MATRIX contains blocking rows (${matrix.blockingRows.map((row) => row.result).join(", ")}). Fix failed/missing checks or record an explicit human override before closing.`);
 						}
-						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\nArtifact evidence may be cited in ACCEPTANCE MATRIX when mapped to criteria with fresh verification; artifact is not acceptance by itself.\n\n${automatedChecks.join("\n\n")}`]);
+						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\nArtifact evidence may be cited in ACCEPTANCE MATRIX when mapped to criteria with fresh verification; artifact is not acceptance by itself.\n\nRUNTIME HASH EVIDENCE\n${runtimeHashEvidence.message}\n\n${automatedChecks.join("\n\n")}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
 						await exec(pi, "bd", ["close", params.beadId, "--reason", "Reviewed and accepted by review_bead"]);
 						pi.events?.emit("workflow-state:update", { activeBead: params.beadId, sessionMode: "closed", branch, worktreePath, startCommit, endCommit });
