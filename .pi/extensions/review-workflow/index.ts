@@ -433,8 +433,9 @@ function parseCheckResult(check: string): { command: string; exitCode?: number; 
 	const firstLine = check.split(/\r?\n/)[0]?.trim() || check.trim();
 	const match = firstLine.match(/^(.*?)\s*->\s*exit\s*(-?\d+)/i);
 	if (!match) {
-		const skipped = /skipped|not run|no automated checks selected/i.test(check);
-		return { command: firstLine || "automated checks", output: check, result: skipped ? "NOT RUN" : "N/A" };
+		const nonApplicable = /no automated checks selected/i.test(check);
+		const skipped = /skipped|not run/i.test(check);
+		return { command: firstLine || "automated checks", output: check, result: nonApplicable ? "N/A" : skipped ? "NOT RUN" : "N/A" };
 	}
 	const exitCode = Number(match[2]);
 	return { command: match[1]?.trim() || "automated check", exitCode, output: check, result: exitCode === 0 ? "PASS" : "FAIL" };
@@ -465,18 +466,18 @@ function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; f
 		});
 	}
 	for (const item of verificationItems) {
-		const matching = checkResults.find((check) => check.command && (item.includes(check.command) || check.command.includes(item.split(/\s+/).slice(0, 2).join(" "))));
-		const fallback = checkResults.length === 1 ? checkResults[0] : undefined;
+		const matching = checkResults.find((check) => check.command && check.result !== "N/A" && (item.includes(check.command) || check.command.includes(item.split(/\s+/).slice(0, 2).join(" "))));
+		const fallback = checkResults.length === 1 && checkResults[0]?.result !== "N/A" ? checkResults[0] : undefined;
 		const check = matching ?? fallback;
 		rows.push({
 			item,
-			evidence: check ? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}` : "No matching automated evidence captured by review_bead.",
+			evidence: check ? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}` : `Required verification evidence missing: no applicable automated check output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`,
 			result: check ? check.result : "NOT RUN",
 		});
 	}
 	if (acceptanceItems.length === 0 && verificationItems.length === 0) {
-		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "PASS";
-		rows.push({ item: "review_bead approved-path acceptance", evidence: `No explicit acceptance/verification bullets found; CODE REVIEW: APPROVED; automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`, result });
+		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "N/A";
+		rows.push({ item: "review_bead approved-path acceptance", evidence: `N/A: no explicit acceptance/verification bullets found and no required verification is applicable; CODE REVIEW: APPROVED; automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`, result });
 	}
 	if (params.frontendChecklist.length === 0) {
 		rows.push({ item: "Frontend review checklist", evidence: `N/A: changed files (${params.changedFiles.join(", ") || "none"}) do not include app/*.vue UI changes.`, result: "N/A" });

@@ -42,6 +42,7 @@ describe('review workflow dashboard publishing', () => {
   it('publishes code-reviewer completion through registered review_bead and requests repaint', async () => {
     let registeredTool: any
     let repaintCount = 0
+    const execCalls: Array<{ command: string; args: string[] }> = []
     const cwd = process.cwd()
     const branch = 'fix/dashboard-review'
     const startCommit = 'abc1234'
@@ -58,6 +59,7 @@ describe('review workflow dashboard publishing', () => {
         if (tool.name === 'review_bead') registeredTool = tool
       },
       exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-review', status: 'inreview', labels: ['pi'], description: '' }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args.length === 2) return { stdout: comments, stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
@@ -73,8 +75,14 @@ describe('review workflow dashboard publishing', () => {
     reviewWorkflowExtension(pi as any)
     const result = await registeredTool.execute('call-1', { beadId: 'bead-review', startCommit, endCommit, worktreePath: cwd, dryRun: false }, undefined, undefined, { cwd })
 
+    const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+    const matrix = String(matrixCall?.args[3] ?? '')
+
     expect(result.details.error).toBeUndefined()
     expect(result.details.reviewerExitCode).toBe(0)
+    expect(matrix).toContain('| review_bead approved-path acceptance | N/A: no explicit acceptance/verification bullets found and no required verification is applicable; CODE REVIEW: APPROVED; automated check summary: No automated checks selected for changed files. | N/A |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(true)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-review')).toBe(true)
     expect(getSharedDashboardState()?.cards.get('code-reviewer')?.status).toBe('completed')
     expect(repaintCount).toBeGreaterThan(0)
   })
