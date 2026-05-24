@@ -358,7 +358,7 @@ describe('Pi worktree naming policy', () => {
     [`${bdWtCreate} ${join(worktreeRoot, 'beads-task-issue-tracker-lgok-branch-worktree-naming')} --branch task/beads-task-issue-tracker-lgok-branch-worktree-naming`, 'полный project bead id'],
     [`${bdWtCreate} ${join(worktreeRoot, 'lgok')} --branch task/lgok`, '<bead-suffix>-<domain-or-component>-<purpose>'],
     [`${bdWtCreate} ${join(worktreeRoot, 'v495-branch-worktree-naming')} --branch task/v495-branch-worktree-naming`, 'active bead'],
-  ])('blocks invalid canonical task worktree names: %s', (command, reason) => {
+  ])('blocks invalid canonical worktree names: %s', (command, reason) => {
     const decision = evaluateBashPolicy(command, {
       activeBead: 'beads-task-issue-tracker-lgok',
     }, { cwd: tmpdir() })
@@ -368,7 +368,7 @@ describe('Pi worktree naming policy', () => {
     expect(decision?.reason).toContain(reason)
   })
 
-  it('does not enforce naming for list/remove/prune/info or non-task orphan branches', () => {
+  it('does not enforce naming for list/remove/prune/info or orphan branches without canonical workflow prefixes', () => {
     const listDecision = evaluateBashPolicy(`${gitWtAdd.replace('add', 'list')}`, {}, { cwd: tmpdir() })
     const removeDecision = evaluateBashPolicy(`bd ${wt} remove ${goodPath}`, {}, { cwd: tmpdir() })
     const nonTaskDecision = evaluateBashPolicy(`${bdWtCreate} ${join(worktreeRoot, 'smoke')} --branch smoke`, {}, { cwd: tmpdir() })
@@ -451,7 +451,7 @@ describe('Pi merge-slot push policy', () => {
 })
 
 describe('Pi safe merged remote branch cleanup policy', () => {
-  function createMergedRemoteFixture() {
+  function createMergedRemoteFixture(branch = 'task/safe-cleanup') {
     const remote = mkdtempSync(join(tmpdir(), 'beads-policy-remote-'))
     const repo = createMainRepo()
     execFileSync('git', ['init', '--bare'], { cwd: remote, stdio: 'ignore' })
@@ -460,17 +460,17 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' })
     execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repo, stdio: 'ignore' })
     execFileSync('git', ['push', 'origin', 'main'], { cwd: repo, stdio: 'ignore' })
-    execFileSync('git', ['checkout', '-b', 'task/safe-cleanup'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['checkout', '-b', branch], { cwd: repo, stdio: 'ignore' })
     writeFileSync(join(repo, 'feature.txt'), 'feature\n')
     execFileSync('git', ['add', 'feature.txt'], { cwd: repo, stdio: 'ignore' })
     execFileSync('git', ['commit', '-m', 'feature'], { cwd: repo, stdio: 'ignore' })
     const branchOid = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
-    execFileSync('git', ['push', 'origin', 'task/safe-cleanup'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['push', 'origin', branch], { cwd: repo, stdio: 'ignore' })
     execFileSync('git', ['checkout', 'main'], { cwd: repo, stdio: 'ignore' })
-    execFileSync('git', ['merge', '--no-ff', 'task/safe-cleanup', '-m', 'merge feature'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['merge', '--no-ff', branch, '-m', 'merge feature'], { cwd: repo, stdio: 'ignore' })
     execFileSync('git', ['push', 'origin', 'main'], { cwd: repo, stdio: 'ignore' })
     const mainOid = execFileSync('git', ['rev-parse', 'main'], { cwd: repo, encoding: 'utf8' }).trim()
-    return { repo, remote, branch: 'task/safe-cleanup', branchOid, mainOid }
+    return { repo, remote, branch, branchOid, mainOid }
   }
 
   function cleanupFixture(fixture: { repo: string; remote: string }) {
@@ -478,21 +478,24 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     rmSync(fixture.remote, { recursive: true, force: true })
   }
 
-  it('allows safe merged remote task branch deletion with matching lease and merge-slot evidence', () => {
-    const fixture = createMergedRemoteFixture()
-    try {
-      const decision = evaluateBashPolicy(
-        `git push --force-with-lease="refs/heads/${fixture.branch}:${fixture.branchOid}" origin ":refs/heads/${fixture.branch}"`,
-        { branch: fixture.branch, mergeSlotHeld: true },
-        { cwd: fixture.repo },
-      )
+  it.each(['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'ci', 'task'])(
+    'allows safe merged remote canonical %s branch deletion with matching lease and merge-slot evidence',
+    (prefix) => {
+      const fixture = createMergedRemoteFixture(`${prefix}/safe-cleanup`)
+      try {
+        const decision = evaluateBashPolicy(
+          `git push --force-with-lease="refs/heads/${fixture.branch}:${fixture.branchOid}" origin ":refs/heads/${fixture.branch}"`,
+          { branch: fixture.branch, mergeSlotHeld: true },
+          { cwd: fixture.repo },
+        )
 
-      expect(decision?.policy).not.toBe('blockDestructiveCommand')
-      expect(decision?.policy).not.toBe('requireMergeSlotForPush')
-    } finally {
-      cleanupFixture(fixture)
-    }
-  })
+        expect(decision?.policy).not.toBe('blockDestructiveCommand')
+        expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+      } finally {
+        cleanupFixture(fixture)
+      }
+    },
+  )
 
   it('allows documented literal fallback deletion shape without shell variables', () => {
     const docs = readFileSync('.pi/skills/merge-to-main/SKILL.md', 'utf8')
@@ -502,7 +505,7 @@ describe('Pi safe merged remote branch cleanup policy', () => {
       .filter((line) => line.startsWith('git push --force-with-lease=') && line.includes(':refs/heads/'))
 
     expect(documentedDeletionLines).toContain(
-      'git push --force-with-lease=refs/heads/task/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/task/example-branch',
+      'git push --force-with-lease=refs/heads/fix/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/fix/example-branch',
     )
     expect(documentedDeletionLines.every((line) => !line.includes('$'))).toBe(true)
 
@@ -521,7 +524,7 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
-  it('allows safe merged remote task branch cleanup after merge flow returns to main', () => {
+  it('allows safe merged remote canonical branch cleanup after merge flow returns to main', () => {
     const fixture = createMergedRemoteFixture()
     try {
       const decision = evaluateBashPolicy(
@@ -559,6 +562,27 @@ describe('Pi safe merged remote branch cleanup policy', () => {
   })
 
   it.each([
+    ['hotfix/safe-cleanup', 'canonical Pi branch prefix'],
+    ['task/bad..name', 'canonical Pi branch prefix'],
+    ['task/bad//name', 'canonical Pi branch prefix'],
+  ])('blocks safe-shaped remote deletion for non-canonical or malformed branch: %s', (branch, expectedReason) => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${branch}:${fixture.branchOid} origin :refs/heads/${branch}`,
+        { branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain(expectedReason)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it.each([
     'git push origin +:refs/heads/main',
     'git push origin +:refs/heads/task/other',
   ])('blocks forced remote deletion refspec with merge-slot evidence: %s', (command) => {
@@ -590,7 +614,7 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
-  it('reports stale lease for safe-shaped remote task branch deletion', () => {
+  it('reports stale lease for safe-shaped remote canonical branch deletion', () => {
     const fixture = createMergedRemoteFixture()
     try {
       const decision = evaluateBashPolicy(
@@ -607,7 +631,7 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
-  it('reports missing remote task branch for safe-shaped deletion', () => {
+  it('reports missing remote canonical branch for safe-shaped deletion', () => {
     const fixture = createMergedRemoteFixture()
     try {
       execFileSync('git', ['push', 'origin', `:refs/heads/${fixture.branch}`], { cwd: fixture.repo, stdio: 'ignore' })
@@ -643,7 +667,7 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
-  it('blocks unmerged remote task branch deletion', () => {
+  it('blocks unmerged remote canonical branch deletion', () => {
     const fixture = createMergedRemoteFixture()
     try {
       execFileSync('git', ['checkout', fixture.branch], { cwd: fixture.repo, stdio: 'ignore' })

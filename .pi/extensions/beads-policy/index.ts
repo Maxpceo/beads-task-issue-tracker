@@ -183,9 +183,18 @@ interface RemoteBranchDeletionPush {
 }
 
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/i;
+const CANONICAL_PI_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
 
-function isSafeTaskBranchName(branch: string): boolean {
-	return /^task\/[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(branch) && !branch.includes("..") && !branch.endsWith("/") && !branch.includes("//");
+function isSafeCanonicalPiBranchName(branch: string): boolean {
+	const slashIndex = branch.indexOf("/");
+	const prefix = slashIndex === -1 ? "" : branch.slice(0, slashIndex);
+	const suffix = slashIndex === -1 ? "" : branch.slice(slashIndex + 1);
+	return Boolean(prefix && suffix)
+		&& CANONICAL_PI_BRANCH_PREFIXES.has(prefix)
+		&& /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(suffix)
+		&& !branch.includes("..")
+		&& !branch.endsWith("/")
+		&& !branch.includes("//");
 }
 
 function normalizeDeletedBranchRef(value: string): string | undefined {
@@ -276,15 +285,15 @@ function hasObservableMergeSlotEvidence(workflowState: WorkflowStateSnapshot, op
 function mergedRemoteBranchCleanupBlockReason(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): string | undefined {
 	const parsed = parseSafeRemoteDeletionCommand(command);
 	if (!parsed) {
-		return "Заблокировано: remote branch deletion разрешён только для exact merge-to-main fallback формы `git push --force-with-lease=refs/heads/task/<branch>:<oid> origin :refs/heads/task/<branch>`.";
+		return "Заблокировано: remote branch deletion разрешён только для exact merge-to-main fallback формы `git push --force-with-lease=refs/heads/<branch>:<oid> origin :refs/heads/<branch>` для canonical Pi branch prefix.";
 	}
 	const branch = parsed.branch;
 	const activeBranch = workflowState.branch;
 	if (activeBranch && !PROTECTED_BRANCHES.has(activeBranch) && branch !== activeBranch) {
 		return `Заблокировано: remote branch deletion target ${branch} не совпадает с active workflow branch ${activeBranch}.`;
 	}
-	if (!isSafeTaskBranchName(branch) || PROTECTED_BRANCHES.has(branch)) {
-		return `Заблокировано: remote branch deletion разрешён только для canonical task/... branch; получен ${branch}.`;
+	if (!isSafeCanonicalPiBranchName(branch) || PROTECTED_BRANCHES.has(branch)) {
+		return `Заблокировано: remote branch deletion разрешён только для canonical Pi branch prefix (feat|fix|docs|refactor|test|chore|ci|task); получен ${branch}.`;
 	}
 	if (!hasObservableMergeSlotEvidence(workflowState, options, cwd)) {
 		return "Заблокировано: remote branch deletion fallback требует observable merge-slot evidence текущего actor/session.";
@@ -2096,7 +2105,7 @@ interface WorktreeCreateCommand {
 	branch?: string;
 }
 
-const TASK_WORKTREE_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
+const TASK_WORKTREE_BRANCH_PREFIXES = CANONICAL_PI_BRANCH_PREFIXES;
 
 function parseWorktreeCreateSegment(segment: string): WorktreeCreateCommand | undefined {
 	const tokens = shellTokens(segment);
