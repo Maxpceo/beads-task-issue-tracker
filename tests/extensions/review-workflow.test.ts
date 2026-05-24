@@ -476,7 +476,7 @@ describe('review_workflow reviewer verdict handling', () => {
     }
   }
 
-  async function runNonDryReview(reviewerOutput: string, options: { failRestore?: boolean } = {}) {
+  async function runNonDryReview(reviewerOutput: string, options: { failRestore?: boolean; failMatrixWrite?: boolean; failPnpm?: boolean; skipChecks?: boolean; beadDescription?: string } = {}) {
     const fixture = createFakeReviewerWorktree(reviewerOutput)
     const oldPath = process.env.PATH
     const oldArgv1 = process.argv[1] ?? ''
@@ -491,17 +491,20 @@ describe('review_workflow reviewer verdict handling', () => {
       registerCommand() {},
       exec: async (command: string, args: string[]) => {
         execCalls.push({ command, args })
-        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
-        if (command === 'bd' && args[0] === 'comments') {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview', description: options.beadDescription ?? '### Acceptance criteria\n- Approved review closes only after durable matrix.\n### Verification / acceptance checks\n- pnpm --dir <worktree> test\n- npx --prefix <worktree> vue-tsc --noEmit' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') {
           return { stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: ${fixture.cwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`, stderr: '', code: 0 }
         }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} rev-parse --show-toplevel`) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: 'tests/extensions/review-workflow.test.ts\n', stderr: '', code: 0 }
-        if (command === 'pnpm' && args.join(' ') === `--dir ${fixture.cwd} test`) return { stdout: 'tests passed\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: options.skipChecks ? 'README.md\n' : 'tests/extensions/review-workflow.test.ts\n', stderr: '', code: 0 }
+        if (command === 'pnpm' && args.join(' ') === `--dir ${fixture.cwd} test`) return options.failPnpm ? { stdout: '', stderr: 'tests failed\n', code: 1 } : { stdout: 'tests passed\n', stderr: '', code: 0 }
         if (command === 'npx' && args.join(' ') === `--prefix ${fixture.cwd} vue-tsc --noEmit`) return { stdout: '', stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'update' && args[1] === 'bead-a' && args.join(' ').includes('--status inreview') && options.failRestore) {
           return { stdout: '', stderr: 'restore denied', code: 1 }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add' && args.some((arg) => String(arg).startsWith('ACCEPTANCE MATRIX:')) && options.failMatrixWrite) {
+          return { stdout: '', stderr: 'matrix write denied', code: 1 }
         }
         if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
@@ -684,12 +687,90 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toContain('restore denied')
   })
 
-  it('keeps exact APPROVED path moving reviewed to accepted and close', async () => {
+  it('keeps exact APPROVED path moving reviewed to accepted and close after ACCEPTANCE MATRIX is written', async () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady')
     const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+    const matrixIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+    const acceptedIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))
+    const closeIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')
 
     expect(statusUpdates).toEqual(['update bead-a --status simplified', 'update bead-a --status reviewed', 'update bead-a --status accepted'])
+    expect(matrixIndex).toBeGreaterThan(-1)
+    expect(matrixIndex).toBeLessThan(acceptedIndex)
+    expect(matrixIndex).toBeLessThan(closeIndex)
+    const matrixCall = execCalls[matrixIndex]
+    expect(matrixCall).toBeDefined()
+    expect(String(matrixCall?.args[3])).toContain('| Approved review closes only after durable matrix. |')
+    expect(String(matrixCall?.args[3])).toContain('| PASS |')
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('maps f7ra-like verification bullets to full passing test and vue-tsc evidence', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Existing approved path with successful matrix and PASS/no blocking rows still reaches accepted/closed flow.',
+      '### Verification / acceptance checks',
+      '- pnpm test tests/extensions/review-workflow.test.ts --reporter dot',
+      '- npx vue-tsc --noEmit',
+      '- Test assertions over execCalls prove matrix before accepted/close, matrix write failure avoids accepted/close, FAIL matrix is written then blocks accepted/close, and NOT RUN matrix is written then blocks accepted/close.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription })
+    const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+    const matrix = String(matrixCall?.args[3] ?? '')
+
+    expect(matrixCall).toBeDefined()
+    expect(matrix).toContain('| pnpm test tests/extensions/review-workflow.test.ts --reporter dot | command: pnpm --dir')
+    expect(matrix).toContain('| npx vue-tsc --noEmit | command: npx --prefix')
+    expect(matrix).toContain('| Test assertions over execCalls prove matrix before accepted/close')
+    expect(matrix).not.toContain('| NOT RUN |')
+    expect(matrix).toContain('All required acceptance rows are PASS or explicitly N/A.')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(true)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
     expect(result.details.error).toBeUndefined()
+  })
+
+  it('blocks accepted and close when ACCEPTANCE MATRIX comment write fails', async () => {
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { failMatrixWrite: true })
+    const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+
+    expect(statusUpdates).toEqual(['update bead-a --status simplified', 'update bead-a --status reviewed'])
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.content[0].text).toContain('matrix write denied')
+    expect(result.details.error).toContain('matrix write denied')
+  })
+
+  it('writes FAIL matrix and blocks accepted and close when an executed check fails', async () => {
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { failPnpm: true })
+    const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+
+    expect(matrixCall).toBeDefined()
+    expect(String(matrixCall?.args[3])).toContain('| FAIL |')
+    expect(String(matrixCall?.args[3])).toContain('BLOCKER: acceptance matrix contains FAIL')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('writes NOT RUN matrix and blocks accepted and close when required checks are skipped', async () => {
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { skipChecks: true })
+    const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+
+    expect(matrixCall).toBeDefined()
+    expect(String(matrixCall?.args[3])).toContain('| NOT RUN |')
+    expect(String(matrixCall?.args[3])).toContain('BLOCKER: acceptance matrix contains NOT RUN')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('generates N/A only with explicit non-applicable context while required evidence remains PASS', async () => {
+    const { execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady')
+    const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+    const matrix = String(matrixCall?.args[3] ?? '')
+
+    expect(matrix).toContain('| Frontend review checklist | N/A: changed files (tests/extensions/review-workflow.test.ts) do not include app/*.vue UI changes. | N/A |')
+    expect(matrix).toContain('| pnpm --dir <worktree> test | command: pnpm --dir')
+    expect(matrix).toContain('| PASS |')
   })
 })
