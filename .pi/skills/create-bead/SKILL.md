@@ -22,6 +22,17 @@ Use this skill when:
 
 Do **not** use for tiny local reminders under ~5 lines/one file where `bd todo add` is enough and no handoff package is needed.
 
+## Mandatory checklist before `bd create`
+
+Do not run `bd create` until every item is true:
+
+- Title is Russian for Maxim; keep only technical identifiers (`bd-api`, file names, commands, labels) in English.
+- Duplicate search is done or intentionally skipped because the title/domain is obviously unique.
+- Description is visible to guards via inline heredoc inside `--description`; do not use `$VAR`, `$(cat /tmp/...)`, repo temp files, or Python/Node/Ruby wrappers.
+- All required `### ...` sections are present with concrete Russian content.
+- `-t` / `--type`, `-p` / `--priority`, and at least one `--label` / `--labels` / `-l` are set.
+- `--deps discovered-from:<id>` is set for follow-ups or discovered work when a source bead exists.
+
 ## Pre-flight
 
 1. Check workflow state:
