@@ -49,6 +49,7 @@
 
 ### Fixed
 
+- **Pi review tool availability blockers** (`beads-task-issue-tracker-ndgk`): in-review workflow guards now require current tool-surface or failed typed-call evidence before reporting `review_bead` / `dispatch_reviewer` as unavailable, preventing false blockers while preserving explicit Russian `BLOCKED` reports for real review-tool failures.
 - **Pi post-approval workflow continuation** (`beads-task-issue-tracker-7buw`): approving a plan now calls the typed supervisor dispatch path directly instead of emitting a follow-up execution prompt, preserves normalized markdown worktree evidence during `workflow_plan_approved`, and records an explicit blocker if the runtime continuation hook is unavailable.
 - **Pi dirty-worktree bd evidence policy** (`beads-task-issue-tracker-kgch`): `beads-policy` now allows scoped self-contained `bd create`, `bd comments add`, and `bd dep add` evidence commands for the active bead when a risky workflow-file worktree is dirty, while still blocking unrelated tracker mutations, terminal lifecycle updates, and combined git/shell mutation forms without approved evidence.
 - **Pi structured task worktree routing** (`beads-task-issue-tracker-xl6v`): shared worktree-scope validation now routes `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, and `review_bead` to the recorded task worktree/branch, rejects stale or mismatched targets with actionable policy errors, and keeps protected-branch workflow operations from silently falling back to the wrong checkout.
