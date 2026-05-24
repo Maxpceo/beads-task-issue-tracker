@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -476,8 +476,12 @@ describe('review_workflow reviewer verdict handling', () => {
     }
   }
 
-  async function runNonDryReview(reviewerOutput: string, options: { failRestore?: boolean; failMatrixWrite?: boolean; failPnpm?: boolean; skipChecks?: boolean; beadDescription?: string } = {}) {
+  async function runNonDryReview(reviewerOutput: string, options: { failRestore?: boolean; failMatrixWrite?: boolean; failPnpm?: boolean; skipChecks?: boolean; beadDescription?: string; changedFiles?: string; reviewWorkflowRuntimeSource?: string } = {}) {
     const fixture = createFakeReviewerWorktree(reviewerOutput)
+    if (options.reviewWorkflowRuntimeSource !== undefined) {
+      mkdirSync(join(fixture.cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
+      writeFileSync(join(fixture.cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'), options.reviewWorkflowRuntimeSource)
+    }
     const oldPath = process.env.PATH
     const oldArgv1 = process.argv[1] ?? ''
     let registeredTool: any
@@ -497,7 +501,7 @@ describe('review_workflow reviewer verdict handling', () => {
         }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} rev-parse --show-toplevel`) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: options.skipChecks ? 'README.md\n' : 'tests/extensions/review-workflow.test.ts\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: `${options.changedFiles ?? (options.skipChecks ? 'README.md' : 'tests/extensions/review-workflow.test.ts')}\n`, stderr: '', code: 0 }
         if (command === 'pnpm' && args.join(' ') === `--dir ${fixture.cwd} test`) return options.failPnpm ? { stdout: '', stderr: 'tests failed\n', code: 1 } : { stdout: 'tests passed\n', stderr: '', code: 0 }
         if (command === 'npx' && args.join(' ') === `--prefix ${fixture.cwd} vue-tsc --noEmit`) return { stdout: '', stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'update' && args[1] === 'bead-a' && args.join(' ').includes('--status inreview') && options.failRestore) {
@@ -772,5 +776,39 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(matrix).toContain('| Frontend review checklist | N/A: changed files (tests/extensions/review-workflow.test.ts) do not include app/*.vue UI changes. | N/A |')
     expect(matrix).toContain('| pnpm --dir <worktree> test | command: pnpm --dir')
     expect(matrix).toContain('| PASS |')
+  })
+
+  it('blocks stale review-workflow runtime before accepted status and bd close', async () => {
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      changedFiles: '.pi/extensions/review-workflow/index.ts',
+      reviewWorkflowRuntimeSource: 'stale task worktree runtime source',
+    })
+    const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+
+    expect(result.content[0].text).toContain('review-workflow runtime hash guard: BLOCKED')
+    expect(result.content[0].text).toContain('Перезапустите Pi/runtime')
+    expect(statusUpdates.some((args) => args.includes('--status accepted'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+  })
+
+  it('allows approved review-workflow runtime change when load-time hash matches and records evidence before close', async () => {
+    const loadedRuntimeSource = readFileSync(join(process.cwd(), '.pi', 'extensions', 'review-workflow', 'index.ts'), 'utf8')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      changedFiles: '.pi/extensions/review-workflow/index.ts',
+      reviewWorkflowRuntimeSource: loadedRuntimeSource,
+    })
+    const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add').map((call) => call.args.join(' '))
+    const acceptanceCommentIndex = comments.findIndex((args) => args.includes('ACCEPTANCE: review_bead acceptance checks completed.'))
+    const closeIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'close')
+
+    expect(statusUpdates).toEqual(['update bead-a --status simplified', 'update bead-a --status reviewed', 'update bead-a --status accepted'])
+    expect(result.details.runtimeHashEvidence.status).toBe('matched')
+    expect(comments[acceptanceCommentIndex]).toContain('RUNTIME HASH EVIDENCE')
+    expect(comments[acceptanceCommentIndex]).toContain('review-workflow runtime hash guard: PASS')
+    expect(acceptanceCommentIndex).toBeGreaterThanOrEqual(0)
+    expect(closeIndex).toBeGreaterThanOrEqual(0)
+    expect(execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args.join(' ').includes('RUNTIME HASH EVIDENCE'))).toBeLessThan(closeIndex)
+    expect(result.details.error).toBeUndefined()
   })
 })
