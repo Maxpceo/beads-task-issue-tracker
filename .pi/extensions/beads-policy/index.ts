@@ -131,6 +131,11 @@ function normalizeCommand(command: string): string {
 	return command.replace(/\s+/g, " ").trim();
 }
 
+function matchesToolName(actual: string | undefined, canonical: string): boolean {
+	if (!actual) return false;
+	return actual === canonical || actual === `functions.${canonical}` || actual.endsWith(`.${canonical}`);
+}
+
 function protectedPathReason(targetPath: string): string | undefined {
 	const normalizedPath = targetPath.replace(/\\/g, "/");
 	if (normalizedPath.includes(".git/")) return ".git internals защищены";
@@ -779,13 +784,14 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 
 function requiredToolCwdDecision(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
 	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
-	if (!["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].includes(toolName)) return undefined;
-	const target = requireTaskToolTarget(toolName, input, workflowState);
+	const canonicalToolName = ["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].find((name) => matchesToolName(toolName, name));
+	if (!canonicalToolName) return undefined;
+	const target = requireTaskToolTarget(canonicalToolName, input, workflowState);
 	if (!target.ok) {
 		return {
 			policy: "enforceActiveWorktreeCwd",
 			block: true,
-			reason: taskScopeErrorToPolicyReason(target.error, workflowState.activeBead, `запуском ${toolName}`),
+			reason: taskScopeErrorToPolicyReason(target.error, workflowState.activeBead, `запуском ${canonicalToolName}`),
 		};
 	}
 	return undefined;
@@ -2828,6 +2834,11 @@ export function evaluateBashPolicy(
 	}
 
 	if (commandClosesBead(command) || commandDirectlySetsClosed(command)) {
+		const latestMatrix = closeId ? latestAcceptanceMatrix(getBdCommentsText(commandCwd, closeId)) : undefined;
+		const earlyEpicMatrixError = closeId ? validateEpicCloseMatrix(commandCwd, closeId) : undefined;
+		if (earlyEpicMatrixError && (!latestMatrix || latestMatrix.toUpperCase().startsWith("EPIC ACCEPTANCE MATRIX"))) {
+			return { policy: "requireEpicFinalizationSweep", block: true, reason: earlyEpicMatrixError };
+		}
 		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId) : undefined;
 		if (matrixError) {
 			return {
@@ -2869,9 +2880,9 @@ export function evaluateBashPolicy(
 export function evaluateToolPolicy(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
 	const worktreeDecision = requiredToolCwdDecision(toolName, input, workflowState);
 	if (worktreeDecision) return worktreeDecision;
-	if (toolName === "dispatch_supervisor") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
-	if (toolName === "review_bead") return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
-	if (toolName === "workflow_complete" && workflowState.activeBead && workflowState.bdStatus === "inreview") {
+	if (matchesToolName(toolName, "dispatch_supervisor")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
+	if (matchesToolName(toolName, "review_bead")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
+	if (matchesToolName(toolName, "workflow_complete") && workflowState.activeBead && workflowState.bdStatus === "inreview") {
 		const targetState = String(input.state ?? "");
 		if (targetState !== "blocked" && targetState !== "deferred") {
 			return {
@@ -2925,7 +2936,7 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
 		const workflowState = latestWorkflowState(ctx);
 
-		if (event.toolName === "bash") {
+		if (matchesToolName(event.toolName, "bash")) {
 			const command = String(event.input.command ?? "");
 			const decision = applySkip(evaluateBashPolicy(command, workflowState, { cwd: ctx.cwd }));
 			if (decision?.block) return toToolBlock(decision);
@@ -2936,9 +2947,10 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 		const toolDecision = applySkip(evaluateToolPolicy(event.toolName, event.input as Record<string, unknown>, workflowState));
 		if (toolDecision?.block) return toToolBlock(toolDecision);
 
-		if (event.toolName === "read" || event.toolName === "edit" || event.toolName === "write") {
+		const pathToolName = ["read", "edit", "write"].find((name) => matchesToolName(event.toolName, name));
+		if (pathToolName) {
 			const targetPath = String(event.input.path ?? "");
-			const decision = applySkip(evaluatePathPolicy(event.toolName, targetPath, workflowState));
+			const decision = applySkip(evaluatePathPolicy(pathToolName, targetPath, workflowState));
 			if (decision?.block) return toToolBlock(decision);
 		}
 

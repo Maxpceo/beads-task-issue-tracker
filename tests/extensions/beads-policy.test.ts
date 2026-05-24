@@ -949,6 +949,27 @@ PARENT_EPIC: epic-a
     }, [{ id: 'child-a', status: 'closed' }])
   })
 
+  it('blocks the real smoke parent epic close command shape without EPIC ACCEPTANCE MATRIX', () => {
+    const epic = {
+      id: 'epic-a',
+      status: 'accepted',
+      issue_type: 'epic',
+      description: [
+        '### Acceptance criteria',
+        '- All child beads are closed.',
+      ].join('\n'),
+    }
+    withFakeBd(epic, '[]', (cwd) => {
+      const decision = evaluateBashPolicy('bd close epic-a --reason "runtime smoke parent should require EPIC ACCEPTANCE MATRIX" --json', {
+        activeBead: 'epic-a',
+        bdStatus: 'accepted',
+      }, { cwd })
+
+      expect(decision?.policy).toBe('requireEpicFinalizationSweep')
+      expect(decision?.reason).toContain('EPIC ACCEPTANCE MATRIX')
+    }, [{ id: 'child-a', status: 'closed' }, { id: 'child-b', status: 'closed' }])
+  })
+
   it('blocks accepted epic close when child list cannot be read', () => {
     const repo = mkdtempSync(join(tmpdir(), 'beads-policy-epic-close-'))
     const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
@@ -1069,6 +1090,71 @@ exit 1
       process.env.PATH = `${binDir}:${oldPath ?? ''}`
       const decision = evaluateBashPolicy('bd close child-b --reason accepted --json', { activeBead: 'child-b', bdStatus: 'accepted' }, { cwd: repo })
       expect(decision?.policy).toBe('requireEpicFinalizationSweep')
+      expect(decision?.reason).toContain('PARENT EPIC SWEEP')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks the real smoke last-child close command shape before shell execution', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-epic-sweep-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      writeFileSync(join(binDir, 'bd'), `#!/usr/bin/env bash
+if [[ "$1" == "dep" ]]; then printf '[{"id":"epic-a","dependency_type":"parent-child"}]'; exit 0; fi
+if [[ "$1" == "show" && "$2" == "epic-a" ]]; then printf '[{"id":"epic-a","status":"in_progress","issue_type":"epic"}]'; exit 0; fi
+if [[ "$1" == "show" ]]; then printf '[{"id":"child-b","status":"accepted","issue_type":"task"}]'; exit 0; fi
+if [[ "$1" == "list" ]]; then printf '[{"id":"child-a","status":"closed"},{"id":"child-b","status":"accepted"}]'; exit 0; fi
+if [[ "$1" == "comments" ]]; then printf '[]'; exit 0; fi
+exit 1
+`)
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+      const decision = evaluateBashPolicy('bd close child-b --reason "runtime smoke child B should require parent sweep" --json', { activeBead: 'child-b', bdStatus: 'accepted' }, { cwd: repo })
+      expect(decision?.policy).toBe('requireEpicFinalizationSweep')
+      expect(decision?.reason).toContain('PARENT EPIC SWEEP')
+      expect(decision?.reason).toContain('EPIC HANDOFF')
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks namespaced bash tool calls for the real smoke last-child close command', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-epic-sweep-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    let handler: ((event: any, ctx: any) => Promise<unknown>) | undefined
+    try {
+      writeFileSync(join(binDir, 'bd'), `#!/usr/bin/env bash
+if [[ "$1" == "dep" ]]; then printf '[{"id":"epic-a","dependency_type":"parent-child"}]'; exit 0; fi
+if [[ "$1" == "show" && "$2" == "epic-a" ]]; then printf '[{"id":"epic-a","status":"in_progress","issue_type":"epic"}]'; exit 0; fi
+if [[ "$1" == "show" ]]; then printf '[{"id":"child-b","status":"accepted","issue_type":"task"}]'; exit 0; fi
+if [[ "$1" == "list" ]]; then printf '[{"id":"child-a","status":"closed"},{"id":"child-b","status":"accepted"}]'; exit 0; fi
+if [[ "$1" == "comments" ]]; then printf '[]'; exit 0; fi
+exit 1
+`)
+      chmodSync(join(binDir, 'bd'), 0o755)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+      beadsPolicyExtension({
+        on: (event: string, callback: (event: any, ctx: any) => Promise<unknown>) => {
+          if (event === 'tool_call') handler = callback
+        },
+        registerCommand() {},
+      } as any)
+      if (!handler) throw new Error('tool_call handler was not registered')
+      const decision = await handler({ toolName: 'functions.bash', input: { command: 'bd close child-b --reason "runtime smoke child B should require parent sweep" --json' } }, {
+        cwd: repo,
+        sessionManager: { getEntries: () => [] },
+        ui: { notify() {}, setStatus() {}, theme: { fg: (_style: string, value: string) => value } },
+      }) as { block?: boolean, reason?: string }
+
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('requireEpicFinalizationSweep')
       expect(decision?.reason).toContain('PARENT EPIC SWEEP')
     } finally {
       process.env.PATH = oldPath

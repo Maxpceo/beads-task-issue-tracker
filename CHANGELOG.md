@@ -50,6 +50,7 @@
 
 ### Fixed
 
+- **Pi epic finalization close guards** (`beads-task-issue-tracker-ck2o`): `beads-policy` now recognizes namespaced Pi tool calls such as `functions.bash`, runs epic acceptance checks before the generic close matrix guard, and blocks last-child or parent-epic close commands that are missing `PARENT EPIC SWEEP`, `EPIC HANDOFF`, or `EPIC ACCEPTANCE MATRIX` evidence.
 - **Pi agents dashboard typed workflow visibility** (`beads-task-issue-tracker-wa52`): `/agents-dashboard` now repaints from registered dashboard renderers when typed `dispatch_supervisor` or `review_bead` workflow cards publish running and terminal updates, so already-open active/all dashboards show workflow supervisors and reviewers without relying on continuation-local UI context.
 - **Pi review tool availability blockers** (`beads-task-issue-tracker-ndgk`): in-review workflow guards now require current tool-surface or failed typed-call evidence before reporting `review_bead` / `dispatch_reviewer` as unavailable, preventing false blockers while preserving explicit Russian `BLOCKED` reports for real review-tool failures.
 - **Pi post-approval progress visibility** (`beads-task-issue-tracker-yqwo`): plan approval now emits an immediate visible started/running message with the active bead and typed `dispatch_supervisor(...)` action before awaiting supervisor dispatch, while keeping completion/blocker follow-up messages and best-effort progress delivery.
