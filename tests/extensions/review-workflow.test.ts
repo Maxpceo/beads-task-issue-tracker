@@ -705,6 +705,30 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toBeUndefined()
   })
 
+  it('maps f7ra-like verification bullets to full passing test and vue-tsc evidence', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Existing approved path with successful matrix and PASS/no blocking rows still reaches accepted/closed flow.',
+      '### Verification / acceptance checks',
+      '- pnpm test tests/extensions/review-workflow.test.ts --reporter dot',
+      '- npx vue-tsc --noEmit',
+      '- Test assertions over execCalls prove matrix before accepted/close, matrix write failure avoids accepted/close, FAIL matrix is written then blocks accepted/close, and NOT RUN matrix is written then blocks accepted/close.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription })
+    const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+    const matrix = String(matrixCall?.args[3] ?? '')
+
+    expect(matrixCall).toBeDefined()
+    expect(matrix).toContain('| pnpm test tests/extensions/review-workflow.test.ts --reporter dot | command: pnpm --dir')
+    expect(matrix).toContain('| npx vue-tsc --noEmit | command: npx --prefix')
+    expect(matrix).toContain('| Test assertions over execCalls prove matrix before accepted/close')
+    expect(matrix).not.toContain('| NOT RUN |')
+    expect(matrix).toContain('All required acceptance rows are PASS or explicitly N/A.')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(true)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
   it('blocks accepted and close when ACCEPTANCE MATRIX comment write fails', async () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { failMatrixWrite: true })
     const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))

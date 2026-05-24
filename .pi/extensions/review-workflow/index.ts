@@ -445,6 +445,36 @@ function evidenceExcerpt(value: string): string {
 	return value.replace(/\s+/g, " ").trim().slice(0, 260) || "no output";
 }
 
+function normalizeVerificationText(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/`/g, "")
+		.replace(/--(?:dir|prefix)\s+<worktree>/g, "")
+		.replace(/<worktree>/g, "")
+		.replace(/--(?:dir|prefix)\s+\S+/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function findPassingCheck(checkResults: Array<ReturnType<typeof parseCheckResult>>, predicate: (normalizedCommand: string) => boolean) {
+	return checkResults.find((check) => check.result === "PASS" && predicate(normalizeVerificationText(check.command)));
+}
+
+function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<typeof parseCheckResult>>) {
+	const normalizedItem = normalizeVerificationText(item);
+	const exact = checkResults.find((check) => check.command && check.result !== "N/A" && (normalizedItem.includes(normalizeVerificationText(check.command)) || normalizeVerificationText(check.command).includes(normalizedItem)));
+	if (exact) return exact;
+
+	const fullTest = findPassingCheck(checkResults, (command) => /^pnpm\s+test$/.test(command));
+	if (fullTest && /\bpnpm\b.*\btest\b/.test(normalizedItem)) return fullTest;
+
+	const vueTsc = findPassingCheck(checkResults, (command) => /^npx\s+vue-tsc\s+--noemit$/.test(command.replace(/--no-?emit/g, "--noemit")));
+	if (vueTsc && /\bnpx\b.*\bvue-tsc\b.*--no-?emit\b/i.test(normalizedItem)) return vueTsc;
+
+	if (fullTest && /\b(test assertions?|regression|matrix|execcalls|accepted\/close|write failure|order|fail|not run)\b/i.test(item)) return fullTest;
+	return undefined;
+}
+
 function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; frontendChecklist: string[]; changedFiles: string[]; supervisorArtifact: SupervisorArtifactEvidence }): { text: string; rows: AcceptanceMatrixRow[]; blockingRows: AcceptanceMatrixRow[] } {
 	const description = typeof params.bead.description === "string" ? params.bead.description : "";
 	const acceptanceItems = extractSectionBullets(description, ["Acceptance criteria", "Acceptance"]);
@@ -466,7 +496,7 @@ function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; f
 		});
 	}
 	for (const item of verificationItems) {
-		const matching = checkResults.find((check) => check.command && check.result !== "N/A" && (item.includes(check.command) || check.command.includes(item.split(/\s+/).slice(0, 2).join(" "))));
+		const matching = matchingVerificationCheck(item, checkResults);
 		const fallback = checkResults.length === 1 && checkResults[0]?.result !== "N/A" ? checkResults[0] : undefined;
 		const check = matching ?? fallback;
 		rows.push({
