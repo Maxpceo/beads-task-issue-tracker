@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent } from "../subagent/dashboard";
+import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent, registerDashboardRenderer } from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
 
@@ -477,7 +477,10 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 function refreshDashboardWidget(ctx?: { ui?: any }): void {
 	const state = getSharedDashboardState();
 	if (!state?.visible || !ctx?.ui) return;
-	ctx.ui.setWidget("subagent-dashboard", (_tui: unknown, theme: any) => new AgentDashboardComponent(() => getSharedDashboardState()!, theme));
+	ctx.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: any) => {
+		registerDashboardRenderer(tui);
+		return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+	});
 }
 
 function publishWorkflowDashboardCard(ctx: { ui?: any } | undefined, agent: AgentConfig, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
@@ -505,7 +508,7 @@ async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signa
 		const startedAt = Date.now();
 		publishWorkflowDashboardCard(ctx, agent, { status: "running", task: prompt.split("\n")[0] || "Workflow dispatch", startedAt, lastPreview: "starting Pi workflow agent..." });
 		return await new Promise((resolve) => {
-			const proc = spawn(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+			const proc = spawnForDispatch(invocation.command, invocation.args, { cwd, shell: false, stdio: ["ignore", "pipe", "pipe"] });
 			let output = "";
 			let stderr = "";
 			let wasAborted = false;
@@ -543,6 +546,17 @@ async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signa
 		await fs.promises.rm(systemPrompt.file, { force: true });
 		await fs.promises.rm(systemPrompt.dir, { force: true, recursive: true });
 	}
+}
+
+let spawnForDispatch = spawn;
+let runPiAgentForDispatch = runPiAgent;
+
+export function setSpawnForDispatchTestOverride(override: typeof spawn | null): void {
+	spawnForDispatch = override ?? spawn;
+}
+
+export function setRunPiAgentForDispatchTestOverride(override: typeof runPiAgent | null): void {
+	runPiAgentForDispatch = override ?? runPiAgent;
 }
 
 async function addDispatchComment(pi: ExtensionAPI, beadId: string, agent: string, branch: string, worktreePath: string, startCommit: string, prompt: string): Promise<void> {
@@ -598,7 +612,7 @@ async function dispatch(
 	}
 	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, exitCode: 0, output: prompt, stderr: "" };
 
-	const result = await runPiAgent(agent, prompt, cwd, signal, ctx);
+	const result = await runPiAgentForDispatch(agent, prompt, cwd, signal, ctx);
 	if (mode === "supervisor") {
 		const endCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 		const updatedBead = await getBead(pi, bead.id);

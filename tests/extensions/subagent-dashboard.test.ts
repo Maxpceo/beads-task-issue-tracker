@@ -4,6 +4,7 @@ import {
   clearObservedDashboardCards,
   createDashboardState,
   publishDashboardCard,
+  registerDashboardRenderer,
   renderDashboardLines,
   selectDashboardAgents,
   setSharedDashboardState,
@@ -71,7 +72,11 @@ function createTheme() {
 }
 
 describe('subagent dashboard helpers', () => {
+  let unregisterRenderer: (() => void) | undefined
+
   beforeEach(() => {
+    unregisterRenderer?.()
+    unregisterRenderer = undefined
     clearObservedDashboardCards()
     setSharedDashboardState(null)
   })
@@ -130,6 +135,62 @@ describe('subagent dashboard helpers', () => {
     expect(shared?.cards.get('supervisor')?.status).toBe('running')
     expect(shared?.cards.get('code-reviewer')?.status).toBe('completed')
     expect(shared?.cards.has('reviewer')).toBe(false)
+  })
+
+  it('does not throw when publishing without a registered renderer', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    setSharedDashboardState(state)
+
+    expect(() => publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'running', task: 'Implement bead', startedAt: 1_000, toolCount: 0 })).not.toThrow()
+    expect(getSharedDashboardState()?.cards.get('supervisor')?.status).toBe('running')
+  })
+
+  it('requests render from only the latest registered renderer', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    setSharedDashboardState(state)
+    let rendersA = 0
+    let rendersB = 0
+    const unregisterA = registerDashboardRenderer({ requestRender: () => rendersA++ })
+    unregisterRenderer = registerDashboardRenderer({ requestRender: () => rendersB++ })
+
+    publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'running', task: 'Implement bead', startedAt: 1_000, toolCount: 0 })
+    unregisterA()
+    publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'completed', task: 'Implement bead', startedAt: 1_000, completedAt: 2_000, toolCount: 0 })
+
+    expect(rendersA).toBe(0)
+    expect(rendersB).toBe(2)
+    expect(getSharedDashboardState()?.cards.get('supervisor')?.status).toBe('completed')
+  })
+
+  it('stops repainting after the current renderer unregisters and ignores throwing renderers', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    setSharedDashboardState(state)
+    let renders = 0
+    unregisterRenderer = registerDashboardRenderer({ requestRender: () => renders++ })
+    unregisterRenderer()
+
+    publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'running', task: 'Implement bead', startedAt: 1_000, toolCount: 0 })
+    unregisterRenderer = registerDashboardRenderer({ requestRender: () => { throw new Error('boom') } })
+    expect(() => publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'failed', task: 'Implement bead', startedAt: 1_000, completedAt: 2_000, toolCount: 0 })).not.toThrow()
+
+    expect(renders).toBe(0)
+    expect(getSharedDashboardState()?.cards.get('supervisor')?.status).toBe('failed')
+  })
+
+  it('does not leak stale cards into a cleared shared dashboard and preserves fields on terminal updates', () => {
+    const state = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    setSharedDashboardState(state)
+    publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'running', task: 'Implement bead', startedAt: 1_000, toolCount: 2, lastPreview: 'reading files' })
+    publishDashboardCard({ agent: 'supervisor', source: 'project', status: 'completed', completedAt: 2_000, toolCount: 2 })
+
+    expect(getSharedDashboardState()?.cards.get('supervisor')).toMatchObject({ status: 'completed', task: 'Implement bead', lastPreview: 'reading files' })
+
+    clearObservedDashboardCards()
+    setSharedDashboardState(null)
+    const fresh = createDashboardState(selectDashboardAgents(agents, teams), 'active')
+    setSharedDashboardState(fresh)
+
+    expect(getSharedDashboardState()?.cards.size).toBe(0)
   })
 
   it('renders live running and error cards with a mode/help hint within narrow widths', () => {

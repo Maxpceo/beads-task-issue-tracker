@@ -23,6 +23,7 @@
 
 ### Changed
 
+- **Pi review ownership evidence parsing** (`beads-task-issue-tracker-83jc`): `review_bead` now treats workflow/review marker lines as anchored records, preventing branch or worktree names such as `wa52-agents-dashboard-dispatch` from splitting ownership evidence and falsely rejecting matching `DISPATCH RESULT` / `PI WORKFLOW UPDATE` review scopes.
 - **Pi bd-first workflow sessions** (`beads-task-issue-tracker-r8tj`): Pi workflow extensions, guards, dashboards, skills, and agent docs now treat bd status as the lifecycle authority while keeping Pi state scoped to session context (`activeBead`, worktree/branch, plan approval, review scope, session mode, and merge-slot hints). Policy, plan, dispatch, review, workflow-chain, footer, and session-context paths now derive lifecycle decisions from live bd status and evidence instead of duplicated Pi lifecycle states.
 - **Pi workflow-state session context** (`beads-task-issue-tracker-v495`): `.pi/extensions/workflow-state` now treats bd status as live read-only issue lifecycle data instead of coercing it into Pi session state, shows `bdStatus` in injected session context/footer output, and clears active session bindings only for terminal bd statuses.
 - **Pi bead locale policy** (`beads-task-issue-tracker-7xou`): Pi `beads-policy` now blocks clearly English `bd create`/`bd update` titles and descriptions so agent-authored bead content stays in Russian for Maxim while preserving technical identifiers and required handoff headings.
@@ -49,6 +50,7 @@
 
 ### Fixed
 
+- **Pi agents dashboard typed workflow visibility** (`beads-task-issue-tracker-wa52`): `/agents-dashboard` now repaints from registered dashboard renderers when typed `dispatch_supervisor` or `review_bead` workflow cards publish running and terminal updates, so already-open active/all dashboards show workflow supervisors and reviewers without relying on continuation-local UI context.
 - **Pi review tool availability blockers** (`beads-task-issue-tracker-ndgk`): in-review workflow guards now require current tool-surface or failed typed-call evidence before reporting `review_bead` / `dispatch_reviewer` as unavailable, preventing false blockers while preserving explicit Russian `BLOCKED` reports for real review-tool failures.
 - **Pi post-approval progress visibility** (`beads-task-issue-tracker-yqwo`): plan approval now emits an immediate visible started/running message with the active bead and typed `dispatch_supervisor(...)` action before awaiting supervisor dispatch, while keeping completion/blocker follow-up messages and best-effort progress delivery.
 - **Pi post-approval workflow continuation** (`beads-task-issue-tracker-7buw`): approving a plan now calls the typed supervisor dispatch path directly instead of emitting a follow-up execution prompt, preserves normalized markdown worktree evidence during `workflow_plan_approved`, and records an explicit blocker if the runtime continuation hook is unavailable.

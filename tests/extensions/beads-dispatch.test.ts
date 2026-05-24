@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
 Approved-by: Test
@@ -44,6 +47,39 @@ Verification / acceptance checks:
 Risks / rollback:
 - Revert readiness matrix changes.
 AUTO_EXECUTE_ALLOWED: true`
+
+function createSuccessfulSpawn(stdoutLine = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'test-model' } }) + '\n') {
+  return (() => {
+    const proc: any = new EventEmitter()
+    proc.stdout = new PassThrough()
+    proc.stderr = new PassThrough()
+    proc.kill = () => true
+    queueMicrotask(() => {
+      proc.stdout.write(stdoutLine)
+      proc.stdout.end()
+      proc.stderr.end()
+      proc.emit('close', 0)
+    })
+    return proc
+  }) as any
+}
+
+let unregisterRenderer: (() => void) | undefined
+
+beforeEach(() => {
+  setSpawnForDispatchTestOverride(null)
+  unregisterRenderer?.()
+  unregisterRenderer = undefined
+  clearObservedDashboardCards()
+  setSharedDashboardState(null)
+})
+
+afterEach(() => {
+  setSpawnForDispatchTestOverride(null)
+  unregisterRenderer?.()
+  clearObservedDashboardCards()
+  setSharedDashboardState(null)
+})
 
 function validBead(descriptionText = description(['.pi/extensions/beads-dispatch/index.ts'])) {
   return { id: 'bead-current', status: 'in_progress', labels: ['pi', 'workflow'], description: descriptionText }
@@ -178,6 +214,37 @@ describe('beads-dispatch path rules integration', () => {
 
 
 describe('beads-dispatch supervisor execution contract', () => {
+  it('publishes registered dispatch_supervisor successful lifecycle cards and repaints an open dashboard', async () => {
+    let registeredTool: any
+    let repaintCount = 0
+    const cwd = process.cwd()
+    const state = createDashboardState(selectDashboardAgents([{ name: 'test-supervisor', description: 'Test supervisor', source: 'project' }], { teams: [], warnings: [] }), 'active')
+    setSharedDashboardState(state)
+    unregisterRenderer = registerDashboardRenderer({ requestRender: () => repaintCount++ })
+    setSpawnForDispatchTestOverride(createSuccessfulSpawn())
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-dashboard', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/dashboard\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, { cwd })
+
+    expect(result.details.exitCode).toBe(0)
+    expect(getSharedDashboardState()?.cards.get('test-supervisor')?.status).toBe('completed')
+    expect(repaintCount).toBeGreaterThan(0)
+  })
+
   it('renders execution contract sections with explicit N/A compatibility defaults', async () => {
     let registeredTool: any
     const pi = {

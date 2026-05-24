@@ -98,6 +98,51 @@ describe('review_workflow scoped review', () => {
     expect(result.details.worktreePath).toBe(taskWorktree)
   })
 
+  it('accepts PI WORKFLOW UPDATE ownership evidence without splitting on dispatch branch names', async () => {
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const worktree = '/repo/worktrees/wa52-agents-dashboard-dispatch'
+    const branch = 'fix/wa52-agents-dashboard-dispatch'
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') {
+          return {
+            stdout: [
+              'PLAN APPROVED continuation completed: dispatch_supervisor(beadId=bead-a)',
+              '',
+              'PI WORKFLOW UPDATE',
+              '',
+              `BRANCH: ${branch}`,
+              `WORKTREE: ${worktree}`,
+              'START_COMMIT: aaa1111',
+              'END_COMMIT: bbb2222',
+              'SESSION_MODE: reviewing',
+            ].join('\n'),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'git' && args.join(' ') === `-C ${worktree} branch --show-current`) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${worktree} rev-parse --show-toplevel`) return { stdout: `${worktree}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${worktree} diff --name-only aaa1111..bbb2222`) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    reviewWorkflowExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', worktreePath: worktree, dryRun: true }, undefined, undefined, { cwd: '/repo/main' })
+
+    expect(execCalls).toContainEqual({ command: 'git', args: ['-C', worktree, 'diff', '--name-only', 'aaa1111..bbb2222'] })
+    expect(result.details.error).toBeUndefined()
+  })
+
   it('accepts explicit task worktree dispatch evidence from a main-session orchestrator', async () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
