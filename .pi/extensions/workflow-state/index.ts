@@ -1188,7 +1188,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (ctx) await ensureReconciled(ctx);
 		const inreviewGuard = workflowState.activeBead && workflowState.bdStatus === "inreview"
-			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} имеет bdStatus=inreview. Не останавливайся с обычным final report. Следующее действие: review-bead / review_bead для ${workflowState.activeBead}. Если review нельзя запустить из-за недоступности tool или stale/foreign ownership, верни BLOCKED с точным blocker и next action; workflow_complete допустим только с state=blocked|deferred для этого явного blocker.`
+			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} имеет bdStatus=inreview. Не останавливайся с обычным final report. Если ты не в plan mode и ownership не stale/foreign, следующее действие: review-bead / review_bead для ${workflowState.activeBead}. Не заявляй, что review_bead или dispatch_reviewer недоступны, по памяти, compacted context или отсутствию предыдущего tool call: такой blocker допустим только если tool реально отсутствует в текущем tool surface или typed call вернул ошибку до запуска review. Если review нельзя запустить из-за доказанной недоступности tool, failed typed call или stale/foreign ownership, верни BLOCKED на русском с точным evidence, next action и затем workflow_complete state=blocked|deferred; workflow_complete допустим только для этого явного blocker.`
 			: "";
 		return {
 			message: {

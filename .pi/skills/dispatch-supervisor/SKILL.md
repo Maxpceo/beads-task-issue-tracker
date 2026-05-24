@@ -69,7 +69,7 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
    workflow_submit_for_review(beadId=<ID>, reason=<fresh evidence summary>, endCommit=<sha>)
    ```
    This synchronizes `bdStatus=inreview` with `state/sessionMode=inreview`, preserves the task branch/worktree/start scope recorded in workflow-state, and writes durable `WORKFLOW SUBMIT FOR REVIEW` evidence for main-start review routing. If a supervisor used raw bd update, immediately repair the session with `workflow_update(bead=<ID>, state=inreview, session=inreview, branch=<branch>, worktree=<task-worktree>, start=<sha>, end=<sha>)` before any final report.
-8. Continue with `review-bead` automatically; do not start another bead or stop with a normal final report while this one is `inreview`. If review cannot run, return an explicit `BLOCKED` report with the blocker and exact next action.
+8. Continue with `review-bead` automatically; do not start another bead or stop with a normal final report while this one is `inreview`. If `review_bead` or `dispatch_reviewer` appears unavailable, first require concrete evidence from the current tool surface or a failed typed call; do not infer unavailability from memory or compacted context. If review truly cannot run, return an explicit Russian `BLOCKED` report with evidence, blocker, and exact next action.
 
 ## Supervisor selection
 
