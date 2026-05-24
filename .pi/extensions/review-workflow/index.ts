@@ -406,6 +406,94 @@ export function isReviewApproved(output: string): boolean {
 }
 
 
+type AcceptanceMatrixResult = "PASS" | "FAIL" | "NOT RUN" | "N/A";
+
+interface AcceptanceMatrixRow {
+	item: string;
+	evidence: string;
+	result: AcceptanceMatrixResult;
+}
+
+function extractSectionBullets(markdown: string | undefined, headings: string[]): string[] {
+	if (!markdown) return [];
+	const headingPattern = headings.map(escapeRegExp).join("|");
+	const regex = new RegExp(`^#{2,4}\\s*(?:${headingPattern})\\s*:?\\s*$([\\s\\S]*?)(?=^#{2,4}\\s+|$(?![\\s\\S]))`, "gim");
+	const bullets: string[] = [];
+	for (const match of markdown.matchAll(regex)) {
+		const body = match[1] ?? "";
+		for (const line of body.split(/\r?\n/)) {
+			const bullet = line.match(/^\s*[-*]\s+(.+)\s*$/)?.[1]?.trim();
+			if (bullet) bullets.push(bullet);
+		}
+	}
+	return [...new Set(bullets)];
+}
+
+function parseCheckResult(check: string): { command: string; exitCode?: number; output: string; result: AcceptanceMatrixResult } {
+	const firstLine = check.split(/\r?\n/)[0]?.trim() || check.trim();
+	const match = firstLine.match(/^(.*?)\s*->\s*exit\s*(-?\d+)/i);
+	if (!match) {
+		const skipped = /skipped|not run|no automated checks selected/i.test(check);
+		return { command: firstLine || "automated checks", output: check, result: skipped ? "NOT RUN" : "N/A" };
+	}
+	const exitCode = Number(match[2]);
+	return { command: match[1]?.trim() || "automated check", exitCode, output: check, result: exitCode === 0 ? "PASS" : "FAIL" };
+}
+
+function evidenceExcerpt(value: string): string {
+	return value.replace(/\s+/g, " ").trim().slice(0, 260) || "no output";
+}
+
+function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; frontendChecklist: string[]; changedFiles: string[]; supervisorArtifact: SupervisorArtifactEvidence }): { text: string; rows: AcceptanceMatrixRow[]; blockingRows: AcceptanceMatrixRow[] } {
+	const description = typeof params.bead.description === "string" ? params.bead.description : "";
+	const acceptanceItems = extractSectionBullets(description, ["Acceptance criteria", "Acceptance"]);
+	const verificationItems = extractSectionBullets(description, ["Verification / acceptance checks", "Verification", "Acceptance checks"]);
+	const checkResults = params.automatedChecks.map(parseCheckResult);
+	const hasFailedCheck = checkResults.some((check) => check.result === "FAIL");
+	const hasNotRunCheck = checkResults.some((check) => check.result === "NOT RUN");
+	const rows: AcceptanceMatrixRow[] = [];
+	for (const item of acceptanceItems) {
+		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "PASS";
+		rows.push({
+			item,
+			evidence: result === "PASS"
+				? `CODE REVIEW: APPROVED; checks passed; supervisor artifact status=${params.supervisorArtifact.status}.`
+				: result === "FAIL"
+					? `Blocked by failed automated check: ${evidenceExcerpt(checkResults.find((check) => check.result === "FAIL")?.output ?? "")}`
+					: `Required verification missing/skipped: ${evidenceExcerpt(checkResults.find((check) => check.result === "NOT RUN")?.output ?? "")}`,
+			result,
+		});
+	}
+	for (const item of verificationItems) {
+		const matching = checkResults.find((check) => check.command && (item.includes(check.command) || check.command.includes(item.split(/\s+/).slice(0, 2).join(" "))));
+		const fallback = checkResults.length === 1 ? checkResults[0] : undefined;
+		const check = matching ?? fallback;
+		rows.push({
+			item,
+			evidence: check ? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}` : "No matching automated evidence captured by review_bead.",
+			result: check ? check.result : "NOT RUN",
+		});
+	}
+	if (acceptanceItems.length === 0 && verificationItems.length === 0) {
+		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "PASS";
+		rows.push({ item: "review_bead approved-path acceptance", evidence: `No explicit acceptance/verification bullets found; CODE REVIEW: APPROVED; automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`, result });
+	}
+	if (params.frontendChecklist.length === 0) {
+		rows.push({ item: "Frontend review checklist", evidence: `N/A: changed files (${params.changedFiles.join(", ") || "none"}) do not include app/*.vue UI changes.`, result: "N/A" });
+	}
+	const blockingRows = rows.filter((row) => row.result === "FAIL" || row.result === "NOT RUN");
+	const text = [
+		"ACCEPTANCE MATRIX:",
+		"",
+		"| Item | Evidence | Result |",
+		"|---|---|---|",
+		...rows.map((row) => `| ${row.item.replace(/\|/g, "\\|")} | ${row.evidence.replace(/\|/g, "\\|")} | ${row.result} |`),
+		"",
+		blockingRows.length > 0 ? `BLOCKER: acceptance matrix contains ${blockingRows.map((row) => row.result).join(", ")}; review_bead will not accept or close this bead.` : "All required acceptance rows are PASS or explicitly N/A.",
+	].join("\n");
+	return { text, rows, blockingRows };
+}
+
 function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence {
 	const marker = /(^|\n)\s*SUPERVISOR ARTIFACT\s*:?\s*(?:\n|$)/gi;
 	const matches = [...comments.matchAll(marker)];
@@ -609,6 +697,11 @@ Artifact evidence may be cited in acceptance matrix, but it is not acceptance by
 					if (isReviewApproved(reviewer.output)) {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
+						const matrix = buildAcceptanceMatrix({ bead, automatedChecks, frontendChecklist, changedFiles, supervisorArtifact });
+						await execRequired(pi, "bd", ["comments", "add", params.beadId, matrix.text]);
+						if (matrix.blockingRows.length > 0) {
+							throw new Error(`review_bead blocked accepted/close: ACCEPTANCE MATRIX contains blocking rows (${matrix.blockingRows.map((row) => row.result).join(", ")}). Fix failed/missing checks or record an explicit human override before closing.`);
+						}
 						await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: review_bead acceptance checks completed.\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\nArtifact evidence may be cited in ACCEPTANCE MATRIX when mapped to criteria with fresh verification; artifact is not acceptance by itself.\n\n${automatedChecks.join("\n\n")}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
 						await exec(pi, "bd", ["close", params.beadId, "--reason", "Reviewed and accepted by review_bead"]);
