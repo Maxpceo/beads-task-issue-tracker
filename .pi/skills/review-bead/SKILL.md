@@ -129,6 +129,17 @@ Recovery: acceptance command failed because dependencies were missing; `pnpm ins
 
 ## Final report
 
+Start with a short human-readable summary before the review evidence table:
+
+```text
+Кратко:
+- Проблема: <what needed review / acceptance confirmation>
+- Что сделал: <review, acceptance, follow-up, close actions in 1-3 bullets>
+- Результат: <APPROVED/NOT APPROVED, closed/open, and user-visible outcome>
+```
+
+Then include the required evidence table:
+
 | Шаг | Результат |
 |---|---|
 | Guard | status evidence |

@@ -145,6 +145,17 @@ Conditions for `session can close`:
 
 Final report format:
 
+Start with a short human-readable summary before the merge evidence table:
+
+```text
+Кратко:
+- Проблема: <why the session needed merge-to-main>
+- Что сделал: <PR/CI/merge/cleanup actions in 1-3 bullets>
+- Результат: <origin/main/session-artifact outcome>
+```
+
+Then include the required evidence table:
+
 | Шаг | Результат |
 |---|---|
 | Commit | `<sha>` or not required |
