@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent, registerDashboardRenderer } from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
-import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
+import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -377,8 +377,31 @@ SUPERVISOR ARTIFACT:
 - Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
 - Files changed: <paths or N/A>
 - Verification: <command/manual check, exit code or observed result, output excerpt; use N/A only with reason>
+- Commit: <sha or not committed with reason>
 - Concerns: <risks/follow-ups or N/A>
 - Artifact status: <complete | incomplete, with reason if incomplete>`;
+}
+
+function wrapperWorkflowBoundary(): string {
+	return `WRAPPER WORKFLOW BOUNDARY:
+- dispatch_supervisor already performed typed workflow preflight before spawning this supervisor.
+- Do not call or depend on workflow_status, workflow_submit_for_review, workflow_complete, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, or review_bead inside the child process.
+- If the approved plan contains older wording that assigns typed workflow preflight/submit to the supervisor, treat it as wrapper responsibility and continue with implementation evidence only.
+- After implementation, commit explicit files and return the SUPERVISOR ARTIFACT; the wrapper/orchestrator owns review-transition routing.`;
+}
+
+function normalizeArtifactText(output: string): string {
+	return output.replace(/\\n/g, "\n");
+}
+
+function supervisorArtifactReadyForReview(result: { exitCode: number; output: string }, startCommit: string, endCommit: string): boolean {
+	if (result.exitCode !== 0 || endCommit === startCommit) return false;
+	const artifact = normalizeArtifactText(result.output);
+	const hasDoneStatus = /Status:\s*DONE(?:_WITH_CONCERNS)?\b/i.test(artifact);
+	const hasCompleteArtifact = /Artifact status:\s*complete\b/i.test(artifact);
+	const hasVerificationEvidence = /Verification:\s*(?!N\/A\b|not run\b|not\s+run\b).*(exit code\s*\d+|observed result|output excerpt|manual check|passed|pass\b)/is.test(artifact);
+	const hasCommitEvidence = /Commit:\s*(?!N\/A\b|not committed\b)[0-9a-f]{7,40}\b/i.test(artifact);
+	return hasDoneStatus && hasCompleteArtifact && hasVerificationEvidence && hasCommitEvidence;
 }
 
 function summarizeContext(bead: BeadInfo): string {
@@ -398,6 +421,8 @@ TASK: ${task || bead.title || "Implement the bead"}
 
 CONTEXT SUMMARY:
 ${summarizeContext(bead)}
+
+${wrapperWorkflowBoundary()}
 
 APPROVED PLAN:
 ${plan}
@@ -430,8 +455,8 @@ Follow Pi supervisor discipline:
 When implementation is complete:
 1. Run relevant checks.
 2. Commit only explicit files if code changed.
-3. Set bead status to inreview if appropriate.
-4. Return a concise completion report.`;
+3. Do not call typed workflow tools; do not push or close the bead.
+4. Return a concise completion report with the SUPERVISOR ARTIFACT fields.`;
 }
 
 function buildReviewerPrompt(bead: BeadInfo, branch: string, startCommit: string, task?: string): string {
@@ -569,6 +594,44 @@ async function addEndCommitComment(pi: ExtensionAPI, beadId: string, agent: stri
 	await pi.exec("bd", ["comments", "add", beadId, comment]);
 }
 
+async function submitForReviewFromWrapper(pi: ExtensionAPI, beadId: string, agent: string, branch: string, worktreePath: string, startCommit: string, endCommit: string, artifact: string): Promise<void> {
+	const evidence = normalizeArtifactText(artifact).slice(-4000);
+	const comment = `WORKFLOW SUBMIT FOR REVIEW (dispatch_supervisor wrapper)\n\nAgent: ${agent}\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\nReason: supervisor artifact reported complete implementation evidence.\n\n${evidence}`;
+	const commentResult = await pi.exec("bd", ["comments", "add", beadId, comment]);
+	if (commentResult.code !== 0) throw new Error(`dispatch_supervisor wrapper submit не записал review evidence: ${commentResult.stderr || commentResult.stdout}`);
+	const updateResult = await pi.exec("bd", ["update", beadId, "--status", "inreview", "--json"]);
+	if (updateResult.code !== 0) throw new Error(`dispatch_supervisor wrapper submit не перевёл bead в inreview: ${updateResult.stderr || updateResult.stdout}`);
+}
+
+async function validateSupervisorPreflight(pi: ExtensionAPI, params: { beadId: string; cwd?: string }, ctx?: ToolContext): Promise<{ scope: TaskScope; cwd: string; branch: string; worktreePath: string; startCommit: string; currentHead: string; evidence: string }> {
+	const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
+	if (!stateScope.ok) throw new Error(taskScopeErrorToPolicyReason(stateScope.error, params.beadId, "dispatch_supervisor preflight"));
+	if (stateScope.scope.activeBead !== params.beadId) {
+		throw new Error(`dispatch_supervisor preflight заблокирован: active bead mismatch, workflow-state=${stateScope.scope.activeBead ?? "-"}, requested=${params.beadId}`);
+	}
+	if (!stateScope.scope.startCommit) {
+		throw new Error(`dispatch_supervisor preflight заблокирован: recorded START_COMMIT отсутствует для ${params.beadId}`);
+	}
+	const cwd = params.cwd ?? stateScope.scope.worktreePath;
+	if (path.resolve(cwd) !== path.resolve(stateScope.scope.worktreePath)) {
+		throw new Error(`dispatch_supervisor preflight заблокирован: cwd mismatch, requested=${path.resolve(cwd)}, workflow-state=${stateScope.scope.worktreePath}`);
+	}
+	const branch = await getGitValue(pi, cwd, ["branch", "--show-current"]);
+	const worktreePath = await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
+	const currentHead = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
+	if (branch !== stateScope.scope.branch) {
+		throw new Error(`dispatch_supervisor preflight заблокирован: branch mismatch, git=${branch}, workflow-state=${stateScope.scope.branch}`);
+	}
+	if (path.resolve(worktreePath) !== path.resolve(stateScope.scope.worktreePath)) {
+		throw new Error(`dispatch_supervisor preflight заблокирован: worktree mismatch, git=${worktreePath}, workflow-state=${stateScope.scope.worktreePath}`);
+	}
+	if (currentHead !== stateScope.scope.startCommit) {
+		throw new Error(`dispatch_supervisor preflight заблокирован: recorded START_COMMIT stale, git HEAD=${currentHead}, workflow-state START_COMMIT=${stateScope.scope.startCommit}`);
+	}
+	const evidence = `PREFLIGHT EVIDENCE\nactiveBead=${stateScope.scope.activeBead}\nbranch=${branch}\nworktree=${worktreePath}\nstartCommit=${stateScope.scope.startCommit}\nhead=${currentHead}`;
+	return { scope: stateScope.scope, cwd, branch, worktreePath, startCommit: stateScope.scope.startCommit, currentHead, evidence };
+}
+
 async function dispatch(
 	pi: ExtensionAPI,
 	mode: "supervisor" | "reviewer" | "docs",
@@ -577,8 +640,9 @@ async function dispatch(
 	defaultCwd?: string,
 	ctx?: ToolContext,
 ): Promise<DispatchResult> {
-	const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
-	const cwd = params.cwd ?? (stateScope.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
+	const supervisorPreflight = mode === "supervisor" ? await validateSupervisorPreflight(pi, params, ctx) : undefined;
+	const stateScope = mode === "supervisor" ? undefined : resolveActiveTaskScope(taskScopeFromContext(ctx));
+	const cwd = supervisorPreflight?.cwd ?? params.cwd ?? (stateScope?.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
 	if (mode === "supervisor") {
@@ -589,9 +653,9 @@ async function dispatch(
 		throw new Error(`dispatch_reviewer требует bead status inreview, получен ${bead.status}`);
 	}
 
-	const branch = await getGitValue(pi, cwd, ["branch", "--show-current"]);
-	const worktreePath = await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
-	const startCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
+	const branch = supervisorPreflight?.branch ?? await getGitValue(pi, cwd, ["branch", "--show-current"]);
+	const worktreePath = supervisorPreflight?.worktreePath ?? await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
+	const startCommit = supervisorPreflight?.startCommit ?? await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
 	const agentName = params.agent ?? (mode === "supervisor" ? chooseSupervisor(bead) : mode === "reviewer" ? "code-reviewer" : "documentation-expert");
 	const agent = loadAgent(cwd, agentName);
 	const contextText = `${bead.title ?? ""}\n${bead.description ?? ""}\n${comments.map((comment) => comment.text ?? "").join("\n")}`;
@@ -604,7 +668,7 @@ async function dispatch(
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
-	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, prompt);
+	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
 	if (mode === "supervisor") {
 		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", sessionMode: "implementing", branch, worktreePath, startCommit });
 	} else if (mode === "reviewer") {
@@ -615,8 +679,12 @@ async function dispatch(
 	const result = await runPiAgentForDispatch(agent, prompt, cwd, signal, ctx);
 	if (mode === "supervisor") {
 		const endCommit = await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
-		const updatedBead = await getBead(pi, bead.id);
 		await addEndCommitComment(pi, bead.id, agentName, branch, worktreePath, startCommit, endCommit);
+		let updatedBead = await getBead(pi, bead.id);
+		if (updatedBead.status !== "inreview" && supervisorArtifactReadyForReview(result, startCommit, endCommit)) {
+			await submitForReviewFromWrapper(pi, bead.id, agentName, branch, worktreePath, startCommit, endCommit, result.output);
+			updatedBead = await getBead(pi, bead.id);
+		}
 		const readyForReview = updatedBead.status === "inreview";
 		pi.events.emit("workflow-state:update", {
 			activeBead: bead.id,

@@ -8,7 +8,7 @@ import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extension
 import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
-const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review']
+const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
 const mandatoryWorkflowTools = [
   'workflow_status',
   'workflow_claim',
@@ -21,7 +21,7 @@ const mandatoryWorkflowTools = [
   'dispatch_docs_agent',
   'review_bead',
 ]
-const expectedNormalTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'subagent', ...mandatoryWorkflowTools]
+const expectedNormalTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'subagent', 'plan_subagent', ...mandatoryWorkflowTools]
 let mockPlanReviewGateOk = true
 let mockPlanReviewReasons: string[] = []
 let mockMissingRevisedPlanSections: string[] = []
@@ -333,6 +333,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     await toolHandlers.get('workflow_plan_mode')?.execute('call-1', { mode: 'strict', reason: 'plan first' }, undefined, undefined, ctx)
 
     expect(activeTools.at(-1)).toEqual(expectedPlanTools)
+    expect(activeTools.at(-1)).toContain('plan_subagent')
+    expect(activeTools.at(-1)).not.toContain('subagent')
     for (const mutatingWorkflowTool of ['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead', 'workflow_submit_for_review', 'workflow_complete']) {
       expect(activeTools.at(-1)).not.toContain(mutatingWorkflowTool)
     }
