@@ -24,7 +24,7 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
   - `AGENTS.md`
   - `.pi/rules/domain.md`
   - `.pi/rules/codebase.md`
-- Generic `subagent` calls run project agents with isolated context but do not automatically render `PATH_RULES_LOADED`. When using generic `subagent` for codebase-sensitive planning or investigation, the orchestrator must include relevant rule context in the task prompt or prefer a typed workflow tool when one exists.
+- Generic `subagent` calls run project agents with isolated context but do not automatically render `PATH_RULES_LOADED`. In strict plan mode, use the dedicated `plan_subagent` tool for read-only `detective`/`architect` work; it injects bead/plan context from the wrapper and forces the child tool surface to `read,grep,find,ls`. Implementation supervisors still go through typed workflow dispatch after approval.
 
 ## Reporting and model guidance
 
@@ -48,7 +48,7 @@ Typed `dispatch_supervisor` prompts define a structured implementation contract 
 
 ## Role boundaries
 
-- Implementation supervisors (`vue-supervisor`, `tauri-supervisor`, `test-supervisor`) may implement within the dispatched bead scope and may set `inreview` only when their prompt/workflow permits it and evidence exists.
+- Implementation supervisors (`vue-supervisor`, `tauri-supervisor`, `test-supervisor`) implement within the dispatched bead scope and return the `SUPERVISOR ARTIFACT`; wrapper/orchestrator code owns typed workflow preflight and review-transition routing. Supervisors must not be required to call `workflow_status` or `workflow_submit_for_review` inside the child process.
 - `code-reviewer` reviews completed work and does not implement fixes unless explicitly instructed.
 - `documentation-expert` updates public documentation only when the docs workflow asks for it; public README/CHANGELOG/release text stays English unless the user asks otherwise.
 - `architect` designs and plans; it must not edit production code.

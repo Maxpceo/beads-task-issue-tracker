@@ -9,10 +9,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
 
 ## Workflow
 
-1. Guard session context and bd status:
-   ```text
-   workflow_status
-   ```
+1. Guard session context and bd status in the orchestrator/wrapper, not inside the child supervisor. Use `workflow_status` when available before calling `dispatch_supervisor`; child supervisors must not be asked to call `workflow_status`.
    Required: current-session active bead exists, matches `<ID>`, bd status is `in_progress`, and session context shows an approved plan (`planApproved=true` or `sessionMode=plan_approved/implementing`). If any other current-session active bead has non-terminal bd status, stop; if bd status is `inreview`, continue with `review-bead`.
 2. Guard bead:
    ```bash
@@ -59,17 +56,9 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
 - `Stop rules`: stop with `NEEDS_CONTEXT` for unclear requirements/acceptance/dependencies/write zone/verification, `BLOCKED` for unsafe branch/worktree/start commit, unresolved dependencies, failing required checks without scoped fix, or policy/tooling blockers; stop before editing outside `Write zone`.
 - `Verification`: approved `Verification / acceptance checks:` commands/manual checks, or explicit `N/A` only when the compatibility path applies.
 - `SUPERVISOR ARTIFACT`: final supervisor report section with `Status`, `Files changed`, `Verification` command/exit/output excerpt or observed result, `Concerns`, and `Artifact status`. This artifact is implementation evidence for review; it is not acceptance and must not imply bead closure. Review handoff records the artifact as accepted / insufficient / missing / N/A so acceptance matrix rows can cite it only when mapped to criteria and fresh verification.
-6. After supervisor returns, inspect status/report.
-7. If completed and bead is ready for review, use the typed transition guard instead of raw `bd update --status inreview` when available:
-   ```bash
-   git rev-parse HEAD
-   bd comments add <ID> "END_COMMIT: <sha>"
-   ```
-   ```text
-   workflow_submit_for_review(beadId=<ID>, reason=<fresh evidence summary>, endCommit=<sha>)
-   ```
-   This synchronizes `bdStatus=inreview` with `state/sessionMode=inreview`, preserves the task branch/worktree/start scope recorded in workflow-state, and writes durable `WORKFLOW SUBMIT FOR REVIEW` evidence for main-start review routing. If a supervisor used raw bd update, immediately repair the session with `workflow_update(bead=<ID>, state=inreview, session=inreview, branch=<branch>, worktree=<task-worktree>, start=<sha>, end=<sha>)` before any final report.
-8. Continue with `review-bead` automatically; do not start another bead or stop with a normal final report while this one is `inreview`. If `review_bead` or `dispatch_reviewer` appears unavailable, first require concrete evidence from the current tool surface or a failed typed call; do not infer unavailability from memory or compacted context. If review truly cannot run, return an explicit Russian `BLOCKED` report with evidence, blocker, and exact next action.
+6. After supervisor returns, the wrapper inspects status/report, records `DISPATCH RESULT`, and owns the review-transition routing. A complete supervisor artifact (`Status: DONE`/`DONE_WITH_CONCERNS`, `Artifact status: complete`, fresh verification, and a changed `END_COMMIT`) is sufficient for the wrapper to record `WORKFLOW SUBMIT FOR REVIEW` evidence and move the bead to `inreview` without asking the child to call `workflow_submit_for_review`.
+7. If the supervisor artifact is incomplete, missing evidence, or reports `BLOCKED`/`NEEDS_CONTEXT`, do not submit for review; report the exact blocker and evidence.
+8. Continue with `review-bead` automatically after the bead is `inreview`; do not start another bead or stop with a normal final report while this one is `inreview`. If `review_bead` or `dispatch_reviewer` appears unavailable, first require concrete evidence from the current tool surface or a failed typed call; do not infer unavailability from memory or compacted context. If review truly cannot run, return an explicit Russian `BLOCKED` report with evidence, blocker, and exact next action.
 
 ## Supervisor selection
 

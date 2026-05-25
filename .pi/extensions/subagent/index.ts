@@ -39,6 +39,8 @@ import {
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
+const PLAN_SUBAGENT_NAMES = new Set(["detective", "architect"]);
+const PLAN_SUBAGENT_TOOLS = ["read", "grep", "find", "ls"];
 
 function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
@@ -296,6 +298,71 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+let spawnForSubagent = spawn;
+
+export function setSpawnForSubagentTestOverride(override: typeof spawn | null): void {
+	spawnForSubagent = override ?? spawn;
+}
+
+async function execText(pi: ExtensionAPI, command: string, args: string[]): Promise<string> {
+	const exec = (pi as ExtensionAPI & { exec?: (command: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number }> }).exec;
+	if (!exec) return `N/A: ${command} ${args.join(" ")} unavailable in this Pi runtime`;
+	const result = await exec(command, args);
+	return result.code === 0 ? result.stdout.trim() || "(empty)" : `ERROR exit ${result.code}: ${(result.stderr || result.stdout).trim()}`;
+}
+
+function latestWorkflowState(ctx: { sessionManager?: { getEntries?: () => Array<{ type?: string; customType?: string; data?: unknown }> } }): { activeBead?: string; branch?: string; worktreePath?: string; startCommit?: string } | undefined {
+	const entries = ctx.sessionManager?.getEntries?.() ?? [];
+	for (const entry of [...entries].reverse()) {
+		const isWorkflowState = entry.type === "workflow-state" || (entry.type === "custom" && entry.customType === "workflow-state");
+		if (!isWorkflowState || !entry.data || typeof entry.data !== "object") continue;
+		return entry.data as { activeBead?: string; branch?: string; worktreePath?: string; startCommit?: string };
+	}
+	return undefined;
+}
+
+async function gitText(pi: ExtensionAPI, cwd: string, args: string[]): Promise<string> {
+	return execText(pi, "git", ["-C", cwd, ...args]);
+}
+
+async function buildPlanSubagentTask(pi: ExtensionAPI, ctx: { cwd: string; sessionManager?: { getEntries?: () => Array<{ type?: string; customType?: string; data?: unknown }> } }, params: { agent: string; task: string; beadId?: string; branch?: string; startCommit?: string; planContext?: string; cwd?: string }): Promise<string> {
+	const state = latestWorkflowState(ctx);
+	const cwd = params.cwd ?? state?.worktreePath ?? ctx.cwd;
+	const beadId = params.beadId ?? state?.activeBead;
+	const branch = params.branch ?? state?.branch ?? await gitText(pi, cwd, ["branch", "--show-current"]);
+	const startCommit = params.startCommit ?? state?.startCommit ?? await gitText(pi, cwd, ["rev-parse", "HEAD"]);
+	const beadShow = beadId ? await execText(pi, "bd", ["show", beadId]) : "N/A: no BEAD_ID supplied or recorded in workflow-state";
+	const beadComments = beadId ? await execText(pi, "bd", ["comments", beadId]) : "N/A: no BEAD_ID supplied or recorded in workflow-state";
+
+	return `PLAN-SAFE SUBAGENT CONTEXT
+Agent: ${params.agent}
+Allowed child tools: ${PLAN_SUBAGENT_TOOLS.join(",")}
+BEAD_ID: ${beadId ?? "-"}
+BRANCH: ${branch || "-"}
+START_COMMIT: ${startCommit || "-"}
+CWD: ${cwd}
+
+Read-only bead context from wrapper prefetch:
+
+--- bd show ${beadId ?? "<none>"} ---
+${beadShow}
+
+--- bd comments ${beadId ?? "<none>"} ---
+${beadComments}
+
+--- relevant plan/context ---
+${params.planContext?.trim() || "N/A"}
+
+TASK:
+${params.task}
+
+Constraints:
+- You are a read-only planning/investigation subagent.
+- Use only read, grep, find, and ls.
+- Do not ask for bash/edit/write or workflow dispatch/review tools.
+- Return findings, evidence, risks, and recommendations only.`;
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -308,6 +375,7 @@ async function runSingleAgent(
 	signal: AbortSignal | undefined,
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
+	toolOverride?: string[],
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -333,7 +401,8 @@ async function runSingleAgent(
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	if (agent.model) args.push("--model", agent.model);
-	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
+	const tools = toolOverride ?? agent.tools;
+	if (tools && tools.length > 0) args.push("--tools", tools.join(","));
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
@@ -375,7 +444,7 @@ async function runSingleAgent(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
-			const proc = spawn(invocation.command, invocation.args, {
+			const proc = spawnForSubagent(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
@@ -508,6 +577,16 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
+const PlanSubagentParams = Type.Object({
+	agent: Type.String({ description: "Plan-safe project agent name. Only detective or architect are allowed." }),
+	task: Type.String({ description: "Read-only planning or investigation task." }),
+	beadId: Type.Optional(Type.String({ description: "Bead ID for wrapper-side bd show/comments prefetch." })),
+	branch: Type.Optional(Type.String({ description: "Branch context to inject." })),
+	startCommit: Type.Optional(Type.String({ description: "Start commit context to inject." })),
+	planContext: Type.Optional(Type.String({ description: "Relevant plan text to inject into the child prompt." })),
+	cwd: Type.Optional(Type.String({ description: "Working directory for the child process. Defaults to workflow-state worktree or current cwd." })),
+});
+
 export default function (pi: ExtensionAPI) {
 	const renderDashboardWidget = (ctx: { ui: any }) => {
 		const dashboardState = getSharedDashboardState();
@@ -621,6 +700,62 @@ export default function (pi: ExtensionAPI) {
 			lines.push("Team view is read-only; workflow dispatch/review still goes through typed guarded tools.");
 			ctx.ui.setWidget("subagent-teams", lines);
 			ctx.ui.notify(`Displayed ${teams.length} team(s).`, teams.length > 0 ? "info" : "warning");
+		},
+	});
+
+	pi.registerTool({
+		name: "plan_subagent",
+		label: "Plan Subagent",
+		description: "Run a read-only planning subagent in plan mode. Only detective/architect are allowed; child tools are forced to read,grep,find,ls.",
+		parameters: PlanSubagentParams,
+		async execute(_toolCallId, params: { agent: string; task: string; beadId?: string; branch?: string; startCommit?: string; planContext?: string; cwd?: string }, signal, onUpdate, ctx) {
+			if (!PLAN_SUBAGENT_NAMES.has(params.agent)) {
+				return {
+					content: [{ type: "text", text: `plan_subagent blocked: agent "${params.agent}" is not allowed. Allowed agents: ${Array.from(PLAN_SUBAGENT_NAMES).join(", ")}. Use typed dispatch tools outside plan mode for implementation supervisors.` }],
+					details: { ok: false, allowedAgents: Array.from(PLAN_SUBAGENT_NAMES), rejectedAgent: params.agent, childTools: PLAN_SUBAGENT_TOOLS },
+					isError: true,
+				};
+			}
+
+			const discovery = discoverAgents(ctx.cwd, "project");
+			const agent = discovery.agents.find((a) => a.name === params.agent);
+			if (!agent) {
+				return {
+					content: [{ type: "text", text: `plan_subagent blocked: project agent "${params.agent}" not found in ${discovery.projectAgentsDir ?? ".pi/agents"}.` }],
+					details: { ok: false, allowedAgents: Array.from(PLAN_SUBAGENT_NAMES), rejectedAgent: params.agent, childTools: PLAN_SUBAGENT_TOOLS },
+					isError: true,
+				};
+			}
+
+			const taskWithContext = await buildPlanSubagentTask(pi, ctx, params);
+			const makeDetails = (results: SingleResult[]): SubagentDetails => ({
+				mode: "single",
+				agentScope: "project",
+				projectAgentsDir: discovery.projectAgentsDir,
+				results,
+			});
+			const result = await runSingleAgent(
+				ctx.cwd,
+				discovery.agents,
+				params.agent,
+				taskWithContext,
+				params.cwd,
+				undefined,
+				signal,
+				(partial) => {
+					if (partial.details?.results[0]) updateDashboardFromResults([partial.details.results[0]], ctx);
+					onUpdate?.(partial);
+				},
+				makeDetails,
+				PLAN_SUBAGENT_TOOLS,
+			);
+			updateDashboardFromResults([result], ctx);
+			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+			return {
+				content: [{ type: "text", text: isError ? `Plan agent ${result.stopReason || "failed"}: ${result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)"}` : getFinalOutput(result.messages) || "(no output)" }],
+				details: { ...makeDetails([result]), ok: !isError, childTools: PLAN_SUBAGENT_TOOLS, injectedContext: { beadId: params.beadId, branch: params.branch, startCommit: params.startCommit } },
+				isError,
+			};
 		},
 	});
 

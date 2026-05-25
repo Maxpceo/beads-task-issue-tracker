@@ -34,8 +34,8 @@ import {
 import { requestSupervisorDispatch } from "../beads-dispatch/index";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review"];
-const NORMAL_MODE_FALLBACK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
+const NORMAL_MODE_FALLBACK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "plan_subagent"];
 const MANDATORY_WORKFLOW_TOOLS = [
 	"workflow_status",
 	"workflow_claim",
@@ -809,8 +809,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 You are in plan mode - a read-only exploration mode for safe code analysis.
 
 Restrictions:
-- You can only use: read, bash, grep, find, ls, questionnaire, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review
-- You CANNOT use: edit, write, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete (file/workflow mutations are disabled until approval)
+- You can only use: read, bash, grep, find, ls, questionnaire, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review, plan_subagent
+- You MAY use plan_subagent only for read-only planning agents (detective/architect); generic subagent and implementation supervisors remain unavailable in plan mode.
+- You CANNOT use: edit, write, subagent, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete (file/workflow mutations are disabled until approval)
 - After approved/cancelled plan mode, Pi restores the pre-plan active tool surface plus registered mandatory workflow tools.
 - Bash is restricted to an allowlist of read-only commands
 - bd read-only commands are allowed: bd show, bd comments, bd list, bd ready, selected bd dep/dolt status commands

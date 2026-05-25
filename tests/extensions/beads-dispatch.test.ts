@@ -213,6 +213,74 @@ describe('beads-dispatch path rules integration', () => {
 })
 
 
+describe('beads-dispatch wrapper workflow boundary', () => {
+  it('supervisor prompt makes typed workflow preflight and submit wrapper-owned', async () => {
+    let registeredTool: any
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-wrapper', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: `${currentPlan}\nLegacy supervisor-side note:\n- Supervisor should call workflow_status before implementation and workflow_submit_for_review after commit.` }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/wrapper\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-wrapper', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const output = result.details.output
+
+    expect(output).toContain('WRAPPER WORKFLOW BOUNDARY:')
+    expect(output).toContain('dispatch_supervisor already performed typed workflow preflight')
+    expect(output).toContain('Do not call or depend on workflow_status')
+    expect(output).toContain('wrapper/orchestrator owns review-transition routing')
+    expect(output).toContain('- Commit: <sha or not committed with reason>')
+  })
+
+  it('submits for review from wrapper when supervisor returns a complete artifact with a new commit', async () => {
+    let registeredTool: any
+    const events: Array<{ name: string, event: any }> = []
+    const execCalls: Array<{ command: string, args: string[] }> = []
+    const cwd = process.cwd()
+    let showCount = 0
+    setSpawnForDispatchTestOverride(createSuccessfulSpawn(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE\n- Verification: pnpm test exit code 0\n- Artifact status: complete' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'test-model' } }) + '\n'))
+    const pi = {
+      events: { emit(name: string, event: any) { events.push({ name, event }) } },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          showCount++
+          const status = showCount >= 3 ? 'inreview' : 'in_progress'
+          return { stdout: JSON.stringify({ id: 'bead-submit', status, labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') return { stdout: JSON.stringify({ id: 'bead-submit', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/wrapper\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : (execCalls.filter((call) => call.command === 'git' && call.args.includes('HEAD')).length > 1 ? 'def5678\n' : 'abc1234\n'), stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-submit', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, { cwd })
+
+    expect(result.details.endCommit).toBe('def5678')
+    expect(execCalls).toContainEqual({ command: 'bd', args: ['update', 'bead-submit', '--status', 'inreview', '--json'] })
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args[3]?.includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(true)
+    expect(events.at(-1)?.event).toMatchObject({ state: 'inreview', sessionMode: 'inreview', endCommit: 'def5678' })
+  })
+})
+
+
 describe('beads-dispatch supervisor execution contract', () => {
   it('publishes registered dispatch_supervisor successful lifecycle cards and repaints an open dashboard', async () => {
     let registeredTool: any
