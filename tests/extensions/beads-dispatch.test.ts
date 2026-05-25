@@ -85,6 +85,19 @@ function validBead(descriptionText = description(['.pi/extensions/beads-dispatch
   return { id: 'bead-current', status: 'in_progress', labels: ['pi', 'workflow'], description: descriptionText }
 }
 
+function workflowCtx(cwd: string, beadId: string, branch: string, startCommit: string) {
+  return {
+    cwd,
+    sessionManager: {
+      getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: beadId, branch, worktreePath: cwd, startCommit, sessionKey: 'session:test' } }],
+    },
+  }
+}
+
+function currentBranch(cwd = process.cwd()) {
+  return execFileSync('git', ['-C', cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || 'task/current'
+}
+
 function description(files: string[]) {
   return `### Origin
 - Test fixture.
@@ -140,7 +153,7 @@ describe('beads-dispatch path rules integration', () => {
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, {
       cwd: mainCwd,
       sessionManager: {
-        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, sessionKey: 'session:test' } }],
+        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, startCommit: 'task-head', sessionKey: 'session:test' } }],
       },
     })
 
@@ -150,6 +163,7 @@ describe('beads-dispatch path rules integration', () => {
 
   it('includes src-tauri/CLAUDE.md in supervisor dryRun prompts for src-tauri targets', async () => {
     let registeredTool: any
+    const branch = currentBranch()
     const pi = {
       events: { emit() {} },
       registerTool(tool: any) {
@@ -159,14 +173,14 @@ describe('beads-dispatch path rules integration', () => {
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'in_progress', labels: ['dx'], description: description(['src-tauri/src/lib.rs']) }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
-        if (command === 'git' && args.includes('branch')) return { stdout: 'feature/path-rules\n', stderr: '', code: 0 }
-        if (command === 'git' && args.includes('rev-parse')) return { stdout: 'abc1234\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
       },
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-a', branch, 'abc1234'))
 
     expect(result.details.output).toContain('PATH_RULES_LOADED:')
     expect(result.details.output).toContain('--- src-tauri/CLAUDE.md')
@@ -177,6 +191,7 @@ describe('beads-dispatch path rules integration', () => {
     let registeredTool: any
     const probeDir = `.tmp-dispatch-rules-probe-${Date.now()}`
     const sentinel = `DISPATCH_SENTINEL_${Date.now()}`
+    const branch = currentBranch()
     const absoluteDir = path.join(process.cwd(), probeDir)
     await fs.mkdir(absoluteDir)
 
@@ -192,14 +207,14 @@ describe('beads-dispatch path rules integration', () => {
           if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-probe', status: 'in_progress', labels: ['dx'], description: description([`${probeDir}/feature.ts`]) }), stderr: '', code: 0 }
           if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: plan }]), stderr: '', code: 0 }
           if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
-          if (command === 'git' && args.includes('branch')) return { stdout: 'feature/path-rules\n', stderr: '', code: 0 }
-          if (command === 'git' && args.includes('rev-parse')) return { stdout: 'abc1234\n', stderr: '', code: 0 }
+          if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
           return { stdout: '', stderr: '', code: 0 }
         },
       }
 
       beadsDispatchExtension(pi as any)
-      const result = await registeredTool.execute('call-1', { beadId: 'bead-probe', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+      const result = await registeredTool.execute('call-1', { beadId: 'bead-probe', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-probe', branch, 'abc1234'))
 
       expect(result.details.output).toContain('PATH_RULES_LOADED:')
       expect(result.details.output).toContain(`--- ${probeDir}/PI_RULES.md`)
@@ -216,6 +231,7 @@ describe('beads-dispatch path rules integration', () => {
 describe('beads-dispatch wrapper workflow boundary', () => {
   it('supervisor prompt makes typed workflow preflight and submit wrapper-owned', async () => {
     let registeredTool: any
+    const branch = currentBranch()
     const pi = {
       events: { emit() {} },
       registerTool(tool: any) {
@@ -225,14 +241,14 @@ describe('beads-dispatch wrapper workflow boundary', () => {
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-wrapper', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: `${currentPlan}\nLegacy supervisor-side note:\n- Supervisor should call workflow_status before implementation and workflow_submit_for_review after commit.` }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
-        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/wrapper\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
       },
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-wrapper', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-wrapper', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-wrapper', branch, 'abc1234'))
     const output = result.details.output
 
     expect(output).toContain('WRAPPER WORKFLOW BOUNDARY:')
@@ -247,8 +263,9 @@ describe('beads-dispatch wrapper workflow boundary', () => {
     const events: Array<{ name: string, event: any }> = []
     const execCalls: Array<{ command: string, args: string[] }> = []
     const cwd = process.cwd()
+    const branch = currentBranch(cwd)
     let showCount = 0
-    setSpawnForDispatchTestOverride(createSuccessfulSpawn(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE\n- Verification: pnpm test exit code 0\n- Artifact status: complete' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'test-model' } }) + '\n'))
+    setSpawnForDispatchTestOverride(createSuccessfulSpawn(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE\n- Verification: pnpm test exit code 0, output excerpt: passed\n- Commit: def5678\n- Artifact status: complete' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'test-model' } }) + '\n'))
     const pi = {
       events: { emit(name: string, event: any) { events.push({ name, event }) } },
       registerTool(tool: any) {
@@ -264,19 +281,110 @@ describe('beads-dispatch wrapper workflow boundary', () => {
         if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'update') return { stdout: JSON.stringify({ id: 'bead-submit', status: 'inreview' }), stderr: '', code: 0 }
-        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/wrapper\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : (execCalls.filter((call) => call.command === 'git' && call.args.includes('HEAD')).length > 1 ? 'def5678\n' : 'abc1234\n'), stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
       },
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-submit', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, { cwd })
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-submit', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-submit', branch, 'abc1234'))
 
     expect(result.details.endCommit).toBe('def5678')
     expect(execCalls).toContainEqual({ command: 'bd', args: ['update', 'bead-submit', '--status', 'inreview', '--json'] })
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args[3]?.includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(true)
     expect(events.at(-1)?.event).toMatchObject({ state: 'inreview', sessionMode: 'inreview', endCommit: 'def5678' })
+  })
+
+  it('fails fast before spawn when workflow-state scope is absent or mismatched', async () => {
+    let registeredTool: any
+    let spawnCount = 0
+    setSpawnForDispatchTestOverride((() => {
+      spawnCount++
+      return createSuccessfulSpawn()()
+    }) as any)
+    const branch = currentBranch()
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async () => ({ stdout: '', stderr: '', code: 0 }),
+    }
+
+    beadsDispatchExtension(pi as any)
+    const missing = await registeredTool.execute('missing', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const mismatched = await registeredTool.execute('mismatch', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'other-bead', branch, 'abc1234'))
+    const missingStart = await registeredTool.execute('missing-start', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, {
+      cwd: process.cwd(),
+      sessionManager: { getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-preflight', branch, worktreePath: process.cwd(), sessionKey: 'session:test' } }] },
+    })
+
+    expect(missing.details.error).toContain('active task bead отсутствует')
+    expect(mismatched.details.error).toContain('active bead mismatch')
+    expect(missingStart.details.error).toContain('recorded START_COMMIT отсутствует')
+    expect(spawnCount).toBe(0)
+  })
+
+  it('fails fast before spawn when workflow-state start commit is stale', async () => {
+    let registeredTool: any
+    let spawnCount = 0
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    setSpawnForDispatchTestOverride((() => {
+      spawnCount++
+      return createSuccessfulSpawn()()
+    }) as any)
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'actual-head\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const stale = await registeredTool.execute('stale', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-preflight', branch, 'recorded-start'))
+
+    expect(stale.details.error).toContain('recorded START_COMMIT stale')
+    expect(spawnCount).toBe(0)
+  })
+
+  it('does not submit for review when supervisor artifact omits commit evidence', async () => {
+    let registeredTool: any
+    const events: Array<{ name: string, event: any }> = []
+    const execCalls: Array<{ command: string, args: string[] }> = []
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    setSpawnForDispatchTestOverride(createSuccessfulSpawn(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE\n- Verification: pnpm test exit code 0, output excerpt: passed\n- Artifact status: complete' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'test-model' } }) + '\n'))
+    const pi = {
+      events: { emit(name: string, event: any) { events.push({ name, event }) } },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-incomplete', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') return { stdout: JSON.stringify({ id: 'bead-incomplete', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : (execCalls.filter((call) => call.command === 'git' && call.args.includes('HEAD')).length > 1 ? 'def5678\n' : 'abc1234\n'), stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-incomplete', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-incomplete', branch, 'abc1234'))
+
+    expect(result.details.endCommit).toBe('def5678')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update')).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args[3]?.includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(false)
+    expect(events.at(-1)?.event).toMatchObject({ state: 'implementing', sessionMode: 'implementing', endCommit: 'def5678' })
   })
 })
 
@@ -286,6 +394,7 @@ describe('beads-dispatch supervisor execution contract', () => {
     let registeredTool: any
     let repaintCount = 0
     const cwd = process.cwd()
+    const branch = currentBranch(cwd)
     const state = createDashboardState(selectDashboardAgents([{ name: 'test-supervisor', description: 'Test supervisor', source: 'project' }], { teams: [], warnings: [] }), 'active')
     setSharedDashboardState(state)
     unregisterRenderer = registerDashboardRenderer({ requestRender: () => repaintCount++ })
@@ -299,14 +408,14 @@ describe('beads-dispatch supervisor execution contract', () => {
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-dashboard', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
-        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/dashboard\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'abc1234\n', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
       },
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, { cwd })
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-dashboard', branch, 'abc1234'))
 
     expect(result.details.exitCode).toBe(0)
     expect(getSharedDashboardState()?.cards.get('test-supervisor')?.status).toBe('completed')
@@ -315,6 +424,7 @@ describe('beads-dispatch supervisor execution contract', () => {
 
   it('renders execution contract sections with explicit N/A compatibility defaults', async () => {
     let registeredTool: any
+    const branch = currentBranch()
     const pi = {
       events: { emit() {} },
       registerTool(tool: any) {
@@ -324,14 +434,14 @@ describe('beads-dispatch supervisor execution contract', () => {
         if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-contract', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
         if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
-        if (command === 'git' && args.includes('branch')) return { stdout: 'task/contract\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
       },
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-contract', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-contract', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-contract', branch, 'abc1234'))
     const output = result.details.output
 
     expect(output).toContain('EXECUTION CONTRACT:')
