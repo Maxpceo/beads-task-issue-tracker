@@ -64,38 +64,43 @@ describe('review_workflow scoped review', () => {
   it('routes review_bead from main-start context to structured task worktree without explicit worktreePath', async () => {
     let registeredTool: any
     const execCalls: Array<{ command: string; args: string[] }> = []
-    const taskWorktree = process.cwd()
+    const taskWorktree = mkdtempSync(join(tmpdir(), 'review-task-worktree-'))
     const mainCwd = dirname(taskWorktree)
-    const branch = execFileSync('git', ['-C', taskWorktree, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || process.env.GITHUB_HEAD_REF || 'task/current'
-    const pi = {
-      events: { emit() {} },
-      registerTool(tool: any) {
-        if (tool.name === 'review_bead') registeredTool = tool
-      },
-      registerCommand() {},
-      exec: async (command: string, args: string[]) => {
-        execCalls.push({ command, args })
-        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
-        if (command === 'bd' && args[0] === 'comments') return { stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: ${branch}\nWORKTREE: ${taskWorktree}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${mainCwd} branch --show-current`) return { stdout: 'main\n', stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${mainCwd} rev-parse --show-toplevel`) return { stdout: `${mainCwd}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: `${branch}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse --show-toplevel`) return { stdout: `${taskWorktree}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${taskWorktree} diff --name-only aaa1111..bbb2222`) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
-        return { stdout: '', stderr: '', code: 0 }
-      },
+    const branch = 'task/current'
+    execFileSync('git', ['init', '-b', branch, taskWorktree], { stdio: 'ignore' })
+    try {
+      const pi = {
+        events: { emit() {} },
+        registerTool(tool: any) {
+          if (tool.name === 'review_bead') registeredTool = tool
+        },
+        registerCommand() {},
+        exec: async (command: string, args: string[]) => {
+          execCalls.push({ command, args })
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments') return { stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: ${branch}\nWORKTREE: ${taskWorktree}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${mainCwd} branch --show-current`) return { stdout: 'main\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${mainCwd} rev-parse --show-toplevel`) return { stdout: `${mainCwd}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${taskWorktree} branch --show-current`) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${taskWorktree} rev-parse --show-toplevel`) return { stdout: `${taskWorktree}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${taskWorktree} diff --name-only aaa1111..bbb2222`) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+
+      reviewWorkflowExtension(pi as any)
+      const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, {
+        cwd: mainCwd,
+        sessionManager: {
+          getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, startCommit: 'aaa1111', endCommit: 'bbb2222', sessionKey: 'session:test' } }],
+        },
+      })
+
+      expect(execCalls).toContainEqual({ command: 'git', args: ['-C', taskWorktree, 'diff', '--name-only', 'aaa1111..bbb2222'] })
+      expect(result.details.worktreePath).toBe(taskWorktree)
+    } finally {
+      rmSync(taskWorktree, { recursive: true, force: true })
     }
-
-    reviewWorkflowExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, {
-      cwd: mainCwd,
-      sessionManager: {
-        getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-a', branch, worktreePath: taskWorktree, startCommit: 'aaa1111', endCommit: 'bbb2222', sessionKey: 'session:test' } }],
-      },
-    })
-
-    expect(execCalls).toContainEqual({ command: 'git', args: ['-C', taskWorktree, 'diff', '--name-only', 'aaa1111..bbb2222'] })
-    expect(result.details.worktreePath).toBe(taskWorktree)
   })
 
   it('accepts PI WORKFLOW UPDATE ownership evidence without splitting on dispatch branch names', async () => {
