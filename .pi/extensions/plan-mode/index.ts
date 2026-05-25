@@ -35,6 +35,7 @@ import { requestSupervisorDispatch } from "../beads-dispatch/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
+const PLAN_MODE_TOOL_SET = new Set(PLAN_MODE_TOOLS);
 const NORMAL_MODE_FALLBACK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "plan_subagent"];
 const MANDATORY_WORKFLOW_TOOLS = [
 	"workflow_status",
@@ -72,6 +73,10 @@ const WorkflowPlanApprovedParams = {
 
 function toolText(text: string, details: Record<string, unknown> = {}) {
 	return { content: [{ type: "text", text }], details };
+}
+
+function normalizedToolCallName(toolName: string | undefined): string {
+	return (toolName ?? "").split(".").at(-1)?.trim() ?? "";
 }
 
 interface WorkflowStateSnapshot {
@@ -762,9 +767,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return { action: "handled" };
 	});
 
-	// Block destructive bash commands in plan mode
+	// Enforce plan mode active tool restrictions before runtime spawns any tool-backed work.
 	pi.on("tool_call", async (event) => {
-		if (!planModeEnabled || event.toolName !== "bash") return;
+		if (!planModeEnabled) return;
+
+		const toolName = normalizedToolCallName(event.toolName);
+		if (!PLAN_MODE_TOOL_SET.has(toolName)) {
+			return {
+				block: true,
+				reason: `Plan mode: tool blocked (not available in strict plan mode). Use plan_subagent for read-only planning agents; generic subagent and implementation tools are unavailable until plan mode is approved or disabled with workflow_plan_mode(mode=off).\nTool: ${event.toolName ?? "<unknown>"}`,
+			};
+		}
+
+		if (toolName !== "bash") return;
 
 		const command = event.input.command as string;
 		if (!isSafeCommand(command)) {

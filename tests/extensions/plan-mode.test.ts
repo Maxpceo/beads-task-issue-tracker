@@ -360,6 +360,38 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(decision.reason).not.toContain('Use /plan')
   })
 
+  it('blocks generic subagent tool calls in plan mode before child execution', async () => {
+    const { commandHandlers, toolCallHandlers, ctx } = makeHarness()
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const decision = await toolCallHandlers[0]?.({ toolName: 'subagent', input: { agent: 'detective', task: 'negative smoke' } }, ctx) as { block: boolean, reason: string }
+
+    expect(decision).toMatchObject({ block: true })
+    expect(decision.reason).toContain('tool blocked')
+    expect(decision.reason).toContain('generic subagent')
+    expect(decision.reason).toContain('Tool: subagent')
+  })
+
+  it('blocks namespaced generic subagent tool calls in plan mode before child execution', async () => {
+    const { commandHandlers, toolCallHandlers, ctx } = makeHarness()
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const decision = await toolCallHandlers[0]?.({ toolName: 'functions.subagent', input: { agent: 'detective', task: 'negative smoke' } }, ctx) as { block: boolean, reason: string }
+
+    expect(decision).toMatchObject({ block: true })
+    expect(decision.reason).toContain('tool blocked')
+    expect(decision.reason).toContain('Tool: functions.subagent')
+  })
+
+  it('does not block allowed plan_subagent tool calls in plan mode', async () => {
+    const { commandHandlers, toolCallHandlers, ctx } = makeHarness()
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const decision = await toolCallHandlers[0]?.({ toolName: 'plan_subagent', input: { agent: 'detective', task: 'read-only planning' } }, ctx)
+
+    expect(decision).toBeUndefined()
+  })
+
   it('workflow_plan_review is available in plan mode, returns findings, blocks failures, and avoids workflow/bd/git mutations', async () => {
     const { toolHandlers, workflowUpdates, activeTools, execCalls, ctx } = makeHarness()
 
