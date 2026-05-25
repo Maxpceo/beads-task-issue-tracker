@@ -68,7 +68,19 @@ EOF
    git push -u origin "$BRANCH"
    bd merge-slot release
    ```
-   Если любая команда после `bd merge-slot acquire` завершается ошибкой, сначала выполните `bd merge-slot release`, затем остановитесь с русскоязычным отчётом: какая команда упала, её exit code, что уже сделано и следующий безопасный шаг. При конфликте rebase не выполняйте push; сообщите, что нужно разрешить конфликты в текущей ветке, затем продолжить `git rebase --continue` или отменить через `git rebase --abort`.
+   Если любая команда после `bd merge-slot acquire` завершается ошибкой, сначала выполните `bd merge-slot release`, затем остановитесь с русскоязычным отчётом: какая команда упала, её exit code, что уже сделано и следующий безопасный шаг. Исключение: trivial rebase conflict можно разрешить без вопроса к Максиму по правилам ниже; push всё равно запрещён до успешного `git rebase --continue` и повторных checks.
+
+   Trivial rebase conflicts агент разрешает сам без дополнительного вопроса, когда все условия выполняются одновременно:
+   - конфликт только additive: docs/markdown/`CHANGELOG.md`, независимые adjacent list entries или непересекающиеся абзацы, где можно сохранить обе стороны без изменения смысла;
+   - нет semantic code conflict, изменения API/контракта, удаления/переименования, конфликтующих правок одной строки или неочевидного порядка;
+   - разрешение не теряет пользовательский текст и не выбирает одну сторону вместо другой без причины;
+   - после разрешения можно показать evidence: affected files, причина classification как trivial, `git diff`, точные `git add <files>`, `git rebase --continue`, затем quality gates/checks перед push.
+
+   Для additive `CHANGELOG.md` conflict безопасное поведение: сохранить обе независимые записи в правильной секции `[Unreleased]`/подзаголовке, не удалять чужую запись и не объединять bullets так, чтобы менялся смысл. Порядок выбирайте по существующей структуре файла; если порядок влияет на смысл или release grouping неочевиден, это уже не trivial.
+
+   Stop criteria для non-trivial conflict: конфликт в кодовой логике, тестовых ожиданиях, конфигурации policy/CI, API/контрактах, удалении/переименовании файлов, противоречивые изменения одной строки, риск потери пользовательского текста, неочевидный порядок/группировка, или failing checks после auto-resolution без scoped local fix. В этих случаях не продолжайте rebase/push молча: release merge-slot при необходимости и остановитесь с blocker report, где указаны конфликтующие файлы, observed diff/status и варианты `git rebase --continue` после ручного решения или `git rebase --abort`.
+
+   Финальный merge report после auto-resolution обязан включать отдельную evidence строку: файлы конфликтов, почему они classified trivial, команды `git add <files>` и `git rebase --continue`, результат checks и exit codes.
 8. Create PR with `gh pr create`.
 9. Dispatch docs agent for documentation coverage before merge:
    ```text
