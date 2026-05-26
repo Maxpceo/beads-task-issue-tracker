@@ -50,6 +50,7 @@
 
 ### Fixed
 
+- **Pi plan-mode subagent guard** (`beads-task-issue-tracker-snoc`): strict plan mode now blocks generic `subagent` tool calls, including namespaced tool names, before child execution while continuing to allow `plan_subagent` for read-only planning agents.
 - **Pi supervisor dispatch preflight** (`beads-task-issue-tracker-nnys`): `dispatch_supervisor` now validates the active workflow-state bead, branch, worktree, and recorded `START_COMMIT` before spawning implementation agents, keeps typed workflow submit/review transitions in the wrapper instead of the child supervisor, and only auto-submits for review when the supervisor artifact includes fresh verification and commit evidence.
 - **Pi epic finalization close guards** (`beads-task-issue-tracker-ck2o`): `beads-policy` now recognizes namespaced Pi tool calls such as `functions.bash`, runs epic acceptance checks before the generic close matrix guard, and blocks last-child or parent-epic close commands that are missing `PARENT EPIC SWEEP`, `EPIC HANDOFF`, or `EPIC ACCEPTANCE MATRIX` evidence.
 - **Pi agents dashboard typed workflow visibility** (`beads-task-issue-tracker-wa52`): `/agents-dashboard` now repaints from registered dashboard renderers when typed `dispatch_supervisor` or `review_bead` workflow cards publish running and terminal updates, so already-open active/all dashboards show workflow supervisors and reviewers without relying on continuation-local UI context.
