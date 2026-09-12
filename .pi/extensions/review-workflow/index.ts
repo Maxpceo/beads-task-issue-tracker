@@ -540,6 +540,9 @@ function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<
 	const exact = checkResults.find((check) => check.command && check.result !== "N/A" && (normalizedItem.includes(normalizeVerificationText(check.command)) || normalizeVerificationText(check.command).includes(normalizedItem)));
 	if (exact) return exact;
 
+	const manual = checkResults.find((check) => check.result !== "N/A" && /^manual review$/i.test(check.command));
+	if (manual && /\bmanual\b|ручн/i.test(normalizedItem)) return manual;
+
 	const fullTest = findPassingCheck(checkResults, (command) => /^pnpm\s+test$/.test(command));
 	if (fullTest && /\bpnpm\b.*\btest\b/.test(normalizedItem)) return fullTest;
 
@@ -550,11 +553,92 @@ function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<
 	return undefined;
 }
 
-function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; frontendChecklist: string[]; changedFiles: string[]; supervisorArtifact: SupervisorArtifactEvidence }): { text: string; rows: AcceptanceMatrixRow[]; blockingRows: AcceptanceMatrixRow[] } {
+type MatrixCheckEvidence = ReturnType<typeof parseCheckResult>;
+
+function isReviewEvidenceCandidate(block: string): boolean {
+	return /(^|\n)\s*(?:WORKFLOW SUBMIT FOR REVIEW|DISPATCH RESULT|SUPERVISOR ARTIFACT)\b/i.test(block);
+}
+
+function isInsufficientReviewEvidence(block: string): boolean {
+	return /Artifact status\s*[:=]\s*(?:incomplete|insufficient|missing|rejected|failed)/i.test(block)
+		|| /Verification\s*[:=]\s*not[_ -]?run\b/i.test(block);
+}
+
+function latestReviewEvidenceBlock(comments: string): string | undefined {
+	const latest = [...reviewOwnershipBlocks(comments)].reverse().find(isReviewEvidenceCandidate);
+	if (!latest || isInsufficientReviewEvidence(latest)) return undefined;
+	if (/SUPERVISOR ARTIFACT/i.test(latest)) {
+		return /Status\s*[:=]\s*DONE(?:_WITH_CONCERNS)?\b/i.test(latest) || /Artifact status\s*[:=]\s*(?:complete|accepted|sufficient)/i.test(latest) ? latest : undefined;
+	}
+	return /exit\s*code\s*[:=]\s*-?\d+|\bexit(?:s|ed)?\s+-?\d+\b|observed\s+(?:result\s+)?(?:pass|success|ok)|(?<![\w-])PASS(?![\w-])/i.test(latest) ? latest : undefined;
+}
+
+function isIndependentEvidenceLine(line: string): boolean {
+	return /^[-*]\s+/.test(line) || /^\d+\.\s+/.test(line);
+}
+
+function evidenceCommand(line: string): string | undefined {
+	const backtickCommand = line.match(/`([^`]+)`/)?.[1]?.trim();
+	const shellCommand = line.match(/^\$\s*(.+?)(?:\s*(?:->|#|$))/)?.[1]?.trim();
+	const manualCommand = /\bmanual\b|ручн/i.test(line) ? "manual review" : undefined;
+	return manualCommand ?? backtickCommand ?? shellCommand;
+}
+
+function hasFailEvidence(text: string, exit: string | undefined): boolean {
+	return (exit !== undefined && exit !== "0") || /(?<![\w-])(?:FAIL(?:ED)?)(?![\w-])/i.test(text);
+}
+
+function hasPassEvidence(text: string, exit: string | undefined): boolean {
+	return exit === "0" || /(?<![\w-])(?:PASS(?:ED)?|success(?:ful)?)(?![\w-])|observed\s+(?:result\s+)?(?:pass|success|ok)/i.test(text);
+}
+
+function parseEvidenceChecks(block: string | undefined): MatrixCheckEvidence[] {
+	if (!block || /Verification\s*[:=]\s*not[_ -]?run\b/i.test(block)) return [];
+	const checks: MatrixCheckEvidence[] = [];
+	const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+	for (let index = 0; index < lines.length; index += 1) {
+		const line = lines[index] ?? "";
+		const command = evidenceCommand(line);
+		if (!command) continue;
+		const continuation: string[] = [];
+		for (let next = index + 1; next < lines.length; next += 1) {
+			const nextLine = lines[next] ?? "";
+			if (isIndependentEvidenceLine(nextLine) || evidenceCommand(nextLine)) break;
+			continuation.push(nextLine);
+		}
+		const windowText = [line, ...continuation].join(" ");
+		if (/\bnot[_ -]?run\b/i.test(windowText)) continue;
+		const exit = windowText.match(/(?:exit\s*code\s*[:=]?|\bexit(?:s|ed)?\s+)(-?\d+)/i)?.[1];
+		const failed = hasFailEvidence(windowText, exit);
+		const passed = hasPassEvidence(windowText, exit);
+		if (!failed && !passed) continue;
+		const exitCode = exit === undefined ? undefined : Number(exit);
+		checks.push({ command, exitCode, output: windowText, result: failed ? "FAIL" : "PASS" });
+	}
+	return checks;
+}
+
+function isDocsOnlyChange(files: string[]): boolean {
+	return files.length > 0 && files.every((file) => /(^|\/)(?:README|CHANGELOG|AGENTS|CLAUDE)\.md$|\.md$|^\.pi\/skills\/.*\/SKILL\.md$/i.test(file));
+}
+
+function hasChangedFilesProof(block: string | undefined, files: string[]): boolean {
+	return Boolean(block && files.length > 0 && files.every((file) => block.includes(file)) && /changed files|files changed|git diff --name-only|changedFiles/i.test(block));
+}
+
+function conditionalNaEvidence(item: string, evidenceBlock: string | undefined, changedFiles: string[]): string | undefined {
+	if (!/\b(?:if|when|conditional(?:ly)?)\b/i.test(item)) return undefined;
+	if (!/\b(?:pnpm\b.*\btest\b|vue-tsc\b.*--no-?emit)\b/i.test(item)) return undefined;
+	if (!isDocsOnlyChange(changedFiles) || !hasChangedFilesProof(evidenceBlock, changedFiles)) return undefined;
+	return `N/A: whitelisted conditional verification is not applicable to docs-only changed files (${changedFiles.join(", ")}); changed-files proof is present in supervisor evidence.`;
+}
+
+function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; frontendChecklist: string[]; changedFiles: string[]; supervisorArtifact: SupervisorArtifactEvidence; comments?: string }): { text: string; rows: AcceptanceMatrixRow[]; blockingRows: AcceptanceMatrixRow[] } {
 	const description = typeof params.bead.description === "string" ? params.bead.description : "";
 	const acceptanceItems = extractSectionBullets(description, ["Acceptance criteria", "Acceptance"]);
 	const verificationItems = extractSectionBullets(description, ["Verification / acceptance checks", "Verification", "Acceptance checks"]);
-	const checkResults = params.automatedChecks.map(parseCheckResult);
+	const evidenceBlock = latestReviewEvidenceBlock(params.comments ?? "");
+	const checkResults = [...params.automatedChecks.map(parseCheckResult), ...parseEvidenceChecks(evidenceBlock)];
 	const hasFailedCheck = checkResults.some((check) => check.result === "FAIL");
 	const hasNotRunCheck = checkResults.some((check) => check.result === "NOT RUN");
 	const rows: AcceptanceMatrixRow[] = [];
@@ -565,7 +649,7 @@ function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; f
 			evidence: result === "PASS"
 				? `CODE REVIEW: APPROVED; checks passed; supervisor artifact status=${params.supervisorArtifact.status}.`
 				: result === "FAIL"
-					? `Blocked by failed automated check: ${evidenceExcerpt(checkResults.find((check) => check.result === "FAIL")?.output ?? "")}`
+					? `Blocked by failed automated/supervisor evidence: ${evidenceExcerpt(checkResults.find((check) => check.result === "FAIL")?.output ?? "")}`
 					: `Required verification missing/skipped: ${evidenceExcerpt(checkResults.find((check) => check.result === "NOT RUN")?.output ?? "")}`,
 			result,
 		});
@@ -574,10 +658,11 @@ function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; f
 		const matching = matchingVerificationCheck(item, checkResults);
 		const fallback = checkResults.length === 1 && checkResults[0]?.result !== "N/A" ? checkResults[0] : undefined;
 		const check = matching ?? fallback;
+		const conditionalEvidence = check ? undefined : conditionalNaEvidence(item, evidenceBlock, params.changedFiles);
 		rows.push({
 			item,
-			evidence: check ? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}` : `Required verification evidence missing: no applicable automated check output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`,
-			result: check ? check.result : "NOT RUN",
+			evidence: check ? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}` : conditionalEvidence ?? `Required verification evidence missing: no applicable automated check or supervisor artifact output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`,
+			result: check ? check.result : conditionalEvidence ? "N/A" : "NOT RUN",
 		});
 	}
 	if (acceptanceItems.length === 0 && verificationItems.length === 0) {
@@ -618,7 +703,7 @@ function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence
 	const verificationExit = raw.match(/(^|\n)\s*(?:exit code|exit|code)\s*[:=]\s*(-?\d+)/i)?.[2];
 	const verificationResult = raw.match(/(^|\n)\s*(?:verification result|result)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
 	const explicitReject = explicit !== undefined && /\b(rejected|reject|insufficient|missing|fail(?:ed)?|not[_ -]?approved|blocked|needs_context)\b/i.test(explicit);
-	const explicitAccept = explicit !== undefined && /\b(accepted|approved|sufficient)\b/i.test(explicit);
+	const explicitAccept = explicit !== undefined && /\b(accepted|approved|sufficient|complete)\b/i.test(explicit);
 	const hasVerificationReject = (verificationExit !== undefined && verificationExit !== "0")
 		|| /\b(fail(?:ed)?|not[_ -]?run|not[_ -]?approved|blocked)\b/i.test(verificationResult ?? "");
 	const hasVerificationAccept = verificationExit === "0"
@@ -809,7 +894,7 @@ Artifact evidence may be cited in acceptance matrix, but it is not acceptance by
 					if (isReviewApproved(reviewer.output)) {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
-						const matrix = buildAcceptanceMatrix({ bead, automatedChecks, frontendChecklist, changedFiles, supervisorArtifact });
+						const matrix = buildAcceptanceMatrix({ bead, automatedChecks, frontendChecklist, changedFiles, supervisorArtifact, comments });
 						await execRequired(pi, "bd", ["comments", "add", params.beadId, matrix.text]);
 						if (matrix.blockingRows.length > 0) {
 							throw new Error(`review_bead blocked accepted/close: ACCEPTANCE MATRIX contains blocking rows (${matrix.blockingRows.map((row) => row.result).join(", ")}). Fix failed/missing checks or record an explicit human override before closing.`);
