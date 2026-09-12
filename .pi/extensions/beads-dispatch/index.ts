@@ -5,6 +5,27 @@ import * as path from "node:path";
 import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent, registerDashboardRenderer } from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
+import {
+	buildVisibleChildArgv,
+	getCmuxAdapterForTests,
+	loadRegistry,
+	nsDir,
+	persistIsolationFiles,
+	saveRegistry,
+	validateVisibleChildArgv,
+	type DispatchRegistryEntry,
+} from "./cmux-transport";
+export {
+	buildVisibleChildArgv,
+	validateVisibleChildArgv,
+	pruneRegistry,
+	persistIsolationFiles,
+	setCmuxAdapterForTests,
+	orchRoot,
+	nsDir,
+	loadRegistry,
+	saveRegistry,
+} from "./cmux-transport";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -62,9 +83,16 @@ interface DispatchResult {
 	exitCode: number;
 	output: string;
 	stderr: string;
+	transport?: DispatchTransport;
+	status?: string;
+	pane?: string;
+	taskFile?: string;
+	resultFile?: string;
+	registryKey?: string;
 }
 
-type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean };
+type DispatchTransport = "headless" | "cmux";
+type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean; transport?: DispatchTransport };
 
 interface SupervisorDispatchApi<Ctx = unknown> {
 	dispatchSupervisor(params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
@@ -95,7 +123,8 @@ export async function requestSupervisorDispatch<Ctx = unknown>(pi: object, param
 	const api = registry.byPi.get(pi) ?? registry.latest;
 	if (!api) return { ok: false, text: "", error: "runtime hook missing: dispatch_supervisor API is unavailable" };
 	try {
-		const result = await api.dispatchSupervisor(params, ctx, signal);
+		const { transport: _ignoredTransport, ...rest } = params;
+		const result = await api.dispatchSupervisor({ ...rest, transport: "headless" }, ctx, signal);
 		const text = result.content.map((item) => item.text).join("\n");
 		const details = result.details as { error?: string } | undefined;
 		if (details?.error) return { ok: false, text, details: result.details, error: details.error };
@@ -113,6 +142,21 @@ const DispatchParams = {
 		task: { type: "string", description: "Short task summary. Full context is read from bead." },
 		cwd: { type: "string", description: "Working directory for the subagent process" },
 		dryRun: { type: "boolean", description: "Prepare and log dispatch without spawning Pi", default: false },
+	},
+	required: ["beadId"],
+	additionalProperties: false,
+} as const;
+
+const SupervisorDispatchParams = {
+	type: "object",
+	properties: {
+		...DispatchParams.properties,
+		transport: {
+			type: "string",
+			enum: ["headless", "cmux"],
+			default: "headless",
+			description: "headless (default, blocking) or cmux (spawn-ack only; no bd comments)",
+		},
 	},
 	required: ["beadId"],
 	additionalProperties: false,
@@ -632,10 +676,125 @@ async function validateSupervisorPreflight(pi: ExtensionAPI, params: { beadId: s
 	return { scope: stateScope.scope, cwd, branch, worktreePath, startCommit: stateScope.scope.startCommit, currentHead, evidence };
 }
 
+function cmuxSpawnAckResult(
+	agentName: string,
+	beadId: string,
+	branch: string,
+	worktreePath: string,
+	startCommit: string,
+	ack: { pane: string; taskFile: string; resultFile: string; registryKey: string; taskId: string },
+): DispatchResult {
+	const output = JSON.stringify({ status: "spawned", ...ack }, null, 2);
+	return {
+		agent: agentName,
+		beadId,
+		branch,
+		worktreePath,
+		startCommit,
+		exitCode: 0,
+		output,
+		stderr: "",
+		transport: "cmux",
+		status: "spawned",
+		pane: ack.pane,
+		taskFile: ack.taskFile,
+		resultFile: ack.resultFile,
+		registryKey: ack.registryKey,
+	};
+}
+
+async function dispatchVisibleCmux(input: {
+	params: DispatchToolParams;
+	bead: BeadInfo;
+	agent: AgentConfig;
+	agentName: string;
+	prompt: string;
+	branch: string;
+	worktreePath: string;
+	startCommit: string;
+	cwd: string;
+}): Promise<DispatchResult> {
+	const { params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd } = input;
+	const taskId = `task-${bead.id.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-24)}`;
+	if (params.dryRun) {
+		const argv = buildVisibleChildArgv({
+			model: agent.model,
+			systemPromptFile: `/tmp/dry-prompt-${taskId}.md`,
+			tools: agent.tools,
+			session: { kind: "no-session" },
+			taskFile: `/tmp/dry-task-${taskId}.md`,
+		});
+		const argvErrors = validateVisibleChildArgv(argv);
+		if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
+		return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
+			pane: "",
+			taskFile: `/tmp/dry-task-${taskId}.md`,
+			resultFile: `/tmp/dry-result-${taskId}.md`,
+			registryKey: taskId,
+			taskId,
+		});
+	}
+	const adapter = getCmuxAdapterForTests();
+	if (!adapter) {
+		throw new Error("transport=cmux live typed dispatch is not enabled in this spike; use .pi/orchestrator/run.sh");
+	}
+	const identified = await adapter.identify();
+	const dir = nsDir(identified.workspaceId);
+	const files = persistIsolationFiles(dir, taskId, agent.systemPrompt, prompt);
+	const argv = buildVisibleChildArgv({
+		model: agent.model,
+		systemPromptFile: files.promptFile,
+		tools: agent.tools,
+		session: { kind: "no-session" },
+		taskFile: files.taskFile,
+	});
+	const argvErrors = validateVisibleChildArgv(argv);
+	if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
+	let surface = "";
+	try {
+		const split = await adapter.newSplit();
+		surface = split.surface;
+		await adapter.send(surface, `${argv.join(" ")}\n`);
+	} catch (error) {
+		if (surface) await adapter.closeSurface(surface);
+		throw error;
+	}
+	const registryFile = path.join(dir, "dispatch-registry.json");
+	const registry = loadRegistry(registryFile);
+	const entry: DispatchRegistryEntry = {
+		taskId,
+		beadId: bead.id,
+		pane: surface,
+		worktree: cwd,
+		role: agentName,
+		model: agent.model ?? "",
+		taskFile: files.taskFile,
+		resultFile: files.resultFile,
+		digestFile: files.digestFile,
+		promptFile: files.promptFile,
+		status: "spawned",
+		createdAt: new Date().toISOString(),
+	};
+	registry.entries.push(entry);
+	try {
+		saveRegistry(registryFile, registry);
+	} catch (error) {
+		await adapter.closeSurface(surface);
+		throw error;
+	}
+	return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
+		pane: surface,
+		taskFile: files.taskFile,
+		resultFile: files.resultFile,
+		registryKey: taskId,
+		taskId,
+	});
+}
+
 async function dispatch(
 	pi: ExtensionAPI,
 	mode: "supervisor" | "reviewer" | "docs",
-	params: { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean },
+	params: DispatchToolParams,
 	signal?: AbortSignal,
 	defaultCwd?: string,
 	ctx?: ToolContext,
@@ -645,6 +804,9 @@ async function dispatch(
 	const cwd = supervisorPreflight?.cwd ?? params.cwd ?? (stateScope?.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
+	if (mode !== "supervisor" && params.transport) {
+		throw new Error(`dispatch_${mode === "reviewer" ? "reviewer" : "docs_agent"} does not accept transport`);
+	}
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments);
 		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);
@@ -667,6 +829,10 @@ async function dispatch(
 			: mode === "reviewer"
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
+
+	if (mode === "supervisor" && params.transport === "cmux") {
+		return await dispatchVisibleCmux({ params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd });
+	}
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
 	if (mode === "supervisor") {
@@ -708,6 +874,8 @@ function renderDispatchResult(result: DispatchResult): string {
 		`worktree=${result.worktreePath}`,
 		`start=${result.startCommit}`,
 		result.endCommit ? `end=${result.endCommit}` : "",
+		result.transport ? `transport=${result.transport}` : "",
+		result.status ? `status=${result.status}` : "",
 		`exit=${result.exitCode}`,
 		result.stderr ? `stderr:\n${result.stderr}` : "",
 		result.output ? `output:\n${result.output.slice(-8000)}` : "",
@@ -736,7 +904,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		name: "dispatch_supervisor",
 		label: "Dispatch Supervisor",
 		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
-		parameters: DispatchParams,
+		parameters: SupervisorDispatchParams,
 		execute: dispatchSupervisorTool,
 	});
 

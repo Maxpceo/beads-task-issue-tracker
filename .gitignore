@@ -61,3 +61,6 @@ scripts/__pycache__/
 
 # Crystal tool artifacts
 .crystl/
+
+# Visible-dispatch runtime ns (scripts live in .pi/orchestrator/; data is $HOME/.pi/orchestrator/ns/)
+.pi/orchestrator/ns/
