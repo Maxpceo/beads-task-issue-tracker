@@ -50,6 +50,7 @@
 
 ### Fixed
 
+- **Pi review acceptance evidence mapping** (`beads-task-issue-tracker-te7m`): `review_bead` now scores ACCEPTANCE MATRIX rows from the latest supervisor/workflow review artifact, not only live `automatedChecks`. Docs-only and manual verification bullets can map to PASS/N/A when changed-files proof is present, instead of false `NOT RUN` when `git diff --name-only` was never executed by the review tool.
 - **Pi plan-mode subagent guard** (`beads-task-issue-tracker-snoc`): strict plan mode now blocks generic `subagent` tool calls, including namespaced tool names, before child execution while continuing to allow `plan_subagent` for read-only planning agents.
 - **Pi supervisor dispatch preflight** (`beads-task-issue-tracker-nnys`): `dispatch_supervisor` now validates the active workflow-state bead, branch, worktree, and recorded `START_COMMIT` before spawning implementation agents, keeps typed workflow submit/review transitions in the wrapper instead of the child supervisor, and only auto-submits for review when the supervisor artifact includes fresh verification and commit evidence.
 - **Pi epic finalization close guards** (`beads-task-issue-tracker-ck2o`): `beads-policy` now recognizes namespaced Pi tool calls such as `functions.bash`, runs epic acceptance checks before the generic close matrix guard, and blocks last-child or parent-epic close commands that are missing `PARENT EPIC SWEEP`, `EPIC HANDOFF`, or `EPIC ACCEPTANCE MATRIX` evidence.
