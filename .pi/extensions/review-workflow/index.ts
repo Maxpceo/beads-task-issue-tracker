@@ -555,16 +555,41 @@ function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<
 
 type MatrixCheckEvidence = ReturnType<typeof parseCheckResult>;
 
+function isReviewEvidenceCandidate(block: string): boolean {
+	return /(^|\n)\s*(?:WORKFLOW SUBMIT FOR REVIEW|DISPATCH RESULT|SUPERVISOR ARTIFACT)\b/i.test(block);
+}
+
+function isInsufficientReviewEvidence(block: string): boolean {
+	return /Artifact status\s*[:=]\s*(?:incomplete|insufficient|missing|rejected|failed)/i.test(block)
+		|| /Verification\s*[:=]\s*not[_ -]?run\b/i.test(block);
+}
+
 function latestReviewEvidenceBlock(comments: string): string | undefined {
-	return reviewOwnershipBlocks(comments).reverse().find((block) => {
-		if (!/(^|\n)\s*(?:WORKFLOW SUBMIT FOR REVIEW|DISPATCH RESULT|SUPERVISOR ARTIFACT)\b/i.test(block)) return false;
-		if (/SUPERVISOR ARTIFACT/i.test(block)) {
-			if (/Artifact status\s*[:=]\s*(?:incomplete|insufficient|missing|rejected|failed)/i.test(block)) return false;
-			if (/Verification\s*[:=]\s*not[_ -]?run\b/i.test(block)) return false;
-			return /Status\s*[:=]\s*DONE(?:_WITH_CONCERNS)?\b/i.test(block) || /Artifact status\s*[:=]\s*(?:complete|accepted|sufficient)/i.test(block);
-		}
-		return /exit\s*code\s*[:=]\s*-?\d+|\bexit(?:s|ed)?\s+-?\d+\b|observed\s+(?:result\s+)?(?:pass|success|ok)|\bPASS\b/i.test(block);
-	});
+	const latest = [...reviewOwnershipBlocks(comments)].reverse().find(isReviewEvidenceCandidate);
+	if (!latest || isInsufficientReviewEvidence(latest)) return undefined;
+	if (/SUPERVISOR ARTIFACT/i.test(latest)) {
+		return /Status\s*[:=]\s*DONE(?:_WITH_CONCERNS)?\b/i.test(latest) || /Artifact status\s*[:=]\s*(?:complete|accepted|sufficient)/i.test(latest) ? latest : undefined;
+	}
+	return /exit\s*code\s*[:=]\s*-?\d+|\bexit(?:s|ed)?\s+-?\d+\b|observed\s+(?:result\s+)?(?:pass|success|ok)|(?<![\w-])PASS(?![\w-])/i.test(latest) ? latest : undefined;
+}
+
+function isIndependentEvidenceLine(line: string): boolean {
+	return /^[-*]\s+/.test(line) || /^\d+\.\s+/.test(line);
+}
+
+function evidenceCommand(line: string): string | undefined {
+	const backtickCommand = line.match(/`([^`]+)`/)?.[1]?.trim();
+	const shellCommand = line.match(/^\$\s*(.+?)(?:\s*(?:->|#|$))/)?.[1]?.trim();
+	const manualCommand = /\bmanual\b|ручн/i.test(line) ? "manual review" : undefined;
+	return manualCommand ?? backtickCommand ?? shellCommand;
+}
+
+function hasFailEvidence(text: string, exit: string | undefined): boolean {
+	return (exit !== undefined && exit !== "0") || /(?<![\w-])(?:FAIL(?:ED)?)(?![\w-])/i.test(text);
+}
+
+function hasPassEvidence(text: string, exit: string | undefined): boolean {
+	return exit === "0" || /(?<![\w-])(?:PASS(?:ED)?|success(?:ful)?)(?![\w-])|observed\s+(?:result\s+)?(?:pass|success|ok)/i.test(text);
 }
 
 function parseEvidenceChecks(block: string | undefined): MatrixCheckEvidence[] {
@@ -573,17 +598,20 @@ function parseEvidenceChecks(block: string | undefined): MatrixCheckEvidence[] {
 	const lines = block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 	for (let index = 0; index < lines.length; index += 1) {
 		const line = lines[index] ?? "";
-		const windowText = [line, lines[index + 1] ?? ""].join(" ");
+		const command = evidenceCommand(line);
+		if (!command) continue;
+		const continuation: string[] = [];
+		for (let next = index + 1; next < lines.length; next += 1) {
+			const nextLine = lines[next] ?? "";
+			if (isIndependentEvidenceLine(nextLine) || evidenceCommand(nextLine)) break;
+			continuation.push(nextLine);
+		}
+		const windowText = [line, ...continuation].join(" ");
 		if (/\bnot[_ -]?run\b/i.test(windowText)) continue;
 		const exit = windowText.match(/(?:exit\s*code\s*[:=]?|\bexit(?:s|ed)?\s+)(-?\d+)/i)?.[1];
-		const failed = exit !== undefined && exit !== "0" || /\b(?:FAIL|FAILED|failure|blocked)\b/i.test(windowText);
-		const passed = exit === "0" || /\b(?:PASS|PASSED|success|successful|ok)\b|observed\s+(?:result\s+)?(?:pass|success|ok)/i.test(windowText);
+		const failed = hasFailEvidence(windowText, exit);
+		const passed = hasPassEvidence(windowText, exit);
 		if (!failed && !passed) continue;
-		const backtickCommand = line.match(/`([^`]+)`/)?.[1]?.trim();
-		const shellCommand = line.match(/^\$\s*(.+?)(?:\s*(?:->|#|$))/)?.[1]?.trim();
-		const manualCommand = /\bmanual\b|ручн/i.test(line) ? "manual review" : undefined;
-		const command = manualCommand ?? backtickCommand ?? shellCommand;
-		if (!command) continue;
 		const exitCode = exit === undefined ? undefined : Number(exit);
 		checks.push({ command, exitCode, output: windowText, result: failed ? "FAIL" : "PASS" });
 	}
@@ -591,7 +619,7 @@ function parseEvidenceChecks(block: string | undefined): MatrixCheckEvidence[] {
 }
 
 function isDocsOnlyChange(files: string[]): boolean {
-	return files.length > 0 && files.every((file) => /(^|\/)(?:README|CHANGELOG|AGENTS|CLAUDE)\.md$|\.md$|^\.pi\/skills\/.*\/SKILL\.md$|^docs\//i.test(file));
+	return files.length > 0 && files.every((file) => /(^|\/)(?:README|CHANGELOG|AGENTS|CLAUDE)\.md$|\.md$|^\.pi\/skills\/.*\/SKILL\.md$/i.test(file));
 }
 
 function hasChangedFilesProof(block: string | undefined, files: string[]): boolean {

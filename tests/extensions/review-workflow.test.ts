@@ -872,6 +872,141 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
   })
 
+  it('keeps adjacent rg without its own exit as NOT RUN instead of inheriting the next bullet PASS', async () => {
+    const beadDescription = [
+      '### Verification / acceptance checks',
+      '- `rg "foo" file.md` exits 0.',
+      '- Manual review confirms missing docs-only evidence remains NOT RUN and close is blocked.',
+    ].join('\n')
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: __WORKTREE__',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: file.md',
+      'Verification:',
+      '- `rg "foo" file.md`',
+      '- Manual review confirms missing docs-only evidence remains NOT RUN and close is blocked; observed result PASS.',
+      'Artifact status: complete',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription, changedFiles: 'file.md', supervisorComments })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `rg "foo" file.md` exits 0. | Required verification evidence missing')
+    expect(matrix).toContain('| NOT RUN |')
+    expect(matrix).not.toMatch(/\| `rg "foo" file.md` exits 0\. \| command: rg "foo" file.md;[^|]*\| PASS \|/)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('does not fall back to older PASS evidence when the latest artifact is incomplete or not run', async () => {
+    const beadDescription = [
+      '### Verification / acceptance checks',
+      '- `rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md` exits 0.',
+    ].join('\n')
+    const supervisorComments = [
+      'DISPATCH RESULT (old)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: __WORKTREE__',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: .pi/skills/merge-to-main/SKILL.md',
+      'Verification:',
+      '- `rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md` exits 0; output contained the lifecycle guard wording.',
+      'Artifact status: complete',
+      '',
+      'WORKFLOW SUBMIT FOR REVIEW',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: __WORKTREE__',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: .pi/skills/merge-to-main/SKILL.md',
+      'Verification: not run',
+      'Artifact status: incomplete',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription, changedFiles: '.pi/skills/merge-to-main/SKILL.md', supervisorComments })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md` exits 0. | Required verification evidence missing')
+    expect(matrix).toContain('| NOT RUN |')
+    expect(matrix).not.toContain('command: rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md; exit code: 0')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('does not treat docs/foo.ts as docs-only N/A for conditional test rows', async () => {
+    const beadDescription = [
+      '### Verification / acceptance checks',
+      '- If TypeScript extension code changes: `pnpm test tests/extensions/review-workflow.test.ts --reporter dot` exits 0.',
+      '- If TypeScript extension code changes: `npx vue-tsc --noEmit` exits 0.',
+    ].join('\n')
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: __WORKTREE__',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: docs/foo.ts',
+      'Verification:',
+      '- Manual review confirms fail-closed policy; observed result PASS.',
+      'Artifact status: complete',
+    ].join('\n')
+    const { execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription, changedFiles: 'docs/foo.ts', supervisorComments })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).not.toContain('docs-only changed files (docs/foo.ts)')
+    expect(matrix).not.toContain('whitelisted conditional verification is not applicable to docs-only')
+    expect(matrix).toContain('| If TypeScript extension code changes: `pnpm test tests/extensions/review-workflow.test.ts --reporter dot` exits 0. | command:')
+    expect(matrix).toContain('| PASS |')
+  })
+
+  it('does not classify fail-closed policy wording as FAIL', async () => {
+    const beadDescription = [
+      '### Verification / acceptance checks',
+      '- Manual review confirms fail-closed policy.',
+    ].join('\n')
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: __WORKTREE__',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: .pi/skills/merge-to-main/SKILL.md',
+      'Verification:',
+      '- Manual review confirms fail-closed policy; observed result PASS.',
+      'Artifact status: complete',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription, changedFiles: '.pi/skills/merge-to-main/SKILL.md', supervisorComments })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| Manual review confirms fail-closed policy. | command: manual review; exit code: not recorded')
+    expect(matrix).toContain('| PASS |')
+    expect(matrix).not.toContain('| FAIL |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
   it('blocks stale review-workflow runtime before accepted status and bd close', async () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
       changedFiles: '.pi/extensions/review-workflow/index.ts',
