@@ -324,6 +324,27 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(pingSh).toMatch(/trigger-flash[\s\S]*\|\| true/)
   })
 
+  it('ping.sh fail-closes nonempty DIGEST_FILE missing/empty before send, not as send-fail', () => {
+    const pingSh = fs.readFileSync(path.join(process.cwd(), '.pi/orchestrator/ping.sh'), 'utf8')
+    const failCloseComment = '# Fail-close: nonempty DIGEST_FILE missing/empty is not a send-fail; retry send will not create digest.'
+    const ifWrapper = 'if [ -n "${DIGEST_FILE:-}" ] && { [ ! -f "$DIGEST_FILE" ] || [ ! -s "$DIGEST_FILE" ]; }; then'
+    const echoLine = 'echo "✗ ping: DIGEST_FILE missing/empty → $DIGEST_FILE" >&2'
+    const nameIdx = pingSh.indexOf('NAME="${AGENT_NAME:-agent}"')
+    const commentIdx = pingSh.indexOf(failCloseComment)
+    const ifIdx = pingSh.indexOf(ifWrapper)
+    const echoIdx = pingSh.indexOf(echoLine)
+    const exitIdx = pingSh.indexOf('  exit 1', ifIdx)
+    const digestHintIdx = pingSh.indexOf('DIGEST_HINT=')
+    const sendIdx = pingSh.indexOf('"$CMUX" send --surface "$ORCH"')
+    expect(nameIdx).toBeGreaterThan(-1)
+    expect(commentIdx).toBeGreaterThan(nameIdx)
+    expect(ifIdx).toBeGreaterThan(commentIdx)
+    expect(echoIdx).toBeGreaterThan(ifIdx)
+    expect(exitIdx).toBeGreaterThan(echoIdx)
+    expect(digestHintIdx).toBeGreaterThan(exitIdx)
+    expect(sendIdx).toBeGreaterThan(digestHintIdx)
+  })
+
   it('kills pane when send fails before registry', async () => {
     const closed: string[] = []
     setCmuxAdapterForTests({
@@ -518,5 +539,30 @@ describe('complete_visible_dispatch', () => {
   it('registers complete_visible_dispatch tool', () => {
     const { tools } = makePi({ toolName: 'complete_visible_dispatch' })
     expect(tools.complete_visible_dispatch).toBeDefined()
+  })
+})
+
+describe('dispatch-supervisor skill frozen A/B', () => {
+  const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+  const step6 = skill.slice(skill.indexOf('6. Headless:'), skill.indexOf('7. If the supervisor artifact'))
+
+  it('positive-pins Frozen A/B: both ids, dual next-action, any throw', () => {
+    expect(skill).toContain('with id from `taskId=` OR `задача <id>`')
+    expect(skill).toContain('Any throw/error from complete_visible_dispatch → one BLOCKED, no retry, no read-screen.')
+    expect(skill).toContain('Any throw/error from complete_visible_dispatch → BLOCKED no retry, no read-screen.')
+    expect(skill).toContain('incomplete → no review-bead; later ping may complete again')
+    expect(skill).toContain('submitted/noop → same-turn review-bead')
+    expect(skill).toContain('do not complete; one BLOCKED: «нет digest/result. Если child ещё работает — записать оба nonempty файла и ping.sh; иначе действие Максима.»')
+    expect(skill).toContain('submitted/noop → review-bead. result-only → BLOCKED artifact not review-ready')
+    expect(skill).toContain('8. Continue with `review-bead` automatically after the bead is `inreview`')
+    expect(step6).toContain('Headless: wrapper waits for the child, then `DISPATCH RESULT` / maybe submit.')
+    expect(step6).toContain('Visible: spawn-ack skips wait. Child stdout is not the trigger. Ping/Maxim-complete delivery follows exclusive A/B in step 4. STOP/BLOCKED A/B do not call review-bead. Step 7 — incomplete artifacts; step 8 — review-bead only after submitted/noop/inreview (headless/resume).')
+  })
+
+  it('negative-pins old ping/review fragments without pinning bare review-bead', () => {
+    expect(skill).not.toContain('Then continue with `review-bead`.')
+    expect(skill).not.toContain('Do not call `review_bead` from the ping itself.')
+    expect(skill).not.toContain('with `taskId=`, call only `complete_visible_dispatch`')
+    expect(step6).not.toContain('Then continue with `review-bead`.')
   })
 })
