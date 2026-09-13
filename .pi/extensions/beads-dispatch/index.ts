@@ -7,7 +7,6 @@ import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/i
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import {
 	appendPanesEnv,
-	artifactLooksComplete,
 	buildVisibleChildArgv,
 	findRegistryByTaskId,
 	getCmuxAdapterForTests,
@@ -33,7 +32,6 @@ export {
 	loadRegistry,
 	saveRegistry,
 	findRegistryByTaskId,
-	artifactLooksComplete,
 } from "./cmux-transport";
 
 interface ExtensionAPI {
