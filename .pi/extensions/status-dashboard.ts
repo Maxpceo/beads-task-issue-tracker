@@ -161,29 +161,21 @@ function contextUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 	return [["ctx", `${formatTokens(used)}/${formatTokens(window)}`, color]];
 }
 
-function sessionUsageParts(ctx: ExtensionContext, cacheLabel: string | null): FooterPart[] {
+function sessionUsageParts(ctx: ExtensionContext): FooterPart[] {
 	let input = 0;
 	let output = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
 
 	for (const entry of ctx.sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
 		const usage = entry.message.usage;
 		input += usage?.input ?? 0;
 		output += usage?.output ?? 0;
-		cacheRead += usage?.cacheRead ?? 0;
-		cacheWrite += usage?.cacheWrite ?? 0;
 	}
 
-	const parts: FooterPart[] = [
+	return [
 		["in", input ? `↑${formatTokens(input)}` : "-", input ? "text" : "muted"],
 		["out", output ? `↓${formatTokens(output)}` : "-", output ? "text" : "muted"],
 	];
-	if (cacheLabel) {
-		parts.push([cacheLabel, `R${formatTokens(cacheRead)}/W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"]);
-	}
-	return parts;
 }
 
 function sanitizeStatus(text: string): string {
@@ -246,7 +238,6 @@ function renderWorkflowFooter(
 	const activeBead = wf.activeBead;
 	const displayBead = activeBead ? compactBeadId(activeBead) : "-";
 	const dirty = snapshot.dirty;
-	const slotHeld = Boolean(wf.mergeSlotHeld);
 	const gitState = dirty == null ? "dirty:?" : dirty === 0 ? "clean" : `dirty:${dirty}`;
 	const gitStateColor = dirty == null ? "muted" : dirty === 0 ? "success" : "warning";
 	const worktree = formatWorktree(snapshot.worktree);
@@ -265,44 +256,24 @@ function renderWorkflowFooter(
 	const bdValue = wf.bdStatus ?? "-";
 	const bdColor = wf.bdStatus ? "accent" : "text";
 	const planColor = wf.planMode && wf.planMode !== "off" ? "warning" : "text";
-	const slotValue = slotHeld ? "held" : "free";
-	const slotColor = slotHeld ? "error" : "success";
 	const density = footerDensity(width);
+	const extPart: FooterPart[] = statuses ? [["ext", statuses, "text"]] : [];
 
-	const sticky4: FooterPart[] =
-		density === "wide"
-			? [
-					["session", sessionMode, sessionColor],
-					["bead", displayBead, beadColor],
-					["bd", bdValue, bdColor],
-					["slot", slotValue, slotColor],
-			  ]
-			: [
-					["s", sessionMode, sessionColor],
-					["b", displayBead, beadColor],
-					["bd", bdValue, bdColor],
-					["sl", slotValue, slotColor],
-			  ];
-
-	const cacheLabel = density === "wide" ? "cache" : density === "medium" ? "c" : null;
-	const statsParts: FooterPart[] = [
-		...contextUsageParts(ctx),
-		...sessionUsageParts(ctx, cacheLabel),
-		...(statuses ? ([["ext", statuses, "text"]] as FooterPart[]) : []),
+	const stickyParts: FooterPart[] = [
+		["s", sessionMode, sessionColor],
+		["b", displayBead, beadColor],
+		["bd", bdValue, bdColor],
+		...extPart,
 	];
+
+	const statsParts: FooterPart[] = [...contextUsageParts(ctx), ...sessionUsageParts(ctx)];
 
 	const lines: string[] = [];
 
 	if (density === "wide") {
 		const wideParts: FooterPart[] = [["session", sessionMode, sessionColor]];
 		if (worktree) wideParts.push(["wt", worktree, "warning"]);
-		wideParts.push(
-			["bead", displayBead, beadColor],
-			["bd", bdValue, bdColor],
-			["plan", planValue, planColor],
-			["", gitState, gitStateColor],
-			["slot", slotValue, slotColor],
-		);
+		wideParts.push(["bead", displayBead, beadColor], ["bd", bdValue, bdColor], ["plan", planValue, planColor], ...extPart, ["", gitState, gitStateColor]);
 		const first = packLine(theme, "  workflow  ", wideParts, width);
 		if (!first.line) return [];
 		lines.push(first.line);
@@ -322,7 +293,7 @@ function renderWorkflowFooter(
 	}
 
 	if (density === "medium") {
-		const first = packLine(theme, "  workflow  ", sticky4, width);
+		const first = packLine(theme, "  workflow  ", stickyParts, width);
 		if (!first.line) return [];
 		lines.push(first.line);
 		const stats = packLine(theme, "  stats     ", statsParts, width);
@@ -330,10 +301,10 @@ function renderWorkflowFooter(
 		return lines.slice(0, 2);
 	}
 
-	const coreFirst = packLine(theme, "wf ", sticky4, width);
+	const coreFirst = packLine(theme, "wf ", stickyParts, width);
 	if (!coreFirst.line) return [];
 	lines.push(coreFirst.line);
-	let coreRest = sticky4.slice(coreFirst.consumed);
+	let coreRest = stickyParts.slice(coreFirst.consumed);
 	if (coreRest.length > 0 && lines.length < 3) {
 		const coreCont = packLine(theme, "   ", coreRest, width);
 		if (coreCont.line) {

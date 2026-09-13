@@ -99,7 +99,7 @@ function hasField(text: string, key: string): boolean {
   return new RegExp(`(^|\\s)${key}:`).test(text)
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120, contextUsage?: ContextUsage): Promise<{ status: string; footer: string[]; footerAt: (w: number) => string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120, contextUsage?: ContextUsage, extensionStatuses?: Map<string, string>): Promise<{ status: string; footer: string[]; footerAt: (w: number) => string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
   const runtimeOwnerKey = 'runtime:test-status-dashboard'
   ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
   if (!Array.isArray(workflowState) && Object.keys(workflowState).length > 0) workflowState.runtimeOwnerKey ??= runtimeOwnerKey
@@ -148,7 +148,7 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
         if (key === 'pi-workflow-dashboard') status = text
       },
       setFooter(factory) {
-        footer = factory({ requestRender: () => {} }, theme, { getExtensionStatuses: () => new Map() })
+        footer = factory({ requestRender: () => {} }, theme, { getExtensionStatuses: () => extensionStatuses ?? new Map() })
       },
       notify() {},
     },
@@ -204,7 +204,8 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.status).toContain('bead:beads-task-issue-tracker-current')
     expect(dashboard.footer.join('\n')).toContain('bead:current')
     expect(dashboard.footer.join('\n')).toContain('plan:strict/pending')
-    expect(dashboard.footer.join('\n')).toContain('slot:held')
+    expect(dashboard.status).toContain('slot:held')
+    expect(dashboard.footer.join('\n')).not.toContain('slot:')
   })
 
   it('displays bd-first session, bd status, approved plan, and slot without wf lifecycle token', async () => {
@@ -225,7 +226,8 @@ describe('Pi status-dashboard worktree display', () => {
     expect(rendered).toContain('bead:current*')
     expect(rendered).toContain('bd:custom_review_hold')
     expect(rendered).toContain('plan:strict/approved')
-    expect(rendered).toContain('slot:held')
+    expect(dashboard.status).toContain('slot:held')
+    expect(dashboard.footer.join('\n')).not.toContain('slot:')
     expect(rendered).not.toContain('wf:')
     expect(rendered).not.toContain('state:claimed')
   })
@@ -241,9 +243,8 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.status).toContain('plan:off/pending')
     expect(dashboard.status).toContain('slot:free')
     expect(dashboard.footer.join('\n')).toContain('plan:off/pending')
-    expect(dashboard.footer.join('\n')).toContain('slot:free')
+    expect(dashboard.footer.join('\n')).not.toContain('slot:')
     expect(dashboard.footer.join('\n')).not.toContain('plan:strict/')
-    expect(dashboard.footer.join('\n')).not.toContain('slot:held')
   })
 
   it('refreshes status and footer immediately after workflow-state update event', async () => {
@@ -358,18 +359,20 @@ describe('Pi status-dashboard worktree display', () => {
     expect(at120[0]).toContain('bead:current')
     expect(at120[0]).toContain('bd:custom_review_hold')
     expect(at120[0]).toContain('plan:strict/approved')
-    expect(at120[1]).toBe('            clean  slot:held')
+    expect(at120[1]).toBe('            clean')
+    expect(at120.join('\n')).not.toContain('slot:')
     expect(at120[2]).toMatch(/^ {2}stats {5}/)
-    expect(at120[2]).toContain('cache:')
+    expect(at120[2]).not.toContain('cache:')
     expect(hasField(at120[2] ?? '', 'c')).toBe(false)
     expect(at120.join('\n')).not.toContain('…')
     for (const line of at120) expect(line.length).toBeLessThanOrEqual(120)
 
     const at70 = dashboard.footerAt(70)
     expect(at70).toHaveLength(2)
-    expect(at70[0]).toBe('  workflow  s:implementing  b:current  bd:custom_review_hold  sl:held')
+    expect(at70[0]).toBe('  workflow  s:implementing  b:current  bd:custom_review_hold')
+    expect(at70.join('\n')).not.toMatch(/(^|\s)sl:/)
     expect(at70[1]).toMatch(/^ {2}stats {5}/)
-    expect(hasField(at70[1] ?? '', 'c')).toBe(true)
+    expect(hasField(at70[1] ?? '', 'c')).toBe(false)
     expect(at70[1]).not.toContain('cache:')
     expect(at70.join('\n')).not.toMatch(/(^|\s)wt:/)
     expect(at70.join('\n')).not.toContain('plan:')
@@ -381,12 +384,12 @@ describe('Pi status-dashboard worktree display', () => {
     expect(hasField(at80[0] ?? '', 's')).toBe(true)
     expect(hasField(at80[0] ?? '', 'b')).toBe(true)
     expect(hasField(at80[0] ?? '', 'bd')).toBe(true)
-    expect(hasField(at80[0] ?? '', 'sl')).toBe(true)
+    expect(hasField(at80[0] ?? '', 'sl')).toBe(false)
     expect(at80[0]).toContain('b:current')
     expect(at80[1]).toMatch(/^ {2}stats {5}/)
     expect(hasField(at80[1] ?? '', 'in')).toBe(true)
     expect(hasField(at80[1] ?? '', 'out')).toBe(true)
-    expect(hasField(at80[1] ?? '', 'c')).toBe(true)
+    expect(hasField(at80[1] ?? '', 'c')).toBe(false)
     expect(at80[1]).not.toContain('cache:')
     expect(at80.join('\n')).not.toMatch(/(^|\s)wt:/)
     expect(at80.join('\n')).not.toContain('session:')
@@ -397,7 +400,7 @@ describe('Pi status-dashboard worktree display', () => {
     expect(hasField(at119[0] ?? '', 's')).toBe(true)
     expect(at119.join('\n')).not.toContain('session:')
     expect(at119.join('\n')).not.toMatch(/(^|\s)wt:/)
-    expect(hasField(at119[1] ?? '', 'c')).toBe(true)
+    expect(hasField(at119[1] ?? '', 'c')).toBe(false)
     expect(at119[1]).not.toContain('cache:')
 
     const at69 = dashboard.footerAt(69)
@@ -406,7 +409,7 @@ describe('Pi status-dashboard worktree display', () => {
     expect(hasField(at69[0] ?? '', 's')).toBe(true)
     expect(hasField(at69[0] ?? '', 'b')).toBe(true)
     expect(hasField(at69[0] ?? '', 'bd')).toBe(true)
-    expect(hasField(at69[0] ?? '', 'sl')).toBe(true)
+    expect(hasField(at69[0] ?? '', 'sl')).toBe(false)
     expect(at69[0]).not.toMatch(/(^|\s)p:/)
     expect(at69[0]).not.toMatch(/(^|\s)wt:/)
     expect(at69[0]).not.toContain('clean')
@@ -420,7 +423,7 @@ describe('Pi status-dashboard worktree display', () => {
     const at40 = dashboard.footerAt(40)
     expect(at40).toHaveLength(3)
     expect(at40[0]).toBe('wf s:implementing  b:current')
-    expect(at40[1]).toBe('   bd:custom_review_hold  sl:held')
+    expect(at40[1]).toBe('   bd:custom_review_hold')
     expect(at40[2]).toBe('   wt:linked-dashboard-wt')
     expect(at40.join('\n')).not.toContain('session:')
     expect(at40.join('\n')).not.toContain('cache:')
@@ -431,7 +434,7 @@ describe('Pi status-dashboard worktree display', () => {
     expect(hasField(at60.join('\n'), 's')).toBe(true)
     expect(hasField(at60.join('\n'), 'b')).toBe(true)
     expect(hasField(at60.join('\n'), 'bd')).toBe(true)
-    expect(hasField(at60.join('\n'), 'sl')).toBe(true)
+    expect(hasField(at60.join('\n'), 'sl')).toBe(false)
     expect(at60.join('\n')).toContain('wt:linked-dashboard-wt')
     expect(at60.join('\n')).not.toContain('session:')
     expect(at60.join('\n')).not.toContain('bead:')
@@ -439,7 +442,6 @@ describe('Pi status-dashboard worktree display', () => {
     expect(at60[0]).toContain('s:implementing')
     expect(at60[0]).toContain('b:current')
     expect(at60[0]).toContain('bd:custom_review_hold')
-    expect(at60[0]).toContain('sl:held')
     expect(at60[1]).toMatch(/^ {3}/)
     expect(at60[1]).toContain('wt:linked-dashboard-wt')
     expect(at60[2]).toMatch(/^st /)
@@ -463,5 +465,26 @@ describe('Pi status-dashboard worktree display', () => {
     expect(dashboard.footer).toHaveLength(2)
     expect(dashboard.footer.join('\n')).toContain('wt:linked-dashboard-wt')
     expect(dashboard.footer[0]).toMatch(/^ {2}workflow {2}/)
+    expect(dashboard.footer.join('\n')).not.toContain('slot:')
+  })
+
+  it('puts purpose/policy ext on the workflow line above stats', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+    const statuses = new Map([
+      ['bead-purpose', 'purpose:no active bead'],
+      ['beads-policy', 'policy:on'],
+    ])
+    const dashboard = await renderDashboard(primary, LONG_STATE, 160, undefined, statuses)
+    const workflow = dashboard.footer[0] ?? ''
+    const stats = dashboard.footer.find((line) => line.includes('stats')) ?? ''
+
+    expect(workflow).toContain('session:implementing')
+    expect(workflow).toContain('bd:custom_review_hold')
+    expect(workflow).toContain('ext:purpose:no active bead')
+    expect(workflow).toContain('policy:on')
+    expect(stats).toMatch(/^ {2}stats {5}/)
+    expect(stats).toContain('in:')
+    expect(stats).not.toContain('ext:')
+    expect(dashboard.footer.join('\n')).not.toContain('slot:')
   })
 })
