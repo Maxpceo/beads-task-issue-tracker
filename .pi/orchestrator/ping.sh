@@ -18,6 +18,9 @@ PANES="$NS_DIR/panes.env"
 
 ORCH=$(grep '^orchestrator=' "$PANES" | tail -1 | cut -d= -f2 || true)
 [ -n "$ORCH" ] || { echo "✗ в panes.env нет orchestrator=" >&2; exit 1; }
+if [ -z "${AGENT_NAME:-}" ]; then
+  echo "AGENT_NAME unset; falling back to agent" >&2
+fi
 NAME="${AGENT_NAME:-agent}"
 DIGEST_HINT="${DIGEST_FILE:-results/${ID}.digest}"
 if [ "$KIND" = "error" ]; then

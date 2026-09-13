@@ -854,7 +854,7 @@ async function dispatchVisibleCmux(input: {
 	const resultFile = path.join(resultsDir, `${taskId}.md`);
 	const digestFile = path.join(resultsDir, `${taskId}.digest`);
 	const pingScript = path.join(worktreePath, ".pi/orchestrator/ping.sh");
-	const pingCommand = `DIGEST_FILE=${posixSingleQuote(digestFile)} bash ${posixSingleQuote(pingScript)} ${posixSingleQuote(taskId)}`;
+	const pingCommand = `AGENT_NAME=${posixSingleQuote(agentName)} DIGEST_FILE=${posixSingleQuote(digestFile)} bash ${posixSingleQuote(pingScript)} ${posixSingleQuote(taskId)}`;
 	const pingErrorCommand = `${pingCommand} error`;
 	const taskBody = `${prompt}
 
