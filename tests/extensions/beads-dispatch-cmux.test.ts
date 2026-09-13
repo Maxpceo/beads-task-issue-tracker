@@ -202,8 +202,10 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(result.details.status).not.toBe('spawned')
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments.length).toBeGreaterThan(0)
-    expect(comments[0].args.join(' ')).toContain('DISPATCH (')
-    expect(comments[0].args.join(' ')).not.toContain('DISPATCH RESULT')
+    const headlessComment = comments[0]
+    expect(headlessComment).toBeDefined()
+    expect(headlessComment!.args.join(' ')).toContain('DISPATCH (')
+    expect(headlessComment!.args.join(' ')).not.toContain('DISPATCH RESULT')
   })
 
   it('requestSupervisorDispatch strips transport=cmux to headless', async () => {
@@ -213,7 +215,9 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(result.ok).toBe(true)
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments.length).toBeGreaterThan(0)
-    expect(comments[0].args.join(' ')).toContain('DISPATCH (')
+    const strippedComment = comments[0]
+    expect(strippedComment).toBeDefined()
+    expect(strippedComment!.args.join(' ')).toContain('DISPATCH (')
   })
 
   it('mocked adapter persists isolation files and does not unlink them on spawn-ack', async () => {
@@ -229,15 +233,19 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(result.details.status).toBe('spawned')
     expect(result.details.pane).toBe('surface:9')
     expect(closed).toEqual([])
-    const prompt = result.details.taskFile.replace('/tasks/', '/prompts/').replace(/\.md$/, '.md')
-    expect(fs.existsSync(result.details.taskFile)).toBe(true)
+    const taskFile = result.details.taskFile
+    expect(taskFile).toBeDefined()
+    const prompt = taskFile!.replace('/tasks/', '/prompts/').replace(/\.md$/, '.md')
+    expect(fs.existsSync(taskFile!)).toBe(true)
     expect(fs.existsSync(prompt)).toBe(true)
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments).toEqual([])
     const registry = loadRegistry(path.join(tmp, 'ns', 'ws-live', 'dispatch-registry.json'))
     expect(registry.entries).toHaveLength(1)
-    expect(registry.entries[0].status).toBe('spawned')
-    expect(fs.existsSync(registry.entries[0].promptFile)).toBe(true)
+    const liveEntry = registry.entries[0]
+    expect(liveEntry).toBeDefined()
+    expect(liveEntry!.status).toBe('spawned')
+    expect(fs.existsSync(liveEntry!.promptFile)).toBe(true)
   })
 
   it('kills pane when send fails before registry', async () => {
