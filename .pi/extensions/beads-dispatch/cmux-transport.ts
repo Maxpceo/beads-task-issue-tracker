@@ -26,6 +26,9 @@ export interface DispatchRegistryEntry {
 	digestFile: string;
 	promptFile: string;
 	status: "spawned" | "tombstone";
+	submitStatus?: "none" | "result-only" | "submitted";
+	callerSurface?: string;
+	startCommit?: string;
 	createdAt: string;
 }
 
@@ -141,4 +144,48 @@ export function setCmuxAdapterForTests(adapter: CmuxAdapter | null): void {
 
 export function getCmuxAdapterForTests(): CmuxAdapter | null {
 	return cmuxAdapterForTests;
+}
+
+export function worktreeOrchDir(worktree: string): string {
+	return path.join(worktree, ".pi", "orchestrator");
+}
+
+export function liveEntriesForBead(registry: DispatchRegistry, beadId: string): DispatchRegistryEntry[] {
+	return registry.entries.filter((entry) => entry.beadId === beadId && entry.status === "spawned");
+}
+
+export function findRegistryByTaskId(taskId: string, env: NodeJS.ProcessEnv = process.env): { file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number } | undefined {
+	const root = path.join(orchRoot(env), "ns");
+	if (!fs.existsSync(root)) return undefined;
+	for (const name of fs.readdirSync(root)) {
+		const file = path.join(root, name, "dispatch-registry.json");
+		if (!fs.existsSync(file)) continue;
+		const registry = loadRegistry(file);
+		const index = registry.entries.findIndex((entry) => entry.taskId === taskId);
+		if (index < 0) continue;
+		const entry = registry.entries[index];
+		if (!entry) continue;
+		return { file, registry, entry, index };
+	}
+	return undefined;
+}
+
+export function readDigestPreview(digestFile: string, resultFile: string): { exists: boolean; text: string } {
+	const source = fs.existsSync(digestFile) ? digestFile : fs.existsSync(resultFile) ? resultFile : "";
+	if (!source) return { exists: false, text: "" };
+	const text = fs.readFileSync(source, "utf8").split("\n").slice(0, 10).join("\n").trim();
+	return { exists: true, text };
+}
+
+export function artifactLooksComplete(text: string): boolean {
+	return /Status:\s*(DONE|DONE_WITH_CONCERNS)/i.test(text) && /Artifact status:\s*complete/i.test(text);
+}
+
+export function appendPanesEnv(ns: string, taskId: string, pane: string, orchestratorSurface?: string): void {
+	const file = path.join(ns, "panes.env");
+	fs.mkdirSync(ns, { recursive: true });
+	const lines: string[] = [];
+	if (orchestratorSurface) lines.push(`orchestrator=${orchestratorSurface}`);
+	lines.push(`task-${taskId}=${pane}`);
+	fs.appendFileSync(file, `${lines.join("\n")}\n`);
 }

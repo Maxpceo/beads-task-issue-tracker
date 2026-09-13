@@ -12,6 +12,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
 source "$ROOT/lib.sh"
 orch_resolve_ns || exit 1
+[ -n "${CALLER_SURFACE:-}" ] || { echo "✗ нет caller surface" >&2; exit 1; }
 orch_prune_panes_env "$NS_DIR/panes.env"
 
 if grep -q "^task-$TASK_ID=" "$NS_DIR/panes.env" 2>/dev/null; then
@@ -19,7 +20,7 @@ if grep -q "^task-$TASK_ID=" "$NS_DIR/panes.env" 2>/dev/null; then
   exit 1
 fi
 
-OUT=$("$CMUX" new-split right 2>/dev/null) || { echo "✗ cmux new-split failed" >&2; exit 1; }
+OUT=$("$CMUX" new-split right --surface "$CALLER_SURFACE" 2>/dev/null) || { echo "✗ cmux new-split failed" >&2; exit 1; }
 SURF=$(printf '%s\n' "$OUT" | awk '{for(i=1;i<=NF;i++) if($i ~ /^surface:/) {print $i; exit}}')
 if [ -z "$SURF" ]; then
   SURF=$(printf '%s\n' "$OUT" | awk '{print $2; exit}')
@@ -37,5 +38,6 @@ if ! "$CMUX" send --surface "$SURF" "${CMD}\n"; then
 fi
 
 touch "$NS_DIR/panes.env"
+grep -q '^orchestrator=' "$NS_DIR/panes.env" 2>/dev/null || echo "orchestrator=$CALLER_SURFACE" >> "$NS_DIR/panes.env"
 echo "task-$TASK_ID=$SURF" >> "$NS_DIR/panes.env"
 echo "$SURF"

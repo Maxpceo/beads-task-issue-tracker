@@ -39,13 +39,17 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    AUTO_EXECUTE_ALLOWED: true
    ```
    Required readiness fields are the marker, approval metadata, start commit, files, acceptance, verification, and implementation intent (`Plan:` or `Problem:` + `Approach:`). The other listed fields are accepted context fields and should stay synchronized with `plan-bead`. Legacy comments like `PLAN (approved ...)` are not sufficient for typed dispatch.
-4. Call typed tool, not raw subagent:
+4. Call typed tool, not raw subagent. Interactive visible path:
    ```text
-   dispatch_supervisor(beadId=<ID>)
-   # optional explicit override when needed: dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
+   dispatch_supervisor(beadId=<ID>, transport="cmux", cwd=<workflowState.worktreePath>)
    ```
-   Default `transport` is `headless` (blocking child, then wrapper `DISPATCH` / `DISPATCH RESULT` / maybe submit). `requestSupervisorDispatch` / PLAN APPROVED continuation **never** pass `transport=cmux`.
-   Optional spike path: `dispatch_supervisor({ beadId, transport: "cmux" })` returns spawn-ack `{ status: "spawned", pane, taskFile, resultFile, registryKey }` and **must not** write bd comments or equal DONE. Live visible panes in this spike use `.pi/orchestrator/run.sh`, not typed cmux. `dryRun` + `cmux` = no pane. `dispatch_reviewer` / `dispatch_docs_agent` do not accept `transport`.
+   - `cwd` must be the task worktree, never protected `main`.
+   - Return `status=spawned` is **not** DONE and not `continuation completed`.
+   - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead.
+   - When the supervisor pane sends `[PING]`, call only `complete_visible_dispatch({ taskId })`. That writes `DISPATCH RESULT` and, if the artifact is complete, sends work to review. Do not call `dispatch_supervisor` again. Do not call `review_bead` from the ping itself.
+   - No cmux in interactive → BLOCKED. Not silent headless.
+   - Explicit old path: `dispatch_supervisor(beadId=<ID>, transport="headless")`.
+   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_reviewer` / `dispatch_docs_agent` do not accept `transport`.
 5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, execution contract, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 
 ## Supervisor execution contract
@@ -58,7 +62,8 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
 - `Stop rules`: stop with `NEEDS_CONTEXT` for unclear requirements/acceptance/dependencies/write zone/verification, `BLOCKED` for unsafe branch/worktree/start commit, unresolved dependencies, failing required checks without scoped fix, or policy/tooling blockers; stop before editing outside `Write zone`.
 - `Verification`: approved `Verification / acceptance checks:` commands/manual checks, or explicit `N/A` only when the compatibility path applies.
 - `SUPERVISOR ARTIFACT`: final supervisor report section with `Status`, `Files changed`, `Verification` command/exit/output excerpt or observed result, `Commit` SHA or explicit not-committed reason, `Concerns`, and `Artifact status`. This artifact is implementation evidence for review; it is not acceptance and must not imply bead closure. Review handoff records the artifact as accepted / insufficient / missing / N/A so acceptance matrix rows can cite it only when mapped to criteria and fresh verification.
-6. After a **headless** supervisor returns, the wrapper inspects status/report, records `DISPATCH RESULT`, and owns the review-transition routing. Cmux spawn-ack skips this step. A complete supervisor artifact (`Status: DONE`/`DONE_WITH_CONCERNS`, `Artifact status: complete`, fresh verification, `Commit` SHA evidence, and a changed `END_COMMIT`) is sufficient for the wrapper to record `WORKFLOW SUBMIT FOR REVIEW` evidence and move the bead to `inreview` without asking the child to call `workflow_submit_for_review`.
+6. Headless: wrapper waits for the child, then `DISPATCH RESULT` / maybe submit.
+   Visible: spawn-ack skips wait. After `[PING]`, `complete_visible_dispatch` writes `DISPATCH RESULT`. Submit/inreview only if the supervisor artifact is complete (same gate as headless). Then continue with `review-bead`.
 7. If the supervisor artifact is incomplete, missing verification/commit evidence, or reports `BLOCKED`/`NEEDS_CONTEXT`, do not submit for review; report the exact blocker and evidence.
 8. Continue with `review-bead` automatically after the bead is `inreview`; do not start another bead or stop with a normal final report while this one is `inreview`. If `review_bead` or `dispatch_reviewer` appears unavailable, first require concrete evidence from the current tool surface or a failed typed call; do not infer unavailability from memory or compacted context. If review truly cannot run, return an explicit Russian `BLOCKED` report with evidence, blocker, and exact next action.
 

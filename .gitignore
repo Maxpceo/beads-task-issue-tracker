@@ -64,3 +64,4 @@ scripts/__pycache__/
 
 # Visible-dispatch runtime ns (scripts live in .pi/orchestrator/; data is $HOME/.pi/orchestrator/ns/)
 .pi/orchestrator/ns/
+.pi/orchestrator/results/

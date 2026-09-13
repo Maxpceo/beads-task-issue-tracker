@@ -10,8 +10,8 @@ if [ -z "${ORCH_NS:-}" ]; then
 else
   NS_DIR="$ORCH_NS"
 fi
-DIGEST="$NS_DIR/results/${ID}.digest"
-RESULT="$NS_DIR/results/${ID}.md"
+DIGEST="${DIGEST_FILE:-$NS_DIR/results/${ID}.digest}"
+RESULT="${RESULT_FILE:-$NS_DIR/results/${ID}.md}"
 if [ ! -f "$DIGEST" ] && [ ! -f "$RESULT" ]; then
   echo "✗ нет digest/result для $ID" >&2
   exit 1

@@ -27,8 +27,9 @@ let mockPlanReviewReasons: string[] = []
 let mockMissingRevisedPlanSections: string[] = []
 let mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
 let mockSupervisorDispatchAvailable = true
-let mockSupervisorDispatchCalls: Array<{ beadId: string; cwd?: string }> = []
+let mockSupervisorDispatchCalls: Array<{ beadId: string; cwd?: string; transport?: string }> = []
 let mockSupervisorDispatchGate: Promise<void> | undefined
+let mockSupervisorDispatchSpawned = false
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -57,10 +58,13 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     }
     if (id === '../beads-dispatch/index') {
       return {
-        requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string }) => {
+        requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string; transport?: string }) => {
           mockSupervisorDispatchCalls.push(params)
           await mockSupervisorDispatchGate
           if (!mockSupervisorDispatchAvailable) return { ok: false, text: '', error: 'runtime hook missing: test API unavailable' }
+          if (mockSupervisorDispatchSpawned) {
+            return { ok: true, text: 'status=spawned', details: { status: 'spawned', transport: 'cmux', beadId: params.beadId } }
+          }
           return { ok: true, text: `agent=test-supervisor\nbead=${params.beadId}\nworktree=${params.cwd ?? '/tmp/project'}\nexit=0`, details: { beadId: params.beadId, worktreePath: params.cwd } }
         },
       }
@@ -81,6 +85,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   mockSupervisorDispatchAvailable = true
   mockSupervisorDispatchCalls = []
   mockSupervisorDispatchGate = undefined
+  mockSupervisorDispatchSpawned = false
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -724,6 +729,20 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/project)')
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
     expect(sendMessages.at(-1)?.message.content).toContain('не silent stall')
+  })
+
+  it('does not treat cmux spawn-ack as continuation completed', async () => {
+    mockSupervisorDispatchSpawned = true
+    const { commandHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    mockSupervisorDispatchSpawned = true
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project', transport: 'cmux' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe('/Users/maksimposudevskiy/Projects/beads-task-issue-tracker')
+    expect(sendMessages.at(-1)?.message.content).toContain('supervisor spawned, waiting ping')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('PLAN APPROVED continuation completed')
   })
 
   it('continues dispatch when best-effort pre-dispatch progress message cannot be displayed', async () => {
