@@ -46,7 +46,8 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    - `cwd` must be the task worktree, never protected `main`.
    - Return `status=spawned` is **not** DONE and not `continuation completed`.
    - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead.
-   - When the supervisor pane sends `[PING]`, call only `complete_visible_dispatch({ taskId })`. That writes `DISPATCH RESULT` and, if the artifact is complete, sends work to review. Do not call `dispatch_supervisor` again. Do not call `review_bead` from the ping itself.
+   - Child ping: the visible supervisor must only run the quoted `DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body (`KIND=error` after BLOCKED/NEEDS_CONTEXT). Child stdout / printing `Ping` in the child pane is not delivery and must not trigger complete. Do not use raw `cmux send` / `send-key enter`.
+   - Orchestrator ping: when this orchestrator surface receives inbound user message `[PING]` or `[PING-ERROR]` with `taskId=`, call only `complete_visible_dispatch({ taskId })`. That writes `DISPATCH RESULT` and, if the artifact is complete, sends work to review. Do not call `dispatch_supervisor` again. Do not call `review_bead` from the ping itself. Incomplete complete may retry on a later ping; do not re-dispatch.
    - No cmux in interactive → BLOCKED. Not silent headless.
    - Explicit old path: `dispatch_supervisor(beadId=<ID>, transport="headless")`.
    PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_reviewer` / `dispatch_docs_agent` do not accept `transport`.
@@ -63,7 +64,7 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
 - `Verification`: approved `Verification / acceptance checks:` commands/manual checks, or explicit `N/A` only when the compatibility path applies.
 - `SUPERVISOR ARTIFACT`: final supervisor report section with `Status`, `Files changed`, `Verification` command/exit/output excerpt or observed result, `Commit` SHA or explicit not-committed reason, `Concerns`, and `Artifact status`. This artifact is implementation evidence for review; it is not acceptance and must not imply bead closure. Review handoff records the artifact as accepted / insufficient / missing / N/A so acceptance matrix rows can cite it only when mapped to criteria and fresh verification.
 6. Headless: wrapper waits for the child, then `DISPATCH RESULT` / maybe submit.
-   Visible: spawn-ack skips wait. After `[PING]`, `complete_visible_dispatch` writes `DISPATCH RESULT`. Submit/inreview only if the supervisor artifact is complete (same gate as headless). Then continue with `review-bead`.
+   Visible: spawn-ack skips wait. After inbound `[PING]`/`[PING-ERROR]` on the orchestrator surface, `complete_visible_dispatch` writes `DISPATCH RESULT`. Child stdout is not the trigger. Submit/inreview only if the supervisor artifact is complete (same gate as headless). Then continue with `review-bead`.
 7. If the supervisor artifact is incomplete, missing verification/commit evidence, or reports `BLOCKED`/`NEEDS_CONTEXT`, do not submit for review; report the exact blocker and evidence.
 8. Continue with `review-bead` automatically after the bead is `inreview`; do not start another bead or stop with a normal final report while this one is `inreview`. If `review_bead` or `dispatch_reviewer` appears unavailable, first require concrete evidence from the current tool surface or a failed typed call; do not infer unavailability from memory or compacted context. If review truly cannot run, return an explicit Russian `BLOCKED` report with evidence, blocker, and exact next action.
 

@@ -801,6 +801,10 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 	};
 }
 
+function posixSingleQuote(value: string): string {
+	return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 async function dispatchVisibleCmux(input: {
 	pi: ExtensionAPI;
 	params: DispatchToolParams;
@@ -849,12 +853,21 @@ async function dispatchVisibleCmux(input: {
 	fs.mkdirSync(resultsDir, { recursive: true });
 	const resultFile = path.join(resultsDir, `${taskId}.md`);
 	const digestFile = path.join(resultsDir, `${taskId}.digest`);
+	const pingScript = path.join(worktreePath, ".pi/orchestrator/ping.sh");
+	const pingCommand = `DIGEST_FILE=${posixSingleQuote(digestFile)} bash ${posixSingleQuote(pingScript)} ${posixSingleQuote(taskId)}`;
+	const pingErrorCommand = `${pingCommand} error`;
 	const taskBody = `${prompt}
 
 WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
 1. Write SUPERVISOR ARTIFACT to ${resultFile}
 2. Write digest ≤10 lines to ${digestFile}
-3. Ping taskId=${taskId} (DIGEST_FILE=${digestFile}). Do not ping before that.
+3. Only ping by running this exact command (POSIX-quoted absolute paths; worktreePath is git toplevel):
+   ${pingCommand}
+   After BLOCKED or NEEDS_CONTEXT, run the same command with KIND=error:
+   ${pingErrorCommand}
+   If ping.sh send exits non-zero, retry once; then BLOCKED and report stderr.
+   Forbidden: printing Ping or [PING] in this pane; raw cmux send / send-key enter.
+   Child stdout is not delivery. Do not ping before digest/result exist.
 Next step is review, same as today. Do not call review yourself.
 `;
 	const files = persistIsolationFiles(dir, taskId, agent.systemPrompt, taskBody);
