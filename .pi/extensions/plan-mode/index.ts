@@ -32,6 +32,7 @@ import {
 	type PlanReviewResult,
 } from "../plan-review/index";
 import { requestSupervisorDispatch } from "../beads-dispatch/index";
+import { PROTECTED_BRANCHES, validateTaskScopePath } from "../worktree-scope/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
@@ -261,12 +262,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		pi.events.emit("workflow-state:update", event);
 	}
 
-	async function detectGitValue(ctx: ExtensionContext, args: string[]): Promise<string | undefined> {
-		const fullArgs = ctx.cwd ? ["-C", ctx.cwd, ...args] : args;
-		const result = await pi.exec("git", fullArgs);
-		return result.code === 0 ? result.stdout.trim() || undefined : undefined;
-	}
-
 	async function detectGitValueAt(cwd: string | undefined, args: string[]): Promise<string | undefined> {
 		const fullArgs = cwd ? ["-C", cwd, ...args] : args;
 		const result = await pi.exec("git", fullArgs);
@@ -301,9 +296,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return value;
 	}
 
-	function worktreeRecovery(worktreePath: string, branch?: string): string {
-		const branchFlag = branch ? ` --branch ${branch}` : " --branch <branch>";
-		return `Recovery: create the task worktree with \`bd worktree create ${worktreePath}${branchFlag}\` from the project checkout, or update workflow-state to a readable task worktree before calling \`workflow_plan_approved\`.`;
+	function worktreeRecovery(worktreePath: string | undefined, branch?: string, phase: "approval" | "continuation" = "approval"): string {
+		const protectedBranch = Boolean(branch && PROTECTED_BRANCHES.has(branch));
+		const recoveryBranch = !branch || protectedBranch ? "<canonical-task-branch>" : branch;
+		const recoveryPath = !worktreePath || protectedBranch ? "<path>" : worktreePath;
+		const nextStep = phase === "continuation"
+			? "then retry `dispatch_supervisor` from that task worktree"
+			: "before calling `workflow_plan_approved`";
+		return `Recovery: create the task worktree with \`bd worktree create ${recoveryPath} --branch ${recoveryBranch}\` from the project checkout, or update workflow-state to a readable task worktree ${nextStep}.`;
 	}
 
 	function latestRecordedWorkflowScope(ctx: ExtensionContext, beadId: string): WorkflowStateSnapshot | undefined {
@@ -327,17 +327,30 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return (currentRuntimeCandidates.length > 0 ? currentRuntimeCandidates : candidates).at(-1);
 	}
 
-	async function validatedWorktreeScope(source: "approved plan evidence" | "recorded workflow-state", worktreePath: string, expectedBranch?: string, startCommit?: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
+	async function validatedWorktreeScope(source: "approved plan evidence" | "recorded workflow-state" | "continuation", worktreePath: string, expectedBranch?: string, startCommit?: string, phase: "approval" | "continuation" = "approval"): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string; code?: string }> {
 		const detectedWorktreePath = await detectGitValueAt(worktreePath, ["rev-parse", "--show-toplevel"]);
-		if (detectedWorktreePath !== worktreePath) return { error: `${source} worktree is not a readable git worktree: ${worktreePath}. ${worktreeRecovery(worktreePath, expectedBranch)}` };
-
-		const branch = await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]);
-		if (expectedBranch && branch !== expectedBranch) return { error: `${source} branch ${expectedBranch} does not match worktree branch ${branch ?? "<unknown>"}. ${worktreeRecovery(worktreePath, expectedBranch)}` };
+		const detectedBranch = detectedWorktreePath ? await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]) : undefined;
+		const validated = validateTaskScopePath(worktreePath, {
+			expectedBranch,
+			exists: () => detectedWorktreePath != null,
+			getRepoRoot: () => detectedWorktreePath,
+			getBranch: () => detectedBranch,
+		});
+		if (!validated.ok) {
+			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase);
+			if (validated.error.code === "BRANCH_MISMATCH") {
+				return { error: `${source} branch ${expectedBranch} does not match worktree branch ${detectedBranch ?? "<unknown>"}. ${recovery}`, code: validated.error.code };
+			}
+			if (validated.error.code === "WORKTREE_NOT_FOUND" || validated.error.code === "INVALID_WORKTREE" || validated.error.code === "MISSING_WORKTREE" || detectedWorktreePath !== worktreePath) {
+				return { error: `${source} worktree is not a readable git worktree: ${worktreePath}. ${recovery}`, code: validated.error.code };
+			}
+			return { error: `${source} ${validated.error.message}. ${recovery}`, code: validated.error.code };
+		}
 
 		return {
-			branch: branch ?? expectedBranch,
-			worktreePath: detectedWorktreePath,
-			startCommit: startCommit ?? await detectGitValueAt(detectedWorktreePath, ["rev-parse", "HEAD"]),
+			branch: validated.scope.branch,
+			worktreePath: validated.scope.worktreePath,
+			startCommit: startCommit ?? await detectGitValueAt(validated.scope.worktreePath, ["rev-parse", "HEAD"]),
 		};
 	}
 
@@ -348,28 +361,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		if (evidenceWorktreePath) {
 			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit);
-			if (scoped.error) return scoped;
-			if (!scoped.startCommit) scoped.startCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
-			return scoped;
+			if (!scoped.error) return scoped;
+			const evidenceProtected = scoped.code === "PROTECTED_BRANCH" || Boolean(evidenceBranch && PROTECTED_BRANCHES.has(evidenceBranch));
+			if (!evidenceProtected) return scoped;
+		} else if (evidenceBranch) {
+			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
 		}
-
-		if (evidenceBranch) return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
 
 		const recordedScope = latestRecordedWorkflowScope(ctx, beadId);
 		if (recordedScope?.worktreePath) {
 			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit);
 			if (scoped.error) return scoped;
-			if (!scoped.startCommit) scoped.startCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
 			return scoped;
 		}
 		if (recordedScope?.branch || recordedScope?.startCommit) {
 			return { error: "recorded workflow-state has branch/start scope but no worktreePath; refusing to approve against ambiguous main-start cwd" };
 		}
 
-		const ctxBranch = await detectGitValue(ctx, ["branch", "--show-current"]);
-		const ctxWorktreePath = await detectGitValue(ctx, ["rev-parse", "--show-toplevel"]);
-		const ctxStartCommit = await detectGitValue(ctx, ["rev-parse", "HEAD"]);
-		return { branch: ctxBranch, worktreePath: ctxWorktreePath, startCommit: ctxStartCommit };
+		return { error: `no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined)}` };
 	}
 
 	function currentSessionKey(ctx: ExtensionContext): string | undefined {
@@ -439,13 +448,32 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return worktreePath ? `dispatch_supervisor(beadId=${beadId}, cwd=${worktreePath})` : `dispatch_supervisor(beadId=${beadId})`;
 	}
 
+	function isRuntimeHookUnavailable(error: string): boolean {
+		return /runtime hook missing|API unavailable|not available|registry/i.test(error);
+	}
+
 	async function recordRuntimeHookMissing(ctx: ExtensionContext, beadId: string, action: string, error: string): Promise<void> {
 		const content = [
 			"BLOCKED: runtime hook missing",
 			`Bead: ${beadId}`,
 			`Action: ${action}`,
 			`Reason: ${error}`,
-			"Немедленный системный blocker: PLAN APPROVED записан, но Pi runtime не смог запустить следующий typed workflow step автономно. Это не silent stall; требуется исправить runtime hook, а не отправлять новое сообщение в чат.",
+			"Немедленный системный blocker: approval comment уже записан, но Pi runtime не смог запустить следующий typed workflow step автономно. Это не silent stall; требуется исправить runtime hook, а не отправлять новое сообщение в чат.",
+		].join("\n");
+		await pi.exec("bd", ["comments", "add", beadId, content]);
+		syncWorkflowPlanMode(ctx, "off", "blocked", { state: "blocked", activeBead: beadId, planApproved: true });
+		pi.sendMessage(
+			{ customType: "post-approval-continuation-blocked", content, display: true },
+			{ triggerTurn: false },
+		);
+	}
+
+	async function recordContinuationScopeBlocked(ctx: ExtensionContext, beadId: string, error: string): Promise<void> {
+		const content = [
+			"BLOCKED: task worktree scope",
+			`Bead: ${beadId}`,
+			`Reason: ${error}`,
+			"Continuation cannot start dispatch_supervisor without a readable task worktree. Create or update the task worktree, then retry dispatch_supervisor. Do not write another approval comment.",
 		].join("\n");
 		await pi.exec("bd", ["comments", "add", beadId, content]);
 		syncWorkflowPlanMode(ctx, "off", "blocked", { state: "blocked", activeBead: beadId, planApproved: true });
@@ -472,12 +500,38 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, worktreePath?: string): Promise<void> {
-		const action = renderPlanExecutionAction(beadId, worktreePath);
+	async function resolveContinuationCwd(ctx: ExtensionContext, beadId: string, approvedWorktreePath?: string): Promise<{ cwd?: string; error?: string }> {
+		const recorded = latestRecordedWorkflowScope(ctx, beadId);
+		const attempts: Array<{ path?: string; expectedBranch?: string; source: "recorded workflow-state" | "approved plan evidence" }> = [
+			{ path: recorded?.worktreePath, expectedBranch: recorded?.branch, source: "recorded workflow-state" },
+			{ path: approvedWorktreePath, source: "approved plan evidence" },
+		];
+		for (const attempt of attempts) {
+			if (!attempt.path) continue;
+			const scoped = await validatedWorktreeScope(attempt.source, attempt.path, attempt.expectedBranch, undefined, "continuation");
+			if (!scoped.error && scoped.worktreePath) return { cwd: scoped.worktreePath };
+		}
+		const recoveryPath = recorded?.worktreePath && !PROTECTED_BRANCHES.has(recorded.branch ?? "") ? recorded.worktreePath : approvedWorktreePath;
+		const recoveryBranch = recorded?.branch && !PROTECTED_BRANCHES.has(recorded.branch) ? recorded.branch : undefined;
+		return { error: `no readable task worktree for continuation. ${worktreeRecovery(recoveryPath, recoveryBranch, "continuation")}` };
+	}
+
+	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, approvedWorktreePath?: string): Promise<void> {
+		const resolved = await resolveContinuationCwd(ctx, beadId, approvedWorktreePath);
+		if (resolved.error || !resolved.cwd) {
+			await recordContinuationScopeBlocked(ctx, beadId, resolved.error ?? "no readable task worktree for continuation");
+			return;
+		}
+		const action = renderPlanExecutionAction(beadId, resolved.cwd);
 		sendPreDispatchProgress(beadId, action);
-		const result = await requestSupervisorDispatch(pi, { beadId, cwd: worktreePath, transport: "cmux" }, ctx);
+		const result = await requestSupervisorDispatch(pi, { beadId, cwd: resolved.cwd, transport: "cmux" }, ctx);
 		if (!result.ok) {
-			await recordRuntimeHookMissing(ctx, beadId, action, result.error ?? "typed continuation returned without success");
+			const error = result.error ?? "typed continuation returned without success";
+			if (isRuntimeHookUnavailable(error)) {
+				await recordRuntimeHookMissing(ctx, beadId, action, error);
+				return;
+			}
+			await recordContinuationScopeBlocked(ctx, beadId, error);
 			return;
 		}
 		const details = result.details as { status?: string; transport?: string } | undefined;

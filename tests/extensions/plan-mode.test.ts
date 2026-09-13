@@ -6,6 +6,7 @@ import ts from 'typescript'
 import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
+import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
 const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
@@ -56,6 +57,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         runPlanReviewers: async () => ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({ reviewer, verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: 'PLAN REVIEW: APPROVED' })),
       }
     }
+    if (id === '../worktree-scope/index') return worktreeScope
     if (id === '../beads-dispatch/index') {
       return {
         requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string; transport?: string }) => {
@@ -78,6 +80,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
 }
 
 function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }>, failPreDispatchProgressMessage?: boolean } = {}) {
+  const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
   mockMissingRevisedPlanSections = []
@@ -104,7 +107,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const delayedClaimEvents: unknown[] = []
   const trace: string[] = []
   const sessionEntries: Array<{ type?: string, customType?: string, data?: unknown }> = options.entries ?? [
-    { type: 'custom', customType: 'workflow-state', data: { activeBead: options.activeBead ?? 'bead-plan', branch: 'main', worktreePath: '/tmp/project', startCommit: 'abc123' } },
+    { type: 'custom', customType: 'workflow-state', data: { activeBead: options.activeBead ?? 'bead-plan', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' } },
   ]
 
   const pi: any = {
@@ -140,15 +143,25 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
         if (options.commentAddFails) return { stdout: '', stderr: 'comment write failed', code: 1 }
         return { stdout: '{"ok":true}', stderr: '', code: 0 }
       }
-      if (command === 'git' && options.taskScopeGit && args[0] === '-C') {
-        if (args[1] !== '/tmp/task') return { stdout: '', stderr: 'not a git repository', code: 128 }
-        if (args.includes('branch')) return { stdout: 'task/plan-approved\n', stderr: '', code: 0 }
-        if (args.includes('--show-toplevel')) return { stdout: '/tmp/task\n', stderr: '', code: 0 }
-        if (args.includes('HEAD')) return { stdout: 'task123\n', stderr: '', code: 0 }
+      if (command === 'git') {
+        const cwd = args[0] === '-C' ? args[1] : undefined
+        if (taskScopeGit) {
+          if (cwd === '/tmp/task') {
+            if (args.includes('branch')) return { stdout: 'task/plan-approved\n', stderr: '', code: 0 }
+            if (args.includes('--show-toplevel')) return { stdout: '/tmp/task\n', stderr: '', code: 0 }
+            if (args.includes('HEAD')) return { stdout: 'task123\n', stderr: '', code: 0 }
+          }
+          if (cwd === '/tmp/project') {
+            if (args.includes('branch')) return { stdout: 'main\n', stderr: '', code: 0 }
+            if (args.includes('--show-toplevel')) return { stdout: '/tmp/project\n', stderr: '', code: 0 }
+            if (args.includes('HEAD')) return { stdout: 'abc123\n', stderr: '', code: 0 }
+          }
+          return { stdout: '', stderr: 'not a git repository', code: 128 }
+        }
+        if (args.includes('branch')) return { stdout: 'main\n', stderr: '', code: 0 }
+        if (args.includes('--show-toplevel')) return { stdout: '/tmp/project\n', stderr: '', code: 0 }
+        if (args.includes('HEAD')) return { stdout: 'abc123\n', stderr: '', code: 0 }
       }
-      if (command === 'git' && args.includes('branch')) return { stdout: 'main\n', stderr: '', code: 0 }
-      if (command === 'git' && args.includes('--show-toplevel')) return { stdout: '/tmp/project\n', stderr: '', code: 0 }
-      if (command === 'git' && args.includes('HEAD')) return { stdout: 'abc123\n', stderr: '', code: 0 }
       return { stdout: '', stderr: '', code: 0 }
     },
     events: {
@@ -156,6 +169,13 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
         if (name === 'workflow-state:update') {
           if (event.planApproved === true) trace.push('workflow-plan-approved')
           workflowUpdates.push(event)
+          const previous = [...sessionEntries].reverse().find((entry) => entry.type === 'workflow-state' || entry.customType === 'workflow-state')
+          const previousData = previous?.data && typeof previous.data === 'object' ? previous.data as Record<string, unknown> : {}
+          const nextData: Record<string, unknown> = { ...previousData }
+          for (const key of ['activeBead', 'branch', 'worktreePath', 'startCommit', 'planApproved', 'state', 'sessionMode', 'planMode']) {
+            if (event[key] !== undefined) nextData[key] = event[key]
+          }
+          sessionEntries.push({ type: 'custom', customType: 'workflow-state', data: nextData })
         }
         if (name === 'workflow-state:claim') {
           void Promise.resolve().then(() => {
@@ -468,6 +488,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ state: 'implementing', activeBead: 'bead-plan', planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(activeTools.at(-1)).toEqual(expectedNormalTools)
     expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).toBe('/tmp/task')
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
   })
 
   it('workflow_plan_approved prefers explicit approved task worktree scope over main ctx cwd', async () => {
@@ -500,6 +522,8 @@ describe('Pi plan-mode typed workflow tools', () => {
       sessionMode: 'implementing',
       planApproved: true,
     })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).toBe('/tmp/task')
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
   })
 
   it('workflow_plan_approved normalizes markdown list/backtick worktree evidence before validation', async () => {
@@ -637,26 +661,30 @@ describe('Pi plan-mode typed workflow tools', () => {
       sessionMode: 'implementing',
       planApproved: true,
     })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).toBe('/tmp/task')
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
   })
 
-  it('workflow_plan_approved falls back to ctx cwd when no recorded task worktree scope exists', async () => {
+  it('workflow_plan_approved blocks when no recorded task worktree scope exists instead of falling back to ctx cwd', async () => {
     const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ entries: [] })
 
-    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-ctx-fallback', {
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-ctx-fallback', {
       beadId: 'bead-plan',
       planEvidence: [
         'Plan: approve without a recorded task worktree.',
         'Files: .pi/extensions/plan-mode/index.ts.',
-        'Acceptance: workflow state uses current ctx cwd scope.',
+        'Acceptance: workflow approval blocks missing task worktree.',
       ].join('\n'),
     }, undefined, undefined, ctx)
 
-    const commentCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
-    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
-    expect(commentCall?.args[3]).toContain('BRANCH: main')
-    expect(commentCall?.args[3]).toContain('WORKTREE: /tmp/project')
-    expect(commentCall?.args[3]).toContain('START_COMMIT: abc123')
-    expect(workflowUpdates.at(-1)).toMatchObject({ branch: 'main', worktreePath: '/tmp/project', startCommit: 'abc123' })
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('bd worktree create')
+    expect(blocked.content[0].text).not.toMatch(/PLAN APPROVED/)
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
   })
 
   it('workflow_plan_approved blocks recorded branch scope without worktree before bd comment', async () => {
@@ -705,6 +733,94 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates).toHaveLength(0)
   })
 
+  it('workflow_plan_approved blocks recorded protected main branch without dispatch or PLAN APPROVED comment', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, sendMessages, ctx } = makeHarness({
+      entries: [{ type: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'main', worktreePath: '/tmp/project', sessionKey: 'id:session-current' } }],
+    })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-recorded-main', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: reject protected recorded main worktree.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: workflow approval blocks protected main.',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('bd worktree create')
+    expect(blocked.content[0].text).not.toContain('--branch main')
+    expect(blocked.content[0].text).not.toMatch(/PLAN APPROVED/)
+    expect(blocked.content[0].text).not.toContain('runtime hook missing')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
+    expect(sendMessages).toHaveLength(0)
+  })
+
+  it('explicit evidence cwd on main does not bypass the guard when recorded scope is also main', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      entries: [{ type: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'main', worktreePath: '/tmp/project', sessionKey: 'id:session-current' } }],
+    })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-arg-main-recorded-main', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: reject explicit main checkout cwd.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: explicit cwd=main does not bypass the guard.',
+        'Branch: main',
+        'Worktree: /tmp/project',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('bd worktree create')
+    expect(blocked.content[0].text).not.toContain('--branch main')
+    expect(blocked.content[0].text).not.toMatch(/PLAN APPROVED/)
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
+  })
+
+  it('explicit evidence cwd on main does not win over a recorded task worktree', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      taskScopeGit: true,
+      entries: [{
+        type: 'workflow-state',
+        data: {
+          activeBead: 'bead-plan',
+          branch: 'task/plan-approved',
+          worktreePath: '/tmp/task',
+          startCommit: 'task123',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+        },
+      }],
+    })
+
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-arg-main-recorded-task', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: continue using recorded task worktree even if evidence names main.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: dispatch uses recorded task worktree.',
+        'Branch: main',
+        'Worktree: /tmp/project',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3]).toContain('WORKTREE: /tmp/task')
+    expect(workflowUpdates.at(-1)).toMatchObject({ worktreePath: '/tmp/task', branch: 'task/plan-approved' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).toBe('/tmp/task')
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
+  })
+
   it('UI Execute writes durable PLAN APPROVED comment and shows started/running progress before dispatch resolves', async () => {
     const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
     let releaseDispatch!: () => void
@@ -724,16 +840,17 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(execCalls[commentCallIndex]?.args[2]).toBe('bead-ui')
     expect(comment).toContain('PLAN APPROVED')
     expect(comment).toContain('Approved-by: Максим')
-    expect(comment).toContain('START_COMMIT: abc123')
+    expect(comment).toContain('START_COMMIT: task123')
     expect(comment).toContain('Files to change:')
     expect(comment).toContain('Acceptance:')
     expect(comment).toContain('Verification / acceptance checks:')
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', planMode: 'off', sessionMode: 'implementing', planApproved: true })
-    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project' })
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
     expect(startedMessage?.message.content).toContain('PLAN APPROVED: продолжение запущено')
     expect(startedMessage?.message.content).toContain('Bead: bead-ui')
     expect(startedMessage?.message.content).toContain('State: started/running')
-    expect(startedMessage?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/project)')
+    expect(startedMessage?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/task)')
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation')).toBe(false)
 
     releaseDispatch()
@@ -756,10 +873,13 @@ describe('Pi plan-mode typed workflow tools', () => {
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
     expect(comments[1]?.args[3]).toContain('BLOCKED: runtime hook missing')
+    expect(comments[1]?.args[3]).not.toMatch(/PLAN APPROVED/)
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', sessionMode: 'blocked', planApproved: true })
-    expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/project)')
+    expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/task)')
+    expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).not.toContain('cwd=/tmp/project')
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
     expect(sendMessages.at(-1)?.message.content).toContain('не silent stall')
+    expect(sendMessages.at(-1)?.message.content).not.toMatch(/PLAN APPROVED/)
   })
 
   it('does not treat cmux spawn-ack as continuation completed', async () => {
@@ -770,7 +890,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     await commandHandlers.get('plan')?.handler('', ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
 
-    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project', transport: 'cmux' })
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task', transport: 'cmux' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe('/Users/maksimposudevskiy/Projects/beads-task-issue-tracker')
     expect(sendMessages.at(-1)?.message.content).toContain('supervisor spawned, waiting ping')
     expect(sendMessages.at(-1)?.message.content).not.toContain('PLAN APPROVED continuation completed')
@@ -782,7 +903,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     await commandHandlers.get('plan')?.handler('', ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
 
-    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project' })
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
     expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation completed')
@@ -859,7 +981,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- reviewers approved\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement gate\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests pass\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, ctx)
 
-    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/project' })
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/task' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
     expect(sendMessages.some((message) => message.message.customType === 'plan-todo-list')).toBe(false)
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })

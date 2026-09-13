@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { isPathInsideOrEqual, requireTaskToolTarget, resolveActiveTaskScope, taskScopeErrorToPolicyReason, validateTaskScopePath } from '../../.pi/extensions/worktree-scope/index'
+import { isPathInsideOrEqual, PROTECTED_BRANCHES, requireTaskToolTarget, resolveActiveTaskScope, taskScopeErrorToPolicyReason, validateTaskScopePath } from '../../.pi/extensions/worktree-scope/index'
 
 function createRepo(branch = 'task/scope') {
   const repo = mkdtempSync(join(tmpdir(), 'worktree-scope-'))
@@ -18,6 +18,10 @@ function createRepo(branch = 'task/scope') {
 }
 
 describe('worktree-scope structured routing helper', () => {
+  it('exports PROTECTED_BRANCHES as the protected-branch source of truth', () => {
+    expect([...PROTECTED_BRANCHES].sort()).toEqual(['main', 'master'])
+  })
+
   it('resolves canonical active task scope and accepts symlinked targets inside it', () => {
     const repo = createRepo()
     const link = join(tmpdir(), `worktree-scope-link-${Date.now()}`)
