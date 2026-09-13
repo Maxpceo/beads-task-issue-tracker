@@ -664,7 +664,7 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
 	if (!entry.startCommit) throw new Error(`complete_visible_dispatch: нет START_COMMIT для ${params.taskId}`);
 	const startCommit = entry.startCommit;
-	const ready = supervisorArtifactReadyForReview({ output: resultText, exitCode: 0, stderr: "" }, startCommit, endCommit);
+	const ready = supervisorArtifactReadyForReview({ output: resultText, exitCode: 0 }, startCommit, endCommit);
 	if (!ready) {
 		await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
 		registry.entries[index] = { ...entry, submitStatus: "result-only" };
