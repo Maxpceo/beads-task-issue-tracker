@@ -22,6 +22,11 @@ if [ -z "${AGENT_NAME:-}" ]; then
   echo "AGENT_NAME unset; falling back to agent" >&2
 fi
 NAME="${AGENT_NAME:-agent}"
+# Fail-close: nonempty DIGEST_FILE missing/empty is not a send-fail; retry send will not create digest.
+if [ -n "${DIGEST_FILE:-}" ] && { [ ! -f "$DIGEST_FILE" ] || [ ! -s "$DIGEST_FILE" ]; }; then
+  echo "✗ ping: DIGEST_FILE missing/empty → $DIGEST_FILE" >&2
+  exit 1
+fi
 DIGEST_HINT="${DIGEST_FILE:-results/${ID}.digest}"
 if [ "$KIND" = "error" ]; then
   MSG="[PING-ERROR] ${NAME} · задача ${ID}: ${BODY:-ошибка}"
