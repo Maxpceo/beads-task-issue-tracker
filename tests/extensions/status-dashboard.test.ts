@@ -85,7 +85,21 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120, contextUsage?: ContextUsage): Promise<{ status: string; footer: string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
+const LONG_STATE = {
+  sessionMode: 'implementing',
+  state: 'claimed',
+  activeBead: 'beads-task-issue-tracker-current',
+  bdStatus: 'custom_review_hold',
+  planMode: 'strict',
+  planApproved: true,
+  mergeSlotHeld: true,
+} as const
+
+function hasField(text: string, key: string): boolean {
+  return new RegExp(`(^|\\s)${key}:`).test(text)
+}
+
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120, contextUsage?: ContextUsage): Promise<{ status: string; footer: string[]; footerAt: (w: number) => string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
   const runtimeOwnerKey = 'runtime:test-status-dashboard'
   ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
   if (!Array.isArray(workflowState) && Object.keys(workflowState).length > 0) workflowState.runtimeOwnerKey ??= runtimeOwnerKey
@@ -147,6 +161,7 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
   return {
     get status() { return status },
     get footer() { return footer?.render(width) ?? [] },
+    footerAt: (w: number) => footer?.render(w) ?? [],
     bdCalls,
     emitWorkflowUpdate: async (entries) => {
       workflowEntries.splice(0, workflowEntries.length, ...entries)
@@ -294,10 +309,11 @@ describe('Pi status-dashboard worktree display', () => {
     const { linked } = createRepoWithLinkedWorktree()
 
     const dashboard = await renderDashboard(linked, {}, 40)
-    const workflowLine = dashboard.footer[0] ?? ''
+    const rendered = dashboard.footer.join('\n')
 
     expect(dashboard.status).toContain('wt:')
-    expect(workflowLine).toContain('wt:')
+    expect(rendered).toContain('wt:')
+    expect(dashboard.footer[0] ?? '').not.toContain('wt:')
   })
 
   it('shows used context tokens before session usage in the stats footer line', async () => {
@@ -328,5 +344,124 @@ describe('Pi status-dashboard worktree display', () => {
     expect(statsLine).not.toContain('ctx:')
     expect(statsLine).not.toContain('left:')
     expect(statsLine).toContain('in:')
+  })
+
+  it('renders adaptive density goldens for the frozen long linked fixture', async () => {
+    const { linked } = createRepoWithLinkedWorktree()
+    const dashboard = await renderDashboard(linked, LONG_STATE, 120)
+
+    const at120 = dashboard.footerAt(120)
+    expect(at120).toHaveLength(3)
+    expect(at120[0]).toMatch(/^ {2}workflow {2}/)
+    expect(at120[0]).toContain('session:implementing')
+    expect(at120[0]).toContain('wt:linked-dashboard-wt')
+    expect(at120[0]).toContain('bead:current')
+    expect(at120[0]).toContain('bd:custom_review_hold')
+    expect(at120[0]).toContain('plan:strict/approved')
+    expect(at120[1]).toBe('            clean  slot:held')
+    expect(at120[2]).toMatch(/^ {2}stats {5}/)
+    expect(at120[2]).toContain('cache:')
+    expect(hasField(at120[2] ?? '', 'c')).toBe(false)
+    expect(at120.join('\n')).not.toContain('…')
+    for (const line of at120) expect(line.length).toBeLessThanOrEqual(120)
+
+    const at70 = dashboard.footerAt(70)
+    expect(at70).toHaveLength(2)
+    expect(at70[0]).toBe('  workflow  s:implementing  b:current  bd:custom_review_hold  sl:held')
+    expect(at70[1]).toMatch(/^ {2}stats {5}/)
+    expect(hasField(at70[1] ?? '', 'c')).toBe(true)
+    expect(at70[1]).not.toContain('cache:')
+    expect(at70.join('\n')).not.toMatch(/(^|\s)wt:/)
+    expect(at70.join('\n')).not.toContain('plan:')
+    expect(at70.join('\n')).not.toContain('session:')
+
+    const at80 = dashboard.footerAt(80)
+    expect(at80).toHaveLength(2)
+    expect(at80[0]).toMatch(/^ {2}workflow {2}/)
+    expect(hasField(at80[0] ?? '', 's')).toBe(true)
+    expect(hasField(at80[0] ?? '', 'b')).toBe(true)
+    expect(hasField(at80[0] ?? '', 'bd')).toBe(true)
+    expect(hasField(at80[0] ?? '', 'sl')).toBe(true)
+    expect(at80[0]).toContain('b:current')
+    expect(at80[1]).toMatch(/^ {2}stats {5}/)
+    expect(hasField(at80[1] ?? '', 'in')).toBe(true)
+    expect(hasField(at80[1] ?? '', 'out')).toBe(true)
+    expect(hasField(at80[1] ?? '', 'c')).toBe(true)
+    expect(at80[1]).not.toContain('cache:')
+    expect(at80.join('\n')).not.toMatch(/(^|\s)wt:/)
+    expect(at80.join('\n')).not.toContain('session:')
+
+    const at119 = dashboard.footerAt(119)
+    expect(at119).toHaveLength(2)
+    expect(at119[0]).toMatch(/^ {2}workflow {2}/)
+    expect(hasField(at119[0] ?? '', 's')).toBe(true)
+    expect(at119.join('\n')).not.toContain('session:')
+    expect(at119.join('\n')).not.toMatch(/(^|\s)wt:/)
+    expect(hasField(at119[1] ?? '', 'c')).toBe(true)
+    expect(at119[1]).not.toContain('cache:')
+
+    const at69 = dashboard.footerAt(69)
+    expect(at69).toHaveLength(3)
+    expect(at69[0]).toMatch(/^wf /)
+    expect(hasField(at69[0] ?? '', 's')).toBe(true)
+    expect(hasField(at69[0] ?? '', 'b')).toBe(true)
+    expect(hasField(at69[0] ?? '', 'bd')).toBe(true)
+    expect(hasField(at69[0] ?? '', 'sl')).toBe(true)
+    expect(at69[0]).not.toMatch(/(^|\s)p:/)
+    expect(at69[0]).not.toMatch(/(^|\s)wt:/)
+    expect(at69[0]).not.toContain('clean')
+    expect(at69[1]).toMatch(/^ {3}/)
+    expect(at69[1]).toContain('wt:linked-dashboard-wt')
+    expect(at69[2]).toMatch(/^st /)
+    expect(hasField(at69[2] ?? '', 'in')).toBe(true)
+    expect(at69[2]).not.toContain('cache:')
+    expect(hasField(at69[2] ?? '', 'c')).toBe(false)
+
+    const at40 = dashboard.footerAt(40)
+    expect(at40).toHaveLength(3)
+    expect(at40[0]).toBe('wf s:implementing  b:current')
+    expect(at40[1]).toBe('   bd:custom_review_hold  sl:held')
+    expect(at40[2]).toBe('   wt:linked-dashboard-wt')
+    expect(at40.join('\n')).not.toContain('session:')
+    expect(at40.join('\n')).not.toContain('cache:')
+
+    const at60 = dashboard.footerAt(60)
+    expect(at60.length).toBeLessThanOrEqual(3)
+    expect(at60[0]).toMatch(/^wf /)
+    expect(hasField(at60.join('\n'), 's')).toBe(true)
+    expect(hasField(at60.join('\n'), 'b')).toBe(true)
+    expect(hasField(at60.join('\n'), 'bd')).toBe(true)
+    expect(hasField(at60.join('\n'), 'sl')).toBe(true)
+    expect(at60.join('\n')).toContain('wt:linked-dashboard-wt')
+    expect(at60.join('\n')).not.toContain('session:')
+    expect(at60.join('\n')).not.toContain('bead:')
+    expect(at60.join('\n')).not.toContain('slot:')
+    expect(at60[0]).toContain('s:implementing')
+    expect(at60[0]).toContain('b:current')
+    expect(at60[0]).toContain('bd:custom_review_hold')
+    expect(at60[0]).toContain('sl:held')
+    expect(at60[1]).toMatch(/^ {3}/)
+    expect(at60[1]).toContain('wt:linked-dashboard-wt')
+    expect(at60[2]).toMatch(/^st /)
+    expect(hasField(at60[2] ?? '', 'in')).toBe(true)
+    expect(at60[2]).not.toContain('cache:')
+    expect(hasField(at60[2] ?? '', 'c')).toBe(false)
+
+    for (const w of [0, 1, 11, 12, 39, 40, 60, 69, 70, 80, 119, 120]) {
+      const rows = dashboard.footerAt(w)
+      expect(rows.length).toBeLessThanOrEqual(3)
+      expect(rows.join('\n')).not.toContain('…')
+      for (const line of rows) expect(line.length).toBeLessThanOrEqual(w)
+      if (w === 0) expect(rows).toEqual([])
+      if (w > 0 && w < 3 + 's:implementing'.length) expect(rows).toEqual([])
+    }
+  })
+
+  it('keeps a two-line idle footer at width 120 with the full linked worktree basename', async () => {
+    const { linked } = createRepoWithLinkedWorktree()
+    const dashboard = await renderDashboard(linked, {}, 120)
+    expect(dashboard.footer).toHaveLength(2)
+    expect(dashboard.footer.join('\n')).toContain('wt:linked-dashboard-wt')
+    expect(dashboard.footer[0]).toMatch(/^ {2}workflow {2}/)
   })
 })
