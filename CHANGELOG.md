@@ -25,6 +25,7 @@
 
 ### Changed
 
+- **Pi workflow footer slot, ext, and cache packing** (`beads-task-issue-tracker-tiuk`): the workflow footer omits prompt-cache R/W (`cache:` / `c:`) from stats, drops the merge-slot field (`slot:` / `sl:`) while keeping slot in compact status, and lifts purpose/policy extension status onto the workflow line above stats.
 - **Pi adaptive-density workflow footer packing** (`beads-task-issue-tracker-e8xi`): the workflow footer now packs by terminal width (`narrow` < 70, `medium` 70–119, `wide` ≥ 120), keeps sticky session/bead/bd/slot fields, continues overflow onto extra lines up to 3, and omits whole fields instead of truncating values so labels stay intact.
 - **Pi footer used context tokens** (`beads-task-issue-tracker-625l`): the workflow stats footer now shows spent model context first as `ctx:used/window` (Haasbot-style) before session usage, using `?/window` when token usage is unknown and omitting the field when the context window is unavailable, instead of remaining `left:remaining/window`.
 - **Pi review ownership evidence parsing** (`beads-task-issue-tracker-83jc`): `review_bead` now treats workflow/review marker lines as anchored records, preventing branch or worktree names such as `wa52-agents-dashboard-dispatch` from splitting ownership evidence and falsely rejecting matching `DISPATCH RESULT` / `PI WORKFLOW UPDATE` review scopes.
