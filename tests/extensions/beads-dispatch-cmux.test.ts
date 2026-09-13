@@ -369,15 +369,19 @@ describe('complete_visible_dispatch', () => {
     })
   }
 
-  it('ping with digest sends to review and later ping is noop', async () => {
+  it('retries incomplete ping and no-ops after submit', async () => {
     seed({})
-    fs.writeFileSync(path.join(tmp, 'd.digest'), completeArtifact)
-    const { pi } = makePi({ head: 'bbb2222' })
+    fs.writeFileSync(path.join(tmp, 'd.digest'), 'still working')
+    const { pi } = makePi({ head: 'aaa1111' })
     const first = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
-    expect(first.status).toBe('submitted')
-    expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('submitted')
-    const second = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
-    expect(second.status).toBe('noop')
+    expect(first.status).toBe('result-only')
+    expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('result-only')
+    fs.writeFileSync(path.join(tmp, 'r.md'), completeArtifact)
+    const { pi: pi2 } = makePi({ head: 'bbb2222' })
+    const second = await completeVisibleDispatch(pi2 as any, { taskId: 'task-1' })
+    expect(second.status).toBe('submitted')
+    const third = await completeVisibleDispatch(pi2 as any, { taskId: 'task-1' })
+    expect(third.status).toBe('noop')
   })
 
   it('ping without digest stays incomplete', async () => {

@@ -663,7 +663,15 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	if (!preview.exists) return { status: "incomplete", text: "нет digest/result" };
 	const resultText = fs.existsSync(entry.resultFile) ? fs.readFileSync(entry.resultFile, "utf8") : preview.text;
 	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
-	const startCommit = entry.startCommit || endCommit;
+	if (!entry.startCommit) throw new Error(`complete_visible_dispatch: нет START_COMMIT для ${params.taskId}`);
+	const startCommit = entry.startCommit;
+	const ready = supervisorArtifactReadyForReview({ output: resultText, exitCode: 0, stderr: "" }, startCommit, endCommit);
+	if (!ready) {
+		await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
+		registry.entries[index] = { ...entry, submitStatus: "result-only" };
+		saveRegistry(file, registry);
+		return { status: "result-only", text: preview.text };
+	}
 	await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
 	await submitForReviewFromWrapper(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit, resultText);
 	registry.entries[index] = { ...entry, submitStatus: "submitted" };
@@ -1013,7 +1021,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "complete_visible_dispatch",
 		label: "Complete Visible Dispatch",
-		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT and submit for review if the artifact is complete. Does not spawn.",
+		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT; submit for review only if the artifact is complete. Does not spawn.",
 		parameters: {
 			type: "object",
 			properties: { taskId: { type: "string", description: "Visible dispatch registry taskId" } },
