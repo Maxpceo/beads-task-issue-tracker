@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-const PROTECTED_BRANCHES = new Set(["main", "master"]);
+export const PROTECTED_BRANCHES = new Set(["main", "master"]);
 const TERMINAL_BD_STATUSES = new Set(["closed", "blocked", "deferred"]);
 const NON_TERMINAL_WORKFLOW_STATES = new Set(["claimed", "planning", "plan_approved", "implementing", "inreview", "reviewing", "accepted", "landing"]);
 
