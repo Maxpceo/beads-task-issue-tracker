@@ -253,6 +253,7 @@ describe('dispatch_supervisor transport=cmux', () => {
       async newSplit() { return { surface: 'surface:9' } },
       async send() {},
       async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
     })
     const { registered, cwd, branch, beadId, head, execCalls } = makePi({ execCalls: [] })
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
@@ -282,6 +283,7 @@ describe('dispatch_supervisor transport=cmux', () => {
       async newSplit() { return { surface: 'surface:11' } },
       async send() {},
       async closeSurface() {},
+      async readScreen() { return '' },
     })
     const { registered, cwd, branch, beadId, head } = makePi({ execCalls: [] })
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
@@ -356,6 +358,7 @@ describe('dispatch_supervisor transport=cmux', () => {
       async newSplit() { return { surface: 'surface:8' } },
       async send() { throw new Error('send failed') },
       async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
     })
     const { registered, cwd, branch, beadId, head } = makePi({})
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
@@ -370,6 +373,7 @@ describe('dispatch_supervisor transport=cmux', () => {
       async newSplit() { return { surface: 'surface:1' } },
       async send() {},
       async closeSurface() {},
+      async readScreen() { return '' },
     })
     const { registered, cwd, branch, beadId, head } = makePi({})
     const ctx = workflowCtx(cwd, beadId, branch, head)
@@ -396,6 +400,7 @@ describe('dispatch_supervisor transport=cmux', () => {
       async newSplit() { return { surface: 'surface:191' } },
       async send(_surface, text) { sent.push(text) },
       async closeSurface() {},
+      async readScreen() { return '' },
     })
     const { registered, beadId, head, emitted } = makePi({ cwd: taskWt, branch: taskBranch })
     const result = await registered.execute(
@@ -511,6 +516,7 @@ describe('dispatch_reviewer transport=cmux', () => {
       async newSplit() { return { surface: 'surface:r1' } },
       async send() {},
       async closeSurface() {},
+      async readScreen() { return '' },
     })
     const { tools, cwd, branch, beadId, emitted } = reviewerPi({ head, execCalls })
     const result = await tools.dispatch_reviewer.execute('call-1', { beadId, transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, beadId, branch, recorded))
@@ -541,6 +547,7 @@ describe('dispatch_reviewer transport=cmux', () => {
         return { surface: `surface:${splits}` }
       },
       async send() {},
+      async readScreen() { return '' },
       async closeSurface() {},
     })
     const { tools, cwd, branch, beadId, head } = makePi({ beadId: 'bead-two', status: 'in_progress' })
@@ -562,6 +569,7 @@ describe('dispatch_reviewer transport=cmux', () => {
       async newSplit() { return { surface: 'surface:dup' } },
       async send() {},
       async closeSurface() {},
+      async readScreen() { return '' },
     })
     const { tools, cwd, branch, beadId, head } = reviewerPi()
     const ctx = workflowCtx(cwd, beadId, branch, head)
