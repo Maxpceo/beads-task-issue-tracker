@@ -300,30 +300,32 @@ describe('Pi status-dashboard worktree display', () => {
     expect(workflowLine).toContain('wt:')
   })
 
-  it('shows remaining context tokens before session usage in the stats footer line', async () => {
+  it('shows used context tokens before session usage in the stats footer line', async () => {
     const { primary } = createRepoWithLinkedWorktree()
 
     const dashboard = await renderDashboard(primary, {}, 160, { tokens: 50_000, contextWindow: 200_000, percent: 25 })
     const statsLine = dashboard.footer[1] ?? ''
 
-    expect(statsLine).toContain('left:150k/200k')
-    expect(statsLine.indexOf('left:')).toBeLessThan(statsLine.indexOf('in:'))
+    expect(statsLine).toContain('ctx:50k/200k')
+    expect(statsLine).not.toContain('left:')
+    expect(statsLine.indexOf('ctx:')).toBeLessThan(statsLine.indexOf('in:'))
   })
 
-  it('shows unknown remaining tokens when usage tokens are null', async () => {
+  it('shows unknown used tokens when usage tokens are null', async () => {
     const { primary } = createRepoWithLinkedWorktree()
 
     const dashboard = await renderDashboard(primary, {}, 160, { tokens: null, contextWindow: 200_000, percent: null })
 
-    expect(dashboard.footer[1] ?? '').toContain('left:?/200k')
+    expect(dashboard.footer[1] ?? '').toContain('ctx:?/200k')
   })
 
-  it('omits remaining tokens when context window is unknown', async () => {
+  it('omits context tokens when context window is unknown', async () => {
     const { primary } = createRepoWithLinkedWorktree()
 
     const dashboard = await renderDashboard(primary)
     const statsLine = dashboard.footer[1] ?? ''
 
+    expect(statsLine).not.toContain('ctx:')
     expect(statsLine).not.toContain('left:')
     expect(statsLine).toContain('in:')
   })
