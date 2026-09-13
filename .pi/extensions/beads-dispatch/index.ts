@@ -161,7 +161,7 @@ const SupervisorDispatchParams = {
 			type: "string",
 			enum: ["headless", "cmux"],
 			default: "headless",
-			description: "headless (default, blocking) or cmux (spawn-ack only; no bd comments)",
+			description: "headless (blocking) or cmux (spawn-ack; DISPATCH on spawn; complete_visible_dispatch after ping)",
 		},
 	},
 	required: ["beadId"],

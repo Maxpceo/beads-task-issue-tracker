@@ -739,7 +739,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     await commandHandlers.get('plan')?.handler('', ctx)
     await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
 
-    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', transport: 'cmux' })
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/project', transport: 'cmux' })
+    expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe('/Users/maksimposudevskiy/Projects/beads-task-issue-tracker')
     expect(sendMessages.at(-1)?.message.content).toContain('supervisor spawned, waiting ping')
     expect(sendMessages.at(-1)?.message.content).not.toContain('PLAN APPROVED continuation completed')
   })
