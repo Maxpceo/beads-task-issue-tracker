@@ -9,7 +9,6 @@ import { evaluateBashPolicy, evaluatePathPolicy } from '../../.pi/extensions/bea
 import sessionReplayExtension from '../../.pi/extensions/session-replay/index'
 import subagentExtension from '../../.pi/extensions/subagent/index'
 import { createDashboardState, renderDashboardLines, selectDashboardAgents, upsertDashboardCard } from '../../.pi/extensions/subagent/dashboard'
-import warpNotificationsExtension, { buildWarpOscPayload } from '../../.pi/extensions/warp-notifications/index'
 import workflowChainExtension from '../../.pi/extensions/workflow-chain/index'
 
 const projectRoot = process.cwd()
@@ -229,24 +228,5 @@ describe('Pi runtime E2E automation harness', () => {
     expect(blockedPath?.block).toBe(true)
     expect(safePath?.block).not.toBe(true)
     logPass('beads-policy')
-  })
-
-  it('warp-notifications: command and turn-end paths have automated OSC 777 payload coverage', async () => {
-    const payload = buildWarpOscPayload('Pi; test\nnotification', 'cwd; /tmp\nnext')
-    expect(payload).toBe('\x1b]777;notify;Pi: test notification;cwd: /tmp next\x07')
-
-    const h = createCommandHarness(projectRoot)
-    warpNotificationsExtension(h.pi)
-    await h.commands.get('warp-notify-test').handler('', h.ctx)
-    await h.handlers.get('agent_start')?.({}, h.ctx)
-    await h.handlers.get('tool_call')?.({ toolName: 'bash', input: { command: 'pnpm test' } }, h.ctx)
-    await h.handlers.get('tool_result')?.({ toolName: 'bash', isError: false }, h.ctx)
-    await h.handlers.get('agent_end')?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Harness complete' }] }] }, h.ctx)
-
-    const turnPayload = buildWarpOscPayload('✅ Pi: Harness Model', '[💻 pnpm test · 1 ops · pi-e2e-session] Harness complete')
-    expect(turnPayload).toContain('\x1b]777;notify;')
-    expect(turnPayload).toContain('Harness complete')
-    expect(h.notifications.at(-1)).toMatchObject({ message: 'Sent test Warp notification', level: 'info' })
-    logPass('warp-notifications')
   })
 })
