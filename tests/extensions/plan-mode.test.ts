@@ -97,6 +97,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
   const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
   const agentEndHandlers: Array<(event: any, ctx: any) => unknown> = []
+  const sessionStartHandlers: Array<(event: any, ctx: any) => unknown> = []
   const sendMessages: Array<{ message: any, options?: any }> = []
   const sendUserMessages: string[] = []
   const execCalls: Array<{ command: string, args: string[] }> = []
@@ -108,6 +109,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
 
   const pi: any = {
     registerFlag() {},
+    getFlag() { return false },
     registerCommand: (name: string, config: { handler: (args: string, ctx: any) => unknown }) => commandHandlers.set(name, config),
     registerTool: (tool: any) => toolHandlers.set(tool.name, tool),
     registerShortcut() {},
@@ -115,6 +117,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       if (event === 'input') inputHandlers.push(handler)
       if (event === 'tool_call') toolCallHandlers.push(handler)
       if (event === 'agent_end') agentEndHandlers.push(handler)
+      if (event === 'session_start') sessionStartHandlers.push(handler)
     },
     appendEntry: (type: string, data: unknown) => { sessionEntries.push({ type, data }) },
     sendMessage: (message: any, sendOptions?: any) => {
@@ -194,7 +197,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   })
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sendMessages, sendUserMessages, execCalls, delayedClaimEvents, trace, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sessionStartHandlers, sendMessages, sendUserMessages, execCalls, delayedClaimEvents, trace, ctx }
 }
 
 describe('Pi plan-mode bash allowlist', () => {
@@ -251,6 +254,34 @@ describe('Pi plan-mode workflow synchronization', () => {
     expect(statuses['plan-mode']).toBeUndefined()
     expect(widgets['plan-todos']).toBeUndefined()
     expect(activeTools.at(-1)).toEqual(expectedNormalTools)
+  })
+
+  it('plan-mode idle does not coerce implementing non-terminal activeBead', async () => {
+    const { sessionStartHandlers, commandHandlers, workflowUpdates, ctx } = makeHarness({
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-dbtg',
+          state: 'implementing',
+          sessionMode: 'implementing',
+          branch: 'fix/dbtg-visible-cmux-cwd-state',
+          worktreePath: '/tmp/task',
+          startCommit: 'abc123',
+          bdStatus: 'in_progress',
+        },
+      }],
+    })
+
+    await sessionStartHandlers[0]?.({}, ctx)
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off' })
+    expect(workflowUpdates.at(-1)).not.toHaveProperty('sessionMode', 'idle')
+    expect(workflowUpdates.at(-1)).not.toHaveProperty('state', 'idle')
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await commandHandlers.get('plan-cancel')?.handler('', ctx)
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off' })
+    expect(workflowUpdates.at(-1)).not.toHaveProperty('sessionMode', 'idle')
   })
 
   it('parses varied explicit claim+plan workflow intents without matching full phrases', () => {

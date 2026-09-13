@@ -452,9 +452,13 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 			startCommit: state.startCommit,
 			sessionKey: scope.sessionKey,
 		} : scope;
-		const hasOwnership = !hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)
+		const ctxSessionKey = currentSessionKey(ctx);
+		const skipWipeForKeylessCtx = !ctxSessionKey && hasRecordedTaskScope && !isTerminalBdStatus(bdStatus);
+		const hasOwnership = skipWipeForKeylessCtx || (
+			!hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)
 			&& hasCurrentSessionOwnership(state, ctx)
-			&& (hasCurrentScope || hasRecordedTaskScope);
+			&& (hasCurrentScope || hasRecordedTaskScope)
+		);
 		if (!hasOwnership) {
 			staleRecoveryBlockedBeads.add(state.activeBead);
 			const cleared = clearUnsafeApprovedImplementingState({
@@ -724,7 +728,10 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		}
 		if (event.activeBead !== undefined) {
 			next.activeBead = event.activeBead || undefined;
-			if (event.activeBead && event.ctx) next.sessionKey = currentSessionKey(event.ctx);
+			if (event.activeBead && event.ctx) {
+				const key = currentSessionKey(event.ctx);
+				if (key) next.sessionKey = key;
+			}
 		}
 		if (event.branch !== undefined) next.branch = event.branch || undefined;
 		if (event.worktreePath !== undefined) next.worktreePath = event.worktreePath || undefined;
@@ -733,8 +740,16 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (event.planMode !== undefined) next.planMode = event.planMode;
 		if (event.planApproved !== undefined) next.planApproved = event.planApproved;
 		if (event.sessionMode !== undefined) {
-			next.sessionMode = event.sessionMode || undefined;
-			if (!event.state && event.sessionMode && isWorkflowStateName(event.sessionMode)) next.state = event.sessionMode;
+			const implementingNonTerminal = Boolean(workflowState.activeBead)
+				&& (workflowState.state === "implementing" || workflowState.sessionMode === "implementing")
+				&& !isTerminalWorkflowState(workflowState.state)
+				&& !isTerminalBdStatus(workflowState.bdStatus);
+			if (event.sessionMode === "idle" && implementingNonTerminal && !event.state) {
+				/* plan-mode idle must not coerce state=idle or drop a non-terminal implementing bead */
+			} else {
+				next.sessionMode = event.sessionMode || undefined;
+				if (!event.state && event.sessionMode && isWorkflowStateName(event.sessionMode)) next.state = event.sessionMode;
+			}
 		}
 		if (event.mergeSlotHeld !== undefined) next.mergeSlotHeld = event.mergeSlotHeld;
 		return setState(next, event.ctx);

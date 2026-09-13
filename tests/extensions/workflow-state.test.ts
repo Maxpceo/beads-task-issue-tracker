@@ -12,6 +12,7 @@ function makeHarness(options: {
   commentAddCode?: number
   entries?: Array<{ type: string; customType?: string; data?: unknown }>
   sessionKey?: string
+  omitSessionKey?: boolean
   ctxCwd?: string
   processBranch?: string
   processWorktreePath?: string
@@ -102,7 +103,7 @@ function makeHarness(options: {
     cwd: options.ctxCwd,
     sessionManager: {
       getEntries: () => options.entries ?? [],
-      getSessionId: () => options.sessionKey ?? 'session-current',
+      getSessionId: () => options.omitSessionKey ? undefined : (options.sessionKey ?? 'session-current'),
     },
     ui: { notify: (message: string, level?: string) => notifications.push({ message, level }), setStatus: (key: string, value: string | undefined) => { statuses[key] = value }, theme: { fg: (_style: string, value: string) => value } },
   }
@@ -948,6 +949,104 @@ describe('Pi workflow-state session-scoped recovery', () => {
     })
     expect(statuses['workflow-state']).toContain('session:implementing')
     expect(statuses['workflow-state']).toContain('plan:off')
+  })
+
+  it('does not coerce plan-mode idle over implementing non-terminal activeBead', async () => {
+    const { eventHandlers, ctx, appended } = makeHarness({
+      branch: 'fix/dbtg-visible-cmux-cwd-state',
+      worktreePath: '/repo/worktrees/dbtg-visible-cmux-cwd-state',
+      startCommit: 'task-head',
+      ctxCwd: '/repo/primary',
+      gitScopes: {
+        '/repo/worktrees/dbtg-visible-cmux-cwd-state': {
+          branch: 'fix/dbtg-visible-cmux-cwd-state',
+          worktreePath: '/repo/worktrees/dbtg-visible-cmux-cwd-state',
+          startCommit: 'task-head',
+        },
+        '/repo/primary': { branch: 'main', worktreePath: '/repo/primary', startCommit: 'main-head' },
+      },
+      issues: {
+        'bead-dbtg': { status: 'in_progress', comments: 'PI_SESSION_KEY: id:session-current\nBRANCH: fix/dbtg-visible-cmux-cwd-state\nWORKTREE: /repo/worktrees/dbtg-visible-cmux-cwd-state\nSTART_COMMIT: task-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'implementing',
+            sessionMode: 'implementing',
+            activeBead: 'bead-dbtg',
+            branch: 'fix/dbtg-visible-cmux-cwd-state',
+            worktreePath: '/repo/worktrees/dbtg-visible-cmux-cwd-state',
+            startCommit: 'task-head',
+            sessionKey: 'id:session-current',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    await eventHandlers.get('workflow-state:update')?.({ ctx, planMode: 'off', sessionMode: 'idle' }, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('state=implementing')
+    expect(context.message.content).toContain('bead=bead-dbtg')
+    expect(context.message.content).toContain('worktree=/repo/worktrees/dbtg-visible-cmux-cwd-state')
+    expect(context.message.content).not.toContain('state=idle')
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-dbtg', state: 'implementing', worktreePath: '/repo/worktrees/dbtg-visible-cmux-cwd-state' })
+  })
+
+  it('keyless ctx does not wipe valid recorded non-terminal task scope', async () => {
+    const { eventHandlers, ctx, appended } = makeHarness({
+      omitSessionKey: true,
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      gitScopes: {
+        '/repo/worktrees/dbtg-visible-cmux-cwd-state': {
+          branch: 'fix/dbtg-visible-cmux-cwd-state',
+          worktreePath: '/repo/worktrees/dbtg-visible-cmux-cwd-state',
+          startCommit: 'task-head',
+        },
+        '/repo/primary': { branch: 'main', worktreePath: '/repo/primary', startCommit: 'main-head' },
+      },
+      issues: {
+        'bead-dbtg': { status: 'in_progress', comments: 'PI_SESSION_KEY: id:session-current\nBRANCH: fix/dbtg-visible-cmux-cwd-state\nWORKTREE: /repo/worktrees/dbtg-visible-cmux-cwd-state\nSTART_COMMIT: task-head' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'implementing',
+            sessionMode: 'implementing',
+            activeBead: 'bead-dbtg',
+            branch: 'fix/dbtg-visible-cmux-cwd-state',
+            worktreePath: '/repo/worktrees/dbtg-visible-cmux-cwd-state',
+            startCommit: 'task-head',
+            sessionKey: 'id:session-current',
+            planMode: 'off',
+            mergeSlotHeld: false,
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('bead=bead-dbtg')
+    expect(context.message.content).toContain('state=implementing')
+    expect(context.message.content).toContain('worktree=/repo/worktrees/dbtg-visible-cmux-cwd-state')
+    expect(context.message.content).not.toContain('bead=-')
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-dbtg', state: 'implementing' })
   })
 
   it('recovers unsafe approved implementing state by current session ownership evidence', async () => {

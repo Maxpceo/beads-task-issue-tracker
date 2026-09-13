@@ -54,6 +54,16 @@ export function nsDir(workspaceId: string, env: NodeJS.ProcessEnv = process.env)
 	return path.join(orchRoot(env), "ns", workspaceId);
 }
 
+export const PROTECTED_SPAWN_BRANCHES = new Set(["main", "master"]);
+
+export function posixQuote(value: string): string {
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+export function isProtectedSpawnBranch(branch?: string): boolean {
+	return Boolean(branch && PROTECTED_SPAWN_BRANCHES.has(branch));
+}
+
 export function buildVisibleChildArgv(input: VisibleChildArgvInput): string[] {
 	const tools = input.tools?.trim() || DEFAULT_SUPERVISOR_TOOLS;
 	const args = ["pi"];
@@ -62,6 +72,22 @@ export function buildVisibleChildArgv(input: VisibleChildArgvInput): string[] {
 	else args.push("--session", input.session.dir);
 	args.push("--append-system-prompt", input.systemPromptFile, "--tools", tools, `Task: read ${input.taskFile} and execute it.`);
 	return args;
+}
+
+export function buildVisibleChildSpawnPayload(worktreePath: string, argv: string[]): string {
+	const quotedArgv = argv.map(posixQuote).join(" ");
+	return `cd ${posixQuote(worktreePath)} && ${quotedArgv}\n`;
+}
+
+export function visibleCmuxSpawnFailReason(input: { branch?: string; worktreePath?: string; payload?: string }): string | undefined {
+	const worktreePath = input.worktreePath?.trim() ?? "";
+	if (!worktreePath) return "transport=cmux spawn fail-close: payload without task worktree";
+	if (isProtectedSpawnBranch(input.branch)) return `transport=cmux spawn fail-close: spawn target is protected branch ${input.branch}`;
+	const payload = input.payload ?? "";
+	if (!payload.includes(worktreePath) || !/\bcd\b/.test(payload) || !payload.includes("pi")) {
+		return "transport=cmux spawn fail-close: payload without task worktree";
+	}
+	return undefined;
 }
 
 export function validateVisibleChildArgv(args: string[]): string[] {

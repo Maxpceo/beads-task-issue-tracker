@@ -8,6 +8,7 @@ import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromCont
 import {
 	appendPanesEnv,
 	buildVisibleChildArgv,
+	buildVisibleChildSpawnPayload,
 	findRegistryByTaskId,
 	getCmuxAdapterForTests,
 	liveEntriesForBead,
@@ -17,13 +18,17 @@ import {
 	readDigestPreview,
 	saveRegistry,
 	validateVisibleChildArgv,
+	visibleCmuxSpawnFailReason,
 	worktreeOrchDir,
 	type CmuxAdapter,
 	type DispatchRegistryEntry,
 } from "./cmux-transport";
 export {
 	buildVisibleChildArgv,
+	buildVisibleChildSpawnPayload,
+	posixQuote,
 	validateVisibleChildArgv,
+	visibleCmuxSpawnFailReason,
 	pruneRegistry,
 	persistIsolationFiles,
 	setCmuxAdapterForTests,
@@ -653,7 +658,23 @@ async function submitForReviewFromWrapper(pi: ExtensionAPI, beadId: string, agen
 	if (updateResult.code !== 0) throw new Error(`dispatch_supervisor wrapper submit не перевёл bead в inreview: ${updateResult.stderr || updateResult.stdout}`);
 }
 
-export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only"; text: string }> {
+function emitVisibleDispatchBind(
+	pi: ExtensionAPI,
+	input: { beadId: string; state: "implementing" | "inreview"; branch?: string; worktreePath: string; startCommit?: string },
+	ctx?: ToolContext,
+): void {
+	pi.events.emit("workflow-state:update", {
+		ctx,
+		activeBead: input.beadId,
+		state: input.state,
+		sessionMode: input.state,
+		branch: input.branch,
+		worktreePath: input.worktreePath,
+		startCommit: input.startCommit,
+	});
+}
+
+export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only"; text: string }> {
 	const found = findRegistryByTaskId(params.taskId);
 	if (!found) throw new Error(`complete_visible_dispatch: нет registry для ${params.taskId}`);
 	const { file, registry, entry, index } = found;
@@ -664,17 +685,25 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
 	if (!entry.startCommit) throw new Error(`complete_visible_dispatch: нет START_COMMIT для ${params.taskId}`);
 	const startCommit = entry.startCommit;
+	let branch = "";
+	try {
+		branch = await getGitValue(pi, entry.worktree, ["branch", "--show-current"]);
+	} catch {
+		branch = "";
+	}
 	const ready = supervisorArtifactReadyForReview({ output: resultText, exitCode: 0 }, startCommit, endCommit);
 	if (!ready) {
-		await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
+		await addEndCommitComment(pi, entry.beadId, entry.role, branch, entry.worktree, startCommit, endCommit);
 		registry.entries[index] = { ...entry, submitStatus: "result-only" };
 		saveRegistry(file, registry);
+		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "implementing", branch, worktreePath: entry.worktree, startCommit }, ctx);
 		return { status: "result-only", text: preview.text };
 	}
-	await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
-	await submitForReviewFromWrapper(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit, resultText);
+	await addEndCommitComment(pi, entry.beadId, entry.role, branch, entry.worktree, startCommit, endCommit);
+	await submitForReviewFromWrapper(pi, entry.beadId, entry.role, branch, entry.worktree, startCommit, endCommit, resultText);
 	registry.entries[index] = { ...entry, submitStatus: "submitted" };
 	saveRegistry(file, registry);
+	emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "inreview", branch, worktreePath: entry.worktree, startCommit }, ctx);
 	return { status: "submitted", text: resultText.slice(0, 2000) };
 }
 
@@ -783,8 +812,9 @@ async function dispatchVisibleCmux(input: {
 	worktreePath: string;
 	startCommit: string;
 	cwd: string;
+	ctx?: ToolContext;
 }): Promise<DispatchResult> {
-	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd } = input;
+	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, ctx } = input;
 	const taskId = `task-${bead.id.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-24)}`;
 	if (params.dryRun) {
 		const argv = buildVisibleChildArgv({
@@ -839,11 +869,14 @@ Next step is review, same as today. Do not call review yourself.
 	});
 	const argvErrors = validateVisibleChildArgv(argv);
 	if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
+	const payload = buildVisibleChildSpawnPayload(worktreePath, argv);
 	let surface = "";
 	try {
 		const split = await adapter.newSplit();
 		surface = split.surface;
-		await adapter.send(surface, `${argv.join(" ")}\n`);
+		const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath, payload });
+		if (spawnFail) throw new Error(spawnFail);
+		await adapter.send(surface, payload);
 	} catch (error) {
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
@@ -854,7 +887,7 @@ Next step is review, same as today. Do not call review yourself.
 		taskId,
 		beadId: bead.id,
 		pane: surface,
-		worktree: cwd,
+		worktree: worktreePath,
 		role: agentName,
 		model: agent.model ?? "",
 		taskFile: files.taskFile,
@@ -875,7 +908,7 @@ Next step is review, same as today. Do not call review yourself.
 		throw error;
 	}
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, `transport=cmux spawn-ack taskId=${taskId} pane=${surface}\nDIGEST_FILE=${files.digestFile}\nRESULT_FILE=${files.resultFile}`);
-	pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", sessionMode: "implementing", branch, worktreePath, startCommit });
+	emitVisibleDispatchBind(pi, { beadId: bead.id, state: "implementing", branch, worktreePath, startCommit }, ctx);
 	return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
 		pane: surface,
 		taskFile: files.taskFile,
@@ -925,7 +958,7 @@ async function dispatch(
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
 	if (mode === "supervisor" && params.transport === "cmux") {
-		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd });
+		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, ctx });
 	}
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
@@ -1027,9 +1060,9 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 			required: ["taskId"],
 			additionalProperties: false,
 		},
-		async execute(_id: string, params: { taskId: string }) {
+		async execute(_id: string, params: { taskId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
-				const result = await completeVisibleDispatch(pi, params);
+				const result = await completeVisibleDispatch(pi, params, ctx);
 				return { content: [{ type: "text", text: `complete_visible_dispatch status=${result.status}\n${result.text}` }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `complete_visible_dispatch не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
