@@ -8,7 +8,10 @@ import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromCont
 import {
 	appendPanesEnv,
 	buildVisibleChildArgv,
+	buildVisibleFollowupPayload,
 	buildVisibleChildSpawnPayload,
+	classifyVisiblePane,
+	findLiveFollowupEntry,
 	findRegistryByTaskId,
 	getCmuxAdapterForTests,
 	liveEntriesForBead,
@@ -17,6 +20,7 @@ import {
 	persistIsolationFiles,
 	readDigestPreview,
 	saveRegistry,
+	unlinkFollowupArtifacts,
 	validateVisibleChildArgv,
 	visibleCmuxSpawnFailReason,
 	worktreeOrchDir,
@@ -26,6 +30,11 @@ import {
 export {
 	buildVisibleChildArgv,
 	buildVisibleChildSpawnPayload,
+	buildVisibleFollowupPayload,
+	classifyVisiblePane,
+	followupPayloadLooksLikeSpawnArgv,
+	findLiveFollowupEntry,
+	unlinkFollowupArtifacts,
 	posixQuote,
 	validateVisibleChildArgv,
 	visibleCmuxSpawnFailReason,
@@ -172,6 +181,21 @@ const SupervisorDispatchParams = {
 	required: ["beadId"],
 	additionalProperties: false,
 } as const;
+
+const FollowupVisibleDispatchParams = {
+	type: "object",
+	properties: {
+		beadId: { type: "string", description: "Bead ID with a live spawned supervisor pane" },
+		task: { type: "string", description: "Follow-up task text sent into the waiting Pi (not spawn argv)" },
+		role: { type: "string", description: "Supervisor role when more than one live pane exists" },
+	},
+	required: ["beadId", "task"],
+	additionalProperties: false,
+} as const;
+
+type FollowupVisibleParams = { beadId: string; task: string; role?: string };
+
+const FOLLOWUP_ALLOWED_STATUSES = new Set(["in_progress", "inreview"]);
 
 function parseFrontmatter(markdown: string): { data: Record<string, string>; body: string } {
 	if (!markdown.startsWith("---\n")) return { data: {}, body: markdown };
@@ -707,6 +731,156 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	return { status: "submitted", text: resultText.slice(0, 2000) };
 }
 
+function patchFollowupEntry(
+	found: { file: string; registry: ReturnType<typeof loadRegistry>; entry: DispatchRegistryEntry; index: number },
+	patch: Partial<DispatchRegistryEntry>,
+): DispatchRegistryEntry {
+	const next = { ...found.entry, ...patch };
+	found.registry.entries[found.index] = next;
+	saveRegistry(found.file, found.registry);
+	found.entry = next;
+	return next;
+}
+
+async function validateFollowupReusePreflight(
+	pi: ExtensionAPI,
+	entry: DispatchRegistryEntry,
+	ctx?: ToolContext,
+): Promise<{ branch: string; worktreePath: string }> {
+	const cwd = entry.worktree;
+	const branch = await getGitValue(pi, cwd, ["branch", "--show-current"]);
+	const worktreePath = await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
+	if (path.resolve(worktreePath) !== path.resolve(entry.worktree)) {
+		throw new Error(`followup_visible_dispatch preflight заблокирован: worktree mismatch, git=${worktreePath}, registry=${entry.worktree}`);
+	}
+	const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
+	if (stateScope.ok) {
+		if (stateScope.scope.activeBead && stateScope.scope.activeBead !== entry.beadId) {
+			throw new Error(`followup_visible_dispatch preflight заблокирован: active bead mismatch, workflow-state=${stateScope.scope.activeBead}, requested=${entry.beadId}`);
+		}
+		if (stateScope.scope.branch && stateScope.scope.branch !== branch) {
+			throw new Error(`followup_visible_dispatch preflight заблокирован: branch mismatch, git=${branch}, workflow-state=${stateScope.scope.branch}`);
+		}
+		if (stateScope.scope.worktreePath && path.resolve(stateScope.scope.worktreePath) !== path.resolve(worktreePath)) {
+			throw new Error(`followup_visible_dispatch preflight заблокирован: worktree mismatch, git=${worktreePath}, workflow-state=${stateScope.scope.worktreePath}`);
+		}
+	}
+	return { branch, worktreePath };
+}
+
+function resolveFollowupAdapter(pi: ExtensionAPI): CmuxAdapter {
+	const testAdapter = getCmuxAdapterForTests();
+	if (testAdapter) return testAdapter;
+	return createLiveCmuxAdapter(pi.exec);
+}
+
+async function sendFollowupWithHungCap(
+	adapter: CmuxAdapter,
+	found: { file: string; registry: ReturnType<typeof loadRegistry>; entry: DispatchRegistryEntry; index: number },
+	payload: string,
+): Promise<void> {
+	for (let attempt = 0; attempt < 2; attempt++) {
+		try {
+			await adapter.send(found.entry.pane, payload);
+			patchFollowupEntry(found, { sendFailCount: 0, hung: false });
+			return;
+		} catch (error) {
+			const failCount = (found.entry.sendFailCount ?? 0) + 1;
+			const hung = failCount >= 2;
+			patchFollowupEntry(found, { sendFailCount: failCount, hung });
+			if (hung) {
+				throw new Error(`followup_visible_dispatch: hung cap-2 для ${found.entry.taskId}: BLOCKED`);
+			}
+		}
+	}
+	throw new Error(`followup_visible_dispatch: send failed: BLOCKED`);
+}
+
+async function respawnVisibleFollowup(
+	adapter: CmuxAdapter,
+	found: { file: string; registry: ReturnType<typeof loadRegistry>; entry: DispatchRegistryEntry; index: number },
+	task: string,
+	branch: string,
+): Promise<DispatchRegistryEntry> {
+	const entry = found.entry;
+	const taskBody = task.endsWith("\n") ? task : `${task}\n`;
+	if (entry.taskFile) {
+		fs.mkdirSync(path.dirname(entry.taskFile), { recursive: true });
+		fs.writeFileSync(entry.taskFile, taskBody);
+	}
+	const argv = buildVisibleChildArgv({
+		model: entry.model || undefined,
+		systemPromptFile: entry.promptFile,
+		session: { kind: "no-session" },
+		taskFile: entry.taskFile,
+	});
+	const argvErrors = validateVisibleChildArgv(argv);
+	if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
+	const payload = buildVisibleChildSpawnPayload(entry.worktree, argv);
+	const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath: entry.worktree, payload });
+	if (spawnFail) throw new Error(spawnFail);
+	await adapter.identify();
+	let surface = "";
+	try {
+		const split = await adapter.newSplit();
+		surface = split.surface;
+		await adapter.send(surface, payload);
+	} catch (error) {
+		if (surface) await adapter.closeSurface(surface);
+		throw error;
+	}
+	await adapter.closeSurface(entry.pane);
+	unlinkFollowupArtifacts(entry);
+	return patchFollowupEntry(found, {
+		pane: surface,
+		submitStatus: "none",
+		sendFailCount: 0,
+		hung: false,
+	});
+}
+
+export async function followupVisibleDispatch(
+	pi: ExtensionAPI,
+	params: FollowupVisibleParams,
+	ctx?: ToolContext,
+): Promise<{ status: "sent" | "busy" | "spawned"; text: string; taskId: string; pane: string }> {
+	const found = findLiveFollowupEntry(params.beadId, params.role);
+	let entry = found.entry;
+	if (entry.hung) {
+		throw new Error(`followup_visible_dispatch: hung pane для ${entry.taskId}; close-surface + tombstone before new spawn: BLOCKED`);
+	}
+	const payload = buildVisibleFollowupPayload(params.task);
+	const bead = await getBead(pi, params.beadId);
+	if (bead.status && (TERMINAL_STATUSES.has(bead.status) || bead.status === "blocked")) {
+		throw new Error(`followup_visible_dispatch: terminal/blocked bead нельзя follow-up: status=${bead.status}: BLOCKED`);
+	}
+	if (!FOLLOWUP_ALLOWED_STATUSES.has(bead.status ?? "")) {
+		throw new Error(`followup_visible_dispatch требует status in_progress|inreview, получен ${bead.status ?? "unknown"}: BLOCKED`);
+	}
+	const { branch, worktreePath } = await validateFollowupReusePreflight(pi, entry, ctx);
+	const adapter = resolveFollowupAdapter(pi);
+	let screen: string;
+	try {
+		screen = await adapter.readScreen(entry.pane);
+	} catch (error) {
+		throw new Error(`cmux read-screen failed: ${(error as Error).message}: BLOCKED`);
+	}
+	const health = classifyVisiblePane(screen);
+	if (health === "busy") {
+		return { status: "busy", text: "visible pane busy (thinking); 0 send, 0 spawn", taskId: entry.taskId, pane: entry.pane };
+	}
+	if (health === "shell" || health === "dead") {
+		entry = await respawnVisibleFollowup(adapter, found, params.task, branch);
+		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "implementing", branch, worktreePath, startCommit: entry.startCommit }, ctx);
+		return { status: "spawned", text: `followup respawn pane=${entry.pane} taskId=${entry.taskId}`, taskId: entry.taskId, pane: entry.pane };
+	}
+	unlinkFollowupArtifacts(entry);
+	entry = patchFollowupEntry(found, { submitStatus: "none", sendFailCount: 0, hung: false });
+	await sendFollowupWithHungCap(adapter, found, payload);
+	emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "implementing", branch, worktreePath, startCommit: entry.startCommit }, ctx);
+	return { status: "sent", text: `followup sent pane=${entry.pane} taskId=${entry.taskId}`, taskId: entry.taskId, pane: found.entry.pane };
+}
+
 async function validateSupervisorPreflight(pi: ExtensionAPI, params: { beadId: string; cwd?: string }, ctx?: ToolContext): Promise<{ scope: TaskScope; cwd: string; branch: string; worktreePath: string; startCommit: string; currentHead: string; evidence: string }> {
 	const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
 	if (!stateScope.ok) throw new Error(taskScopeErrorToPolicyReason(stateScope.error, params.beadId, "dispatch_supervisor preflight"));
@@ -795,6 +969,11 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 			const result = await exec("cmux", ["send", "--surface", surface, text]);
 			if (result.code !== 0) throw new Error(`cmux send failed: ${result.stderr || result.stdout}`);
 		},
+		async readScreen(surface) {
+			const result = await exec("cmux", ["read-screen", "--surface", surface, "--lines", "20"]);
+			if (result.code !== 0) throw new Error(`cmux read-screen failed: ${result.stderr || result.stdout}`);
+			return `${result.stdout ?? ""}`;
+		},
 		async closeSurface(surface) {
 			await exec("cmux", ["close-surface", "--surface", surface]);
 		},
@@ -846,8 +1025,8 @@ async function dispatchVisibleCmux(input: {
 	const dir = nsDir(identified.workspaceId);
 	const registryFile = path.join(dir, "dispatch-registry.json");
 	const existing = loadRegistry(registryFile);
-	if (liveEntriesForBead(existing, bead.id).length > 0) {
-		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered)`);
+	if (liveEntriesForBead(existing, bead.id, agentName).length > 0) {
+		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; use followup_visible_dispatch({ beadId }))`);
 	}
 	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
 	fs.mkdirSync(resultsDir, { recursive: true });
@@ -1059,6 +1238,21 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `dispatch_reviewer не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "followup_visible_dispatch",
+		label: "Follow-up Visible Dispatch",
+		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
+		parameters: FollowupVisibleDispatchParams,
+		async execute(_id: string, params: FollowupVisibleParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
+			try {
+				const result = await followupVisibleDispatch(pi, params, ctx);
+				return { content: [{ type: "text", text: `followup_visible_dispatch status=${result.status}\n${result.text}` }], details: result };
+			} catch (error) {
+				return { content: [{ type: "text", text: `followup_visible_dispatch не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
 			}
 		},
 	});

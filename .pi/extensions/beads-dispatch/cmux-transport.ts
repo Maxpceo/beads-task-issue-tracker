@@ -29,6 +29,8 @@ export interface DispatchRegistryEntry {
 	submitStatus?: "none" | "result-only" | "submitted";
 	callerSurface?: string;
 	startCommit?: string;
+	sendFailCount?: number;
+	hung?: boolean;
 	createdAt: string;
 }
 
@@ -36,12 +38,14 @@ export interface DispatchRegistry {
 	entries: DispatchRegistryEntry[];
 }
 
+export type VisiblePaneHealth = "waiting" | "busy" | "shell" | "dead";
+
 export interface CmuxAdapter {
 	identify(): Promise<{ workspaceId: string }>;
 	newSplit(): Promise<{ surface: string }>;
 	send(surface: string, text: string): Promise<void>;
 	closeSurface(surface: string): Promise<void>;
-	readScreen?(surface: string): Promise<boolean>;
+	readScreen(surface: string): Promise<string>;
 }
 
 export function orchRoot(env: NodeJS.ProcessEnv = process.env): string {
@@ -77,6 +81,29 @@ export function buildVisibleChildArgv(input: VisibleChildArgvInput): string[] {
 export function buildVisibleChildSpawnPayload(worktreePath: string, argv: string[]): string {
 	const quotedArgv = argv.map(posixQuote).join(" ");
 	return `cd ${posixQuote(worktreePath)} && ${quotedArgv}\n`;
+}
+
+const SESSION_LINE_RE = /\bsession(?:Mode)?(?:\s*[:=]\s*|\s+)(idle|implementing|inreview|waiting|reviewing|planning)\b/i;
+const BUSY_RE = /\b(thinking|busy)\b/i;
+const SHELL_PROMPT_RE = /(?:^|\n)[^\n]*[$%❯]\s*$/m;
+
+export function classifyVisiblePane(text: string): VisiblePaneHealth {
+	const screen = text ?? "";
+	if (BUSY_RE.test(screen)) return "busy";
+	if (SESSION_LINE_RE.test(screen)) return "waiting";
+	if (SHELL_PROMPT_RE.test(screen.trimEnd())) return "shell";
+	return "dead";
+}
+
+export function buildVisibleFollowupPayload(task: string): string {
+	if (task.trim().length === 0) {
+		throw new Error("followup_visible_dispatch: пустой task: BLOCKED");
+	}
+	return task.endsWith("\n") ? task : `${task}\n`;
+}
+
+export function followupPayloadLooksLikeSpawnArgv(payload: string): boolean {
+	return /^\s*cd\s/.test(payload) && /\s&&\s/.test(payload) && /\bpi\b/.test(payload);
 }
 
 export function visibleCmuxSpawnFailReason(input: { branch?: string; worktreePath?: string; payload?: string }): string | undefined {
@@ -153,6 +180,16 @@ export function unlinkIsolationFiles(entry: DispatchRegistryEntry): void {
 	}
 }
 
+export function unlinkFollowupArtifacts(entry: DispatchRegistryEntry): void {
+	for (const file of [entry.digestFile, entry.resultFile]) {
+		try {
+			if (file && fs.existsSync(file)) fs.unlinkSync(file);
+		} catch {
+			/* ignore */
+		}
+	}
+}
+
 export interface SpawnAck {
 	status: "spawned";
 	pane: string;
@@ -176,8 +213,38 @@ export function worktreeOrchDir(worktree: string): string {
 	return path.join(worktree, ".pi", "orchestrator");
 }
 
-export function liveEntriesForBead(registry: DispatchRegistry, beadId: string): DispatchRegistryEntry[] {
-	return registry.entries.filter((entry) => entry.beadId === beadId && entry.status === "spawned");
+export function liveEntriesForBead(registry: DispatchRegistry, beadId: string, role?: string): DispatchRegistryEntry[] {
+	return registry.entries.filter((entry) => entry.beadId === beadId && entry.status === "spawned" && (role ? entry.role === role : true));
+}
+
+function isSupervisorRole(role: string): boolean {
+	return role.includes("supervisor");
+}
+
+export function findLiveFollowupEntry(
+	beadId: string,
+	role?: string,
+	env: NodeJS.ProcessEnv = process.env,
+): { file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number } {
+	const matches: Array<{ file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number }> = [];
+	const root = path.join(orchRoot(env), "ns");
+	if (fs.existsSync(root)) {
+		for (const name of fs.readdirSync(root)) {
+			const file = path.join(root, name, "dispatch-registry.json");
+			if (!fs.existsSync(file)) continue;
+			const registry = loadRegistry(file);
+			registry.entries.forEach((entry, index) => {
+				if (entry.beadId === beadId && entry.status === "spawned") matches.push({ file, registry, entry, index });
+			});
+		}
+	}
+	const selected = role ? matches.filter((item) => item.entry.role === role) : matches.filter((item) => isSupervisorRole(item.entry.role));
+	if (selected.length === 0) throw new Error("нет live pane; first spawn через dispatch_supervisor");
+	if (!role && selected.length > 1) throw new Error("followup_visible_dispatch: неоднозначный role, укажите role: BLOCKED");
+	if (role && selected.length > 1) throw new Error(`followup_visible_dispatch: несколько live pane для ${beadId} role=${role}: BLOCKED`);
+	const found = selected[0];
+	if (!found) throw new Error("нет live pane; first spawn через dispatch_supervisor");
+	return found;
 }
 
 export function findRegistryByTaskId(taskId: string, env: NodeJS.ProcessEnv = process.env): { file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number } | undefined {
