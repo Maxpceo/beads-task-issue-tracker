@@ -7,6 +7,8 @@ import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/i
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import {
 	appendPanesEnv,
+	beadSuffixFromId,
+	buildCmuxRenameArgv,
 	buildVisibleChildArgv,
 	buildVisibleFollowupPayload,
 	buildVisibleChildSpawnPayload,
@@ -17,26 +19,32 @@ import {
 	liveEntriesForBead,
 	loadRegistry,
 	nsDir,
+	ORCHESTRATOR_TAB_TITLE,
 	persistIsolationFiles,
 	readDigestPreview,
 	saveRegistry,
 	unlinkFollowupArtifacts,
 	validateVisibleChildArgv,
+	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
 	worktreeOrchDir,
 	type CmuxAdapter,
 	type DispatchRegistryEntry,
 } from "./cmux-transport";
 export {
+	beadSuffixFromId,
+	buildCmuxRenameArgv,
 	buildVisibleChildArgv,
 	buildVisibleChildSpawnPayload,
 	buildVisibleFollowupPayload,
 	classifyVisiblePane,
 	followupPayloadLooksLikeSpawnArgv,
 	findLiveFollowupEntry,
+	ORCHESTRATOR_TAB_TITLE,
 	unlinkFollowupArtifacts,
 	posixQuote,
 	validateVisibleChildArgv,
+	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
 	pruneRegistry,
 	persistIsolationFiles,
@@ -897,6 +905,9 @@ async function respawnVisibleFollowup(
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
+	await safeRenameSurface(adapter, surface, visibleChildTabTitle(entry.role, entry.beadId));
+	const caller = resolveCallerSurface(adapter, entry);
+	if (caller) await safeRenameSurface(adapter, caller, ORCHESTRATOR_TAB_TITLE);
 	await adapter.closeSurface(entry.pane);
 	unlinkFollowupArtifacts(entry);
 	return patchFollowupEntry(found, {
@@ -1045,7 +1056,26 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 		async closeSurface(surface) {
 			await exec("cmux", ["close-surface", "--surface", surface]);
 		},
+		async renameSurface(surface, title) {
+			const result = await exec("cmux", buildCmuxRenameArgv(surface, title));
+			if (result.code !== 0) throw new Error(`cmux rename failed: ${result.stderr || result.stdout}`);
+		},
 	};
+}
+
+function resolveCallerSurface(adapter: CmuxAdapter, entry?: DispatchRegistryEntry): string {
+	const fromMethod = typeof adapter.callerSurface === "function" ? adapter.callerSurface() : "";
+	return String(fromMethod || entry?.callerSurface || "").trim();
+}
+
+/** Fail-soft tab rename: never fails spawn, never closeSurface. */
+async function safeRenameSurface(adapter: CmuxAdapter, surface: string, title: string): Promise<void> {
+	if (!surface || !title || typeof adapter.renameSurface !== "function") return;
+	try {
+		await adapter.renameSurface(surface, title);
+	} catch {
+		/* title-only best effort */
+	}
 }
 
 function posixSingleQuote(value: string): string {
@@ -1155,7 +1185,9 @@ Next step is review, same as today. Do not call review yourself.
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	const callerSurface = liveAdapter?.callerSurface() || "";
+	const callerSurface = resolveCallerSurface(adapter) || liveAdapter?.callerSurface() || "";
+	await safeRenameSurface(adapter, surface, visibleChildTabTitle(agentName, bead.id));
+	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
 	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);
 	const entry: DispatchRegistryEntry = {
 		taskId,

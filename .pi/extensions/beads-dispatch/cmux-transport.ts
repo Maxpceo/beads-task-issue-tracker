@@ -46,6 +46,31 @@ export interface CmuxAdapter {
 	send(surface: string, text: string): Promise<void>;
 	closeSurface(surface: string): Promise<void>;
 	readScreen(surface: string): Promise<string>;
+	/** Optional: rename a surface tab after spawn. Live adapter always implements this. */
+	renameSurface?(surface: string, title: string): Promise<void>;
+	/** Optional: orchestrator/caller surface for rename; live adapter exposes via method. */
+	callerSurface?(): string;
+}
+
+export const ORCHESTRATOR_TAB_TITLE = "оркестратор";
+
+/** Last `-` segment of a bead id (`beads-task-issue-tracker-fo5d` → `fo5d`). */
+export function beadSuffixFromId(beadId: string): string {
+	const id = (beadId ?? "").trim();
+	if (!id) return "";
+	const idx = id.lastIndexOf("-");
+	if (idx < 0 || idx === id.length - 1) return id;
+	return id.slice(idx + 1);
+}
+
+/** Child pane title: `{role} · {bead-suffix}`. */
+export function visibleChildTabTitle(role: string, beadId: string): string {
+	return `${role} · ${beadSuffixFromId(beadId)}`;
+}
+
+/** Exact argv for `cmux tab-action rename` with `--focus false`. */
+export function buildCmuxRenameArgv(surface: string, title: string): string[] {
+	return ["tab-action", "--action", "rename", "--surface", surface, "--title", title, "--focus", "false"];
 }
 
 export function orchRoot(env: NodeJS.ProcessEnv = process.env): string {

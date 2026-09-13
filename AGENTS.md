@@ -138,6 +138,15 @@ Stage and commit только explicit file paths. Не stage whole trees чер
 bd status — lifecycle authority для beads. Pi `workflow-state` — только session-local context: active bead binding, branch/worktree/start/end commit, `sessionMode`, plan mode/approval и merge-slot hint. Agents используют typed workflow tools как primary path: `workflow_status`, `workflow_claim`, `workflow_reset`, `workflow_update`, `workflow_plan_mode`, `workflow_plan_approved` и `workflow_complete`, когда нужен local terminal cleanup. Slash commands вроде `/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/workflow-update`, `/plan` и `/plan-auto` — optional human UI shortcuts, а не required agent steps. После каждого mutating workflow tool или blocker дай visible checkpoint с observed state/tool result; не зависай silently. Checkpoint — inline progress marker, а не stop condition: когда next workflow step уже approved или required активным skill, продолжай в том же turn, если нет real decision point/blocker.
 Не start, claim, implement или dispatch unrelated work, пока current-session active bead имеет non-terminal bd status; terminal bd statuses — `closed`, `blocked` или explicit `deferred`/handoff с recorded reason. Если bd status — `inreview`, next action — `review-bead` / `review_bead`, а не другая задача. Если active local workflow-state stale, foreign или ambiguous, вызови `workflow_reset` или попроси explicit takeover confirmation. Если reset выполнен, чтобы выполнить explicit user request переключиться с open/terminal/stale bead на named next bead, сразу продолжай claim/planning этого next bead в том же turn. `land` — explicit save/push checkpoint, а `merge-to-main` — explicit session-final PR/merge workflow; ни один из них не является automatic per-task stage.
 
+## Cmux layout and panel names
+
+Visible cmux agent panes must be distinguishable by tab title:
+
+- Orchestrator tab: `оркестратор`
+- Agent tabs: `{role} · {bead-suffix}` (example: `test-supervisor · fo5d`, where `bead-suffix` is the last `-` segment of the bead id)
+
+Visible `dispatch_supervisor` / `dispatch_reviewer` (`transport=cmux`) auto-renames after spawn (`cmux tab-action rename`, `--focus false`). Do not rely on manual rename each spawn. Geometry 1/2 layout is a separate concern (evxj).
+
 ## Fast Path / Large Change Discipline
 
 Fast Path разрешён только когда orchestrator явно считает изменение trivial, low-risk и более дешёвым, чем supervisor dispatch.

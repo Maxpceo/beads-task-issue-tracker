@@ -5,6 +5,8 @@ import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import beadsDispatchExtension, {
+  beadSuffixFromId,
+  buildCmuxRenameArgv,
   buildVisibleChildArgv,
   buildVisibleChildSpawnPayload,
   completeVisibleDispatch,
@@ -14,9 +16,11 @@ import beadsDispatchExtension, {
   loadRegistry,
   nsDir,
   orchRoot,
+  ORCHESTRATOR_TAB_TITLE,
   persistIsolationFiles,
   posixQuote,
   pruneRegistry,
+  visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
   saveRegistry,
@@ -382,6 +386,56 @@ describe('dispatch_supervisor transport=cmux', () => {
     const second = await registered.execute('call-2', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
     expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId \}\)/)
     expect(second.content[0].text).toMatch(/BLOCKED/)
+  })
+
+  it('renames child and orchestrator tabs after visible spawn', async () => {
+    const renames: Array<{ surface: string; title: string }> = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-rename' } },
+      callerSurface() { return 'surface:orch' },
+      async newSplit() { return { surface: 'surface:child' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface(surface, title) { renames.push({ surface, title }) },
+    })
+    const beadId = 'beads-task-issue-tracker-fo5d'
+    const { registered, cwd, branch, head } = makePi({ beadId })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    expect(renames).toEqual([
+      { surface: 'surface:child', title: 'test-supervisor · fo5d' },
+      { surface: 'surface:orch', title: ORCHESTRATOR_TAB_TITLE },
+    ])
+    expect(visibleChildTabTitle('test-supervisor', beadId)).toBe('test-supervisor · fo5d')
+    expect(beadSuffixFromId(beadId)).toBe('fo5d')
+  })
+
+  it('live adapter rename uses tab-action argv with --focus false', async () => {
+    setCmuxAdapterForTests(null)
+    const cmuxCalls: string[][] = []
+    const beadId = 'beads-task-issue-tracker-fo5d'
+    const { registered, cwd, branch, head } = makePi({
+      beadId,
+      cmux: async (args) => {
+        cmuxCalls.push(args)
+        if (args[0] === 'identify') {
+          return { stdout: JSON.stringify({ caller: { workspace_ref: 'ws-live-rename', surface_ref: 'surface:orch' } }), stderr: '', code: 0 }
+        }
+        if (args[0] === 'new-split') return { stdout: 'surface:child\n', stderr: '', code: 0 }
+        if (args[0] === 'send') return { stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'tab-action') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    const renames = cmuxCalls.filter((args) => args[0] === 'tab-action')
+    expect(renames).toContainEqual(buildCmuxRenameArgv('surface:child', 'test-supervisor · fo5d'))
+    expect(renames).toContainEqual(buildCmuxRenameArgv('surface:orch', ORCHESTRATOR_TAB_TITLE))
+    expect(buildCmuxRenameArgv('surface:x', 't')).toEqual([
+      'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
+    ])
   })
 
   it('live typed cmux without adapter is BLOCKED when identify fails', async () => {
