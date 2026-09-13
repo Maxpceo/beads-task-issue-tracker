@@ -238,13 +238,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	function shouldPreserveImplementingOnPlanIdle(ctx: ExtensionContext): boolean {
+		const entries = ctx.sessionManager?.getEntries?.() ?? [];
+		for (const entry of [...entries].reverse()) {
+			const isWorkflowState = entry.type === "workflow-state" || (entry.type === "custom" && entry.customType === "workflow-state");
+			if (!isWorkflowState) continue;
+			const data = entry.data as { activeBead?: string; state?: string; sessionMode?: string; bdStatus?: string } | undefined;
+			if (!data?.activeBead) return false;
+			const implementing = data.state === "implementing" || data.sessionMode === "implementing";
+			const terminal = data.bdStatus === "closed" || data.bdStatus === "blocked" || data.bdStatus === "deferred" || data.state === "closed" || data.state === "blocked" || data.state === "deferred";
+			return implementing && !terminal;
+		}
+		return false;
+	}
+
 	function syncWorkflowPlanMode(ctx: ExtensionContext, planMode: "off" | "strict" | "auto", sessionMode?: string, extra: Record<string, unknown> = {}): void {
-		pi.events.emit("workflow-state:update", {
-			ctx,
-			planMode,
-			sessionMode,
-			...extra,
-		});
+		const event: Record<string, unknown> = { ctx, planMode, ...extra };
+		if (sessionMode !== undefined) {
+			const preserveImplementing = sessionMode === "idle" && extra.state !== "idle" && shouldPreserveImplementingOnPlanIdle(ctx);
+			if (!preserveImplementing) event.sessionMode = sessionMode;
+		}
+		pi.events.emit("workflow-state:update", event);
 	}
 
 	async function detectGitValue(ctx: ExtensionContext, args: string[]): Promise<string | undefined> {

@@ -6,13 +6,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import beadsDispatchExtension, {
   buildVisibleChildArgv,
+  buildVisibleChildSpawnPayload,
   completeVisibleDispatch,
   findRegistryByTaskId,
   loadRegistry,
   nsDir,
   orchRoot,
   persistIsolationFiles,
+  posixQuote,
   pruneRegistry,
+  visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
   saveRegistry,
   setCmuxAdapterForTests,
@@ -70,11 +73,11 @@ function currentBranch(cwd = process.cwd()) {
   return execFileSync('git', ['-C', cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || 'task/current'
 }
 
-function workflowCtx(cwd: string, beadId: string, branch: string, startCommit: string) {
+function workflowCtx(cwd: string, beadId: string, branch: string, startCommit: string, worktreePath = cwd) {
   return {
     cwd,
     sessionManager: {
-      getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: beadId, branch, worktreePath: cwd, startCommit, sessionKey: 'session:test' } }],
+      getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: beadId, branch, worktreePath, startCommit, sessionKey: 'session:test' } }],
     },
   }
 }
@@ -82,14 +85,15 @@ function workflowCtx(cwd: string, beadId: string, branch: string, startCommit: s
 function makePi(opts: { toolName?: string; execCalls?: Array<{ command: string; args: string[] }>; cwd?: string; branch?: string; head?: string; beadId?: string }) {
   const toolName = opts.toolName ?? 'dispatch_supervisor'
   const execCalls = opts.execCalls ?? []
+  const emitted: Array<{ name: string; event: Record<string, unknown> }> = []
   const cwd = opts.cwd ?? process.cwd()
-  const branch = opts.branch ?? currentBranch(cwd)
+  const branch = opts.branch ?? (currentBranch(cwd) === 'main' || currentBranch(cwd) === 'master' ? 'task/cmux-fixture' : currentBranch(cwd))
   const head = opts.head ?? 'abc1234'
   const beadId = opts.beadId ?? 'bead-a'
   let registered: any
   const tools: Record<string, any> = {}
   const pi = {
-    events: { emit() {} },
+    events: { emit(name: string, event: Record<string, unknown>) { emitted.push({ name, event }) } },
     registerTool(tool: any) {
       tools[tool.name] = tool
       if (tool.name === toolName) registered = tool
@@ -105,7 +109,7 @@ function makePi(opts: { toolName?: string; execCalls?: Array<{ command: string; 
     },
   }
   beadsDispatchExtension(pi as any)
-  return { pi, registered, tools, execCalls, cwd, branch, head, beadId }
+  return { pi, registered, tools, execCalls, emitted, cwd, branch, head, beadId }
 }
 
 describe('visible child argv', () => {
@@ -136,6 +140,23 @@ describe('visible child argv', () => {
     expect(custom[custom.indexOf('--tools') + 1]).toBe('read,bash')
     const def = buildVisibleChildArgv({ systemPromptFile: 'a.md', taskFile: 't.md', session: { kind: 'no-session' } })
     expect(def[def.indexOf('--tools') + 1]).toBe('read,bash,edit,write')
+  })
+
+  it('POSIX-quotes cd worktree && argv including spaces', () => {
+    const argv = buildVisibleChildArgv({ systemPromptFile: 'a.md', taskFile: '/tmp/task file.md', session: { kind: 'no-session' }, tools: 'read,bash,edit,write' })
+    const payload = buildVisibleChildSpawnPayload('/tmp/task worktree', argv)
+    expect(payload.startsWith(`cd ${posixQuote('/tmp/task worktree')} && `)).toBe(true)
+    expect(payload).toContain("pi")
+    expect(payload).toContain('--no-session')
+    expect(payload).not.toMatch(/^pi /)
+  })
+
+  it('fail-closes protected branch or payload without worktree', () => {
+    expect(visibleCmuxSpawnFailReason({ branch: 'main', worktreePath: '/tmp/task', payload: 'cd /tmp/task && pi\n' })).toMatch(/protected branch/)
+    expect(visibleCmuxSpawnFailReason({ branch: 'master', worktreePath: '/tmp/task', payload: 'cd /tmp/task && pi\n' })).toMatch(/protected branch/)
+    expect(visibleCmuxSpawnFailReason({ branch: 'fix/x', worktreePath: '', payload: 'pi --no-session\n' })).toMatch(/without task worktree/)
+    expect(visibleCmuxSpawnFailReason({ branch: 'fix/x', worktreePath: '/tmp/task', payload: 'pi --no-session\n' })).toMatch(/without task worktree/)
+    expect(visibleCmuxSpawnFailReason({ branch: 'fix/x', worktreePath: '/tmp/task', payload: 'cd /tmp/task && pi --no-session\n' })).toBeUndefined()
   })
 })
 
@@ -286,6 +307,46 @@ describe('dispatch_supervisor transport=cmux', () => {
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
     expect(result.content[0].text).toMatch(/BLOCKED|identify/)
   })
+
+  it('sends quoted cd task-worktree && pi when orchestrator cwd is protected main', async () => {
+    const sent: string[] = []
+    const taskWt = process.cwd()
+    const orchMain = '/Users/maksimposudevskiy/Projects/beads-task-issue-tracker'
+    const taskBranch = currentBranch(taskWt)
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-main-vs-wt' } },
+      async newSplit() { return { surface: 'surface:191' } },
+      async send(_surface, text) { sent.push(text) },
+      async closeSurface() {},
+    })
+    const { registered, beadId, head, emitted } = makePi({ cwd: taskWt, branch: taskBranch })
+    const result = await registered.execute(
+      'call-1',
+      { beadId, transport: 'cmux', agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      workflowCtx(orchMain, beadId, taskBranch, head, taskWt),
+    )
+    expect(result.details?.error || result.details.status).toBe('spawned')
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain(`cd ${posixQuote(taskWt)} && `)
+    expect(sent[0]).toContain('--no-session')
+    expect(sent[0]).toContain('--tools')
+    expect(sent[0]).toContain('read,bash,edit,write')
+    expect(sent[0]).not.toMatch(/^pi /)
+    expect(sent[0]).not.toContain(orchMain)
+    const registry = loadRegistry(path.join(tmp, 'ns', 'ws-main-vs-wt', 'dispatch-registry.json'))
+    expect(registry.entries[0]?.worktree).toBe(taskWt)
+    const bind = emitted.find((item) => item.name === 'workflow-state:update')
+    expect(bind?.event).toMatchObject({ activeBead: beadId, state: 'implementing', sessionMode: 'implementing', worktreePath: taskWt })
+    expect(bind?.event.state).not.toBe('idle')
+    expect(bind?.event.activeBead).not.toBeUndefined()
+  })
+
+  it('fail-closes protected spawn target and payload without worktree', () => {
+    expect(visibleCmuxSpawnFailReason({ branch: 'main', worktreePath: process.cwd(), payload: `cd ${process.cwd()} && pi\n` })).toMatch(/protected branch/)
+    expect(visibleCmuxSpawnFailReason({ branch: 'fix/x', worktreePath: process.cwd(), payload: 'pi --no-session\n' })).toMatch(/without task worktree/)
+  })
 })
 
 describe('reviewer/docs reject transport', () => {
@@ -371,14 +432,26 @@ describe('complete_visible_dispatch', () => {
   it('retries incomplete ping and no-ops after submit', async () => {
     seed({})
     fs.writeFileSync(path.join(tmp, 'd.digest'), 'still working')
-    const { pi } = makePi({ head: 'aaa1111' })
+    const { pi, emitted } = makePi({ head: 'aaa1111' })
     const first = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
     expect(first.status).toBe('result-only')
     expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('result-only')
+    expect(emitted.find((item) => item.name === 'workflow-state:update')?.event).toMatchObject({
+      activeBead: 'bead-a',
+      state: 'implementing',
+      sessionMode: 'implementing',
+      worktreePath: tmp,
+    })
     fs.writeFileSync(path.join(tmp, 'r.md'), completeArtifact)
-    const { pi: pi2 } = makePi({ head: 'bbb2222' })
+    const { pi: pi2, emitted: emitted2 } = makePi({ head: 'bbb2222' })
     const second = await completeVisibleDispatch(pi2 as any, { taskId: 'task-1' })
     expect(second.status).toBe('submitted')
+    expect(emitted2.find((item) => item.name === 'workflow-state:update')?.event).toMatchObject({
+      activeBead: 'bead-a',
+      state: 'inreview',
+      sessionMode: 'inreview',
+      worktreePath: tmp,
+    })
     const third = await completeVisibleDispatch(pi2 as any, { taskId: 'task-1' })
     expect(third.status).toBe('noop')
   })
