@@ -26,7 +26,7 @@ export interface DispatchRegistryEntry {
 	digestFile: string;
 	promptFile: string;
 	status: "spawned" | "tombstone";
-	submitStatus?: "none" | "result-only" | "submitted";
+	submitStatus?: "none" | "result-only" | "submitted" | "verdict";
 	callerSurface?: string;
 	startCommit?: string;
 	sendFailCount?: number;
@@ -239,11 +239,12 @@ export function findLiveFollowupEntry(
 		}
 	}
 	const selected = role ? matches.filter((item) => item.entry.role === role) : matches.filter((item) => isSupervisorRole(item.entry.role));
-	if (selected.length === 0) throw new Error("нет live pane; first spawn через dispatch_supervisor");
+	const firstSpawnHint = role === "code-reviewer" ? "dispatch_reviewer" : "dispatch_supervisor";
+	if (selected.length === 0) throw new Error(`нет live pane; first spawn через ${firstSpawnHint}`);
 	if (!role && selected.length > 1) throw new Error("followup_visible_dispatch: неоднозначный role, укажите role: BLOCKED");
 	if (role && selected.length > 1) throw new Error(`followup_visible_dispatch: несколько live pane для ${beadId} role=${role}: BLOCKED`);
 	const found = selected[0];
-	if (!found) throw new Error("нет live pane; first spawn через dispatch_supervisor");
+	if (!found) throw new Error(`нет live pane; first spawn через ${firstSpawnHint}`);
 	return found;
 }
 

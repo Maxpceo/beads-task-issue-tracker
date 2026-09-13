@@ -1041,3 +1041,15 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toBeUndefined()
   })
 })
+
+describe('review-bead visible code-reviewer hop', () => {
+  const skill = readFileSync(join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
+
+  it('pins interactive dispatch_reviewer transport=cmux and does not auto-call review_bead after verdict', () => {
+    expect(skill).toContain('dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)')
+    expect(skill).toContain('status=verdict` → do not call `review_bead`')
+    expect(skill).toContain('followup_visible_dispatch({ beadId, role: "code-reviewer", task })')
+    expect(skill).toContain('complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`')
+    expect(skill).toContain('While a live code-reviewer pane exists, do not call `review_bead`')
+  })
+})

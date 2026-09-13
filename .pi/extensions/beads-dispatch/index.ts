@@ -182,12 +182,27 @@ const SupervisorDispatchParams = {
 	additionalProperties: false,
 } as const;
 
+const ReviewerDispatchParams = {
+	type: "object",
+	properties: {
+		...DispatchParams.properties,
+		transport: {
+			type: "string",
+			enum: ["headless", "cmux"],
+			default: "headless",
+			description: "headless (blocking fallback) or cmux (one visible code-reviewer pane; spawn-ack; complete_visible_dispatch records CODE REVIEW verdict)",
+		},
+	},
+	required: ["beadId"],
+	additionalProperties: false,
+} as const;
+
 const FollowupVisibleDispatchParams = {
 	type: "object",
 	properties: {
-		beadId: { type: "string", description: "Bead ID with a live spawned supervisor pane" },
+		beadId: { type: "string", description: "Bead ID with a live spawned supervisor or code-reviewer pane" },
 		task: { type: "string", description: "Follow-up task text sent into the waiting Pi (not spawn argv)" },
-		role: { type: "string", description: "Supervisor role when more than one live pane exists" },
+		role: { type: "string", description: "Pane role when more than one live pane exists; use code-reviewer for the visible reviewer" },
 	},
 	required: ["beadId", "task"],
 	additionalProperties: false,
@@ -330,6 +345,34 @@ function extractSection(text: string, heading: string): string {
 
 function getPlanComment(comments: BeadComment[]): string | undefined {
 	return comments.map((comment) => comment.text ?? "").reverse().find((text) => /PLAN APPROVED/.test(text));
+}
+
+function extractRecordedStartCommit(comments: BeadComment[]): string | undefined {
+	for (const text of comments.map((comment) => comment.text ?? "").reverse()) {
+		if (!/DISPATCH(?: RESULT)?|WORKFLOW SUBMIT FOR REVIEW|PI WORKFLOW UPDATE|PLAN APPROVED/.test(text)) continue;
+		const match = text.match(/(?:^|\n)\s*(?:START_COMMIT|Start-commit):\s*([0-9a-f]{7,40})\b/i);
+		if (match?.[1]) return match[1];
+	}
+	return undefined;
+}
+
+function visibleDispatchTaskId(beadId: string, role: string): string {
+	const beadSlug = beadId.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-24);
+	const roleSlug = role.replace(/[^a-zA-Z0-9._-]+/g, "-");
+	return `task-${beadSlug}-${roleSlug}`;
+}
+
+const VISIBLE_REVIEWER_VERDICT_RE = /(?:^|\n)\s*(?:[-*>]\s*)?(?:VERDICT|CODE REVIEW)\s*:\s*(APPROVED|NOT[_ ]APPROVED)\b/gi;
+
+function parseVisibleReviewerVerdict(text: string): "APPROVED" | "NOT APPROVED" | undefined {
+	let latest: string | undefined;
+	VISIBLE_REVIEWER_VERDICT_RE.lastIndex = 0;
+	for (const match of text.matchAll(VISIBLE_REVIEWER_VERDICT_RE)) {
+		latest = (match[1] ?? "").toUpperCase().replace(/_/g, " ");
+	}
+	if (latest === "APPROVED") return "APPROVED";
+	if (latest === "NOT APPROVED") return "NOT APPROVED";
+	return undefined;
 }
 
 function hasPlanAlias(plan: string, alias: string): boolean {
@@ -684,7 +727,7 @@ async function submitForReviewFromWrapper(pi: ExtensionAPI, beadId: string, agen
 
 function emitVisibleDispatchBind(
 	pi: ExtensionAPI,
-	input: { beadId: string; state: "implementing" | "inreview"; branch?: string; worktreePath: string; startCommit?: string },
+	input: { beadId: string; state: "implementing" | "inreview" | "reviewing"; branch?: string; worktreePath: string; startCommit?: string },
 	ctx?: ToolContext,
 ): void {
 	pi.events.emit("workflow-state:update", {
@@ -698,15 +741,25 @@ function emitVisibleDispatchBind(
 	});
 }
 
-export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only"; text: string }> {
+async function addCodeReviewVerdictComment(pi: ExtensionAPI, beadId: string, verdict: "APPROVED" | "NOT APPROVED", evidence: string): Promise<void> {
+	const comment = `CODE REVIEW: ${verdict}\n\n${evidence.slice(-4000)}`;
+	const commentResult = await pi.exec("bd", ["comments", "add", beadId, comment]);
+	if (commentResult.code !== 0) throw new Error(`complete_visible_dispatch не записал CODE REVIEW: ${commentResult.stderr || commentResult.stdout}`);
+}
+
+function followupBindState(role: string): "implementing" | "reviewing" {
+	return role === "code-reviewer" ? "reviewing" : "implementing";
+}
+
+export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only" | "verdict"; text: string }> {
 	const found = findRegistryByTaskId(params.taskId);
 	if (!found) throw new Error(`complete_visible_dispatch: нет registry для ${params.taskId}`);
 	const { file, registry, entry, index } = found;
 	if (entry.submitStatus === "submitted") return { status: "noop", text: "already submitted" };
+	if (entry.submitStatus === "verdict") return { status: "noop", text: "already recorded verdict" };
 	const preview = readDigestPreview(entry.digestFile, entry.resultFile);
 	if (!preview.exists) return { status: "incomplete", text: "нет digest/result" };
 	const resultText = fs.existsSync(entry.resultFile) ? fs.readFileSync(entry.resultFile, "utf8") : preview.text;
-	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
 	if (!entry.startCommit) throw new Error(`complete_visible_dispatch: нет START_COMMIT для ${params.taskId}`);
 	const startCommit = entry.startCommit;
 	let branch = "";
@@ -715,6 +768,21 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	} catch {
 		branch = "";
 	}
+	if (entry.role === "code-reviewer") {
+		const verdict = parseVisibleReviewerVerdict(resultText);
+		if (!verdict) {
+			registry.entries[index] = { ...entry, submitStatus: "result-only" };
+			saveRegistry(file, registry);
+			emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "reviewing", branch, worktreePath: entry.worktree, startCommit }, ctx);
+			return { status: "result-only", text: preview.text };
+		}
+		await addCodeReviewVerdictComment(pi, entry.beadId, verdict, resultText);
+		registry.entries[index] = { ...entry, submitStatus: "verdict" };
+		saveRegistry(file, registry);
+		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "inreview", branch, worktreePath: entry.worktree, startCommit }, ctx);
+		return { status: "verdict", text: `CODE REVIEW: ${verdict}` };
+	}
+	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
 	const ready = supervisorArtifactReadyForReview({ output: resultText, exitCode: 0 }, startCommit, endCommit);
 	if (!ready) {
 		await addEndCommitComment(pi, entry.beadId, entry.role, branch, entry.worktree, startCommit, endCommit);
@@ -871,13 +939,13 @@ export async function followupVisibleDispatch(
 	}
 	if (health === "shell" || health === "dead") {
 		entry = await respawnVisibleFollowup(adapter, found, params.task, branch);
-		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "implementing", branch, worktreePath, startCommit: entry.startCommit }, ctx);
+		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: followupBindState(entry.role), branch, worktreePath, startCommit: entry.startCommit }, ctx);
 		return { status: "spawned", text: `followup respawn pane=${entry.pane} taskId=${entry.taskId}`, taskId: entry.taskId, pane: entry.pane };
 	}
 	unlinkFollowupArtifacts(entry);
 	entry = patchFollowupEntry(found, { submitStatus: "none", sendFailCount: 0, hung: false });
 	await sendFollowupWithHungCap(adapter, found, payload);
-	emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "implementing", branch, worktreePath, startCommit: entry.startCommit }, ctx);
+	emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: followupBindState(entry.role), branch, worktreePath, startCommit: entry.startCommit }, ctx);
 	return { status: "sent", text: `followup sent pane=${entry.pane} taskId=${entry.taskId}`, taskId: entry.taskId, pane: found.entry.pane };
 }
 
@@ -995,10 +1063,11 @@ async function dispatchVisibleCmux(input: {
 	worktreePath: string;
 	startCommit: string;
 	cwd: string;
+	mode: "supervisor" | "reviewer";
 	ctx?: ToolContext;
 }): Promise<DispatchResult> {
-	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, ctx } = input;
-	const taskId = `task-${bead.id.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-24)}`;
+	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, mode, ctx } = input;
+	const taskId = visibleDispatchTaskId(bead.id, agentName);
 	if (params.dryRun) {
 		const argv = buildVisibleChildArgv({
 			model: agent.model,
@@ -1026,7 +1095,8 @@ async function dispatchVisibleCmux(input: {
 	const registryFile = path.join(dir, "dispatch-registry.json");
 	const existing = loadRegistry(registryFile);
 	if (liveEntriesForBead(existing, bead.id, agentName).length > 0) {
-		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; use followup_visible_dispatch({ beadId }))`);
+		const followupHint = agentName === "code-reviewer" ? `{ beadId, role: "code-reviewer" }` : `{ beadId }`;
+		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; use followup_visible_dispatch(${followupHint}))`);
 	}
 	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
 	fs.mkdirSync(resultsDir, { recursive: true });
@@ -1035,18 +1105,30 @@ async function dispatchVisibleCmux(input: {
 	const pingScript = path.join(worktreePath, ".pi/orchestrator/ping.sh");
 	const pingCommand = `AGENT_NAME=${posixSingleQuote(agentName)} DIGEST_FILE=${posixSingleQuote(digestFile)} bash ${posixSingleQuote(pingScript)} ${posixSingleQuote(taskId)}`;
 	const pingErrorCommand = `${pingCommand} error`;
-	const taskBody = `${prompt}
-
-WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
-1. Write SUPERVISOR ARTIFACT to ${resultFile}
-2. Write digest ≤10 lines to ${digestFile}
-3. Only ping by running this exact command (POSIX-quoted absolute paths; worktreePath is git toplevel):
+	const pingContract = `3. Only ping by running this exact command (POSIX-quoted absolute paths; worktreePath is git toplevel):
    ${pingCommand}
    After BLOCKED or NEEDS_CONTEXT, run the same command with KIND=error:
    ${pingErrorCommand}
    If ping.sh send exits non-zero, retry once; then BLOCKED and report stderr.
    Forbidden: printing Ping or [PING] in this pane; raw cmux send / send-key enter.
-   Child stdout is not delivery. Do not ping before digest/result exist.
+   Child stdout is not delivery. Do not ping before digest/result exist.`;
+	const taskBody = mode === "reviewer"
+		? `${prompt}
+
+WHEN YOU BELIEVE YOUR REVIEW IS DONE:
+1. Write CODE REVIEW verdict (APPROVED or NOT APPROVED) plus evidence to ${resultFile}
+2. Write digest ≤10 lines to ${digestFile}
+${pingContract}
+Do not write SUPERVISOR ARTIFACT.
+Do not call review_bead.
+Do not spawn a supervisor.
+`
+		: `${prompt}
+
+WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
+1. Write SUPERVISOR ARTIFACT to ${resultFile}
+2. Write digest ≤10 lines to ${digestFile}
+${pingContract}
 Next step is review, same as today. Do not call review yourself.
 `;
 	const files = persistIsolationFiles(dir, taskId, agent.systemPrompt, taskBody);
@@ -1100,7 +1182,7 @@ Next step is review, same as today. Do not call review yourself.
 		throw error;
 	}
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, `transport=cmux spawn-ack taskId=${taskId} pane=${surface}\nDIGEST_FILE=${files.digestFile}\nRESULT_FILE=${files.resultFile}`);
-	emitVisibleDispatchBind(pi, { beadId: bead.id, state: "implementing", branch, worktreePath, startCommit }, ctx);
+	emitVisibleDispatchBind(pi, { beadId: bead.id, state: mode === "reviewer" ? "reviewing" : "implementing", branch, worktreePath, startCommit }, ctx);
 	return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
 		pane: surface,
 		taskFile: files.taskFile,
@@ -1123,8 +1205,8 @@ async function dispatch(
 	const cwd = supervisorPreflight?.cwd ?? params.cwd ?? (stateScope?.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
-	if (mode !== "supervisor" && params.transport) {
-		throw new Error(`dispatch_${mode === "reviewer" ? "reviewer" : "docs_agent"} does not accept transport`);
+	if (mode === "docs" && params.transport) {
+		throw new Error("dispatch_docs_agent does not accept transport");
 	}
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments);
@@ -1136,7 +1218,27 @@ async function dispatch(
 
 	const branch = supervisorPreflight?.branch ?? await getGitValue(pi, cwd, ["branch", "--show-current"]);
 	const worktreePath = supervisorPreflight?.worktreePath ?? await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
-	const startCommit = supervisorPreflight?.startCommit ?? await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
+	let startCommit = supervisorPreflight?.startCommit ?? await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
+	if (mode === "reviewer" && params.transport === "cmux") {
+		const reviewerScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
+		if (reviewerScope.ok && reviewerScope.scope.activeBead === params.beadId) {
+			if (reviewerScope.scope.branch && reviewerScope.scope.branch !== branch) {
+				throw new Error(`dispatch_reviewer preflight заблокирован: branch mismatch, git=${branch}, workflow-state=${reviewerScope.scope.branch}`);
+			}
+			if (reviewerScope.scope.worktreePath && path.resolve(reviewerScope.scope.worktreePath) !== path.resolve(worktreePath)) {
+				throw new Error(`dispatch_reviewer preflight заблокирован: worktree mismatch, git=${worktreePath}, workflow-state=${reviewerScope.scope.worktreePath}`);
+			}
+			if (reviewerScope.scope.startCommit) startCommit = reviewerScope.scope.startCommit;
+		}
+		if (!reviewerScope.ok || reviewerScope.scope.activeBead !== params.beadId || !reviewerScope.scope.startCommit) {
+			const recorded = extractRecordedStartCommit(comments);
+			if (recorded) startCommit = recorded;
+		}
+		const hasWorkflowStart = reviewerScope.ok && reviewerScope.scope.activeBead === params.beadId && Boolean(reviewerScope.scope.startCommit);
+		if (!hasWorkflowStart && !extractRecordedStartCommit(comments)) {
+			throw new Error(`dispatch_reviewer preflight заблокирован: recorded START_COMMIT отсутствует для ${params.beadId}`);
+		}
+	}
 	const agentName = params.agent ?? (mode === "supervisor" ? chooseSupervisor(bead) : mode === "reviewer" ? "code-reviewer" : "documentation-expert");
 	const agent = loadAgent(cwd, agentName);
 	const contextText = `${bead.title ?? ""}\n${bead.description ?? ""}\n${comments.map((comment) => comment.text ?? "").join("\n")}`;
@@ -1149,8 +1251,8 @@ async function dispatch(
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
-	if (mode === "supervisor" && params.transport === "cmux") {
-		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, ctx });
+	if ((mode === "supervisor" || mode === "reviewer") && params.transport === "cmux") {
+		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx });
 	}
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
@@ -1230,8 +1332,8 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_reviewer",
 		label: "Dispatch Reviewer",
-		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview.",
-		parameters: DispatchParams,
+		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. transport=cmux opens one visible pane; omit transport for headless fallback.",
+		parameters: ReviewerDispatchParams,
 		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd, ctx);
@@ -1245,7 +1347,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "followup_visible_dispatch",
 		label: "Follow-up Visible Dispatch",
-		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
+		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора или code-reviewer. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
 		parameters: FollowupVisibleDispatchParams,
 		async execute(_id: string, params: FollowupVisibleParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
@@ -1260,7 +1362,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "complete_visible_dispatch",
 		label: "Complete Visible Dispatch",
-		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT; submit for review only if the artifact is complete. Does not spawn.",
+		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT and submit if the artifact is complete; after code-reviewer ping, record CODE REVIEW verdict. Does not spawn.",
 		parameters: {
 			type: "object",
 			properties: { taskId: { type: "string", description: "Visible dispatch registry taskId" } },

@@ -427,27 +427,149 @@ describe('dispatch_supervisor transport=cmux', () => {
   })
 })
 
-describe('reviewer/docs reject transport', () => {
-  it('dispatch_reviewer execute rejects transport', async () => {
-    const { tools, cwd, branch } = makePi({ toolName: 'dispatch_reviewer', beadId: 'bead-r' })
-    const result = await tools.dispatch_reviewer.execute('call-1', { beadId: 'bead-r', transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, 'bead-r', branch, 'abc1234'))
-    expect(result.content[0].text).toMatch(/does not accept transport/)
-  })
-
+describe('reviewer/docs transport', () => {
   it('dispatch_docs_agent execute rejects transport', async () => {
     const { tools, cwd, branch } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
     const result = await tools.dispatch_docs_agent.execute('call-1', { beadId: 'bead-d', transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, 'bead-d', branch, 'abc1234'))
     expect(result.content[0].text).toMatch(/does not accept transport/)
   })
 
-  it('schemas: supervisor has transport, reviewer/docs do not', () => {
+  it('schemas: supervisor and reviewer have transport, docs does not', () => {
     const { tools } = makePi({})
     expect(tools.dispatch_supervisor.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
+    expect(tools.dispatch_reviewer.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
     expect(tools.followup_visible_dispatch).toBeDefined()
     expect(tools.followup_visible_dispatch.description).toMatch(/Единственный typed hop/)
-    expect(tools.dispatch_reviewer.parameters.properties.transport).toBeUndefined()
     expect(tools.dispatch_docs_agent.parameters.properties.transport).toBeUndefined()
     expect(tools.dispatch_reviewer.parameters.additionalProperties).toBe(false)
+  })
+})
+
+describe('dispatch_reviewer transport=cmux', () => {
+  let tmp: string
+  const prevOrch = process.env.ORCH_ROOT
+  const prevHome = process.env.HOME
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'esg3-reviewer-'))
+    process.env.ORCH_ROOT = tmp
+    process.env.HOME = tmp
+    setCmuxAdapterForTests(null)
+  })
+
+  afterEach(() => {
+    setCmuxAdapterForTests(null)
+    if (prevOrch === undefined) delete process.env.ORCH_ROOT
+    else process.env.ORCH_ROOT = prevOrch
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  function reviewerPi(extra: { head?: string; execCalls?: Array<{ command: string; args: string[] }> } = {}) {
+    return makePi({
+      toolName: 'dispatch_reviewer',
+      beadId: 'bead-r',
+      status: 'inreview',
+      head: extra.head,
+      execCalls: extra.execCalls,
+    })
+  }
+
+  it('omitted transport stays headless', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { tools, cwd, branch, beadId, head } = reviewerPi({ execCalls })
+    const result = await tools.dispatch_reviewer.execute('call-1', { beadId, dryRun: true }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.transport).toBeUndefined()
+    expect(result.details.status).not.toBe('spawned')
+  })
+
+  it('dryRun+cmux returns spawn-ack, no pane', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { tools, cwd, branch, beadId, head } = reviewerPi({ execCalls })
+    const result = await tools.dispatch_reviewer.execute('call-1', { beadId, dryRun: true, transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.transport).toBe('cmux')
+    expect(result.details.pane).toBe('')
+    expect(execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toEqual([])
+  })
+
+  it('no cmux is BLOCKED, not silent headless', async () => {
+    const { tools, cwd, branch, beadId, head } = reviewerPi()
+    const result = await tools.dispatch_reviewer.execute('call-1', { beadId, transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.content[0].text).toMatch(/BLOCKED|identify/)
+    expect(result.details.status).not.toBe('spawned')
+    expect(result.content[0].text).not.toMatch(/does not accept transport/)
+  })
+
+  it('inreview HEAD≠startCommit uses recorded startCommit', async () => {
+    const recorded = 'aaa1111'
+    const head = 'bbb2222'
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-rev-start' } },
+      async newSplit() { return { surface: 'surface:r1' } },
+      async send() {},
+      async closeSurface() {},
+    })
+    const { tools, cwd, branch, beadId, emitted } = reviewerPi({ head, execCalls })
+    const result = await tools.dispatch_reviewer.execute('call-1', { beadId, transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, beadId, branch, recorded))
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.startCommit).toBe(recorded)
+    expect(result.details.startCommit).not.toBe(head)
+    const dispatchComment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(dispatchComment?.args.join(' ')).toContain(`START_COMMIT: ${recorded}`)
+    expect(dispatchComment?.args.join(' ')).not.toContain(`START_COMMIT: ${head}`)
+    const body = fs.readFileSync(result.details.taskFile!, 'utf8')
+    expect(body).toContain(`START_COMMIT: ${recorded}`)
+    expect(body).toContain('CODE REVIEW verdict')
+    expect(body).not.toContain('Write SUPERVISOR ARTIFACT')
+    expect(body).toContain("AGENT_NAME='code-reviewer'")
+    expect(result.details.registryKey).toMatch(/code-reviewer$/)
+    const bind = emitted.find((item) => item.name === 'workflow-state:update')
+    expect(bind?.event.state).toBe('reviewing')
+    expect(bind?.event.sessionMode).toBe('reviewing')
+    expect(bind?.event.state).not.toBe('implementing')
+  })
+
+  it('live supervisor + reviewer spawn two taskIds', async () => {
+    let splits = 0
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-two' } },
+      async newSplit() {
+        splits += 1
+        return { surface: `surface:${splits}` }
+      },
+      async send() {},
+      async closeSurface() {},
+    })
+    const { tools, cwd, branch, beadId, head } = makePi({ beadId: 'bead-two', status: 'in_progress' })
+    const supervisor = await tools.dispatch_supervisor.execute('s1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(supervisor.details.status).toBe('spawned')
+    const reviewerPiInst = makePi({ toolName: 'dispatch_reviewer', beadId, status: 'inreview', head, cwd, branch })
+    const reviewer = await reviewerPiInst.tools.dispatch_reviewer.execute('r1', { beadId, transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(reviewer.details.status).toBe('spawned')
+    expect(reviewer.details.registryKey).not.toBe(supervisor.details.registryKey)
+    const registry = loadRegistry(path.join(tmp, 'ns', 'ws-two', 'dispatch-registry.json'))
+    expect(registry.entries).toHaveLength(2)
+    expect(registry.entries.map((entry) => entry.taskId).sort()).toEqual([supervisor.details.registryKey, reviewer.details.registryKey].sort())
+    expect(registry.entries.map((entry) => entry.role).sort()).toEqual(['code-reviewer', 'test-supervisor'].sort())
+  })
+
+  it('second live code-reviewer spawn is BLOCKED', async () => {
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-dup-rev' } },
+      async newSplit() { return { surface: 'surface:dup' } },
+      async send() {},
+      async closeSurface() {},
+    })
+    const { tools, cwd, branch, beadId, head } = reviewerPi()
+    const ctx = workflowCtx(cwd, beadId, branch, head)
+    const first = await tools.dispatch_reviewer.execute('r1', { beadId, transport: 'cmux' }, undefined, undefined, ctx)
+    expect(first.details.status).toBe('spawned')
+    const second = await tools.dispatch_reviewer.execute('r2', { beadId, transport: 'cmux' }, undefined, undefined, ctx)
+    expect(second.content[0].text).toMatch(/BLOCKED/)
+    expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId, role: "code-reviewer" \}\)/)
   })
 })
 
@@ -547,6 +669,98 @@ describe('complete_visible_dispatch', () => {
     const { tools } = makePi({ toolName: 'complete_visible_dispatch' })
     expect(tools.complete_visible_dispatch).toBeDefined()
   })
+
+  it('code-reviewer APPROVED records CODE REVIEW verdict without submit-for-review', async () => {
+    seed({ role: 'code-reviewer' })
+    fs.writeFileSync(path.join(tmp, 'd.digest'), 'CODE REVIEW: APPROVED')
+    fs.writeFileSync(path.join(tmp, 'r.md'), 'CODE REVIEW: APPROVED\nLooks good')
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { pi, emitted } = makePi({ head: 'bbb2222', execCalls })
+    const first = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    expect(first.status).toBe('verdict')
+    expect(first.text).toContain('CODE REVIEW: APPROVED')
+    expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('verdict')
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(comments.some((call) => call.args.join(' ').includes('CODE REVIEW: APPROVED'))).toBe(true)
+    expect(comments.some((call) => call.args.join(' ').includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.includes('inreview'))).toBe(false)
+    expect(emitted.find((item) => item.name === 'workflow-state:update')?.event.state).toBe('inreview')
+    const second = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    expect(second.status).toBe('noop')
+    expect(second.text).toMatch(/already recorded verdict/)
+  })
+
+  it('code-reviewer NOT APPROVED is verdict and does not spawn supervisor', async () => {
+    seed({ role: 'code-reviewer' })
+    fs.writeFileSync(path.join(tmp, 'r.md'), 'VERDICT: NOT APPROVED\nFix required')
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { pi } = makePi({ head: 'bbb2222', execCalls })
+    const first = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    expect(first.status).toBe('verdict')
+    expect(first.text).toContain('CODE REVIEW: NOT APPROVED')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update')).toBe(false)
+    expect(execCalls.some((call) => call.args.join(' ').includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'pi')).toBe(false)
+  })
+
+  it('code-reviewer without verdict marker is result-only', async () => {
+    seed({ role: 'code-reviewer' })
+    fs.writeFileSync(path.join(tmp, 'd.digest'), 'still reviewing')
+    fs.writeFileSync(path.join(tmp, 'r.md'), `${completeArtifact}\nno verdict here`)
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { pi } = makePi({ head: 'bbb2222', execCalls })
+    const first = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    expect(first.status).toBe('result-only')
+    expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('result-only')
+    expect(execCalls.some((call) => call.args.join(' ').includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(false)
+    expect(execCalls.some((call) => call.args.join(' ').includes('CODE REVIEW:'))).toBe(false)
+  })
+
+  it('reviewer complete does not change a live supervisor submitStatus', async () => {
+    const file = path.join(tmp, 'ns', 'ws-c', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [
+        {
+          taskId: 'task-supervisor',
+          beadId: 'bead-a',
+          pane: 'surface:s',
+          worktree: tmp,
+          role: 'test-supervisor',
+          model: '',
+          taskFile: path.join(tmp, 'st.md'),
+          resultFile: path.join(tmp, 'sr.md'),
+          digestFile: path.join(tmp, 'sd.digest'),
+          promptFile: path.join(tmp, 'sp.md'),
+          status: 'spawned',
+          submitStatus: 'submitted',
+          startCommit: 'aaa1111',
+          createdAt: 't',
+        },
+        {
+          taskId: 'task-reviewer',
+          beadId: 'bead-a',
+          pane: 'surface:r',
+          worktree: tmp,
+          role: 'code-reviewer',
+          model: '',
+          taskFile: path.join(tmp, 'rt.md'),
+          resultFile: path.join(tmp, 'rr.md'),
+          digestFile: path.join(tmp, 'rd.digest'),
+          promptFile: path.join(tmp, 'rp.md'),
+          status: 'spawned',
+          submitStatus: 'none',
+          startCommit: 'aaa1111',
+          createdAt: 't',
+        },
+      ],
+    })
+    fs.writeFileSync(path.join(tmp, 'rr.md'), 'CODE REVIEW: APPROVED')
+    const { pi } = makePi({ head: 'bbb2222' })
+    const result = await completeVisibleDispatch(pi as any, { taskId: 'task-reviewer' })
+    expect(result.status).toBe('verdict')
+    expect(findRegistryByTaskId('task-supervisor')?.entry.submitStatus).toBe('submitted')
+    expect(findRegistryByTaskId('task-reviewer')?.entry.submitStatus).toBe('verdict')
+  })
 })
 
 describe('dispatch-supervisor skill frozen A/B', () => {
@@ -559,11 +773,12 @@ describe('dispatch-supervisor skill frozen A/B', () => {
     expect(skill).toContain('Any throw/error from complete_visible_dispatch → BLOCKED no retry, no read-screen.')
     expect(skill).toContain('incomplete → no review-bead; later ping may complete again')
     expect(skill).toContain('submitted/noop → same-turn review-bead')
+    expect(skill).toContain('status=verdict → стоп, не review-bead')
     expect(skill).toContain('do not complete; one BLOCKED: «нет digest/result. Если child ещё работает — записать оба nonempty файла и ping.sh; иначе действие Максима.»')
     expect(skill).toContain('submitted/noop → review-bead. result-only → BLOCKED artifact not review-ready')
     expect(skill).toContain('8. Continue with `review-bead` automatically after the bead is `inreview`')
     expect(step6).toContain('Headless: wrapper waits for the child, then `DISPATCH RESULT` / maybe submit.')
-    expect(step6).toContain('Visible: spawn-ack skips wait. Child stdout is not the trigger. Ping/Maxim-complete delivery follows exclusive A/B in step 4. STOP/BLOCKED A/B do not call review-bead. Step 7 — incomplete artifacts; step 8 — review-bead only after submitted/noop/inreview (headless/resume).')
+    expect(step6).toContain('Visible: spawn-ack skips wait. Child stdout is not the trigger. Ping/Maxim-complete delivery follows exclusive A/B in step 4. STOP/BLOCKED A/B do not call review-bead. Frozen A/B status=verdict → стоп, не review-bead. Step 7 — incomplete artifacts; step 8 — review-bead only after submitted/noop/inreview (headless/resume).')
   })
 
   it('negative-pins old ping/review fragments without pinning bare review-bead', () => {
@@ -625,6 +840,26 @@ describe('followup_visible_dispatch', () => {
     })
     return { file, resultFile, digestFile, taskFile, cwd }
   }
+
+  it('reuses a live code-reviewer pane when role is code-reviewer', async () => {
+    seed({ role: 'code-reviewer' })
+    const splits: string[] = []
+    const sent: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-follow' } },
+      async newSplit() { splits.push('surface:99'); return { surface: 'surface:99' } },
+      async send(_surface, text) { sent.push(text) },
+      async closeSurface() {},
+      async readScreen() { return 'session reviewing\n$\n' },
+    })
+    const { pi, cwd, branch, beadId, emitted } = makePi({ beadId: 'bead-a', head: 'bbb2222', status: 'inreview' })
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'code-reviewer', task: 'Re-check the diff' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    expect(result.status).toBe('sent')
+    expect(sent).toEqual(['Re-check the diff\n'])
+    expect(splits).toEqual([])
+    expect(emitted.find((item) => item.name === 'workflow-state:update')?.event.state).toBe('reviewing')
+    expect(emitted.find((item) => item.name === 'workflow-state:update')?.event.state).not.toBe('implementing')
+  })
 
   it('sends task text into a waiting Pi and does not new-split', async () => {
     seed()
