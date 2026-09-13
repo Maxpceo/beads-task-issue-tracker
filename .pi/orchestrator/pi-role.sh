@@ -13,4 +13,4 @@ TOOLS="${4:-read,bash,edit,write}"
 exec pi --model "$MODEL" --no-session \
   --append-system-prompt "$ROLE_MD" \
   --tools "$TOOLS" \
-  "Task: read $PROMPT_FILE and execute it. Write digest ≤10 lines to the result path named in that file."
+  "Task: read $PROMPT_FILE and execute it. When you believe the contract is done, write the artifact and digest named in that file, then ping. Do not ping before that."

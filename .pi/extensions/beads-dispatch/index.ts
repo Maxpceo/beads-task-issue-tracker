@@ -666,13 +666,6 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	const resultText = fs.existsSync(entry.resultFile) ? fs.readFileSync(entry.resultFile, "utf8") : preview.text;
 	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
 	const startCommit = entry.startCommit || endCommit;
-	const ready = artifactLooksComplete(resultText) && supervisorArtifactReadyForReview({ output: resultText, exitCode: 0, stderr: "" }, startCommit, endCommit);
-	if (!ready) {
-		await pi.exec("bd", ["comments", "add", entry.beadId, `DISPATCH INCOMPLETE (${entry.role})\nPING: агент считает контракт выполненным, отчёта для auto-submit мало.\n\n${preview.text}`]);
-		registry.entries[index] = { ...entry, submitStatus: "result-only" };
-		saveRegistry(file, registry);
-		return { status: "incomplete", text: preview.text };
-	}
 	await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
 	await submitForReviewFromWrapper(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit, resultText);
 	registry.entries[index] = { ...entry, submitStatus: "submitted" };
@@ -817,11 +810,21 @@ async function dispatchVisibleCmux(input: {
 	if (liveEntriesForBead(existing, bead.id).length > 0) {
 		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered)`);
 	}
-	const files = persistIsolationFiles(dir, taskId, agent.systemPrompt, prompt);
 	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
 	fs.mkdirSync(resultsDir, { recursive: true });
-	files.resultFile = path.join(resultsDir, `${taskId}.md`);
-	files.digestFile = path.join(resultsDir, `${taskId}.digest`);
+	const resultFile = path.join(resultsDir, `${taskId}.md`);
+	const digestFile = path.join(resultsDir, `${taskId}.digest`);
+	const taskBody = `${prompt}
+
+WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
+1. Write SUPERVISOR ARTIFACT to ${resultFile}
+2. Write digest ≤10 lines to ${digestFile}
+3. Ping taskId=${taskId} (DIGEST_FILE=${digestFile}). Do not ping before that.
+Next step is review, same as today. Do not call review yourself.
+`;
+	const files = persistIsolationFiles(dir, taskId, agent.systemPrompt, taskBody);
+	files.resultFile = resultFile;
+	files.digestFile = digestFile;
 	const argv = buildVisibleChildArgv({
 		model: agent.model,
 		systemPromptFile: files.promptFile,
