@@ -210,16 +210,15 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(headlessComment!.args.join(' ')).not.toContain('DISPATCH RESULT')
   })
 
-  it('requestSupervisorDispatch strips transport=cmux to headless', async () => {
+  it('requestSupervisorDispatch passes transport=cmux', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { pi, cwd, branch, beadId, head } = makePi({ execCalls })
     const result = await requestSupervisorDispatch(pi, { beadId, dryRun: true, transport: 'cmux', agent: 'test-supervisor' }, workflowCtx(cwd, beadId, branch, head))
     expect(result.ok).toBe(true)
+    expect((result.details as { status?: string; transport?: string }).status).toBe('spawned')
+    expect((result.details as { transport?: string }).transport).toBe('cmux')
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
-    expect(comments.length).toBeGreaterThan(0)
-    const strippedComment = comments[0]
-    expect(strippedComment).toBeDefined()
-    expect(strippedComment!.args.join(' ')).toContain('DISPATCH (')
+    expect(comments).toEqual([])
   })
 
   it('mocked adapter persists isolation files and does not unlink them on spawn-ack', async () => {

@@ -461,13 +461,21 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, worktreePath?: string): Promise<void> {
 		const action = renderPlanExecutionAction(beadId, worktreePath);
 		sendPreDispatchProgress(beadId, action);
-		const result = await requestSupervisorDispatch(pi, { beadId, cwd: worktreePath }, ctx);
+		const result = await requestSupervisorDispatch(pi, { beadId, cwd: worktreePath, transport: "cmux" }, ctx);
 		if (!result.ok) {
 			await recordRuntimeHookMissing(ctx, beadId, action, result.error ?? "typed continuation returned without success");
 			return;
 		}
+		const details = result.details as { status?: string; transport?: string } | undefined;
+		const spawned = details?.status === "spawned" || details?.transport === "cmux";
 		pi.sendMessage(
-			{ customType: "post-approval-continuation", content: `PLAN APPROVED continuation completed: ${action}\n\n${result.text}`, display: true },
+			{
+				customType: "post-approval-continuation",
+				content: spawned
+					? `PLAN APPROVED continuation: supervisor spawned, waiting ping\nBead: ${beadId}\n${result.text}\nNext: complete_visible_dispatch after supervisor ping. Spawn-ack is not DONE.`
+					: `PLAN APPROVED continuation completed: ${action}\n\n${result.text}`,
+				display: true,
+			},
 			{ triggerTurn: false },
 		);
 	}

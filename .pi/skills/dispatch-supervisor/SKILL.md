@@ -44,8 +44,8 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    dispatch_supervisor(beadId=<ID>)
    # optional explicit override when needed: dispatch_supervisor(beadId=<ID>, cwd=<workflowState.worktreePath>)
    ```
-   Default `transport` is `headless` (blocking child, then wrapper `DISPATCH` / `DISPATCH RESULT` / maybe submit). `requestSupervisorDispatch` / PLAN APPROVED continuation **never** pass `transport=cmux`.
-   Optional spike path: `dispatch_supervisor({ beadId, transport: "cmux" })` returns spawn-ack `{ status: "spawned", pane, taskFile, resultFile, registryKey }` and **must not** write bd comments or equal DONE. Live visible panes in this spike use `.pi/orchestrator/run.sh`, not typed cmux. `dryRun` + `cmux` = no pane. `dispatch_reviewer` / `dispatch_docs_agent` do not accept `transport`.
+   Interactive: `dispatch_supervisor(beadId=<ID>, transport="cmux")`. Spawn-ack (`status=spawned`) is **not** DONE. After supervisor ping, call `complete_visible_dispatch({ taskId })` — that sends work to review like today. Do not re-dispatch. Explicit `transport=headless` is the old dark window. No cmux in interactive → BLOCKED, not silent headless.
+   PLAN APPROVED continuation passes `transport=cmux` and must not treat spawn-ack as `continuation completed`. `dispatch_reviewer` / `dispatch_docs_agent` do not accept `transport`.
 5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, execution contract, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 
 ## Supervisor execution contract

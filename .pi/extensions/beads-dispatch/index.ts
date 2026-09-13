@@ -130,8 +130,7 @@ export async function requestSupervisorDispatch<Ctx = unknown>(pi: object, param
 	const api = registry.byPi.get(pi) ?? registry.latest;
 	if (!api) return { ok: false, text: "", error: "runtime hook missing: dispatch_supervisor API is unavailable" };
 	try {
-		const { transport: _ignoredTransport, ...rest } = params;
-		const result = await api.dispatchSupervisor({ ...rest, transport: "headless" }, ctx, signal);
+		const result = await api.dispatchSupervisor(params, ctx, signal);
 		const text = result.content.map((item) => item.text).join("\n");
 		const details = result.details as { error?: string } | undefined;
 		if (details?.error) return { ok: false, text, details: result.details, error: details.error };
