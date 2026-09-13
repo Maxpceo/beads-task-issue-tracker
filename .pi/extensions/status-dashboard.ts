@@ -155,6 +155,18 @@ function compactBeadId(id: string): string {
 	return `${suffix}${fallbackMarker}`;
 }
 
+function contextUsageParts(ctx: ExtensionContext): readonly (readonly [string, string, string])[] {
+	const usage = typeof ctx.getContextUsage === "function" ? ctx.getContextUsage() : undefined;
+	const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+	if (!window) return [];
+	if (usage?.tokens == null) return [["ctx", `?/${formatTokens(window)}`, "muted"]];
+
+	const used = Math.max(0, usage.tokens);
+	const percent = usage.percent ?? (used / window) * 100;
+	const color = percent > 90 ? "error" : percent > 70 ? "warning" : "text";
+	return [["ctx", `${formatTokens(used)}/${formatTokens(window)}`, color]];
+}
+
 function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, string, string])[] {
 	let input = 0;
 	let output = 0;
@@ -246,6 +258,7 @@ function renderWorkflowFooter(
 	);
 	workflowParts.push(["", gitState, gitStateColor], ["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"]);
 	const statsParts = [
+		...contextUsageParts(ctx),
 		...sessionUsageParts(ctx),
 		...(statuses ? [["ext", statuses, "text"] as const] : []),
 	] as const;

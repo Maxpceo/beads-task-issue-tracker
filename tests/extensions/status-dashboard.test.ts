@@ -35,10 +35,18 @@ interface RegisteredHandlers {
   turn_start?: (event: unknown, ctx: MockContext) => Promise<void> | void
 }
 
+interface ContextUsage {
+  tokens: number | null
+  contextWindow: number
+  percent: number | null
+}
+
 interface MockContext {
   cwd: string
   hasUI: true
   sessionManager: { getEntries: () => unknown[] }
+  getContextUsage: () => ContextUsage | undefined
+  model?: { contextWindow?: number }
   ui: {
     theme: { fg: (_color: string, text: string) => string }
     setStatus: (key: string, text: string) => void
@@ -77,7 +85,7 @@ function createRepoWithLinkedWorktree(): { primary: string; linked: string; link
   return { primary, linked, linkedName }
 }
 
-async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120): Promise<{ status: string; footer: string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
+async function renderDashboard(cwd: string, workflowState: Record<string, unknown> | Array<{ type: string; customType?: string; data?: unknown }> = {}, width = 120, contextUsage?: ContextUsage): Promise<{ status: string; footer: string[]; bdCalls: string[]; emitWorkflowUpdate: (entries: Array<{ type: string; customType?: string; data?: unknown }>) => Promise<void> }> {
   const runtimeOwnerKey = 'runtime:test-status-dashboard'
   ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
   if (!Array.isArray(workflowState) && Object.keys(workflowState).length > 0) workflowState.runtimeOwnerKey ??= runtimeOwnerKey
@@ -119,6 +127,7 @@ async function renderDashboard(cwd: string, workflowState: Record<string, unknow
     sessionManager: {
       getEntries: () => workflowEntries,
     },
+    getContextUsage: () => contextUsage,
     ui: {
       theme,
       setStatus(key: string, text: string) {
@@ -289,5 +298,35 @@ describe('Pi status-dashboard worktree display', () => {
 
     expect(dashboard.status).toContain('wt:')
     expect(workflowLine).toContain('wt:')
+  })
+
+  it('shows used context tokens before session usage in the stats footer line', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, {}, 160, { tokens: 50_000, contextWindow: 200_000, percent: 25 })
+    const statsLine = dashboard.footer[1] ?? ''
+
+    expect(statsLine).toContain('ctx:50k/200k')
+    expect(statsLine).not.toContain('left:')
+    expect(statsLine.indexOf('ctx:')).toBeLessThan(statsLine.indexOf('in:'))
+  })
+
+  it('shows unknown used tokens when usage tokens are null', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary, {}, 160, { tokens: null, contextWindow: 200_000, percent: null })
+
+    expect(dashboard.footer[1] ?? '').toContain('ctx:?/200k')
+  })
+
+  it('omits context tokens when context window is unknown', async () => {
+    const { primary } = createRepoWithLinkedWorktree()
+
+    const dashboard = await renderDashboard(primary)
+    const statsLine = dashboard.footer[1] ?? ''
+
+    expect(statsLine).not.toContain('ctx:')
+    expect(statsLine).not.toContain('left:')
+    expect(statsLine).toContain('in:')
   })
 })
