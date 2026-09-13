@@ -272,6 +272,33 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(fs.existsSync(liveEntry!.promptFile)).toBe(true)
   })
 
+  it('visible task body quotes ping.sh and does not use bare Ping taskId=', async () => {
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-ping' } },
+      async newSplit() { return { surface: 'surface:11' } },
+      async send() {},
+      async closeSurface() {},
+    })
+    const { registered, cwd, branch, beadId, head } = makePi({ execCalls: [] })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    const body = fs.readFileSync(result.details.taskFile!, 'utf8')
+    const pingSh = path.join(cwd, '.pi/orchestrator/ping.sh')
+    expect(body).toContain(`bash '${pingSh}'`)
+    expect(body).toMatch(/DIGEST_FILE='[^']+' bash '/)
+    expect(body).not.toMatch(/Ping taskId=/)
+    expect(body).toContain('KIND=error')
+    expect(body).toContain('Child stdout is not delivery')
+  })
+
+  it('ping.sh fail-closes send without || true and keeps newline in the same send', () => {
+    const pingSh = fs.readFileSync(path.join(process.cwd(), '.pi/orchestrator/ping.sh'), 'utf8')
+    expect(pingSh).toMatch(/send --surface "\$ORCH" "\$\{MSG\}\\n"/)
+    expect(pingSh).not.toMatch(/send --surface "\$ORCH" "\$\{MSG\}\\n" \|\| true/)
+    expect(pingSh).toMatch(/notify[\s\S]*\|\| true/)
+    expect(pingSh).toMatch(/trigger-flash[\s\S]*\|\| true/)
+  })
+
   it('kills pane when send fails before registry', async () => {
     const closed: string[] = []
     setCmuxAdapterForTests({

@@ -26,7 +26,12 @@ else
   MSG="[PING] ${NAME} · задача ${ID} завершена taskId=${ID} digest=${DIGEST_HINT}"
 fi
 
-"$CMUX" send --surface "$ORCH" "${MSG}\n" || true
+send_rc=0
+"$CMUX" send --surface "$ORCH" "${MSG}\n" || send_rc=$?
 "$CMUX" notify --title "visible-dispatch ${ID}" --body "${BODY:-готова}" --surface "$ORCH" || true
 "$CMUX" trigger-flash --surface "$ORCH" || true
+if [ "$send_rc" -ne 0 ]; then
+  echo "✗ ping send failed ($send_rc) → $ORCH" >&2
+  exit "$send_rc"
+fi
 echo "✓ ping $KIND → $ORCH ($MSG)"
