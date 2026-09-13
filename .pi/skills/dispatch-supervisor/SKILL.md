@@ -46,7 +46,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    - `cwd` must be the task worktree, never protected `main`.
    - Return `status=spawned` is **not** DONE and not `continuation completed`.
    - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead.
-   - Child ping: the visible supervisor must only run the quoted `DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body (`KIND=error` after BLOCKED/NEEDS_CONTEXT). Child stdout / printing `Ping` in the child pane is not delivery and must not trigger complete. Do not use raw `cmux send` / `send-key enter`.
+   - Child ping: the visible supervisor must only run the quoted `AGENT_NAME=<posix-quoted role> DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body (`KIND=error` after BLOCKED/NEEDS_CONTEXT). Child stdout / printing `Ping` in the child pane is not delivery and must not trigger complete. Do not use raw `cmux send` / `send-key enter`.
    - Orchestrator ping: when this orchestrator surface receives inbound user message `[PING]` or `[PING-ERROR]` with `taskId=`, call only `complete_visible_dispatch({ taskId })`. That writes `DISPATCH RESULT` and, if the artifact is complete, sends work to review. Do not call `dispatch_supervisor` again. Do not call `review_bead` from the ping itself. Incomplete complete may retry on a later ping; do not re-dispatch.
    - No cmux in interactive → BLOCKED. Not silent headless.
    - Explicit old path: `dispatch_supervisor(beadId=<ID>, transport="headless")`.

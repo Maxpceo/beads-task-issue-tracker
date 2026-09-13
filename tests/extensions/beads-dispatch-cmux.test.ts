@@ -289,6 +289,31 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(body).not.toMatch(/Ping taskId=/)
     expect(body).toContain('KIND=error')
     expect(body).toContain('Child stdout is not delivery')
+    const agentNamePrefix = "AGENT_NAME='test-supervisor' DIGEST_FILE="
+    expect(body.split(agentNamePrefix)).toHaveLength(3)
+    expect(body).toMatch(/AGENT_NAME='test-supervisor' DIGEST_FILE='[^']+' bash '/)
+    expect(body).not.toContain("AGENT_NAME='agent'")
+  })
+
+  it('pins ping.sh unset AGENT_NAME warning and last-resort fallback', () => {
+    const pingSh = fs.readFileSync(path.join(process.cwd(), '.pi/orchestrator/ping.sh'), 'utf8')
+    expect(pingSh).toContain('if [ -z "${AGENT_NAME:-}" ]')
+    expect(pingSh).toContain('echo "AGENT_NAME unset; falling back to agent" >&2')
+    expect(pingSh).toContain('NAME="${AGENT_NAME:-agent}"')
+  })
+
+  it('pins skill child ping command order AGENT_NAME then DIGEST_FILE then bash ping.sh', () => {
+    const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+    const pingSentence = skill.split('\n').find((line) => line.includes('Child ping:') && line.includes('ping.sh'))
+    expect(pingSentence).toBeDefined()
+    const agentIdx = pingSentence!.indexOf('AGENT_NAME=')
+    const digestIdx = pingSentence!.indexOf('DIGEST_FILE=')
+    const bashIdx = pingSentence!.indexOf('bash')
+    const pingIdx = pingSentence!.indexOf('ping.sh')
+    expect(agentIdx).toBeGreaterThanOrEqual(0)
+    expect(digestIdx).toBeGreaterThan(agentIdx)
+    expect(bashIdx).toBeGreaterThan(digestIdx)
+    expect(pingIdx).toBeGreaterThan(bashIdx)
   })
 
   it('ping.sh fail-closes send without || true and keeps newline in the same send', () => {
