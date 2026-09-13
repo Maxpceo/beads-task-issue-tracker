@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Opt-in visible cmux dispatch transport** (`beads-task-issue-tracker-hyjy`): `dispatch_supervisor` accepts `transport: "cmux"` for spawn-ack into a live cmux pane while default headless blocking dispatch is unchanged. Adds `.pi/orchestrator` scripts (run/ping/poll/watchdog), a home-namespace registry, mapping notes, and focused vitest coverage. Production waiter/default replacement remains a follow-up epic.
 - **Pi footer remaining tokens** (`beads-task-issue-tracker-wecj`): the workflow stats footer now shows remaining model context as `left:remaining/window` before session usage, using `?/window` when token usage is unknown and omitting the field when the context window is unavailable.
 - **Pi epic finalization workflow guard** (`beads-task-issue-tracker-8kay`): added a documented `finalize-epic` skill path plus policy checks that require `parent-child` epic relationships, `PARENT EPIC SWEEP` / `EPIC HANDOFF` markers before terminalizing the last required child, and an `EPIC ACCEPTANCE MATRIX` before closing an epic so parent epics are not left silently non-terminal after child completion.
 - **Pi supervisor artifact handoff** (`beads-task-issue-tracker-eo44`): typed supervisor dispatch prompts now include a stable execution contract and `SUPERVISOR ARTIFACT` format; review workflow surfaces the latest supervisor artifact status as evidence-only handoff data in dry-run output and durable review comments, and plan review rejects vague sequential-stream rationale in decomposition matrices.
