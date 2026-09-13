@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { visibleWidth } from "@earendil-works/pi-tui";
 
 interface WorkflowStateSnapshot {
 	state?: string;
@@ -36,15 +36,9 @@ function stripAnsi(text: string): string {
 	return text.replace(ANSI_PATTERN, "");
 }
 
-function truncatePlain(text: string, maxWidth: number): string {
-	return truncateToWidth(text, maxWidth, "…");
-}
-
-function clampFooterLine(line: string, width: number): string {
-	// TUI treats over-width component output as fatal. Keep a final ANSI-aware
-	// guard here even though fitParts also budgets each part.
-	return truncateToWidth(line, Math.max(0, width), "…");
-}
+type FooterPart = readonly [string, string, string];
+type FooterTheme = { fg(color: string, text: string): string };
+type FooterDensity = "narrow" | "medium" | "wide";
 
 const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
 
@@ -167,7 +161,7 @@ function contextUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 	return [["ctx", `${formatTokens(used)}/${formatTokens(window)}`, color]];
 }
 
-function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, string, string])[] {
+function sessionUsageParts(ctx: ExtensionContext, cacheLabel: string | null): FooterPart[] {
 	let input = 0;
 	let output = 0;
 	let cacheRead = 0;
@@ -182,11 +176,14 @@ function sessionUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 		cacheWrite += usage?.cacheWrite ?? 0;
 	}
 
-	return [
+	const parts: FooterPart[] = [
 		["in", input ? `↑${formatTokens(input)}` : "-", input ? "text" : "muted"],
 		["out", output ? `↓${formatTokens(output)}` : "-", output ? "text" : "muted"],
-		["cache", `R${formatTokens(cacheRead)}/W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"],
-	] as const;
+	];
+	if (cacheLabel) {
+		parts.push([cacheLabel, `R${formatTokens(cacheRead)}/W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"]);
+	}
+	return parts;
 }
 
 function sanitizeStatus(text: string): string {
@@ -196,35 +193,49 @@ function sanitizeStatus(text: string): string {
 		.trim();
 }
 
-function fitParts(
-	theme: { fg(color: string, text: string): string },
+function partPlain(label: string, value: string): string {
+	return label ? `${label}:${value}` : value;
+}
+
+function footerDensity(width: number): FooterDensity {
+	if (width >= 120) return "wide";
+	if (width >= 70) return "medium";
+	return "narrow";
+}
+
+function packLine(
+	theme: FooterTheme,
 	prefixText: string,
-	parts: readonly (readonly [string, string, string])[],
+	parts: readonly FooterPart[],
 	width: number,
-): string {
+): { line: string | undefined; consumed: number } {
+	if (parts.length === 0) return { line: undefined, consumed: 0 };
 	const prefix = theme.fg("accent", prefixText);
+	const firstPlain = partPlain(parts[0][0], parts[0][1]);
+	if (visibleWidth(prefix) + visibleWidth(firstPlain) > width) return { line: undefined, consumed: 0 };
+
 	const separator = theme.fg("muted", "  ");
-	let available = Math.max(0, width - visibleWidth(prefix));
 	const rendered: string[] = [];
-
+	let available = width - visibleWidth(prefix);
+	let consumed = 0;
 	for (const [label, value, color] of parts) {
-		const plain = label ? `${label}:${value}` : value;
+		const plain = partPlain(label, value);
 		const separatorWidth = rendered.length > 0 ? 2 : 0;
-		if (available <= separatorWidth) break;
-		const maxPartWidth = available - separatorWidth;
-		const labelWidth = label ? label.length + 1 : 0;
-		const truncatedValue = truncatePlain(value, Math.max(1, maxPartWidth - labelWidth));
-		const part = themePart(theme, label, truncatedValue, color);
-		rendered.push(part);
-		available -= separatorWidth + Math.min(visibleWidth(plain), maxPartWidth);
+		const need = separatorWidth + visibleWidth(plain);
+		if (need > available) break;
+		rendered.push(themePart(theme, label, value, color));
+		available -= need;
+		consumed += 1;
 	}
-
-	return clampFooterLine(prefix + rendered.join(separator), width);
+	if (rendered.length === 0) return { line: undefined, consumed: 0 };
+	const line = prefix + rendered.join(separator);
+	if (visibleWidth(line) > width) return { line: undefined, consumed: 0 };
+	return { line, consumed };
 }
 
 function renderWorkflowFooter(
 	ctx: ExtensionContext,
-	theme: { fg(color: string, text: string): string },
+	theme: FooterTheme,
 	footerData: { getExtensionStatuses?: () => ReadonlyMap<string, string> },
 	width: number,
 ): string[] {
@@ -249,24 +260,97 @@ function renderWorkflowFooter(
 
 	const sessionMode = wf.sessionMode ?? wf.state ?? "idle";
 	const planValue = `${wf.planMode ?? "off"}/${wf.planApproved ? "approved" : "pending"}`;
-	const workflowParts: Array<readonly [string, string, string]> = [["session", sessionMode, sessionMode === "idle" ? "text" : "accent"]];
-	if (worktree) workflowParts.push(["wt", worktree, "warning"]);
-	workflowParts.push(
-		["bead", displayBead, activeBead ? "accent" : "text"],
-		["bd", wf.bdStatus ?? "-", wf.bdStatus ? "accent" : "text"],
-		["plan", planValue, wf.planMode && wf.planMode !== "off" ? "warning" : "text"],
-	);
-	workflowParts.push(["", gitState, gitStateColor], ["slot", slotHeld ? "held" : "free", slotHeld ? "error" : "success"]);
-	const statsParts = [
-		...contextUsageParts(ctx),
-		...sessionUsageParts(ctx),
-		...(statuses ? [["ext", statuses, "text"] as const] : []),
-	] as const;
+	const sessionColor = sessionMode === "idle" ? "text" : "accent";
+	const beadColor = activeBead ? "accent" : "text";
+	const bdValue = wf.bdStatus ?? "-";
+	const bdColor = wf.bdStatus ? "accent" : "text";
+	const planColor = wf.planMode && wf.planMode !== "off" ? "warning" : "text";
+	const slotValue = slotHeld ? "held" : "free";
+	const slotColor = slotHeld ? "error" : "success";
+	const density = footerDensity(width);
 
-	return [
-		fitParts(theme, "  workflow  ", workflowParts, width),
-		fitParts(theme, "  stats     ", statsParts, width),
-	].map((line) => clampFooterLine(line, width));
+	const sticky4: FooterPart[] =
+		density === "wide"
+			? [
+					["session", sessionMode, sessionColor],
+					["bead", displayBead, beadColor],
+					["bd", bdValue, bdColor],
+					["slot", slotValue, slotColor],
+			  ]
+			: [
+					["s", sessionMode, sessionColor],
+					["b", displayBead, beadColor],
+					["bd", bdValue, bdColor],
+					["sl", slotValue, slotColor],
+			  ];
+
+	const cacheLabel = density === "wide" ? "cache" : density === "medium" ? "c" : null;
+	const statsParts: FooterPart[] = [
+		...contextUsageParts(ctx),
+		...sessionUsageParts(ctx, cacheLabel),
+		...(statuses ? ([["ext", statuses, "text"]] as FooterPart[]) : []),
+	];
+
+	const lines: string[] = [];
+
+	if (density === "wide") {
+		const wideParts: FooterPart[] = [["session", sessionMode, sessionColor]];
+		if (worktree) wideParts.push(["wt", worktree, "warning"]);
+		wideParts.push(
+			["bead", displayBead, beadColor],
+			["bd", bdValue, bdColor],
+			["plan", planValue, planColor],
+			["", gitState, gitStateColor],
+			["slot", slotValue, slotColor],
+		);
+		const first = packLine(theme, "  workflow  ", wideParts, width);
+		if (!first.line) return [];
+		lines.push(first.line);
+		let rest = wideParts.slice(first.consumed);
+		if (rest.length > 0) {
+			const cont = packLine(theme, "            ", rest, width);
+			if (cont.line) {
+				lines.push(cont.line);
+				rest = rest.slice(cont.consumed);
+			}
+		}
+		if (lines.length < 3) {
+			const stats = packLine(theme, "  stats     ", statsParts, width);
+			if (stats.line) lines.push(stats.line);
+		}
+		return lines.slice(0, 3);
+	}
+
+	if (density === "medium") {
+		const first = packLine(theme, "  workflow  ", sticky4, width);
+		if (!first.line) return [];
+		lines.push(first.line);
+		const stats = packLine(theme, "  stats     ", statsParts, width);
+		if (stats.line) lines.push(stats.line);
+		return lines.slice(0, 2);
+	}
+
+	const coreFirst = packLine(theme, "wf ", sticky4, width);
+	if (!coreFirst.line) return [];
+	lines.push(coreFirst.line);
+	let coreRest = sticky4.slice(coreFirst.consumed);
+	if (coreRest.length > 0 && lines.length < 3) {
+		const coreCont = packLine(theme, "   ", coreRest, width);
+		if (coreCont.line) {
+			lines.push(coreCont.line);
+			coreRest = coreRest.slice(coreCont.consumed);
+		}
+	}
+	if (worktree && lines.length < 3) {
+		const wtPart: FooterPart[] = [["wt", worktree, "warning"]];
+		const meta = packLine(theme, "   ", wtPart, width);
+		if (meta.line) lines.push(meta.line);
+	}
+	if (lines.length < 3) {
+		const stats = packLine(theme, "st ", statsParts, width);
+		if (stats.line) lines.push(stats.line);
+	}
+	return lines.slice(0, 3);
 }
 
 function installWorkflowFooter(ctx: ExtensionContext): void {
