@@ -161,29 +161,21 @@ function contextUsageParts(ctx: ExtensionContext): readonly (readonly [string, s
 	return [["ctx", `${formatTokens(used)}/${formatTokens(window)}`, color]];
 }
 
-function sessionUsageParts(ctx: ExtensionContext, cacheLabel: string | null): FooterPart[] {
+function sessionUsageParts(ctx: ExtensionContext): FooterPart[] {
 	let input = 0;
 	let output = 0;
-	let cacheRead = 0;
-	let cacheWrite = 0;
 
 	for (const entry of ctx.sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
 		const usage = entry.message.usage;
 		input += usage?.input ?? 0;
 		output += usage?.output ?? 0;
-		cacheRead += usage?.cacheRead ?? 0;
-		cacheWrite += usage?.cacheWrite ?? 0;
 	}
 
-	const parts: FooterPart[] = [
+	return [
 		["in", input ? `↑${formatTokens(input)}` : "-", input ? "text" : "muted"],
 		["out", output ? `↓${formatTokens(output)}` : "-", output ? "text" : "muted"],
 	];
-	if (cacheLabel) {
-		parts.push([cacheLabel, `R${formatTokens(cacheRead)}/W${formatTokens(cacheWrite)}`, cacheRead || cacheWrite ? "accent" : "muted"]);
-	}
-	return parts;
 }
 
 function sanitizeStatus(text: string): string {
@@ -284,10 +276,9 @@ function renderWorkflowFooter(
 					["sl", slotValue, slotColor],
 			  ];
 
-	const cacheLabel = density === "wide" ? "cache" : density === "medium" ? "c" : null;
 	const statsParts: FooterPart[] = [
 		...contextUsageParts(ctx),
-		...sessionUsageParts(ctx, cacheLabel),
+		...sessionUsageParts(ctx),
 		...(statuses ? ([["ext", statuses, "text"]] as FooterPart[]) : []),
 	];
 
