@@ -325,6 +325,31 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(pingSh).toContain('NAME="${AGENT_NAME:-agent}"')
   })
 
+  it('pins always-on agents: ping.sh required and chat report is not delivery', () => {
+    const agents = [
+      'test-supervisor.md',
+      'vue-supervisor.md',
+      'tauri-supervisor.md',
+      'code-reviewer.md',
+    ]
+    for (const name of agents) {
+      const text = fs.readFileSync(path.join(process.cwd(), '.pi/agents', name), 'utf8')
+      expect(text, name).toContain('ping.sh')
+      expect(text, name).toContain('чат-отчёт не заменяет')
+      expect(text, name).toContain('AGENT_NAME=')
+      expect(text, name).toContain('DIGEST_FILE=')
+    }
+  })
+
+  it('pins WRAPPER BOUNDARY does not cancel visible ping.sh', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), '.pi/extensions/beads-dispatch/index.ts'), 'utf8')
+    const start = src.indexOf('WRAPPER WORKFLOW BOUNDARY:')
+    const boundary = src.slice(start, src.indexOf('`;', start))
+    expect(boundary).toContain('ping.sh')
+    expect(boundary).toContain('Chat completion report is not delivery')
+    expect(boundary).not.toMatch(/return the SUPERVISOR ARTIFACT; the wrapper\/orchestrator owns review-transition routing\.`/)
+  })
+
   it('pins skill child ping command order AGENT_NAME then DIGEST_FILE then bash ping.sh', () => {
     const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
     const pingSentence = skill.split('\n').find((line) => line.includes('Child ping:') && line.includes('ping.sh'))

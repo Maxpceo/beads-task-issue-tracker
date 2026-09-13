@@ -517,7 +517,8 @@ function wrapperWorkflowBoundary(): string {
 - dispatch_supervisor already performed typed workflow preflight before spawning this supervisor.
 - Do not call or depend on workflow_status, workflow_submit_for_review, workflow_complete, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, or review_bead inside the child process.
 - If the approved plan contains older wording that assigns typed workflow preflight/submit to the supervisor, treat it as wrapper responsibility and continue with implementation evidence only.
-- After implementation, commit explicit files and return the SUPERVISOR ARTIFACT; the wrapper/orchestrator owns review-transition routing.`;
+- After implementation, commit explicit files, write result+digest, and run the task-body ping.sh; the wrapper/orchestrator owns review-transition routing after ping.
+- Visible ping.sh is still required on DONE/BLOCKED/NEEDS_CONTEXT. Chat completion report is not delivery.`;
 }
 
 function normalizeArtifactText(output: string): string {
