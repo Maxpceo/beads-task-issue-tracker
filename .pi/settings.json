@@ -14,8 +14,7 @@
     "extensions/session-context/index.ts",
     "extensions/session-replay/index.ts",
     "extensions/memory-capture/index.ts",
-    "extensions/follow-up-reminder/index.ts",
-    "extensions/warp-notifications/index.ts"
+    "extensions/follow-up-reminder/index.ts"
   ],
   "enableSkillCommands": true
 }
