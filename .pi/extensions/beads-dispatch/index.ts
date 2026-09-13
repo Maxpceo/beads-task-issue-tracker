@@ -906,8 +906,7 @@ async function respawnVisibleFollowup(
 		throw error;
 	}
 	await safeRenameSurface(adapter, surface, visibleChildTabTitle(entry.role, entry.beadId));
-	const caller = resolveCallerSurface(adapter, entry);
-	if (caller) await safeRenameSurface(adapter, caller, ORCHESTRATOR_TAB_TITLE);
+	if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
 	await adapter.closeSurface(entry.pane);
 	unlinkFollowupArtifacts(entry);
 	return patchFollowupEntry(found, {
@@ -1185,7 +1184,7 @@ Next step is review, same as today. Do not call review yourself.
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	const callerSurface = resolveCallerSurface(adapter) || liveAdapter?.callerSurface() || "";
+	const callerSurface = resolveCallerSurface(adapter);
 	await safeRenameSurface(adapter, surface, visibleChildTabTitle(agentName, bead.id));
 	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
 	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);

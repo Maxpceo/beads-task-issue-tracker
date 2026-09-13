@@ -120,6 +120,19 @@ function makePi(opts: { toolName?: string; execCalls?: Array<{ command: string; 
   return { pi, registered, tools, execCalls, emitted, cwd, branch, head, beadId }
 }
 
+describe('visible cmux tab titles', () => {
+  it('derives bead suffix and rename argv without focusing the pane', () => {
+    expect(beadSuffixFromId('')).toBe('')
+    expect(beadSuffixFromId('fo5d')).toBe('fo5d')
+    expect(beadSuffixFromId('beads-task-issue-tracker-fo5d')).toBe('fo5d')
+    expect(visibleChildTabTitle('test-supervisor', 'beads-task-issue-tracker-fo5d')).toBe('test-supervisor · fo5d')
+    expect(ORCHESTRATOR_TAB_TITLE).toBe('оркестратор')
+    expect(buildCmuxRenameArgv('surface:x', 't')).toEqual([
+      'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
+    ])
+  })
+})
+
 describe('visible child argv', () => {
   it('fail-closes without --append-system-prompt or --tools', () => {
     expect(validateVisibleChildArgv(['pi', '--no-session'])).toEqual(expect.arrayContaining(['missing --append-system-prompt', 'missing --tools']))
