@@ -5,6 +5,8 @@ import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import beadsDispatchExtension, {
+  beadSuffixFromId,
+  buildCmuxRenameArgv,
   buildVisibleChildArgv,
   buildVisibleChildSpawnPayload,
   completeVisibleDispatch,
@@ -14,9 +16,11 @@ import beadsDispatchExtension, {
   loadRegistry,
   nsDir,
   orchRoot,
+  ORCHESTRATOR_TAB_TITLE,
   persistIsolationFiles,
   posixQuote,
   pruneRegistry,
+  visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
   saveRegistry,
@@ -115,6 +119,19 @@ function makePi(opts: { toolName?: string; execCalls?: Array<{ command: string; 
   beadsDispatchExtension(pi as any)
   return { pi, registered, tools, execCalls, emitted, cwd, branch, head, beadId }
 }
+
+describe('visible cmux tab titles', () => {
+  it('derives bead suffix and rename argv without focusing the pane', () => {
+    expect(beadSuffixFromId('')).toBe('')
+    expect(beadSuffixFromId('fo5d')).toBe('fo5d')
+    expect(beadSuffixFromId('beads-task-issue-tracker-fo5d')).toBe('fo5d')
+    expect(visibleChildTabTitle('test-supervisor', 'beads-task-issue-tracker-fo5d')).toBe('test-supervisor · fo5d')
+    expect(ORCHESTRATOR_TAB_TITLE).toBe('оркестратор')
+    expect(buildCmuxRenameArgv('surface:x', 't')).toEqual([
+      'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
+    ])
+  })
+})
 
 describe('visible child argv', () => {
   it('fail-closes without --append-system-prompt or --tools', () => {
@@ -308,6 +325,31 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(pingSh).toContain('NAME="${AGENT_NAME:-agent}"')
   })
 
+  it('pins always-on agents: ping.sh required and chat report is not delivery', () => {
+    const agents = [
+      'test-supervisor.md',
+      'vue-supervisor.md',
+      'tauri-supervisor.md',
+      'code-reviewer.md',
+    ]
+    for (const name of agents) {
+      const text = fs.readFileSync(path.join(process.cwd(), '.pi/agents', name), 'utf8')
+      expect(text, name).toContain('ping.sh')
+      expect(text, name).toContain('чат-отчёт не заменяет')
+      expect(text, name).toContain('AGENT_NAME=')
+      expect(text, name).toContain('DIGEST_FILE=')
+    }
+  })
+
+  it('pins WRAPPER BOUNDARY does not cancel visible ping.sh', () => {
+    const src = fs.readFileSync(path.join(process.cwd(), '.pi/extensions/beads-dispatch/index.ts'), 'utf8')
+    const start = src.indexOf('WRAPPER WORKFLOW BOUNDARY:')
+    const boundary = src.slice(start, src.indexOf('`;', start))
+    expect(boundary).toContain('ping.sh')
+    expect(boundary).toContain('Chat completion report is not delivery')
+    expect(boundary).not.toMatch(/return the SUPERVISOR ARTIFACT; the wrapper\/orchestrator owns review-transition routing\.`/)
+  })
+
   it('pins skill child ping command order AGENT_NAME then DIGEST_FILE then bash ping.sh', () => {
     const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
     const pingSentence = skill.split('\n').find((line) => line.includes('Child ping:') && line.includes('ping.sh'))
@@ -382,6 +424,56 @@ describe('dispatch_supervisor transport=cmux', () => {
     const second = await registered.execute('call-2', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
     expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId \}\)/)
     expect(second.content[0].text).toMatch(/BLOCKED/)
+  })
+
+  it('renames child and orchestrator tabs after visible spawn', async () => {
+    const renames: Array<{ surface: string; title: string }> = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-rename' } },
+      callerSurface() { return 'surface:orch' },
+      async newSplit() { return { surface: 'surface:child' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface(surface, title) { renames.push({ surface, title }) },
+    })
+    const beadId = 'beads-task-issue-tracker-fo5d'
+    const { registered, cwd, branch, head } = makePi({ beadId })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    expect(renames).toEqual([
+      { surface: 'surface:child', title: 'test-supervisor · fo5d' },
+      { surface: 'surface:orch', title: ORCHESTRATOR_TAB_TITLE },
+    ])
+    expect(visibleChildTabTitle('test-supervisor', beadId)).toBe('test-supervisor · fo5d')
+    expect(beadSuffixFromId(beadId)).toBe('fo5d')
+  })
+
+  it('live adapter rename uses tab-action argv with --focus false', async () => {
+    setCmuxAdapterForTests(null)
+    const cmuxCalls: string[][] = []
+    const beadId = 'beads-task-issue-tracker-fo5d'
+    const { registered, cwd, branch, head } = makePi({
+      beadId,
+      cmux: async (args) => {
+        cmuxCalls.push(args)
+        if (args[0] === 'identify') {
+          return { stdout: JSON.stringify({ caller: { workspace_ref: 'ws-live-rename', surface_ref: 'surface:orch' } }), stderr: '', code: 0 }
+        }
+        if (args[0] === 'new-split') return { stdout: 'surface:child\n', stderr: '', code: 0 }
+        if (args[0] === 'send') return { stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'tab-action') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    const renames = cmuxCalls.filter((args) => args[0] === 'tab-action')
+    expect(renames).toContainEqual(buildCmuxRenameArgv('surface:child', 'test-supervisor · fo5d'))
+    expect(renames).toContainEqual(buildCmuxRenameArgv('surface:orch', ORCHESTRATOR_TAB_TITLE))
+    expect(buildCmuxRenameArgv('surface:x', 't')).toEqual([
+      'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
+    ])
   })
 
   it('live typed cmux without adapter is BLOCKED when identify fails', async () => {

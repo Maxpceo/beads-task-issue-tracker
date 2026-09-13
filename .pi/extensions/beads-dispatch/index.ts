@@ -7,6 +7,8 @@ import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/i
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import {
 	appendPanesEnv,
+	beadSuffixFromId,
+	buildCmuxRenameArgv,
 	buildVisibleChildArgv,
 	buildVisibleFollowupPayload,
 	buildVisibleChildSpawnPayload,
@@ -17,26 +19,32 @@ import {
 	liveEntriesForBead,
 	loadRegistry,
 	nsDir,
+	ORCHESTRATOR_TAB_TITLE,
 	persistIsolationFiles,
 	readDigestPreview,
 	saveRegistry,
 	unlinkFollowupArtifacts,
 	validateVisibleChildArgv,
+	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
 	worktreeOrchDir,
 	type CmuxAdapter,
 	type DispatchRegistryEntry,
 } from "./cmux-transport";
 export {
+	beadSuffixFromId,
+	buildCmuxRenameArgv,
 	buildVisibleChildArgv,
 	buildVisibleChildSpawnPayload,
 	buildVisibleFollowupPayload,
 	classifyVisiblePane,
 	followupPayloadLooksLikeSpawnArgv,
 	findLiveFollowupEntry,
+	ORCHESTRATOR_TAB_TITLE,
 	unlinkFollowupArtifacts,
 	posixQuote,
 	validateVisibleChildArgv,
+	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
 	pruneRegistry,
 	persistIsolationFiles,
@@ -509,7 +517,8 @@ function wrapperWorkflowBoundary(): string {
 - dispatch_supervisor already performed typed workflow preflight before spawning this supervisor.
 - Do not call or depend on workflow_status, workflow_submit_for_review, workflow_complete, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, or review_bead inside the child process.
 - If the approved plan contains older wording that assigns typed workflow preflight/submit to the supervisor, treat it as wrapper responsibility and continue with implementation evidence only.
-- After implementation, commit explicit files and return the SUPERVISOR ARTIFACT; the wrapper/orchestrator owns review-transition routing.`;
+- After implementation, commit explicit files, write result+digest, and run the task-body ping.sh; the wrapper/orchestrator owns review-transition routing after ping.
+- Visible ping.sh is still required on DONE/BLOCKED/NEEDS_CONTEXT. Chat completion report is not delivery.`;
 }
 
 function normalizeArtifactText(output: string): string {
@@ -897,6 +906,8 @@ async function respawnVisibleFollowup(
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
+	await safeRenameSurface(adapter, surface, visibleChildTabTitle(entry.role, entry.beadId));
+	if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
 	await adapter.closeSurface(entry.pane);
 	unlinkFollowupArtifacts(entry);
 	return patchFollowupEntry(found, {
@@ -1045,7 +1056,26 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 		async closeSurface(surface) {
 			await exec("cmux", ["close-surface", "--surface", surface]);
 		},
+		async renameSurface(surface, title) {
+			const result = await exec("cmux", buildCmuxRenameArgv(surface, title));
+			if (result.code !== 0) throw new Error(`cmux rename failed: ${result.stderr || result.stdout}`);
+		},
 	};
+}
+
+function resolveCallerSurface(adapter: CmuxAdapter, entry?: DispatchRegistryEntry): string {
+	const fromMethod = typeof adapter.callerSurface === "function" ? adapter.callerSurface() : "";
+	return String(fromMethod || entry?.callerSurface || "").trim();
+}
+
+/** Fail-soft tab rename: never fails spawn, never closeSurface. */
+async function safeRenameSurface(adapter: CmuxAdapter, surface: string, title: string): Promise<void> {
+	if (!surface || !title || typeof adapter.renameSurface !== "function") return;
+	try {
+		await adapter.renameSurface(surface, title);
+	} catch {
+		/* title-only best effort */
+	}
 }
 
 function posixSingleQuote(value: string): string {
@@ -1155,7 +1185,9 @@ Next step is review, same as today. Do not call review yourself.
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	const callerSurface = liveAdapter?.callerSurface() || "";
+	const callerSurface = resolveCallerSurface(adapter);
+	await safeRenameSurface(adapter, surface, visibleChildTabTitle(agentName, bead.id));
+	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
 	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);
 	const entry: DispatchRegistryEntry = {
 		taskId,
