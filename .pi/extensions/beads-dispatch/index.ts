@@ -6,13 +6,20 @@ import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent,
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import {
+	appendPanesEnv,
+	artifactLooksComplete,
 	buildVisibleChildArgv,
+	findRegistryByTaskId,
 	getCmuxAdapterForTests,
+	liveEntriesForBead,
 	loadRegistry,
 	nsDir,
 	persistIsolationFiles,
+	readDigestPreview,
 	saveRegistry,
 	validateVisibleChildArgv,
+	worktreeOrchDir,
+	type CmuxAdapter,
 	type DispatchRegistryEntry,
 } from "./cmux-transport";
 export {
@@ -25,6 +32,8 @@ export {
 	nsDir,
 	loadRegistry,
 	saveRegistry,
+	findRegistryByTaskId,
+	artifactLooksComplete,
 } from "./cmux-transport";
 
 interface ExtensionAPI {
@@ -647,6 +656,30 @@ async function submitForReviewFromWrapper(pi: ExtensionAPI, beadId: string, agen
 	if (updateResult.code !== 0) throw new Error(`dispatch_supervisor wrapper submit не перевёл bead в inreview: ${updateResult.stderr || updateResult.stdout}`);
 }
 
+export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only"; text: string }> {
+	const found = findRegistryByTaskId(params.taskId);
+	if (!found) throw new Error(`complete_visible_dispatch: нет registry для ${params.taskId}`);
+	const { file, registry, entry, index } = found;
+	if (entry.submitStatus === "submitted") return { status: "noop", text: "already submitted" };
+	const preview = readDigestPreview(entry.digestFile, entry.resultFile);
+	if (!preview.exists) return { status: "incomplete", text: "нет digest/result" };
+	const resultText = fs.existsSync(entry.resultFile) ? fs.readFileSync(entry.resultFile, "utf8") : preview.text;
+	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
+	const startCommit = entry.startCommit || endCommit;
+	const ready = artifactLooksComplete(resultText) && supervisorArtifactReadyForReview({ output: resultText, exitCode: 0, stderr: "" }, startCommit, endCommit);
+	if (!ready) {
+		await pi.exec("bd", ["comments", "add", entry.beadId, `DISPATCH INCOMPLETE (${entry.role})\nPING: агент считает контракт выполненным, отчёта для auto-submit мало.\n\n${preview.text}`]);
+		registry.entries[index] = { ...entry, submitStatus: "result-only" };
+		saveRegistry(file, registry);
+		return { status: "incomplete", text: preview.text };
+	}
+	await addEndCommitComment(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit);
+	await submitForReviewFromWrapper(pi, entry.beadId, entry.role, "", entry.worktree, startCommit, endCommit, resultText);
+	registry.entries[index] = { ...entry, submitStatus: "submitted" };
+	saveRegistry(file, registry);
+	return { status: "submitted", text: resultText.slice(0, 2000) };
+}
+
 async function validateSupervisorPreflight(pi: ExtensionAPI, params: { beadId: string; cwd?: string }, ctx?: ToolContext): Promise<{ scope: TaskScope; cwd: string; branch: string; worktreePath: string; startCommit: string; currentHead: string; evidence: string }> {
 	const stateScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
 	if (!stateScope.ok) throw new Error(taskScopeErrorToPolicyReason(stateScope.error, params.beadId, "dispatch_supervisor preflight"));
@@ -703,7 +736,46 @@ function cmuxSpawnAckResult(
 	};
 }
 
+function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { callerSurface(): string } {
+	let callerSurface = "";
+	return {
+		callerSurface: () => callerSurface,
+		async identify() {
+			const result = await exec("cmux", ["identify", "--json"]);
+			if (result.code !== 0) throw new Error("нет cmux (identify failed): BLOCKED");
+			let data: { caller?: { workspace_ref?: string; surface_ref?: string; surface?: string }; workspace?: string };
+			try {
+				data = JSON.parse(result.stdout || "{}") as typeof data;
+			} catch {
+				throw new Error("нет cmux (identify json): BLOCKED");
+			}
+			const caller = data.caller ?? {};
+			const workspaceId = String(caller.workspace_ref || data.workspace || "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+			if (!workspaceId) throw new Error("нет cmux workspace: BLOCKED");
+			callerSurface = String(caller.surface_ref || caller.surface || "").trim();
+			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
+			return { workspaceId };
+		},
+		async newSplit() {
+			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
+			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface]);
+			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
+			const match = `${result.stdout || ""}`.match(/surface:\S+/);
+			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
+			return { surface: match[0] };
+		},
+		async send(surface, text) {
+			const result = await exec("cmux", ["send", "--surface", surface, text]);
+			if (result.code !== 0) throw new Error(`cmux send failed: ${result.stderr || result.stdout}`);
+		},
+		async closeSurface(surface) {
+			await exec("cmux", ["close-surface", "--surface", surface]);
+		},
+	};
+}
+
 async function dispatchVisibleCmux(input: {
+	pi: ExtensionAPI;
 	params: DispatchToolParams;
 	bead: BeadInfo;
 	agent: AgentConfig;
@@ -714,7 +786,7 @@ async function dispatchVisibleCmux(input: {
 	startCommit: string;
 	cwd: string;
 }): Promise<DispatchResult> {
-	const { params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd } = input;
+	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd } = input;
 	const taskId = `task-${bead.id.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-24)}`;
 	if (params.dryRun) {
 		const argv = buildVisibleChildArgv({
@@ -734,13 +806,22 @@ async function dispatchVisibleCmux(input: {
 			taskId,
 		});
 	}
-	const adapter = getCmuxAdapterForTests();
-	if (!adapter) {
-		throw new Error("transport=cmux live typed dispatch is not enabled in this spike; use .pi/orchestrator/run.sh");
-	}
+	const testAdapter = getCmuxAdapterForTests();
+	const liveAdapter = testAdapter ? null : createLiveCmuxAdapter(pi.exec);
+	const adapter = testAdapter ?? liveAdapter;
+	if (!adapter) throw new Error("нет cmux adapter: BLOCKED");
 	const identified = await adapter.identify();
 	const dir = nsDir(identified.workspaceId);
+	const registryFile = path.join(dir, "dispatch-registry.json");
+	const existing = loadRegistry(registryFile);
+	if (liveEntriesForBead(existing, bead.id).length > 0) {
+		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered)`);
+	}
 	const files = persistIsolationFiles(dir, taskId, agent.systemPrompt, prompt);
+	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
+	fs.mkdirSync(resultsDir, { recursive: true });
+	files.resultFile = path.join(resultsDir, `${taskId}.md`);
+	files.digestFile = path.join(resultsDir, `${taskId}.digest`);
 	const argv = buildVisibleChildArgv({
 		model: agent.model,
 		systemPromptFile: files.promptFile,
@@ -759,8 +840,8 @@ async function dispatchVisibleCmux(input: {
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	const registryFile = path.join(dir, "dispatch-registry.json");
-	const registry = loadRegistry(registryFile);
+	const callerSurface = liveAdapter?.callerSurface() || "";
+	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);
 	const entry: DispatchRegistryEntry = {
 		taskId,
 		beadId: bead.id,
@@ -773,15 +854,20 @@ async function dispatchVisibleCmux(input: {
 		digestFile: files.digestFile,
 		promptFile: files.promptFile,
 		status: "spawned",
+		submitStatus: "none",
+		callerSurface: callerSurface || undefined,
+		startCommit,
 		createdAt: new Date().toISOString(),
 	};
-	registry.entries.push(entry);
+	existing.entries.push(entry);
 	try {
-		saveRegistry(registryFile, registry);
+		saveRegistry(registryFile, existing);
 	} catch (error) {
 		await adapter.closeSurface(surface);
 		throw error;
 	}
+	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, `transport=cmux spawn-ack taskId=${taskId} pane=${surface}\nDIGEST_FILE=${files.digestFile}\nRESULT_FILE=${files.resultFile}`);
+	pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", sessionMode: "implementing", branch, worktreePath, startCommit });
 	return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
 		pane: surface,
 		taskFile: files.taskFile,
@@ -831,7 +917,7 @@ async function dispatch(
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
 	if (mode === "supervisor" && params.transport === "cmux") {
-		return await dispatchVisibleCmux({ params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd });
+		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd });
 	}
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
@@ -919,6 +1005,26 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `dispatch_reviewer не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "complete_visible_dispatch",
+		label: "Complete Visible Dispatch",
+		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT and submit for review if the artifact is complete. Does not spawn.",
+		parameters: {
+			type: "object",
+			properties: { taskId: { type: "string", description: "Visible dispatch registry taskId" } },
+			required: ["taskId"],
+			additionalProperties: false,
+		},
+		async execute(_id: string, params: { taskId: string }) {
+			try {
+				const result = await completeVisibleDispatch(pi, params);
+				return { content: [{ type: "text", text: `complete_visible_dispatch status=${result.status}\n${result.text}` }], details: result };
+			} catch (error) {
+				return { content: [{ type: "text", text: `complete_visible_dispatch не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
 			}
 		},
 	});

@@ -17,16 +17,16 @@ PANES="$NS_DIR/panes.env"
 [ -f "$PANES" ] || { echo "✗ нет $PANES" >&2; exit 1; }
 
 ORCH=$(grep '^orchestrator=' "$PANES" | tail -1 | cut -d= -f2 || true)
+[ -n "$ORCH" ] || { echo "✗ в panes.env нет orchestrator=" >&2; exit 1; }
 NAME="${AGENT_NAME:-agent}"
+DIGEST_HINT="${DIGEST_FILE:-results/${ID}.digest}"
 if [ "$KIND" = "error" ]; then
   MSG="[PING-ERROR] ${NAME} · задача ${ID}: ${BODY:-ошибка}"
 else
-  MSG="[PING] ${NAME} · задача ${ID} завершена, смотри results/${ID}.md"
+  MSG="[PING] ${NAME} · задача ${ID} завершена taskId=${ID} digest=${DIGEST_HINT}"
 fi
 
-if [ -n "$ORCH" ]; then
-  "$CMUX" send --surface "$ORCH" "${MSG}\n" || true
-  "$CMUX" notify --title "visible-dispatch ${ID}" --body "${BODY:-готова}" --surface "$ORCH" || true
-  "$CMUX" trigger-flash --surface "$ORCH" || true
-fi
-echo "✓ ping $KIND → ${ORCH:-no-orchestrator-pane} ($MSG)"
+"$CMUX" send --surface "$ORCH" "${MSG}\n" || true
+"$CMUX" notify --title "visible-dispatch ${ID}" --body "${BODY:-готова}" --surface "$ORCH" || true
+"$CMUX" trigger-flash --surface "$ORCH" || true
+echo "✓ ping $KIND → $ORCH ($MSG)"

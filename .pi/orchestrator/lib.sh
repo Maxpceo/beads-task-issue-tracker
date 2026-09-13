@@ -49,12 +49,18 @@ else:
     uid = ws or ""
 uid = str(uid).strip()
 uid = re.sub(r"[^A-Za-z0-9._-]+", "-", uid).strip("-")
+surf = ""
+if isinstance(caller, dict):
+    surf = str(caller.get("surface_ref") or caller.get("surface") or "").strip()
 print(uid if uid else "")
+print(surf)
 ')
+  CALLER_SURFACE=$(printf '%s\n' "$WS_UUID" | sed -n '2p')
+  WS_UUID=$(printf '%s\n' "$WS_UUID" | sed -n '1p')
   [ -n "$WS_UUID" ] || { orch_fail "cmux identify did not return a workspace id"; return 1; }
   NS_DIR="$ORCH_ROOT/ns/$WS_UUID"
   mkdir -p "$NS_DIR/tasks" "$NS_DIR/results" "$NS_DIR/hang" "$NS_DIR/prompts"
-  export ORCH_NS="$NS_DIR" ORCH_ROOT WS_UUID
+  export ORCH_NS="$NS_DIR" ORCH_ROOT WS_UUID CALLER_SURFACE
   return 0
 }
 

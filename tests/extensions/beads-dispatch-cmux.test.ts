@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import beadsDispatchExtension, {
   buildVisibleChildArgv,
+  completeVisibleDispatch,
+  findRegistryByTaskId,
   loadRegistry,
   nsDir,
   orchRoot,
@@ -239,7 +241,9 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(fs.existsSync(taskFile!)).toBe(true)
     expect(fs.existsSync(prompt)).toBe(true)
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
-    expect(comments).toEqual([])
+    expect(comments.length).toBeGreaterThan(0)
+    expect(comments[0]?.args.join(' ')).toContain('DISPATCH (')
+    expect(comments[0]?.args.join(' ')).not.toContain('DISPATCH RESULT')
     const registry = loadRegistry(path.join(tmp, 'ns', 'ws-live', 'dispatch-registry.json'))
     expect(registry.entries).toHaveLength(1)
     const liveEntry = registry.entries[0]
@@ -263,10 +267,25 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(fs.existsSync(path.join(tmp, 'ns', 'ws-fail', 'dispatch-registry.json'))).toBe(false)
   })
 
-  it('live typed cmux without adapter is disabled', async () => {
+  it('duplicate spawn of live bead is BLOCKED', async () => {
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-dup' } },
+      async newSplit() { return { surface: 'surface:1' } },
+      async send() {},
+      async closeSurface() {},
+    })
+    const { registered, cwd, branch, beadId, head } = makePi({})
+    const ctx = workflowCtx(cwd, beadId, branch, head)
+    const first = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
+    expect(first.details.status).toBe('spawned')
+    const second = await registered.execute('call-2', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
+    expect(second.content[0].text).toMatch(/повторный spawn|BLOCKED/)
+  })
+
+  it('live typed cmux without adapter is BLOCKED when identify fails', async () => {
     const { registered, cwd, branch, beadId, head } = makePi({})
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
-    expect(result.content[0].text).toMatch(/not enabled in this spike/)
+    expect(result.content[0].text).toMatch(/BLOCKED|identify/)
   })
 })
 
@@ -304,5 +323,69 @@ describe('persistIsolationFiles', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+const completeArtifact = `Status: DONE
+Artifact status: complete
+Verification: pnpm test exit code 0 passed
+Commit: abcdef1234567`
+
+describe('complete_visible_dispatch', () => {
+  let tmp: string
+  const prevOrch = process.env.ORCH_ROOT
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wfh7-complete-'))
+    process.env.ORCH_ROOT = tmp
+  })
+
+  afterEach(() => {
+    if (prevOrch === undefined) delete process.env.ORCH_ROOT
+    else process.env.ORCH_ROOT = prevOrch
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  function seed(entry: Record<string, string>) {
+    const file = path.join(tmp, 'ns', 'ws-c', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [{
+        taskId: 'task-1',
+        beadId: 'bead-a',
+        pane: 'surface:1',
+        worktree: tmp,
+        role: 'test-supervisor',
+        model: '',
+        taskFile: path.join(tmp, 't.md'),
+        resultFile: path.join(tmp, 'r.md'),
+        digestFile: path.join(tmp, 'd.digest'),
+        promptFile: path.join(tmp, 'p.md'),
+        status: 'spawned',
+        submitStatus: 'none',
+        startCommit: 'aaa1111',
+        createdAt: 't',
+        ...entry,
+      }],
+    })
+  }
+
+  it('retries incomplete ping and no-ops after submit', async () => {
+    seed({})
+    fs.writeFileSync(path.join(tmp, 'd.digest'), 'still working')
+    const { pi } = makePi({ head: 'aaa1111' })
+    const first = await completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    expect(first.status).toBe('incomplete')
+    expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('result-only')
+    fs.writeFileSync(path.join(tmp, 'r.md'), completeArtifact)
+    const { pi: pi2 } = makePi({ head: 'bbb2222' })
+    const second = await completeVisibleDispatch(pi2 as any, { taskId: 'task-1' })
+    expect(second.status).toBe('submitted')
+    const third = await completeVisibleDispatch(pi2 as any, { taskId: 'task-1' })
+    expect(third.status).toBe('noop')
+  })
+
+  it('registers complete_visible_dispatch tool', () => {
+    const { tools } = makePi({ toolName: 'complete_visible_dispatch' })
+    expect(tools.complete_visible_dispatch).toBeDefined()
   })
 })
