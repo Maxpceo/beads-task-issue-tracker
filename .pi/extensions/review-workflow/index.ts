@@ -1034,7 +1034,7 @@ async function runProgrammaticReviewRuntimeDelegate(params: ReviewRuntimeDelegat
 	process.env[PI_REVIEW_RUNTIME_DELEGATED_ENV] = "1";
 	const abort = createDelegateAbortSignal(params.signal);
 	try {
-		const result = await registeredTool.execute(
+		const executePromise = registeredTool.execute(
 			"review-runtime-delegate",
 			{
 				beadId: params.beadId,
@@ -1047,6 +1047,21 @@ async function runProgrammaticReviewRuntimeDelegate(params: ReviewRuntimeDelegat
 			undefined,
 			{ cwd: params.worktreePath },
 		);
+		// Enforce 15m wall-clock timeout even if child ignores AbortSignal.
+		const timeoutOrAbort = new Promise<never>((_, reject) => {
+			const fail = () => {
+				const message = abort.didTimeout()
+					? `review runtime delegate timed out after ${REVIEW_RUNTIME_DELEGATE_TIMEOUT_MS}ms`
+					: "review runtime delegate aborted";
+				reject(new Error(message));
+			};
+			if (abort.signal.aborted) {
+				fail();
+				return;
+			}
+			abort.signal.addEventListener("abort", fail, { once: true });
+		});
+		const result = await Promise.race([executePromise, timeoutOrAbort]);
 		const text = Array.isArray(result?.content) ? result.content.map((part: any) => part?.text ?? "").join("\n") : String(result ?? "");
 		const errorText = typeof result?.details?.error === "string" ? result.details.error : "";
 		const timeoutText = abort.didTimeout() ? `review runtime delegate timed out after ${REVIEW_RUNTIME_DELEGATE_TIMEOUT_MS}ms` : "";
@@ -1129,11 +1144,13 @@ async function bestEffortRestoreInreview(pi: ExtensionAPI, beadId: string): Prom
 function findLatestWorktreeFreshMarker(
 	comments: string,
 	expectedWorktreeSha?: string,
+	minIndex = 0,
 ): { index: number; end: number; sha: string } | null {
 	WORKTREE_FRESH_MARKER_RE.lastIndex = 0;
 	let match: RegExpExecArray | null;
 	let latest: { index: number; end: number; sha: string } | null = null;
 	while ((match = WORKTREE_FRESH_MARKER_RE.exec(comments)) !== null) {
+		if (match.index < minIndex) continue;
 		const sha = match[1];
 		if (expectedWorktreeSha && sha !== expectedWorktreeSha) continue;
 		latest = { index: match.index, end: match.index + match[0].length, sha };
@@ -1164,38 +1181,45 @@ async function evaluateDelegatedReviewOutcome(
 	const bead = await getBead(pi, beadId);
 	const comments = await getComments(pi, beadId);
 	const status = String(bead?.status ?? "unknown");
-	const freshMarker = findLatestWorktreeFreshMarker(comments, expectedWorktreeSha);
-	const hasMarker = Boolean(freshMarker);
-	const markerSha = freshMarker?.sha;
 	const anyNotApproved = NOT_APPROVED_MARKER_RE.test(comments);
-	const delegateAnchorEnd = findLatestDelegateMarkerEnd(comments);
-	const notApprovedAnchorEnd = freshMarker?.end ?? delegateAnchorEnd;
-	const freshNotApproved =
-		typeof notApprovedAnchorEnd === "number" && hasNotApprovedAfterAnchor(comments, notApprovedAnchorEnd);
-
-	if (status === "closed" && hasMarker && freshMarker) {
+	// Parent always writes REVIEW RUNTIME DELEGATE before spawn; evidence must be for THIS run.
+	const delegateEnd = findLatestDelegateMarkerEnd(comments);
+	if (delegateEnd === null) {
 		return {
-			ok: true,
+			ok: false,
 			status,
 			comments,
-			message: `Delegated review succeeded: bd status=closed with REVIEW RUNTIME worktree-fresh marker sha256=${markerSha}.`,
+			message: `review-workflow runtime hash guard: BLOCKED after delegate. Missing REVIEW RUNTIME DELEGATE marker for this run; observed status=${status}, anyNotApproved=${anyNotApproved}.`,
 		};
 	}
-	// NOT APPROVED success requires a matching worktree-fresh marker and a verdict after that
-	// marker (or after the latest REVIEW RUNTIME DELEGATE if marker end is unavailable).
-	if (status === "inreview" && hasMarker && freshMarker && freshNotApproved) {
+	// Matching worktree-fresh must appear after the latest DELEGATE (not a prior cycle).
+	const freshMarker = findLatestWorktreeFreshMarker(comments, expectedWorktreeSha, delegateEnd);
+	const hasMarker = Boolean(freshMarker);
+	const markerSha = freshMarker?.sha;
+	const freshNotApproved = Boolean(freshMarker && hasNotApprovedAfterAnchor(comments, freshMarker.end));
+
+	if (status === "closed" && freshMarker) {
 		return {
 			ok: true,
 			status,
 			comments,
-			message: `Delegated review completed with CODE REVIEW: NOT APPROVED after worktree-fresh marker sha256=${markerSha}; bead remains inreview for supervisor redispatch.`,
+			message: `Delegated review succeeded: bd status=closed with REVIEW RUNTIME worktree-fresh marker sha256=${markerSha} after latest REVIEW RUNTIME DELEGATE.`,
+		};
+	}
+	// NOT APPROVED success requires matching worktree-fresh after latest DELEGATE and verdict after that marker.
+	if (status === "inreview" && freshMarker && freshNotApproved) {
+		return {
+			ok: true,
+			status,
+			comments,
+			message: `Delegated review completed with CODE REVIEW: NOT APPROVED after worktree-fresh marker sha256=${markerSha} (post-DELEGATE); bead remains inreview for supervisor redispatch.`,
 		};
 	}
 	return {
 		ok: false,
 		status,
 		comments,
-		message: `review-workflow runtime hash guard: BLOCKED after delegate. Expected closed+worktree-fresh marker or fresh NOT APPROVED after worktree-fresh marker+inreview; observed status=${status}, marker=${hasMarker ? `sha256=${markerSha}` : "absent"}, anyNotApproved=${anyNotApproved}, freshNotApproved=${freshNotApproved}.`,
+		message: `review-workflow runtime hash guard: BLOCKED after delegate. Expected closed+worktree-fresh marker after latest DELEGATE or fresh NOT APPROVED after that marker+inreview; observed status=${status}, postDelegateMarker=${hasMarker ? `sha256=${markerSha}` : "absent"}, anyNotApproved=${anyNotApproved}, freshNotApproved=${freshNotApproved}.`,
 	};
 }
 
