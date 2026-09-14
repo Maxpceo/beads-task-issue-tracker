@@ -54,7 +54,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
      B (on-demand insurance, not primary): Maxim «не пинганул» / stalled without those ping markers → one-shot `poll.sh` insurance hop (never auto-timer, never loop):
        1. Parse only the latest DISPATCH spawn-ack comment for `taskId=` (+ optional `DIGEST_FILE=` / `RESULT_FILE=`). Any required key missing → BLOCKED нет spawn-ack (no registry scan, no pane dump).
        2. Run exactly one: `bash <worktree>/.pi/orchestrator/poll.sh <taskId>` (pass `DIGEST_FILE`/`RESULT_FILE` env from spawn-ack when present). `poll.sh` reads digest ≤10 lines once; no loop, no bd, no `scheduler_create`, no 20-min hang timer.
-       3. poll exit 0 + nonempty complete digest/result → at most one `complete_visible_dispatch({ taskId })`. submitted/noop → review-bead. result-only / incomplete artifact → BLOCKED artifact not review-ready (no review-bead).
+       3. poll exit 0 + nonempty complete digest/result → at most one `complete_visible_dispatch({ taskId })`. submitted/noop → review-bead. result-only / incomplete artifact → BLOCKED artifact not review-ready (no review-bead). Any throw/error from complete_visible_dispatch → BLOCKED no retry, no read-screen.
        4. poll exit 1 / missing/empty files → do not complete; one BLOCKED: «нет digest/result. Если child ещё работает — записать оба nonempty файла и ping.sh; иначе действие Максима.» Do not probe liveness.
        5. Two hang / false-complete / insurance-poll cycles without progress → stop, ask Maxim (no third poll, no re-dispatch).
        Forbid: background 20-min timer, `scheduler_create`, read-screen as normal path, `watchdog.sh` auto, pane dump, send-key, wait loops, re-dispatch same-turn, same-turn second complete.

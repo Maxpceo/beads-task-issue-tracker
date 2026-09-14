@@ -915,10 +915,14 @@ describe('dispatch-supervisor skill frozen A/B', () => {
     expect(skill).toContain('submitted/noop → same-turn review-bead')
     expect(skill).toContain('status=verdict → стоп, не review-bead')
     expect(skill).toContain('do not complete; one BLOCKED: «нет digest/result. Если child ещё работает — записать оба nonempty файла и ping.sh; иначе действие Максима.»')
-    expect(skill).toContain('submitted/noop → review-bead. result-only → BLOCKED artifact not review-ready')
+    expect(skill).toContain('submitted/noop → review-bead. result-only / incomplete artifact → BLOCKED artifact not review-ready')
+    expect(skill).toContain('B (on-demand insurance, not primary)')
+    expect(skill).toContain('one-shot `poll.sh` insurance hop')
+    expect(skill).toContain('Two hang / false-complete / insurance-poll cycles without progress → stop, ask Maxim')
     expect(skill).toContain('8. Continue with `review-bead` automatically after the bead is `inreview`')
     expect(step6).toContain('Headless: wrapper waits for the child, then `DISPATCH RESULT` / maybe submit.')
-    expect(step6).toContain('Visible: spawn-ack skips wait. Child stdout is not the trigger. Ping/Maxim-complete delivery follows exclusive A/B in step 4. STOP/BLOCKED A/B do not call review-bead. Frozen A/B status=verdict → стоп, не review-bead. Step 7 — incomplete artifacts; step 8 — review-bead only after submitted/noop/inreview (headless/resume).')
+    expect(step6).toContain('Primary delivery is ping (A); on-demand insurance is one-shot `poll.sh` (B)')
+    expect(step6).toContain('STOP/BLOCKED A/B do not call review-bead. Frozen A/B status=verdict → стоп, не review-bead.')
   })
 
   it('negative-pins old ping/review fragments without pinning bare review-bead', () => {
