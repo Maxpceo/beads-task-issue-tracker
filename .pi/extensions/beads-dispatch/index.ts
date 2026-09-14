@@ -23,6 +23,7 @@ import {
 	ORCHESTRATOR_TAB_TITLE,
 	persistIsolationFiles,
 	readDigestPreview,
+	resolveVisibleSplitAnchor,
 	saveRegistry,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
@@ -45,6 +46,7 @@ export {
 	findLiveFollowupEntry,
 	findLiveRegistryEntriesForBead,
 	ORCHESTRATOR_TAB_TITLE,
+	resolveVisibleSplitAnchor,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
 	posixQuote,
@@ -128,6 +130,20 @@ interface DispatchResult {
 type DispatchTransport = "headless" | "cmux";
 type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean; transport?: DispatchTransport };
 
+/**
+ * Explicit transport always wins.
+ * Omit + interactive UI (ctx.hasUI) → cmux (no headless hang when agent forgets transport).
+ * Omit + no UI (CI/headless host) → headless.
+ */
+export function resolveDispatchTransport(
+	params: { transport?: DispatchTransport | string },
+	ctx?: unknown,
+): DispatchTransport {
+	if (params.transport === "cmux" || params.transport === "headless") return params.transport;
+	const hasUI = Boolean(ctx && typeof ctx === "object" && "hasUI" in ctx && (ctx as { hasUI?: boolean }).hasUI);
+	return hasUI ? "cmux" : "headless";
+}
+
 interface SupervisorDispatchApi<Ctx = unknown> {
 	dispatchSupervisor(params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
 }
@@ -187,8 +203,8 @@ const SupervisorDispatchParams = {
 		transport: {
 			type: "string",
 			enum: ["headless", "cmux"],
-			default: "headless",
-			description: "headless (blocking) or cmux (spawn-ack; DISPATCH on spawn; complete_visible_dispatch after ping)",
+			description:
+				"cmux = visible pane spawn-ack; headless = blocking dark window. Omit: cmux when interactive UI (hasUI), headless when no UI (CI). Explicit transport=headless required for CI/dark-window.",
 		},
 	},
 	required: ["beadId"],
@@ -202,8 +218,8 @@ const ReviewerDispatchParams = {
 		transport: {
 			type: "string",
 			enum: ["headless", "cmux"],
-			default: "headless",
-			description: "headless (blocking fallback) or cmux (one visible code-reviewer pane; spawn-ack; complete_visible_dispatch records CODE REVIEW verdict)",
+			description:
+				"cmux = one visible code-reviewer pane; headless = blocking fallback. Omit: cmux when interactive UI (hasUI), headless when no UI (CI). Explicit transport=headless required for CI/dark-window.",
 		},
 	},
 	required: ["beadId"],
@@ -979,9 +995,16 @@ async function respawnVisibleFollowup(
 	const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath: entry.worktree, payload });
 	if (spawnFail) throw new Error(spawnFail);
 	await adapter.identify();
+	const livePanes = liveEntriesForBead(found.registry, entry.beadId);
+	const callerSurface = resolveCallerSurface(adapter, entry);
+	const anchorSurface = resolveVisibleSplitAnchor({
+		callerSurface,
+		liveAgentPanes: livePanes,
+		excludePane: entry.pane,
+	});
 	let surface = "";
 	try {
-		const split = await adapter.newSplit();
+		const split = await adapter.newSplit({ anchorSurface });
 		surface = split.surface;
 		await adapter.send(surface, payload);
 	} catch (error) {
@@ -989,7 +1012,8 @@ async function respawnVisibleFollowup(
 		throw error;
 	}
 	await safeRenameSurface(adapter, surface, visibleChildTabTitle(entry.role, entry.beadId));
-	if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
+	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
+	else if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
 	await adapter.closeSurface(entry.pane);
 	unlinkFollowupArtifacts(entry);
 	return patchFollowupEntry(found, {
@@ -1118,10 +1142,12 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
 			return { workspaceId };
 		},
-		async newSplit() {
-			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
+		async newSplit(opts?: { anchorSurface?: string }) {
+			const anchor = String(opts?.anchorSurface || callerSurface || "").trim();
+			if (!anchor) throw new Error("нет caller surface: BLOCKED");
 			// Explicit --focus false: pin non-stealing spawn across cmux versions (default is already false).
-			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface, "--focus", "false"]);
+			// Anchor is first live agent when present so orch stays exclusive left (kgvd).
+			const result = await exec("cmux", ["new-split", "right", "--surface", anchor, "--focus", "false"]);
 			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
 			const match = `${result.stdout || ""}`.match(/surface:\S+/);
 			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
@@ -1257,9 +1283,15 @@ Next step is review, same as today. Do not call review yourself.
 	const argvErrors = validateVisibleChildArgv(argv);
 	if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
 	const payload = buildVisibleChildSpawnPayload(worktreePath, argv);
+	const callerSurface = resolveCallerSurface(adapter);
+	const livePanes = liveEntriesForBead(existing, bead.id);
+	const anchorSurface = resolveVisibleSplitAnchor({
+		callerSurface,
+		liveAgentPanes: livePanes,
+	});
 	let surface = "";
 	try {
-		const split = await adapter.newSplit();
+		const split = await adapter.newSplit({ anchorSurface });
 		surface = split.surface;
 		const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath, payload });
 		if (spawnFail) throw new Error(spawnFail);
@@ -1268,7 +1300,6 @@ Next step is review, same as today. Do not call review yourself.
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	const callerSurface = resolveCallerSurface(adapter);
 	await safeRenameSurface(adapter, surface, visibleChildTabTitle(agentName, bead.id));
 	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
 	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);
@@ -1323,6 +1354,7 @@ async function dispatch(
 	if (mode === "docs" && params.transport) {
 		throw new Error("dispatch_docs_agent does not accept transport");
 	}
+	const transport = mode === "docs" ? undefined : resolveDispatchTransport(params, ctx);
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments);
 		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);
@@ -1334,7 +1366,7 @@ async function dispatch(
 	const branch = supervisorPreflight?.branch ?? await getGitValue(pi, cwd, ["branch", "--show-current"]);
 	const worktreePath = supervisorPreflight?.worktreePath ?? await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
 	let startCommit = supervisorPreflight?.startCommit ?? await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
-	if (mode === "reviewer" && params.transport === "cmux") {
+	if (mode === "reviewer" && transport === "cmux") {
 		const reviewerScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
 		if (reviewerScope.ok && reviewerScope.scope.activeBead === params.beadId) {
 			if (reviewerScope.scope.branch && reviewerScope.scope.branch !== branch) {
@@ -1366,7 +1398,7 @@ async function dispatch(
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
-	if ((mode === "supervisor" || mode === "reviewer") && params.transport === "cmux") {
+	if ((mode === "supervisor" || mode === "reviewer") && transport === "cmux") {
 		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx });
 	}
 
@@ -1439,7 +1471,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_supervisor",
 		label: "Dispatch Supervisor",
-		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
+		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress. Interactive omit/hasUI → cmux pane; explicit transport=headless for CI/dark-window.",
 		parameters: SupervisorDispatchParams,
 		execute: dispatchSupervisorTool,
 	});
@@ -1447,7 +1479,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_reviewer",
 		label: "Dispatch Reviewer",
-		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. transport=cmux opens one visible pane; omit transport for headless fallback.",
+		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. Interactive omit/hasUI → cmux pane (no headless hang). Explicit transport=headless for CI/dark-window; explicit transport=cmux always pane.",
 		parameters: ReviewerDispatchParams,
 		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {

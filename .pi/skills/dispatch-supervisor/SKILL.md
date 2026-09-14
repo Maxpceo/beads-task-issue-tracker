@@ -46,6 +46,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    - `cwd` must be the task worktree, never protected `main`.
    - Return `status=spawned` is **not** DONE and not `continuation completed`.
    - Live `new-split` uses explicit `--focus false` (no focus-pane workaround); spawn must not steal Maxim focus.
+   - Layout anchor (`resolveVisibleSplitAnchor`): first agent splits right of orch; next agent splits right of the oldest live agent pane so **оркестратор** stays exclusive left and agents stay **side-by-side** on the right (N≤2). Never re-split orch when another live agent exists. See AGENTS.md «Layout geometry».
    - After spawn, dispatch renames tabs per AGENTS.md Cmux layout: child `{role} · {bead-suffix}`, caller `оркестратор` (not the default `π - …` title).
    - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead.
    - Child ping: the visible supervisor must only run the quoted `AGENT_NAME=<posix-quoted role> DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body (`KIND=error` after BLOCKED/NEEDS_CONTEXT). Child stdout / printing `Ping` in the child pane is not delivery and must not trigger complete. Do not use raw `cmux send` / `send-key enter`.
@@ -59,8 +60,8 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
        5. Two hang / false-complete / insurance-poll cycles without progress → stop, ask Maxim (no third poll, no re-dispatch).
        Forbid: background 20-min timer, `scheduler_create`, read-screen as normal path, `watchdog.sh` auto, pane dump, send-key, wait loops, re-dispatch same-turn, same-turn second complete.
    - No cmux in interactive → BLOCKED. Not silent headless.
-   - Explicit old path: `dispatch_supervisor(beadId=<ID>, transport="headless")`.
-   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_docs_agent` does not accept `transport`. Reviewer `transport=cmux` lives in review-bead.
+   - Explicit CI/dark-window path: `dispatch_supervisor(beadId=<ID>, transport="headless")`. Interactive omit (hasUI) resolves to cmux automatically — do not rely on headless-by-omit.
+   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_docs_agent` does not accept `transport`. Reviewer interactive omit/hasUI → cmux (same resolve as supervisor).
 5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, execution contract, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 
 ## Supervisor execution contract

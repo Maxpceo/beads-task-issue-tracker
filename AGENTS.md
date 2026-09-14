@@ -145,7 +145,18 @@ Visible cmux agent panes must be distinguishable by tab title:
 - Orchestrator tab: `оркестратор`
 - Agent tabs: `{role} · {bead-suffix}` (example: `test-supervisor · fo5d`, where `bead-suffix` is the last `-` segment of the bead id)
 
-Visible `dispatch_supervisor` / `dispatch_reviewer` (`transport=cmux`) auto-renames after spawn (`cmux tab-action rename`, `--focus false`). Do not rely on manual rename each spawn. Geometry 1/2 layout is a separate concern (evxj).
+Visible `dispatch_supervisor` / `dispatch_reviewer` (`transport=cmux`) auto-renames after spawn (`cmux tab-action rename`, `--focus false`). Do not rely on manual rename each spawn.
+
+### Layout geometry (orch exclusive left, agents side-by-side right)
+
+Accepted dual-agent geometry (`beads-task-issue-tracker-kgvd`, Maxim HA f8fl):
+
+- **Оркестратор** stays exclusive on the left (~50%). Agent panes never `new-split` from the orch surface when another live agent already exists.
+- First visible agent: `new-split right --surface <orch-caller> --focus false`.
+- Second visible agent (typical supervisor + reviewer): `new-split right --surface <first-live-agent> --focus false` so agents are **side-by-side** on the right (~25%+25%), not tabs in one pane and not a third column that squeezes orch.
+- Anchor selection uses `resolveVisibleSplitAnchor`: live spawned panes for the bead, oldest `createdAt` then `taskId`; respawn excludes self (solo → orch; with peer → peer).
+- N>2 agents: still right-from-first (never splits orch); simultaneous full visibility is **not** guaranteed — overflow beyond dual side-by-side is documented only (no tabs/down path in this contract). kgvd supersedes the older N=2 tabs geometry note (evxj) for supervisor+reviewer.
+- Parallel cross-role double-spawn race is out of scope; sequential orch dispatch is assumed.
 
 ### Close supervisor pane after terminal bead
 

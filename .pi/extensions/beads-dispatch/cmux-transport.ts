@@ -40,9 +40,14 @@ export interface DispatchRegistry {
 
 export type VisiblePaneHealth = "waiting" | "busy" | "shell" | "dead";
 
+export interface CmuxNewSplitOpts {
+	/** Surface to split from. When omitted, live adapter uses the identify caller surface. */
+	anchorSurface?: string;
+}
+
 export interface CmuxAdapter {
 	identify(): Promise<{ workspaceId: string }>;
-	newSplit(): Promise<{ surface: string }>;
+	newSplit(opts?: CmuxNewSplitOpts): Promise<{ surface: string }>;
 	send(surface: string, text: string): Promise<void>;
 	closeSurface(surface: string): Promise<void>;
 	readScreen(surface: string): Promise<string>;
@@ -50,6 +55,30 @@ export interface CmuxAdapter {
 	renameSurface?(surface: string, title: string): Promise<void>;
 	/** Optional: orchestrator/caller surface for rename; live adapter exposes via method. */
 	callerSurface?(): string;
+}
+
+/**
+ * Choose the cmux surface to split right-of for the next visible agent pane.
+ * - 0 live candidates (after excludePane) → orchestrator/caller surface
+ * - ≥1 candidates → oldest createdAt, then taskId; never re-split orch when another live agent exists
+ */
+export function resolveVisibleSplitAnchor(input: {
+	callerSurface: string;
+	liveAgentPanes: Array<Pick<DispatchRegistryEntry, "pane" | "createdAt" | "taskId" | "status">>;
+	excludePane?: string;
+}): string {
+	const caller = (input.callerSurface ?? "").trim();
+	const exclude = (input.excludePane ?? "").trim();
+	const candidates = input.liveAgentPanes
+		.filter((entry) => entry.status === "spawned" && Boolean(entry.pane?.trim()) && entry.pane.trim() !== exclude)
+		.slice()
+		.sort((a, b) => {
+			const createdCmp = (a.createdAt || "").localeCompare(b.createdAt || "");
+			if (createdCmp !== 0) return createdCmp;
+			return (a.taskId || "").localeCompare(b.taskId || "");
+		});
+	if (candidates.length === 0) return caller;
+	return candidates[0]!.pane.trim();
 }
 
 export const ORCHESTRATOR_TAB_TITLE = "оркестратор";

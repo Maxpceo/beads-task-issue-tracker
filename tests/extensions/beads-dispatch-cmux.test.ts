@@ -21,9 +21,11 @@ import beadsDispatchExtension, {
   persistIsolationFiles,
   posixQuote,
   pruneRegistry,
+  resolveVisibleSplitAnchor,
   visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
+  resolveDispatchTransport,
   saveRegistry,
   setCmuxAdapterForTests,
   validateVisibleChildArgv,
@@ -80,9 +82,17 @@ function currentBranch(cwd = process.cwd()) {
   return execFileSync('git', ['-C', cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || 'task/current'
 }
 
-function workflowCtx(cwd: string, beadId: string, branch: string, startCommit: string, worktreePath = cwd) {
+function workflowCtx(
+  cwd: string,
+  beadId: string,
+  branch: string,
+  startCommit: string,
+  worktreePath = cwd,
+  opts: { hasUI?: boolean } = {},
+) {
   return {
     cwd,
+    hasUI: opts.hasUI,
     sessionManager: {
       getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: beadId, branch, worktreePath, startCommit, sessionKey: 'session:test' } }],
     },
@@ -239,7 +249,7 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
   })
 
-  it('omitted transport stays headless and writes DISPATCH on dryRun', async () => {
+  it('omitted transport without UI stays headless and writes DISPATCH on dryRun', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
     const result = await registered.execute('call-1', { beadId, dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
@@ -251,6 +261,37 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(headlessComment).toBeDefined()
     expect(headlessComment!.args.join(' ')).toContain('DISPATCH (')
     expect(headlessComment!.args.join(' ')).not.toContain('DISPATCH RESULT')
+  })
+
+  it('omitted transport with hasUI uses cmux spawn-ack on dryRun', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
+    const result = await registered.execute(
+      'call-1',
+      { beadId, dryRun: true, agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.transport).toBe('cmux')
+    expect(result.details.pane).toBe('')
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(comments).toEqual([])
+  })
+
+  it('explicit transport=headless stays headless even with hasUI', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
+    const result = await registered.execute(
+      'call-1',
+      { beadId, dryRun: true, agent: 'test-supervisor', transport: 'headless' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.transport).toBeUndefined()
+    expect(result.details.status).not.toBe('spawned')
   })
 
   it('requestSupervisorDispatch passes transport=cmux', async () => {
@@ -564,6 +605,20 @@ describe('dispatch_supervisor transport=cmux', () => {
   })
 })
 
+describe('resolveDispatchTransport', () => {
+  it('explicit transport always wins', () => {
+    expect(resolveDispatchTransport({ transport: 'headless' }, { hasUI: true })).toBe('headless')
+    expect(resolveDispatchTransport({ transport: 'cmux' }, { hasUI: false })).toBe('cmux')
+  })
+
+  it('omit with hasUI → cmux; omit without UI → headless', () => {
+    expect(resolveDispatchTransport({}, { hasUI: true })).toBe('cmux')
+    expect(resolveDispatchTransport({}, { hasUI: false })).toBe('headless')
+    expect(resolveDispatchTransport({}, null)).toBe('headless')
+    expect(resolveDispatchTransport({})).toBe('headless')
+  })
+})
+
 describe('reviewer/docs transport', () => {
   it('dispatch_docs_agent execute rejects transport', async () => {
     const { tools, cwd, branch } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
@@ -575,6 +630,9 @@ describe('reviewer/docs transport', () => {
     const { tools } = makePi({})
     expect(tools.dispatch_supervisor.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
     expect(tools.dispatch_reviewer.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
+    expect(tools.dispatch_supervisor.parameters.properties.transport.default).toBeUndefined()
+    expect(tools.dispatch_reviewer.parameters.properties.transport.default).toBeUndefined()
+    expect(tools.dispatch_supervisor.parameters.properties.transport.description).toMatch(/Omit: cmux when interactive/)
     expect(tools.followup_visible_dispatch).toBeDefined()
     expect(tools.followup_visible_dispatch.description).toMatch(/Единственный typed hop/)
     expect(tools.dispatch_docs_agent.parameters.properties.transport).toBeUndefined()
@@ -613,10 +671,37 @@ describe('dispatch_reviewer transport=cmux', () => {
     })
   }
 
-  it('omitted transport stays headless', async () => {
+  it('omitted transport without UI stays headless', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { tools, cwd, branch, beadId, head } = reviewerPi({ execCalls })
     const result = await tools.dispatch_reviewer.execute('call-1', { beadId, dryRun: true }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.transport).toBeUndefined()
+    expect(result.details.status).not.toBe('spawned')
+  })
+
+  it('omitted transport with hasUI uses cmux for reviewer', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { tools, cwd, branch, beadId, head } = reviewerPi({ execCalls })
+    const result = await tools.dispatch_reviewer.execute(
+      'call-1',
+      { beadId, dryRun: true },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.transport).toBe('cmux')
+  })
+
+  it('explicit transport=headless stays headless for reviewer even with hasUI', async () => {
+    const { tools, cwd, branch, beadId, head } = reviewerPi()
+    const result = await tools.dispatch_reviewer.execute(
+      'call-1',
+      { beadId, dryRun: true, transport: 'headless' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
     expect(result.details.transport).toBeUndefined()
     expect(result.details.status).not.toBe('spawned')
   })
@@ -672,9 +757,12 @@ describe('dispatch_reviewer transport=cmux', () => {
 
   it('live supervisor + reviewer spawn two taskIds', async () => {
     let splits = 0
+    const anchors: Array<string | undefined> = []
     setCmuxAdapterForTests({
+      callerSurface: () => 'surface:orch',
       async identify() { return { workspaceId: 'ws-two' } },
-      async newSplit() {
+      async newSplit(opts) {
+        anchors.push(opts?.anchorSurface)
         splits += 1
         return { surface: `surface:${splits}` }
       },
@@ -693,6 +781,8 @@ describe('dispatch_reviewer transport=cmux', () => {
     expect(registry.entries).toHaveLength(2)
     expect(registry.entries.map((entry) => entry.taskId).sort()).toEqual([supervisor.details.registryKey, reviewer.details.registryKey].sort())
     expect(registry.entries.map((entry) => entry.role).sort()).toEqual(['code-reviewer', 'test-supervisor'].sort())
+    // kgvd: sequential anchors [orch, first live supervisor], never orch on second spawn
+    expect(anchors).toEqual(['surface:orch', 'surface:1'])
   })
 
   it('second live code-reviewer spawn is BLOCKED', async () => {
@@ -1235,6 +1325,355 @@ describe('followup_visible_dispatch', () => {
     expect(closed).toEqual(['surface:new'])
     expect(findRegistryByTaskId('task-1')?.entry.status).toBe('spawned')
     expect(findRegistryByTaskId('task-1')?.entry.pane).toBe('surface:1')
+  })
+})
+
+describe('resolveVisibleSplitAnchor (kgvd layout)', () => {
+  it('N=0 candidates anchors orch caller', () => {
+    expect(resolveVisibleSplitAnchor({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [],
+    })).toBe('surface:orch')
+  })
+
+  it('N=1 anchors oldest live agent, never orch', () => {
+    expect(resolveVisibleSplitAnchor({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [{
+        pane: 'surface:sup',
+        status: 'spawned',
+        createdAt: '2026-09-14T10:00:00.000Z',
+        taskId: 'task-sup',
+      }],
+    })).toBe('surface:sup')
+  })
+
+  it('orders by createdAt then taskId', () => {
+    expect(resolveVisibleSplitAnchor({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        { pane: 'surface:b', status: 'spawned', createdAt: '2026-09-14T11:00:00.000Z', taskId: 'task-b' },
+        { pane: 'surface:a', status: 'spawned', createdAt: '2026-09-14T10:00:00.000Z', taskId: 'task-z' },
+        { pane: 'surface:c', status: 'spawned', createdAt: '2026-09-14T10:00:00.000Z', taskId: 'task-a' },
+      ],
+    })).toBe('surface:c')
+  })
+
+  it('excludePane drops self; solo falls back to orch', () => {
+    expect(resolveVisibleSplitAnchor({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [{
+        pane: 'surface:self',
+        status: 'spawned',
+        createdAt: 't',
+        taskId: 'task-1',
+      }],
+      excludePane: 'surface:self',
+    })).toBe('surface:orch')
+  })
+
+  it('excludePane with peer anchors the other live agent', () => {
+    expect(resolveVisibleSplitAnchor({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        { pane: 'surface:sup', status: 'spawned', createdAt: '2026-09-14T10:00:00.000Z', taskId: 'task-sup' },
+        { pane: 'surface:rev', status: 'spawned', createdAt: '2026-09-14T11:00:00.000Z', taskId: 'task-rev' },
+      ],
+      excludePane: 'surface:rev',
+    })).toBe('surface:sup')
+  })
+
+  it('ignores tombstone panes', () => {
+    expect(resolveVisibleSplitAnchor({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [{
+        pane: 'surface:dead',
+        status: 'tombstone',
+        createdAt: 't',
+        taskId: 'task-old',
+      }],
+    })).toBe('surface:orch')
+  })
+})
+
+describe('kgvd dual-agent layout wiring', () => {
+  let tmp: string
+  const prevOrch = process.env.ORCH_ROOT
+  const prevHome = process.env.HOME
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'kgvd-layout-'))
+    process.env.ORCH_ROOT = tmp
+    process.env.HOME = tmp
+    setCmuxAdapterForTests(null)
+  })
+
+  afterEach(() => {
+    setCmuxAdapterForTests(null)
+    if (prevOrch === undefined) delete process.env.ORCH_ROOT
+    else process.env.ORCH_ROOT = prevOrch
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  it('live second spawn argv is right of first agent with --focus false, never orch', async () => {
+    setCmuxAdapterForTests(null)
+    const cmuxCalls: string[][] = []
+    let splitN = 0
+    const beadId = 'beads-task-issue-tracker-kgvd'
+    const { tools, cwd, branch, head } = makePi({
+      beadId,
+      status: 'in_progress',
+      cmux: async (args) => {
+        cmuxCalls.push(args)
+        if (args[0] === 'identify') {
+          return {
+            stdout: JSON.stringify({
+              caller: { workspace_ref: 'ws-kgvd-live', surface_ref: 'surface:orch' },
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (args[0] === 'new-split') {
+          splitN += 1
+          return { stdout: `surface:agent${splitN}\n`, stderr: '', code: 0 }
+        }
+        if (args[0] === 'send') return { stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'tab-action') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    })
+    const supervisor = await tools.dispatch_supervisor.execute(
+      's1',
+      { beadId, transport: 'cmux', agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head),
+    )
+    expect(supervisor.details.status).toBe('spawned')
+    const reviewerPiInst = makePi({
+      toolName: 'dispatch_reviewer',
+      beadId,
+      status: 'inreview',
+      head,
+      cwd,
+      branch,
+      cmux: async (args) => {
+        cmuxCalls.push(args)
+        if (args[0] === 'identify') {
+          return {
+            stdout: JSON.stringify({
+              caller: { workspace_ref: 'ws-kgvd-live', surface_ref: 'surface:orch' },
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (args[0] === 'new-split') {
+          splitN += 1
+          return { stdout: `surface:agent${splitN}\n`, stderr: '', code: 0 }
+        }
+        if (args[0] === 'send') return { stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'tab-action') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    })
+    const reviewer = await reviewerPiInst.tools.dispatch_reviewer.execute(
+      'r1',
+      { beadId, transport: 'cmux' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head),
+    )
+    expect(reviewer.details.status).toBe('spawned')
+    const splits = cmuxCalls.filter((args) => args[0] === 'new-split')
+    expect(splits).toHaveLength(2)
+    expect(splits[0]).toEqual(['new-split', 'right', '--surface', 'surface:orch', '--focus', 'false'])
+    expect(splits[1]).toEqual(['new-split', 'right', '--surface', 'surface:agent1', '--focus', 'false'])
+    expect(splits[1]).not.toContain('surface:orch')
+  })
+
+  it('respawn exclude-self: solo anchors orch; with peer anchors peer', async () => {
+    const soloTmp = path.join(tmp, 'solo')
+    fs.mkdirSync(soloTmp, { recursive: true })
+    const taskFile = path.join(soloTmp, 't.md')
+    const promptFile = path.join(soloTmp, 'p.md')
+    fs.writeFileSync(taskFile, 'old')
+    fs.writeFileSync(promptFile, '# p')
+    const file = path.join(tmp, 'ns', 'ws-kgvd-respawn', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [{
+        taskId: 'task-sup',
+        beadId: 'bead-kgvd',
+        pane: 'surface:sup-old',
+        worktree: process.cwd(),
+        role: 'test-supervisor',
+        model: '',
+        taskFile,
+        resultFile: path.join(soloTmp, 'r.md'),
+        digestFile: path.join(soloTmp, 'd.digest'),
+        promptFile,
+        status: 'spawned',
+        submitStatus: 'none',
+        callerSurface: 'surface:orch',
+        startCommit: 'aaa1111',
+        createdAt: '2026-09-14T10:00:00.000Z',
+      }],
+    })
+    const soloAnchors: Array<string | undefined> = []
+    setCmuxAdapterForTests({
+      callerSurface: () => 'surface:orch',
+      async identify() { return { workspaceId: 'ws-kgvd-respawn' } },
+      async newSplit(opts) {
+        soloAnchors.push(opts?.anchorSurface)
+        return { surface: 'surface:sup-new' }
+      },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return 'user@host ~/proj $\n' },
+    })
+    const { pi, cwd, branch } = makePi({ beadId: 'bead-kgvd' })
+    const solo = await followupVisibleDispatch(pi as any, { beadId: 'bead-kgvd', task: 'respawn solo' }, workflowCtx(cwd, 'bead-kgvd', branch, 'aaa1111'))
+    expect(solo.status).toBe('spawned')
+    expect(soloAnchors).toEqual(['surface:orch'])
+
+    // peer present: exclude self → anchor supervisor
+    const peerTask = path.join(soloTmp, 'rev-t.md')
+    const peerPrompt = path.join(soloTmp, 'rev-p.md')
+    fs.writeFileSync(peerTask, 'rev')
+    fs.writeFileSync(peerPrompt, '# rev')
+    saveRegistry(file, {
+      entries: [
+        {
+          taskId: 'task-sup2',
+          beadId: 'bead-kgvd',
+          pane: 'surface:sup-live',
+          worktree: process.cwd(),
+          role: 'test-supervisor',
+          model: '',
+          taskFile,
+          resultFile: path.join(soloTmp, 'r2.md'),
+          digestFile: path.join(soloTmp, 'd2.digest'),
+          promptFile,
+          status: 'spawned',
+          submitStatus: 'none',
+          callerSurface: 'surface:orch',
+          startCommit: 'aaa1111',
+          createdAt: '2026-09-14T10:00:00.000Z',
+        },
+        {
+          taskId: 'task-rev',
+          beadId: 'bead-kgvd',
+          pane: 'surface:rev-old',
+          worktree: process.cwd(),
+          role: 'code-reviewer',
+          model: '',
+          taskFile: peerTask,
+          resultFile: path.join(soloTmp, 'rr.md'),
+          digestFile: path.join(soloTmp, 'rd.digest'),
+          promptFile: peerPrompt,
+          status: 'spawned',
+          submitStatus: 'none',
+          callerSurface: 'surface:orch',
+          startCommit: 'aaa1111',
+          createdAt: '2026-09-14T11:00:00.000Z',
+        },
+      ],
+    })
+    const peerAnchors: Array<string | undefined> = []
+    setCmuxAdapterForTests({
+      callerSurface: () => 'surface:orch',
+      async identify() { return { workspaceId: 'ws-kgvd-respawn' } },
+      async newSplit(opts) {
+        peerAnchors.push(opts?.anchorSurface)
+        return { surface: 'surface:rev-new' }
+      },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return 'user@host ~/proj $\n' },
+    })
+    const peerPi = makePi({ beadId: 'bead-kgvd', status: 'inreview' })
+    const peer = await followupVisibleDispatch(
+      peerPi.pi as any,
+      { beadId: 'bead-kgvd', role: 'code-reviewer', task: 'respawn peer' },
+      workflowCtx(peerPi.cwd, 'bead-kgvd', peerPi.branch, 'aaa1111'),
+    )
+    expect(peer.status).toBe('spawned')
+    expect(peerAnchors).toEqual(['surface:sup-live'])
+    expect(peerAnchors[0]).not.toBe('surface:orch')
+  })
+
+  it('close_visible_dispatch closes both agent panes for bead', async () => {
+    const promptA = path.join(tmp, 'pa.md')
+    const promptB = path.join(tmp, 'pb.md')
+    const taskA = path.join(tmp, 'ta.md')
+    const taskB = path.join(tmp, 'tb.md')
+    for (const f of [promptA, promptB, taskA, taskB]) fs.writeFileSync(f, 'x')
+    const file = path.join(tmp, 'ns', 'ws-kgvd-close', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [
+        {
+          taskId: 'task-sup-close',
+          beadId: 'bead-close-dual',
+          pane: 'surface:sup',
+          worktree: tmp,
+          role: 'test-supervisor',
+          model: '',
+          taskFile: taskA,
+          resultFile: path.join(tmp, 'ra.md'),
+          digestFile: path.join(tmp, 'da.digest'),
+          promptFile: promptA,
+          status: 'spawned',
+          createdAt: 't1',
+        },
+        {
+          taskId: 'task-rev-close',
+          beadId: 'bead-close-dual',
+          pane: 'surface:rev',
+          worktree: tmp,
+          role: 'code-reviewer',
+          model: '',
+          taskFile: taskB,
+          resultFile: path.join(tmp, 'rb.md'),
+          digestFile: path.join(tmp, 'db.digest'),
+          promptFile: promptB,
+          status: 'spawned',
+          createdAt: 't2',
+        },
+      ],
+    })
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-kgvd-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-close-dual', status: 'closed' })
+    const result = await closeVisibleDispatch(pi as any, { beadId: 'bead-close-dual' })
+    expect(result.status).toBe('closed')
+    expect(closed.sort()).toEqual(['surface:rev', 'surface:sup'].sort())
+    expect(findRegistryByTaskId('task-sup-close')?.entry.status).toBe('tombstone')
+    expect(findRegistryByTaskId('task-rev-close')?.entry.status).toBe('tombstone')
+  })
+
+  it('docs mention resolveVisibleSplitAnchor and side-by-side orch exclusive layout', () => {
+    const agents = fs.readFileSync(path.join(process.cwd(), 'AGENTS.md'), 'utf8')
+    const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+    const review = fs.readFileSync(path.join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
+    const transport = fs.readFileSync(path.join(process.cwd(), '.pi/extensions/beads-dispatch/cmux-transport.ts'), 'utf8')
+    expect(transport).toContain('resolveVisibleSplitAnchor')
+    expect(agents).toContain('resolveVisibleSplitAnchor')
+    expect(agents).toContain('side-by-side')
+    expect(agents).toContain('оркестратор')
+    expect(agents).not.toContain('Geometry 1/2 layout is a separate concern (evxj)')
+    expect(skill).toContain('resolveVisibleSplitAnchor')
+    expect(skill).toContain('side-by-side')
+    expect(review).toContain('resolveVisibleSplitAnchor')
+    expect(review).toContain('side-by-side')
   })
 })
 

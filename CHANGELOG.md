@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Interactive omit transport → cmux** (`beads-task-issue-tracker-m94j`): `dispatch_supervisor` / `dispatch_reviewer` resolve omitted `transport` to `cmux` when the host has interactive UI (`hasUI`), so forgetting `transport=cmux` no longer starts a multi-minute headless hang. Explicit `transport=headless` remains the CI/dark-window path; omit without UI still headless. Schema no longer advertises a headless default.
+
 ### Added
 
 - **Close visible dispatch panes after terminal bead** (`beads-task-issue-tracker-ovxe`): typed `close_visible_dispatch({ beadId })` closes only this bead's live cmux registry panes (`cmux close-surface`) and tombstones registry entries after `closed` / `blocked` / `deferred` with no pending-fix reuse. `pendingFix: true` / NOT APPROVED keeps the pane for `followup_visible_dispatch`. Skills (`dispatch-supervisor`, `review-bead`) and `AGENTS.md` document the happy-path hop; foreign/historical panes are never swept.
@@ -31,6 +35,7 @@
 
 ### Changed
 
+- **Visible cmux dual-agent layout anchors first live pane** (`beads-task-issue-tracker-kgvd`): second `transport=cmux` spawn (`dispatch_reviewer` after supervisor) uses `resolveVisibleSplitAnchor` so `new-split right --surface <first-live-agent> --focus false` keeps the orchestrator exclusive on the left and places agents side-by-side on the right. Respawn excludes self (solo → orch; peer present → peer). N>2 remains right-from-first without tabs/down overflow code. Docs in `AGENTS.md` and dispatch/review skills supersede the older N=2 tabs geometry note.
 - **Visible cmux spawn stays focus-safe** (`beads-task-issue-tracker-ovxe`): `cmux new-split` for live supervisor/reviewer panes now passes explicit `--focus false`, so spawning a visible agent does not steal keyboard focus from the orchestrator across cmux versions.
 - **One-shot poll.sh insurance when ping is missing** (`beads-task-issue-tracker-ovxe`): if Maxim reports a stalled visible child with no `[PING]`, orchestrator delivery path B runs exactly one `bash .pi/orchestrator/poll.sh <taskId>` (digest ≤10 lines, no loop/timer/`scheduler_create`) before `complete_visible_dispatch`. Primary delivery remains ping → complete; two hang/false-complete/insurance-poll cycles without progress stop and ask Maxim.
 - **Pi footer used context tokens** (`beads-task-issue-tracker-qhhp`): the workflow stats footer now shows spent model context first as `ctx:used/window` before session usage, using `?/window` when token usage is unknown and omitting the field when the context window is unavailable.
@@ -61,6 +66,7 @@
 
 ### Fixed
 
+- **Pi plan-mode hop tool restore + reviewer hang trap** (`beads-task-issue-tracker-rdgp`): plan-mode exit/approval now restores registered `complete_visible_dispatch`, `followup_visible_dispatch`, and `close_visible_dispatch` via `MANDATORY_WORKFLOW_TOOLS` even when the pre-plan active surface omitted them. `dispatch_reviewer` description now states interactive MUST pass `transport=cmux`; omit/default remains blocking headless until abort/SIGTERM (default transport unchanged for CI).
 - **Pi review acceptance evidence mapping** (`beads-task-issue-tracker-te7m`): `review_bead` now scores ACCEPTANCE MATRIX rows from the latest supervisor/workflow review artifact, not only live `automatedChecks`. Docs-only and manual verification bullets can map to PASS/N/A when changed-files proof is present, instead of false `NOT RUN` when `git diff --name-only` was never executed by the review tool.
 - **Pi plan-mode subagent guard** (`beads-task-issue-tracker-snoc`): strict plan mode now blocks generic `subagent` tool calls, including namespaced tool names, before child execution while continuing to allow `plan_subagent` for read-only planning agents.
 - **Pi supervisor dispatch preflight** (`beads-task-issue-tracker-nnys`): `dispatch_supervisor` now validates the active workflow-state bead, branch, worktree, and recorded `START_COMMIT` before spawning implementation agents, keeps typed workflow submit/review transitions in the wrapper instead of the child supervisor, and only auto-submits for review when the supervisor artifact includes fresh verification and commit evidence.
