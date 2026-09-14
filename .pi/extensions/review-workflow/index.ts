@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { renderPathRulesLoaded } from "../path-rules/index";
 import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard, registerDashboardRenderer } from "../subagent/dashboard";
 import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
@@ -127,7 +127,7 @@ function evaluateReviewWorkflowRuntimeHash(changedFiles: string[], worktreePath:
 		return {
 			...base,
 			status: "mismatch",
-			message: `review-workflow runtime hash guard: BLOCKED. Загруженный review_bead runtime не совпадает с ${reviewWorktreeSourcePath}: loadedRuntimeSha256=${loadedRuntimeHash.sha256}, reviewWorktreeSha256=${reviewWorktreeSha256}. Перезапустите Pi/runtime из этого worktree или передайте review handoff свежему процессу; bd close запрещён, чтобы не закрыть bead stale self-hosted logic.`,
+			message: `review-workflow runtime hash guard: mismatch. Загруженный review_bead runtime не совпадает с ${reviewWorktreeSourcePath}: loadedRuntimeSha256=${loadedRuntimeHash.sha256}, reviewWorktreeSha256=${reviewWorktreeSha256}. review_bead делегирует свежему процессу из task worktree (PI_REVIEW_RUNTIME_DELEGATED); bd close на stale path запрещён.`,
 		};
 	}
 	return {
@@ -799,12 +799,323 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal, ct
 let spawnForReview = spawn;
 let runReviewerForWorkflow = runReviewer;
 
+const PI_REVIEW_RUNTIME_DELEGATED_ENV = "PI_REVIEW_RUNTIME_DELEGATED";
+const REVIEW_RUNTIME_DELEGATE_TIMEOUT_MS = 15 * 60 * 1000;
+const WORKTREE_FRESH_MARKER_RE = /REVIEW RUNTIME:\s*worktree-fresh,\s*sha256=([a-f0-9]{64})/i;
+const NOT_APPROVED_MARKER_RE = /(?:^|\n)\s*(?:[-*>]\s*)?(?:CODE REVIEW|VERDICT)\s*:\s*NOT[_ ]APPROVED\b/i;
+
+export interface ReviewRuntimeDelegateParams {
+	beadId: string;
+	startCommit: string;
+	endCommit: string;
+	worktreePath: string;
+	signal?: AbortSignal;
+}
+
+export interface ReviewRuntimeDelegateResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+	method: "programmatic" | "pi-oneshot" | "test-override";
+}
+
+type ReviewRuntimeDelegateFn = (params: ReviewRuntimeDelegateParams) => Promise<ReviewRuntimeDelegateResult>;
+
+let reviewRuntimeDelegateOverride: ReviewRuntimeDelegateFn | null = null;
+
 export function setSpawnForReviewTestOverride(override: typeof spawn | null): void {
 	spawnForReview = override ?? spawn;
 }
 
 export function setRunReviewerForWorkflowTestOverride(override: typeof runReviewer | null): void {
 	runReviewerForWorkflow = override ?? runReviewer;
+}
+
+/** Test seam for hash-mismatch auto-delegate; separate from code-reviewer spawn. */
+export function setReviewRuntimeDelegateForTestOverride(override: ReviewRuntimeDelegateFn | null): void {
+	reviewRuntimeDelegateOverride = override;
+}
+
+function isReviewRuntimeDelegatedEnv(): boolean {
+	return process.env[PI_REVIEW_RUNTIME_DELEGATED_ENV] === "1";
+}
+
+function buildReviewRuntimeDelegateComment(params: {
+	beadId: string;
+	branch: string;
+	worktreePath: string;
+	startCommit: string;
+	endCommit: string;
+	loadedSha?: string;
+	worktreeSha?: string;
+}): string {
+	return [
+		"REVIEW RUNTIME DELEGATE",
+		"",
+		`BEAD_ID: ${params.beadId}`,
+		`BRANCH: ${params.branch}`,
+		`WORKTREE: ${params.worktreePath}`,
+		`START_COMMIT: ${params.startCommit}`,
+		`END_COMMIT: ${params.endCommit}`,
+		`LOADED_RUNTIME_SHA256: ${params.loadedSha ?? "unknown"}`,
+		`WORKTREE_RUNTIME_SHA256: ${params.worktreeSha ?? "unknown"}`,
+		`ENV: ${PI_REVIEW_RUNTIME_DELEGATED_ENV}=1`,
+		"",
+		"Parent review_bead detected review-workflow runtime hash mismatch and delegated the full review path to a fresh process with cwd=worktree. Parent will not bd close on the stale path.",
+	].join("\n");
+}
+
+function buildWorktreeFreshMarker(worktreeSha: string): string {
+	return `REVIEW RUNTIME: worktree-fresh, sha256=${worktreeSha}`;
+}
+
+function killProcessTree(proc: ReturnType<typeof spawn>, signalName: NodeJS.Signals): void {
+	if (!proc.pid) {
+		proc.kill(signalName);
+		return;
+	}
+	try {
+		process.kill(-proc.pid, signalName);
+	} catch {
+		try {
+			proc.kill(signalName);
+		} catch {
+			/* ignore */
+		}
+	}
+}
+
+async function spawnDelegatedProcess(params: {
+	command: string;
+	args: string[];
+	cwd: string;
+	env: NodeJS.ProcessEnv;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+}): Promise<{ code: number; stdout: string; stderr: string }> {
+	const timeoutMs = params.timeoutMs ?? REVIEW_RUNTIME_DELEGATE_TIMEOUT_MS;
+	return await new Promise((resolve) => {
+		const proc = spawnForReview(params.command, params.args, {
+			cwd: params.cwd,
+			env: params.env,
+			shell: false,
+			stdio: ["ignore", "pipe", "pipe"],
+			detached: process.platform !== "win32",
+		});
+		let stdout = "";
+		let stderr = "";
+		let settled = false;
+		let timedOut = false;
+		const finish = (code: number, finalStderr = stderr) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			if (params.signal) params.signal.removeEventListener("abort", onAbort);
+			resolve({
+				code,
+				stdout,
+				stderr: timedOut ? `${finalStderr}\nreview runtime delegate timed out after ${timeoutMs}ms`.trim() : finalStderr,
+			});
+		};
+		const onAbort = () => {
+			killProcessTree(proc, "SIGTERM");
+			setTimeout(() => killProcessTree(proc, "SIGKILL"), 5_000).unref?.();
+		};
+		const timer = setTimeout(() => {
+			timedOut = true;
+			killProcessTree(proc, "SIGTERM");
+			setTimeout(() => killProcessTree(proc, "SIGKILL"), 5_000).unref?.();
+		}, timeoutMs);
+		timer.unref?.();
+		proc.stdout?.on("data", (data) => {
+			stdout += data.toString();
+		});
+		proc.stderr?.on("data", (data) => {
+			stderr += data.toString();
+		});
+		proc.on("close", (code) => finish(code ?? (timedOut ? 1 : 0)));
+		proc.on("error", (error) => finish(1, `${stderr}\n${error.message}`));
+		if (params.signal) {
+			if (params.signal.aborted) onAbort();
+			else params.signal.addEventListener("abort", onAbort, { once: true });
+		}
+	});
+}
+
+function buildPiOneshotDelegatePrompt(params: ReviewRuntimeDelegateParams): string {
+	return [
+		"FIXED CONTRACT: call the review_bead tool exactly once, then stop.",
+		"Do not free-form review. Do not skip the tool. If review_bead is absent, fail closed.",
+		"review_bead parameters (exact):",
+		`- beadId: ${params.beadId}`,
+		`- startCommit: ${params.startCommit}`,
+		`- endCommit: ${params.endCommit}`,
+		`- worktreePath: ${params.worktreePath}`,
+		"After the tool returns, exit without additional tool calls.",
+	].join("\n");
+}
+
+async function runProgrammaticReviewRuntimeDelegate(params: ReviewRuntimeDelegateParams): Promise<ReviewRuntimeDelegateResult> {
+	const modulePath = path.join(params.worktreePath, REVIEW_WORKFLOW_RUNTIME_RELATIVE_PATH);
+	if (!fs.existsSync(modulePath)) {
+		throw new Error(`programmatic delegate: missing ${modulePath}`);
+	}
+	const moduleUrl = `${pathToFileURL(modulePath).href}?review-runtime-delegate=${Date.now()}`;
+	let mod: { default?: (api: ExtensionAPI) => void };
+	try {
+		mod = await import(moduleUrl);
+	} catch (error) {
+		throw new Error(`programmatic delegate import failed: ${(error as Error).message}`);
+	}
+	if (typeof mod.default !== "function") {
+		throw new Error("programmatic delegate: worktree review-workflow default export is not a factory function");
+	}
+
+	let registeredTool: { execute: Function } | undefined;
+	const childPi: ExtensionAPI = {
+		async exec(command, args) {
+			return await new Promise((resolve) => {
+				const proc = spawn(command, args, { cwd: params.worktreePath, shell: false, stdio: ["ignore", "pipe", "pipe"] });
+				let stdout = "";
+				let stderr = "";
+				proc.stdout?.on("data", (data) => {
+					stdout += data.toString();
+				});
+				proc.stderr?.on("data", (data) => {
+					stderr += data.toString();
+				});
+				proc.on("close", (code) => resolve({ stdout, stderr, code: code ?? 0 }));
+				proc.on("error", (error) => resolve({ stdout, stderr: `${stderr}\n${error.message}`, code: 1 }));
+			});
+		},
+		registerTool(tool: any) {
+			if (tool?.name === "review_bead") registeredTool = tool;
+		},
+		registerCommand() {},
+	};
+	mod.default(childPi);
+	if (!registeredTool?.execute) {
+		throw new Error("programmatic delegate: review_bead tool was not registered by worktree runtime");
+	}
+
+	const previous = process.env[PI_REVIEW_RUNTIME_DELEGATED_ENV];
+	process.env[PI_REVIEW_RUNTIME_DELEGATED_ENV] = "1";
+	try {
+		const result = await registeredTool.execute(
+			"review-runtime-delegate",
+			{
+				beadId: params.beadId,
+				startCommit: params.startCommit,
+				endCommit: params.endCommit,
+				worktreePath: params.worktreePath,
+				dryRun: false,
+			},
+			params.signal,
+			undefined,
+			{ cwd: params.worktreePath },
+		);
+		const text = Array.isArray(result?.content) ? result.content.map((part: any) => part?.text ?? "").join("\n") : String(result ?? "");
+		const errorText = typeof result?.details?.error === "string" ? result.details.error : "";
+		return {
+			code: errorText ? 1 : 0,
+			stdout: text,
+			stderr: errorText,
+			method: "programmatic",
+		};
+	} finally {
+		if (previous === undefined) delete process.env[PI_REVIEW_RUNTIME_DELEGATED_ENV];
+		else process.env[PI_REVIEW_RUNTIME_DELEGATED_ENV] = previous;
+	}
+}
+
+async function runPiOneshotReviewRuntimeDelegate(params: ReviewRuntimeDelegateParams): Promise<ReviewRuntimeDelegateResult> {
+	const prompt = buildPiOneshotDelegatePrompt(params);
+	const invocation = getPiInvocation(["--approve", "--mode", "json", "-p", "--no-session", "--tools", "review_bead", prompt]);
+	const env = {
+		...process.env,
+		[PI_REVIEW_RUNTIME_DELEGATED_ENV]: "1",
+	};
+	const spawned = await spawnDelegatedProcess({
+		command: invocation.command,
+		args: invocation.args,
+		cwd: params.worktreePath,
+		env,
+		signal: params.signal,
+	});
+	const combined = `${spawned.stdout}\n${spawned.stderr}`;
+	if (/review_bead (is )?(not |un)available|unknown tool|tool not found|no such tool/i.test(combined)) {
+		throw new Error(`pi oneshot delegate fail-closed: review_bead tool absent (${combined.slice(0, 500)})`);
+	}
+	return { ...spawned, method: "pi-oneshot" };
+}
+
+async function runReviewRuntimeDelegate(params: ReviewRuntimeDelegateParams): Promise<ReviewRuntimeDelegateResult> {
+	if (reviewRuntimeDelegateOverride) {
+		const result = await reviewRuntimeDelegateOverride(params);
+		return { ...result, method: result.method ?? "test-override" };
+	}
+	let programmaticError: Error | undefined;
+	try {
+		return await runProgrammaticReviewRuntimeDelegate(params);
+	} catch (error) {
+		programmaticError = error as Error;
+	}
+	try {
+		return await runPiOneshotReviewRuntimeDelegate(params);
+	} catch (error) {
+		throw new Error(
+			`review runtime delegate failed. programmatic: ${programmaticError?.message ?? "n/a"}; pi-oneshot: ${(error as Error).message}`,
+		);
+	}
+}
+
+async function bestEffortRestoreInreview(pi: ExtensionAPI, beadId: string): Promise<void> {
+	try {
+		const bead = await getBead(pi, beadId);
+		if (bead?.status === "closed" || bead?.status === "blocked") return;
+		if (bead?.status === "inreview") return;
+		await exec(pi, "bd", ["update", beadId, "--status", "inreview"]);
+	} catch {
+		/* best-effort only */
+	}
+}
+
+async function evaluateDelegatedReviewOutcome(
+	pi: ExtensionAPI,
+	beadId: string,
+	expectedWorktreeSha?: string,
+): Promise<{ ok: boolean; status: string; comments: string; message: string }> {
+	const bead = await getBead(pi, beadId);
+	const comments = await getComments(pi, beadId);
+	const status = String(bead?.status ?? "unknown");
+	const markerMatch = comments.match(WORKTREE_FRESH_MARKER_RE);
+	const hasMarker = Boolean(markerMatch);
+	const markerSha = markerMatch?.[1];
+	const markerMatches = !expectedWorktreeSha || markerSha === expectedWorktreeSha;
+	const notApproved = NOT_APPROVED_MARKER_RE.test(comments);
+
+	if (status === "closed" && hasMarker && markerMatches) {
+		return {
+			ok: true,
+			status,
+			comments,
+			message: `Delegated review succeeded: bd status=closed with REVIEW RUNTIME worktree-fresh marker sha256=${markerSha}.`,
+		};
+	}
+	if (status === "inreview" && notApproved) {
+		return {
+			ok: true,
+			status,
+			comments,
+			message: "Delegated review completed with CODE REVIEW: NOT APPROVED; bead remains inreview for supervisor redispatch.",
+		};
+	}
+	return {
+		ok: false,
+		status,
+		comments,
+		message: `review-workflow runtime hash guard: BLOCKED after delegate. Expected closed+worktree-fresh marker or NOT APPROVED+inreview; observed status=${status}, marker=${hasMarker ? `sha256=${markerSha}` : "absent"}, notApproved=${notApproved}.`,
+	};
 }
 
 function render(result: ReviewResult): string {
@@ -862,8 +1173,98 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const changedRaw = await execRequired(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`]);
 				const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
 				const runtimeHashEvidence = evaluateReviewWorkflowRuntimeHash(changedFiles, worktreePath);
-				if (!params.dryRun && ["missing", "mismatch"].includes(runtimeHashEvidence.status)) {
+				if (!params.dryRun && runtimeHashEvidence.status === "missing") {
 					throw new Error(runtimeHashEvidence.message);
+				}
+				if (!params.dryRun && runtimeHashEvidence.status === "mismatch") {
+					if (isReviewRuntimeDelegatedEnv()) {
+						throw new Error(
+							`review-workflow runtime hash guard: BLOCKED. Nested delegate refused (${PI_REVIEW_RUNTIME_DELEGATED_ENV}=1) while runtime still mismatches. ${runtimeHashEvidence.message}`,
+						);
+					}
+					await exec(pi, "bd", [
+						"comments",
+						"add",
+						params.beadId,
+						buildReviewRuntimeDelegateComment({
+							beadId: params.beadId,
+							branch,
+							worktreePath,
+							startCommit,
+							endCommit,
+							loadedSha: runtimeHashEvidence.loadedRuntimeSha256,
+							worktreeSha: runtimeHashEvidence.reviewWorktreeSha256,
+						}),
+					]);
+					let delegateResult: ReviewRuntimeDelegateResult;
+					try {
+						delegateResult = await runReviewRuntimeDelegate({
+							beadId: params.beadId,
+							startCommit,
+							endCommit,
+							worktreePath,
+							signal,
+						});
+					} catch (error) {
+						await bestEffortRestoreInreview(pi, params.beadId);
+						pi.events?.emit("workflow-state:update", {
+							activeBead: params.beadId,
+							sessionMode: "inreview",
+							branch,
+							worktreePath,
+							startCommit,
+							endCommit,
+						});
+						throw new Error(
+							`review-workflow runtime hash guard: BLOCKED. Delegate spawn/run failed: ${(error as Error).message}. ${runtimeHashEvidence.message}`,
+						);
+					}
+					const outcome = await evaluateDelegatedReviewOutcome(pi, params.beadId, runtimeHashEvidence.reviewWorktreeSha256);
+					if (!outcome.ok) {
+						await bestEffortRestoreInreview(pi, params.beadId);
+						pi.events?.emit("workflow-state:update", {
+							activeBead: params.beadId,
+							sessionMode: "inreview",
+							branch,
+							worktreePath,
+							startCommit,
+							endCommit,
+						});
+						throw new Error(`${outcome.message} Delegate method=${delegateResult.method}, exit=${delegateResult.code}.`);
+					}
+					const delegatedSessionMode = outcome.status === "closed" ? "closed" : "inreview";
+					pi.events?.emit("workflow-state:update", {
+						activeBead: params.beadId,
+						sessionMode: delegatedSessionMode,
+						branch,
+						worktreePath,
+						startCommit,
+						endCommit,
+					});
+					const delegatedResult: ReviewResult = {
+						beadId: params.beadId,
+						branch,
+						worktreePath,
+						startCommit,
+						endCommit,
+						changedFiles,
+						automatedChecks: [
+							`delegated review via ${delegateResult.method}; parent did not run checks or close on stale runtime`,
+							outcome.message,
+						],
+						checkpoints: [
+							runtimeHashEvidence.message,
+							"Parent delegated full review path to worktree-fresh runtime; parent never bd close on stale path after mismatch.",
+							outcome.message,
+						],
+						frontendChecklist: [],
+						supervisorArtifact: extractSupervisorArtifact(comments),
+						runtimeHashEvidence,
+						reviewerExitCode: delegateResult.code,
+						reviewerOutput: delegateResult.stdout.slice(-8000),
+						reviewerStderr: delegateResult.stderr.slice(-4000),
+					};
+					return { content: [{ type: "text", text: render(delegatedResult) }], details: delegatedResult };
 				}
 				const automatedChecks = params.dryRun ? ["dryRun: automated checks skipped"] : await runChecks(pi, changedFiles, reviewCwd);
 				const frontendChecklist = frontendReviewChecklist(changedFiles);
@@ -881,6 +1282,9 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				];
 				const result: ReviewResult = { beadId: params.beadId, branch, worktreePath, startCommit, endCommit, changedFiles, automatedChecks, checkpoints, frontendChecklist, supervisorArtifact, runtimeHashEvidence, pathRulesLoaded };
 				if (!params.dryRun) {
+					if (runtimeHashEvidence.status === "matched" && isReviewRuntimeDelegatedEnv() && runtimeHashEvidence.reviewWorktreeSha256) {
+						await exec(pi, "bd", ["comments", "add", params.beadId, buildWorktreeFreshMarker(runtimeHashEvidence.reviewWorktreeSha256)]);
+					}
 					await exec(pi, "bd", ["comments", "add", params.beadId, `REVIEW START (review_bead)\n\nBRANCH: ${branch}\nWORKTREE: ${worktreePath}\nSTART_COMMIT: ${startCommit}\nEND_COMMIT: ${endCommit}\n\nSIMPLIFIED: review_bead simplify gate completed; scoped diff ${startCommit}..${endCommit} prepared for code review.
 
 SUPERVISOR ARTIFACT HANDOFF

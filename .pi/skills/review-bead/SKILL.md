@@ -42,16 +42,24 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    # optional: dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>, transport=headless)
    ```
    In a main-start session, headless `review_bead` still resolves `workflowState.worktreePath`. Do not run raw mutating review/check shell commands from `main`; only read-only inspection may happen there.
-5. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.
-6. Simplify/reuse pass:
+5. Internal `review_bead` recovery on review-workflow runtime **hash mismatch** (not the interactive cmux hop above):
+   - Guard stays fail-closed: loaded runtime sha256 must match task worktree `.pi/extensions/review-workflow/index.ts` when that file is in the scoped diff. `missing` / `not-applicable` / `matched` do **not** auto-delegate.
+   - On `status===mismatch` and non-`dryRun` only, `review_bead` writes a durable `REVIEW RUNTIME DELEGATE` comment and spawns a fresh process with `cwd=<worktreePath>` and `PI_REVIEW_RUNTIME_DELEGATED=1`, forwarding `beadId` / `startCommit` / `endCommit` / `worktreePath`.
+   - Preferred spawn is programmatic load of the worktree `review-workflow` module and a direct `review_bead` execute (not free-form LLM). Fallback is a fixed `pi --approve` oneshot that must call `review_bead` once and fail closed if the tool is absent.
+   - Child owns the full checks → reviewer → matrix → close/`inreview` path. Parent never `bd close` on the stale path after mismatch. Parent success is only via `bd show`: `closed` + `REVIEW RUNTIME: worktree-fresh, sha256=<worktreeSha>` **or** `NOT APPROVED` + `inreview`.
+   - Child writes `REVIEW RUNTIME: worktree-fresh, sha256=<worktreeSha>` immediately after hash match and before the reviewer runs.
+   - Anti-recursion: `PI_REVIEW_RUNTIME_DELEGATED=1` + mismatch → hard `BLOCK` with no second spawn. Timeout 15m (`SIGTERM`→`SIGKILL`); abort kills the child process tree. Spawn failure / mid-flight crash without terminal evidence → best-effort restore `inreview` and `BLOCK`.
+   - This internal recovery does **not** replace interactive cmux hop pins in step 3 (`dispatch_reviewer transport=cmux`, pane reuse, ping/complete_visible_dispatch).
+6. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.
+7. Simplify/reuse pass:
    - record `SIMPLIFY: DONE ...`, or
    - record `SIMPLIFY: SKIPPED. docs/config only` when no code simplification is applicable.
-7. Code review must check spec compliance first, then quality. Review context must include `SUPERVISOR ARTIFACT` handoff evidence when present, or explicit `ARTIFACT STATUS: N/A` when absent. Durable review comments must record artifact status as accepted / insufficient / missing / N/A. The artifact is implementation evidence only: it may be cited in an `ACCEPTANCE MATRIX` row when mapped to a criterion plus fresh verification, but it is not acceptance by itself and must not auto-advance the bead.
-8. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and do not advance to `reviewed`, `accepted`, or `closed`. Visible `complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`. Do not `close_visible_dispatch` while pending-fix reuse is needed.
-9. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then write an `ACCEPTANCE MATRIX:` bd comment before moving `reviewed -> accepted -> closed`. The matrix must map every `### Acceptance criteria` bullet and applicable `### Verification / acceptance checks` bullet to command/manual evidence, exit code or observed result, and `result: PASS|FAIL|NOT RUN|N/A`. `FAIL`, `NOT RUN`, `BLOCKED`, or `SCOPE GAP` stops close unless Maxim gives an explicit `HUMAN ACCEPTANCE OVERRIDE` with `approver:` and `reason:`. If the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat that as human acceptance: record an `ACCEPTANCE MATRIX:` and override/evidence when needed, run `workflow_update(bead=<ID>, session=accepted)`, close through the standard `bd close` path, then clear/update session context to `closed`/idle. After close, `land` is not required before the next bead.
-10. For frontend Vue diffs, run the Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo` (i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion, responsive/layout, regression evidence). This intentionally replaces undefined Claude RAMS/WIG requirements in Pi.
-11. If diff touches `$t(...)` or `i18n/locales/`, verify en/ru locale key parity.
-12. Close only after evidence and matrix coverage:
+8. Code review must check spec compliance first, then quality. Review context must include `SUPERVISOR ARTIFACT` handoff evidence when present, or explicit `ARTIFACT STATUS: N/A` when absent. Durable review comments must record artifact status as accepted / insufficient / missing / N/A. The artifact is implementation evidence only: it may be cited in an `ACCEPTANCE MATRIX` row when mapped to a criterion plus fresh verification, but it is not acceptance by itself and must not auto-advance the bead.
+9. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and do not advance to `reviewed`, `accepted`, or `closed`. Visible `complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`. Do not `close_visible_dispatch` while pending-fix reuse is needed.
+10. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then write an `ACCEPTANCE MATRIX:` bd comment before moving `reviewed -> accepted -> closed`. The matrix must map every `### Acceptance criteria` bullet and applicable `### Verification / acceptance checks` bullet to command/manual evidence, exit code or observed result, and `result: PASS|FAIL|NOT RUN|N/A`. `FAIL`, `NOT RUN`, `BLOCKED`, or `SCOPE GAP` stops close unless Maxim gives an explicit `HUMAN ACCEPTANCE OVERRIDE` with `approver:` and `reason:`. If the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat that as human acceptance: record an `ACCEPTANCE MATRIX:` and override/evidence when needed, run `workflow_update(bead=<ID>, session=accepted)`, close through the standard `bd close` path, then clear/update session context to `closed`/idle. After close, `land` is not required before the next bead.
+11. For frontend Vue diffs, run the Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo` (i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion, responsive/layout, regression evidence). This intentionally replaces undefined Claude RAMS/WIG requirements in Pi.
+12. If diff touches `$t(...)` or `i18n/locales/`, verify en/ru locale key parity.
+13. Close only after evidence and matrix coverage:
     ```bash
     bd comments add <ID> "ACCEPTANCE MATRIX:
     - criterion: <acceptance/verification bullet>
@@ -60,7 +68,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
       result: PASS"
     bd close <ID> --reason "Reviewed and accepted"
     ```
-13. Update state after terminal close:
+14. Update state after terminal close:
     ```text
     workflow_complete(state=closed, reason=<review accepted and bd closed>)
     close_visible_dispatch({ beadId: <ID> })

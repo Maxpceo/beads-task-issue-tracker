@@ -6,10 +6,15 @@ import { delimiter, dirname, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import reviewWorkflowExtension, { isReviewApproved, setSpawnForReviewTestOverride } from '../../.pi/extensions/review-workflow/index'
+import reviewWorkflowExtension, {
+  isReviewApproved,
+  setReviewRuntimeDelegateForTestOverride,
+  setSpawnForReviewTestOverride,
+} from '../../.pi/extensions/review-workflow/index'
 
 afterEach(() => {
   setSpawnForReviewTestOverride(null)
+  setReviewRuntimeDelegateForTestOverride(null)
 })
 
 describe('review_workflow scoped review', () => {
@@ -1013,17 +1018,220 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toBeUndefined()
   })
 
-  it('blocks stale review-workflow runtime before accepted status and bd close', async () => {
-    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
-      changedFiles: '.pi/extensions/review-workflow/index.ts',
-      reviewWorkflowRuntimeSource: 'stale task worktree runtime source',
-    })
-    const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
+  it('delegates once on runtime hash mismatch with cwd+env+forwarded params and never closes on parent stale path', async () => {
+    const delegateCalls: Array<Record<string, unknown>> = []
+    const { createHash } = await import('node:crypto')
+    try {
+      const fixture = createFakeReviewerWorktree('VERDICT: APPROVED\nReady')
+      mkdirSync(join(fixture.cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
+      writeFileSync(join(fixture.cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'), 'stale task worktree runtime source')
+      const worktreeSha = createHash('sha256').update(readFileSync(join(fixture.cwd, '.pi/extensions/review-workflow/index.ts'))).digest('hex')
+      let registeredTool: any
+      const execCalls: Array<{ command: string; args: string[] }> = []
+      let beadStatus = 'inreview'
+      const commentLog: string[] = [
+        `DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: ${fixture.cwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`,
+      ]
+      const pi = {
+        events: { emit() {} },
+        registerTool(tool: any) {
+          if (tool.name === 'review_bead') registeredTool = tool
+        },
+        registerCommand() {},
+        exec: async (command: string, args: string[]) => {
+          execCalls.push({ command, args })
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: beadStatus }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: commentLog.join('\n\n'), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
+            commentLog.push(String(args[3] ?? ''))
+            return { stdout: '', stderr: '', code: 0 }
+          }
+          if (command === 'bd' && args[0] === 'update' && args.includes('--status')) {
+            beadStatus = String(args[args.indexOf('--status') + 1] ?? beadStatus)
+            return { stdout: '', stderr: '', code: 0 }
+          }
+          if (command === 'bd' && args[0] === 'close') {
+            beadStatus = 'closed'
+            return { stdout: '', stderr: '', code: 0 }
+          }
+          if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} rev-parse --show-toplevel`) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) {
+            return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+          }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
 
-    expect(result.content[0].text).toContain('review-workflow runtime hash guard: BLOCKED')
-    expect(result.content[0].text).toContain('Перезапустите Pi/runtime')
-    expect(statusUpdates.some((args) => args.includes('--status accepted'))).toBe(false)
-    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+      try {
+        setReviewRuntimeDelegateForTestOverride(async (params) => {
+          delegateCalls.push({
+            beadId: params.beadId,
+            startCommit: params.startCommit,
+            endCommit: params.endCommit,
+            worktreePath: params.worktreePath,
+          })
+          commentLog.push(`REVIEW RUNTIME: worktree-fresh, sha256=${worktreeSha}`)
+          beadStatus = 'closed'
+          return { code: 0, stdout: 'child closed', stderr: '', method: 'test-override' }
+        })
+        reviewWorkflowExtension(pi as any)
+
+        const result = await registeredTool.execute(
+          'call-1',
+          { beadId: 'bead-a', worktreePath: fixture.cwd, startCommit: 'aaa1111', endCommit: 'bbb2222' },
+          undefined,
+          undefined,
+          { cwd: '/repo/main' },
+        )
+
+        expect(delegateCalls).toHaveLength(1)
+        expect(delegateCalls[0]).toMatchObject({
+          beadId: 'bead-a',
+          startCommit: 'aaa1111',
+          endCommit: 'bbb2222',
+          worktreePath: fixture.cwd,
+        })
+        expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').includes('REVIEW RUNTIME DELEGATE'))).toBe(true)
+        expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+        expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.includes('simplified'))).toBe(false)
+        expect(result.details.error).toBeUndefined()
+        expect(result.content[0].text).toContain('Parent delegated full review path')
+        expect(result.content[0].text).toContain('bd status=closed')
+      } finally {
+        fixture.cleanup()
+      }
+    } finally {
+      setReviewRuntimeDelegateForTestOverride(null)
+    }
+  })
+
+  it('blocks nested delegate when PI_REVIEW_RUNTIME_DELEGATED=1 on mismatch', async () => {
+    const previous = process.env.PI_REVIEW_RUNTIME_DELEGATED
+    process.env.PI_REVIEW_RUNTIME_DELEGATED = '1'
+    let delegateCalled = false
+    setReviewRuntimeDelegateForTestOverride(async () => {
+      delegateCalled = true
+      return { code: 0, stdout: '', stderr: '', method: 'test-override' }
+    })
+    try {
+      const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+        changedFiles: '.pi/extensions/review-workflow/index.ts',
+        reviewWorkflowRuntimeSource: 'stale task worktree runtime source',
+      })
+      expect(delegateCalled).toBe(false)
+      expect(result.content[0].text).toContain('Nested delegate refused')
+      expect(result.content[0].text).toContain('PI_REVIEW_RUNTIME_DELEGATED=1')
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').includes('REVIEW RUNTIME DELEGATE'))).toBe(false)
+    } finally {
+      setReviewRuntimeDelegateForTestOverride(null)
+      if (previous === undefined) delete process.env.PI_REVIEW_RUNTIME_DELEGATED
+      else process.env.PI_REVIEW_RUNTIME_DELEGATED = previous
+    }
+  })
+
+  it('blocks when delegate spawn fails and does not close on parent path', async () => {
+    setReviewRuntimeDelegateForTestOverride(async () => {
+      throw new Error('spawn failed: pi missing')
+    })
+    try {
+      const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+        changedFiles: '.pi/extensions/review-workflow/index.ts',
+        reviewWorkflowRuntimeSource: 'stale task worktree runtime source',
+      })
+      expect(result.content[0].text).toContain('Delegate spawn/run failed')
+      expect(result.content[0].text).toContain('spawn failed: pi missing')
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').includes('REVIEW RUNTIME DELEGATE'))).toBe(true)
+    } finally {
+      setReviewRuntimeDelegateForTestOverride(null)
+    }
+  })
+
+  it('treats delegated NOT APPROVED + inreview as successful parent outcome without close', async () => {
+    setReviewRuntimeDelegateForTestOverride(async () => {
+      throw new Error('should be replaced below')
+    })
+    try {
+      const fixture = createFakeReviewerWorktree('unused')
+      mkdirSync(join(fixture.cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
+      writeFileSync(join(fixture.cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'), 'stale runtime body')
+      let registeredTool: any
+      const execCalls: Array<{ command: string; args: string[] }> = []
+      let beadStatus = 'inreview'
+      const commentLog: string[] = [
+        `DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: ${fixture.cwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`,
+      ]
+      const pi = {
+        events: { emit() {} },
+        registerTool(tool: any) {
+          if (tool.name === 'review_bead') registeredTool = tool
+        },
+        registerCommand() {},
+        exec: async (command: string, args: string[]) => {
+          execCalls.push({ command, args })
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: beadStatus }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: commentLog.join('\n\n'), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
+            commentLog.push(String(args[3] ?? ''))
+            return { stdout: '', stderr: '', code: 0 }
+          }
+          if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} rev-parse --show-toplevel`) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) {
+            return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+          }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+      setReviewRuntimeDelegateForTestOverride(async () => {
+        commentLog.push('CODE REVIEW: NOT APPROVED\nFix required')
+        beadStatus = 'inreview'
+        return { code: 0, stdout: 'not approved', stderr: '', method: 'test-override' }
+      })
+      reviewWorkflowExtension(pi as any)
+      const result = await registeredTool.execute(
+        'call-1',
+        { beadId: 'bead-a', worktreePath: fixture.cwd, startCommit: 'aaa1111', endCommit: 'bbb2222' },
+        undefined,
+        undefined,
+        { cwd: '/repo/main' },
+      )
+      expect(result.details.error).toBeUndefined()
+      expect(result.content[0].text).toContain('NOT APPROVED')
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+      fixture.cleanup()
+    } finally {
+      setReviewRuntimeDelegateForTestOverride(null)
+    }
+  })
+
+  it('writes worktree-fresh marker before reviewer when delegated env matches runtime hash', async () => {
+    const previous = process.env.PI_REVIEW_RUNTIME_DELEGATED
+    process.env.PI_REVIEW_RUNTIME_DELEGATED = '1'
+    try {
+      const loadedRuntimeSource = readFileSync(join(process.cwd(), '.pi', 'extensions', 'review-workflow', 'index.ts'), 'utf8')
+      const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+        changedFiles: '.pi/extensions/review-workflow/index.ts',
+        reviewWorkflowRuntimeSource: loadedRuntimeSource,
+      })
+      const comments = execCalls
+        .filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+        .map((call) => String(call.args[3] ?? ''))
+      const markerIndex = comments.findIndex((text) => text.startsWith('REVIEW RUNTIME: worktree-fresh, sha256='))
+      const reviewStartIndex = comments.findIndex((text) => text.startsWith('REVIEW START (review_bead)'))
+      const closeIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'close')
+
+      expect(result.details.runtimeHashEvidence.status).toBe('matched')
+      expect(markerIndex).toBeGreaterThanOrEqual(0)
+      expect(reviewStartIndex).toBeGreaterThan(markerIndex)
+      expect(closeIndex).toBeGreaterThan(reviewStartIndex)
+      expect(result.details.error).toBeUndefined()
+    } finally {
+      if (previous === undefined) delete process.env.PI_REVIEW_RUNTIME_DELEGATED
+      else process.env.PI_REVIEW_RUNTIME_DELEGATED = previous
+    }
   })
 
   it('allows approved review-workflow runtime change when load-time hash matches and records evidence before close', async () => {
@@ -1044,7 +1252,74 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(acceptanceCommentIndex).toBeGreaterThanOrEqual(0)
     expect(closeIndex).toBeGreaterThanOrEqual(0)
     expect(execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args.join(' ').includes('RUNTIME HASH EVIDENCE'))).toBeLessThan(closeIndex)
+    expect(comments.some((args) => args.includes('REVIEW RUNTIME: worktree-fresh'))).toBe(false)
     expect(result.details.error).toBeUndefined()
+  })
+
+  it('does not delegate on dryRun mismatch', async () => {
+    let delegateCalled = false
+    setReviewRuntimeDelegateForTestOverride(async () => {
+      delegateCalled = true
+      return { code: 0, stdout: '', stderr: '', method: 'test-override' }
+    })
+    try {
+      let registeredTool: any
+      const pi = {
+        registerTool(tool: any) {
+          if (tool.name === 'review_bead') registeredTool = tool
+        },
+        registerCommand() {},
+        exec: async (command: string, args: string[]) => {
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments') {
+            return {
+              stdout: 'DISPATCH\n\nBRANCH: feature/test\nWORKTREE: /repo/current\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222',
+              stderr: '',
+              code: 0,
+            }
+          }
+          if (command === 'git' && args.includes('branch')) return { stdout: 'feature/test\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ').includes('rev-parse --show-toplevel')) return { stdout: '/repo/current\n', stderr: '', code: 0 }
+          if (command === 'git' && args.includes('diff')) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+      // Force mismatch by pointing worktree path at a temp file with different contents via dryRun on process.cwd
+      // dryRun evaluates hash against real worktree file; if cwd is project root and loaded hash matches, status is matched.
+      // Use explicit worktree with different source via a temp dir.
+      const cwd = mkdtempSync(join(tmpdir(), 'review-dry-mismatch-'))
+      mkdirSync(join(cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
+      writeFileSync(join(cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'), 'different runtime for dryRun')
+      const pi2 = {
+        registerTool(tool: any) {
+          if (tool.name === 'review_bead') registeredTool = tool
+        },
+        registerCommand() {},
+        exec: async (command: string, args: string[]) => {
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments') {
+            return {
+              stdout: `DISPATCH\n\nBRANCH: feature/test\nWORKTREE: ${cwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`,
+              stderr: '',
+              code: 0,
+            }
+          }
+          if (command === 'git' && args.includes('branch')) return { stdout: 'feature/test\n', stderr: '', code: 0 }
+          if (command === 'git' && args.join(' ').includes('rev-parse --show-toplevel')) return { stdout: `${cwd}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.includes('diff')) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+      reviewWorkflowExtension(pi2 as any)
+      const result = await registeredTool.execute('call-1', { beadId: 'bead-a', worktreePath: cwd, dryRun: true }, undefined, undefined, { cwd })
+      expect(delegateCalled).toBe(false)
+      expect(result.details.runtimeHashEvidence.status).toBe('mismatch')
+      expect(result.content[0].text).toContain('review-workflow runtime hash guard: mismatch')
+      rmSync(cwd, { recursive: true, force: true })
+      void pi
+    } finally {
+      setReviewRuntimeDelegateForTestOverride(null)
+    }
   })
 })
 
@@ -1057,6 +1332,14 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('followup_visible_dispatch({ beadId, role: "code-reviewer", task })')
     expect(skill).toContain('complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`')
     expect(skill).toContain('While a live code-reviewer pane exists, do not call `review_bead`')
+  })
+
+  it('documents internal runtime hash auto-delegate without changing cmux hop pins', () => {
+    expect(skill).toContain('REVIEW RUNTIME DELEGATE')
+    expect(skill).toContain('worktree-fresh')
+    expect(skill).toContain('PI_REVIEW_RUNTIME_DELEGATED')
+    expect(skill).toContain('hash mismatch')
+    expect(skill).toContain('dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)')
   })
 })
 
