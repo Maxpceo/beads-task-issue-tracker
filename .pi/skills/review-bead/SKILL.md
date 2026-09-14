@@ -27,7 +27,9 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```
    - Return `status=spawned` is **not** DONE.
    - Child ping uses `AGENT_NAME=code-reviewer` and the quoted `DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body.
-   - Orchestrator: inbound ping → one `complete_visible_dispatch({ taskId })`. `status=verdict` → do not call `review_bead`.
+   - Orchestrator delivery (exclusive; mirror dispatch-supervisor):
+     A (primary): inbound `[PING]` / `[PING-ERROR]` with `taskId=` or `задача <id>` → one `complete_visible_dispatch({ taskId })`. `status=verdict` → do not call `review_bead`.
+     B (on-demand insurance, not primary): Maxim «не пинганул» / stalled without ping markers → parse latest reviewer DISPATCH spawn-ack for `taskId=` (+ optional `DIGEST_FILE=`/`RESULT_FILE=`), then exactly one `bash <worktree>/.pi/orchestrator/poll.sh <taskId>`. poll exit 0 + complete digest/result → at most one `complete_visible_dispatch`. poll exit 1 / empty → BLOCKED ask Maxim (child still working vs dead); do not probe liveness. Two hang / false-complete / insurance-poll cycles without progress → stop, ask Maxim. Forbid: background 20-min timer, `scheduler_create`, read-screen as normal path, `watchdog.sh` auto, pane dump, wait loops, re-dispatch same-turn, same-turn second complete.
    - `APPROVED` → continue acceptance/close below. `NOT APPROVED` → keep `inreview`; `complete_visible_dispatch` does not spawn a supervisor (5o03 owns supervisor-pane reuse). Do **not** call `close_visible_dispatch` on NOT APPROVED / pending-fix — keep the pane for `followup_visible_dispatch`.
    - No cmux → `BLOCKED`, not silent headless.
    - Hung/reuse of the live reviewer pane: `followup_visible_dispatch({ beadId, role: "code-reviewer", task })`.
