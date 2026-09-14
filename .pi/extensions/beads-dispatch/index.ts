@@ -23,6 +23,7 @@ import {
 	ORCHESTRATOR_TAB_TITLE,
 	persistIsolationFiles,
 	readDigestPreview,
+	resolveVisibleSplitAnchor,
 	saveRegistry,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
@@ -45,6 +46,7 @@ export {
 	findLiveFollowupEntry,
 	findLiveRegistryEntriesForBead,
 	ORCHESTRATOR_TAB_TITLE,
+	resolveVisibleSplitAnchor,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
 	posixQuote,
@@ -979,9 +981,16 @@ async function respawnVisibleFollowup(
 	const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath: entry.worktree, payload });
 	if (spawnFail) throw new Error(spawnFail);
 	await adapter.identify();
+	const livePanes = liveEntriesForBead(found.registry, entry.beadId);
+	const callerSurface = resolveCallerSurface(adapter, entry);
+	const anchorSurface = resolveVisibleSplitAnchor({
+		callerSurface,
+		liveAgentPanes: livePanes,
+		excludePane: entry.pane,
+	});
 	let surface = "";
 	try {
-		const split = await adapter.newSplit();
+		const split = await adapter.newSplit({ anchorSurface });
 		surface = split.surface;
 		await adapter.send(surface, payload);
 	} catch (error) {
@@ -989,7 +998,8 @@ async function respawnVisibleFollowup(
 		throw error;
 	}
 	await safeRenameSurface(adapter, surface, visibleChildTabTitle(entry.role, entry.beadId));
-	if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
+	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
+	else if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
 	await adapter.closeSurface(entry.pane);
 	unlinkFollowupArtifacts(entry);
 	return patchFollowupEntry(found, {
@@ -1118,10 +1128,12 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
 			return { workspaceId };
 		},
-		async newSplit() {
-			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
+		async newSplit(opts?: { anchorSurface?: string }) {
+			const anchor = String(opts?.anchorSurface || callerSurface || "").trim();
+			if (!anchor) throw new Error("нет caller surface: BLOCKED");
 			// Explicit --focus false: pin non-stealing spawn across cmux versions (default is already false).
-			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface, "--focus", "false"]);
+			// Anchor is first live agent when present so orch stays exclusive left (kgvd).
+			const result = await exec("cmux", ["new-split", "right", "--surface", anchor, "--focus", "false"]);
 			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
 			const match = `${result.stdout || ""}`.match(/surface:\S+/);
 			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
@@ -1257,9 +1269,15 @@ Next step is review, same as today. Do not call review yourself.
 	const argvErrors = validateVisibleChildArgv(argv);
 	if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
 	const payload = buildVisibleChildSpawnPayload(worktreePath, argv);
+	const callerSurface = resolveCallerSurface(adapter);
+	const livePanes = liveEntriesForBead(existing, bead.id);
+	const anchorSurface = resolveVisibleSplitAnchor({
+		callerSurface,
+		liveAgentPanes: livePanes,
+	});
 	let surface = "";
 	try {
-		const split = await adapter.newSplit();
+		const split = await adapter.newSplit({ anchorSurface });
 		surface = split.surface;
 		const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath, payload });
 		if (spawnFail) throw new Error(spawnFail);
@@ -1268,7 +1286,6 @@ Next step is review, same as today. Do not call review yourself.
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	const callerSurface = resolveCallerSurface(adapter);
 	await safeRenameSurface(adapter, surface, visibleChildTabTitle(agentName, bead.id));
 	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
 	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);
