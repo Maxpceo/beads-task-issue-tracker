@@ -477,6 +477,45 @@ describe('dispatch_supervisor transport=cmux', () => {
     ])
   })
 
+  it('live adapter new-split argv includes --focus false', async () => {
+    setCmuxAdapterForTests(null)
+    const cmuxCalls: string[][] = []
+    const beadId = 'beads-task-issue-tracker-ok60'
+    const { registered, cwd, branch, head } = makePi({
+      beadId,
+      cmux: async (args) => {
+        cmuxCalls.push(args)
+        if (args[0] === 'identify') {
+          return {
+            stdout: JSON.stringify({
+              caller: { workspace_ref: 'ws-live-new-split-focus', surface_ref: 'surface:orch' },
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (args[0] === 'new-split') return { stdout: 'surface:child\n', stderr: '', code: 0 }
+        if (args[0] === 'send') return { stdout: '', stderr: '', code: 0 }
+        if (args[0] === 'tab-action') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    })
+    const result = await registered.execute(
+      'call-1',
+      { beadId, transport: 'cmux', agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head),
+    )
+    expect(result.details.status).toBe('spawned')
+    const splits = cmuxCalls.filter((args) => args[0] === 'new-split')
+    expect(splits).toHaveLength(1)
+    expect(splits[0]).toEqual([
+      'new-split', 'right', '--surface', 'surface:orch', '--focus', 'false',
+    ])
+    expect(cmuxCalls.some((args) => args[0] === 'focus-pane')).toBe(false)
+  })
+
   it('live typed cmux without adapter is BLOCKED when identify fails', async () => {
     const { registered, cwd, branch, beadId, head } = makePi({})
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))

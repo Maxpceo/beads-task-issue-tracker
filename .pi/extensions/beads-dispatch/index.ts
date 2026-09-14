@@ -1120,7 +1120,8 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 		},
 		async newSplit() {
 			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
-			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface]);
+			// Explicit --focus false: pin non-stealing spawn across cmux versions (default is already false).
+			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface, "--focus", "false"]);
 			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
 			const match = `${result.stdout || ""}`.match(/surface:\S+/);
 			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
