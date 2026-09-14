@@ -280,6 +280,41 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return normalized;
 	}
 
+	/** Worktree-only sanitize for planEvidence paths with trailing notes/inline wrappers. */
+	function normalizeWorktreePathEvidence(value: string): string {
+		let normalized = value.trim();
+		if (!normalized) return normalized;
+
+		// 1) strip trailing parenthetical/bracket notes: `/path` (created) / [already created]
+		while (true) {
+			const stripped = normalized.replace(/\s*[(\[].*?[)\]]\s*$/u, "").trim();
+			if (stripped === normalized) break;
+			normalized = stripped;
+		}
+
+		// 2) iterative unwrap whole-string quotes/backticks
+		while (true) {
+			const unwrapped = normalized
+				.replace(/^`([^`]+)`$/u, "$1")
+				.replace(/^["'“”‘’]([^"'“”‘’]+)["'“”‘’]$/u, "$1")
+				.trim();
+			if (unwrapped === normalized) break;
+			normalized = unwrapped;
+		}
+
+		normalized = normalized.replace(/[.,;:]$/u, "").trim();
+
+		// 3) if still dirty, extract first absolute POSIX path token (unanchored)
+		const cleanAbsolutePath = /^\/[^\s`'"()[\]]+$/u.test(normalized);
+		if (!cleanAbsolutePath) {
+			const token = normalized.match(/\/[^\s`'"()[\]]+/u)?.[0];
+			if (token) return token.replace(/[.,;:]+$/u, "");
+			// never invent a path when none is present
+		}
+
+		return normalized;
+	}
+
 	function latestPlanField(text: string, names: string[]): string | undefined {
 		const namePattern = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 		const fieldRegex = new RegExp(`^\\s*(?:[-*]\\s*)?(?:${namePattern})\\s*[:=]\\s*(.*)$`, "iu");
@@ -358,7 +393,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function approvalScope(ctx: ExtensionContext, beadId: string, planEvidence: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
-		const evidenceWorktreePath = latestPlanField(planEvidence, ["WORKTREE", "Worktree", "worktree", "worktreePath", "Worktree / cwd"]);
+		const evidenceWorktreePathRaw = latestPlanField(planEvidence, ["WORKTREE", "Worktree", "worktree", "worktreePath", "Worktree / cwd"]);
+		const evidenceWorktreePath = evidenceWorktreePathRaw ? normalizeWorktreePathEvidence(evidenceWorktreePathRaw) : undefined;
 		const evidenceBranch = latestPlanField(planEvidence, ["BRANCH", "Branch", "branch"]);
 		const evidenceStartCommit = latestPlanField(planEvidence, ["START_COMMIT", "Start-commit", "Start commit", "startCommit", "start"]);
 
