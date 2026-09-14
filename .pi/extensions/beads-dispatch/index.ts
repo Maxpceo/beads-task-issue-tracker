@@ -1778,7 +1778,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Follow-up Visible Dispatch",
 		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора или code-reviewer. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
 		parameters: FollowupVisibleDispatchParams,
-		async execute(_id: string, params: FollowupVisibleParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
+		async execute(_id: string, params: FollowupVisibleParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const result = await followupVisibleDispatch(pi, params, ctx, signal);
 				return { content: [{ type: "text", text: `followup_visible_dispatch status=${result.status}\n${result.text}` }], details: result };

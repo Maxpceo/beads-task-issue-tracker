@@ -1205,6 +1205,7 @@ describe('followup_visible_dispatch', () => {
 
   afterEach(() => {
     setCmuxAdapterForTests(null)
+    setStickyTabTitleDelayForTests(null)
     if (prevOrch === undefined) delete process.env.ORCH_ROOT
     else process.env.ORCH_ROOT = prevOrch
     if (prevHome === undefined) delete process.env.HOME
@@ -1304,12 +1305,16 @@ describe('followup_visible_dispatch', () => {
     const splits: string[] = []
     const sent: string[] = []
     const closed: string[] = []
+    const renames: Array<{ surface: string; title: string }> = []
+    setStickyTabTitleDelayForTests(async () => {})
     setCmuxAdapterForTests({
       async identify() { return { workspaceId: 'ws-follow' } },
+      callerSurface() { return 'surface:orch' },
       async newSplit() { splits.push('surface:2'); return { surface: 'surface:2' } },
       async send(_surface, text) { sent.push(text) },
       async closeSurface(surface) { closed.push(surface) },
       async readScreen() { return 'user@host ~/proj $\n' },
+      async renameSurface(surface, title) { renames.push({ surface, title }) },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
     const result = await followupVisibleDispatch(pi as any, { beadId, task: 'Fix the pane' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
@@ -1322,6 +1327,42 @@ describe('followup_visible_dispatch', () => {
     expect(closed).toEqual(['surface:1'])
     expect(findRegistryByTaskId('task-1')?.entry.pane).toBe('surface:2')
     expect(findRegistryByTaskId('task-1')?.entry.startCommit).toBe('aaa1111')
+    // shell/respawn sticky schedule: child+orch on full delay list
+    expect(renames[0]).toEqual({ surface: 'surface:2', title: 'test-supervisor · a' })
+    expect(renames[1]).toEqual({ surface: 'surface:orch', title: ORCHESTRATOR_TAB_TITLE })
+    expect(renames.length).toBe(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(result.renameAttempts).toBe(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(result.renameFailures).toBe(0)
+    expect(result.text).toMatch(/renameAttempts=/)
+  })
+
+  it('registered tool execute passes AbortSignal without ReferenceError and returns sticky metrics', async () => {
+    seed({ callerSurface: 'surface:orch' })
+    setStickyTabTitleDelayForTests(async () => {})
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-follow' } },
+      callerSurface() { return 'surface:orch' },
+      async newSplit() { return { surface: 'surface:99' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return 'session idle\n$\n' },
+      async renameSurface() {},
+    })
+    const { tools, cwd, branch, beadId } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
+    const controller = new AbortController()
+    const result = await tools.followup_visible_dispatch.execute(
+      'call-followup-signal',
+      { beadId, task: 'Fix via registered tool' },
+      controller.signal,
+      undefined,
+      workflowCtx(cwd, beadId, branch, 'aaa1111'),
+    )
+    expect(result.details?.error).toBeUndefined()
+    expect(result.content[0].text).not.toMatch(/ReferenceError|signal is not defined/)
+    expect(result.details.status).toBe('sent')
+    expect(result.details.renameAttempts).toBe(2)
+    expect(result.details.renameFailures).toBe(0)
+    expect(result.content[0].text).toMatch(/renameAttempts=2/)
   })
 
   it('unlinks submitted artifacts so complete is incomplete until rewrite, then a new DONE is not noop', async () => {
