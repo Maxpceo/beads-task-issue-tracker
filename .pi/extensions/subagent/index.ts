@@ -23,6 +23,7 @@ import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@ear
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, loadProjectAgentTeams } from "./agents.js";
+import { resolveAgentModelFromCwd } from "../agent-models/index";
 import {
 	AgentDashboardComponent,
 	type AgentDashboardCard,
@@ -399,8 +400,10 @@ async function runSingleAgent(
 		};
 	}
 
+	// Project .pi/agent-models.json overrides frontmatter model (role > class > inherit).
+	const resolvedModel = resolveAgentModelFromCwd(cwd ?? defaultCwd, agentName).model;
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (resolvedModel) args.push("--model", resolvedModel);
 	const tools = toolOverride ?? agent.tools;
 	if (tools && tools.length > 0) args.push("--tools", tools.join(","));
 
@@ -417,7 +420,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: resolvedModel,
 		step,
 	};
 

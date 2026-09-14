@@ -174,6 +174,27 @@ describe('visible child argv', () => {
     expect(def[def.indexOf('--tools') + 1]).toBe('read,bash,edit,write')
   })
 
+  it('includes --model when resolved and omits it on inherit', () => {
+    const withModel = buildVisibleChildArgv({
+      model: 'xai/grok-4.5',
+      systemPromptFile: 'a.md',
+      taskFile: 't.md',
+      session: { kind: 'no-session' },
+      tools: 'read,bash,edit,write',
+    })
+    expect(withModel).toContain('--model')
+    expect(withModel[withModel.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+    expect(validateVisibleChildArgv(withModel)).toEqual([])
+
+    const inherit = buildVisibleChildArgv({
+      systemPromptFile: 'a.md',
+      taskFile: 't.md',
+      session: { kind: 'no-session' },
+      tools: 'read,bash,edit,write',
+    })
+    expect(inherit).not.toContain('--model')
+  })
+
   it('POSIX-quotes cd worktree && argv including spaces', () => {
     const argv = buildVisibleChildArgv({ systemPromptFile: 'a.md', taskFile: '/tmp/task file.md', session: { kind: 'no-session' }, tools: 'read,bash,edit,write' })
     const payload = buildVisibleChildSpawnPayload('/tmp/task worktree', argv)
@@ -244,6 +265,9 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(result.details.transport).toBe('cmux')
     expect(result.details.pane).toBe('')
     expect(result.details.endCommit).toBeUndefined()
+    // Project agent-models.json maps test-supervisor → standard → xai/grok-4.5
+    expect(result.details.model).toBe('xai/grok-4.5')
+    expect(result.content[0].text).toContain('model=xai/grok-4.5')
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments).toEqual([])
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)

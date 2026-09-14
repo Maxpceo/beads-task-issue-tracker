@@ -28,7 +28,41 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
 
 ## Reporting and model guidance
 
-- Use the model declared in agent frontmatter when present; otherwise use the Pi/default orchestrator-selected model. Do not copy Claude Opus/Sonnet assumptions unless a Pi model alias is explicitly configured.
+### Per-agent model routing (project-local)
+
+Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`. Agent frontmatter `model:` is not the routing source of truth.
+
+Resolve order when spawning a child Pi process (`dispatch_supervisor` / `dispatch_reviewer` headless+cmux, `review_bead`, `subagent` / `plan_subagent`):
+
+1. `roles[agent].model` — optional per-role override
+2. else `classes[agentClasses[agent]]` — power class mapping
+3. else **session inherit** — do not pass `--model` (child uses the current session model)
+
+Empty string model ids and missing/invalid JSON are treated as inherit for spawn (spawn does not fail solely because the file is absent). Mutating commands (`set`) require a valid project `.pi/` and reject unknown class names on `set agent-class`.
+
+Default power classes (all start as `xai/grok-4.5`; change with the command, not by editing agent.md):
+
+| Class | Default model | Default agents |
+|---|---|---|
+| `strong` | `xai/grok-4.5` | `code-reviewer`, `architect` |
+| `standard` | `xai/grok-4.5` | `vue-supervisor`, `tauri-supervisor`, `test-supervisor`, `detective` |
+| `cheap` | `xai/grok-4.5` | `documentation-expert`, `plan-edge-reviewer`, `plan-consistency-reviewer`, `plan-dead-zone-reviewer` |
+
+Slash command (project cwd/worktree only; writes only `проект/.pi/agent-models.json`):
+
+```text
+/agent-models show
+/agent-models set class <name> <modelId>
+/agent-models set role <agent> <modelId>
+/agent-models set agent-class <agent> <class>
+/agent-models unset role <agent>
+/agent-models unset agent-class <agent>
+```
+
+`followup_visible_dispatch` does not restart a live pane with a new model mid-session; a changed mapping applies on the next spawn. Dry-run dispatch includes the resolved `model=` field (or session inherit).
+
+Out of scope here: dynamic auto-pick by task complexity, provider failover, global `~/.pi` mapping.
+
 - Completion reports must be evidence-backed: cite commands/manual checks, exit codes, and relevant output excerpts for every claim that work is done, tests pass, docs changed, review is approved, a plan covers a rule, or an investigation found a root cause.
 - Use `DONE` only when assigned scope is complete and verified; use `DONE_WITH_CONCERNS` when complete but there are non-blocking risks or skipped checks with reasons; use `BLOCKED` for missing context, unsafe branch/policy state, failing required checks, or unresolved decisions; use `NEEDS_CONTEXT` when required inputs such as `BEAD_ID`, `BRANCH`, `START_COMMIT`, symptoms, or acceptance criteria are missing.
 - Keep reports concise and factual. For final user-visible task/workflow reports, include a short `Кратко` summary (`Проблема`, `Что сделал`, `Результат`) before evidence tables so Maxim sees the human context as well as proof.

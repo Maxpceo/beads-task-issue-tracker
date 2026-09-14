@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { renderPathRulesLoaded } from "../path-rules/index";
 import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard, registerDashboardRenderer } from "../subagent/dashboard";
 import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
+import { resolveAgentModelFromCwd } from "../agent-models/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	registerTool(tool: any): void;
@@ -746,7 +747,9 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal, ct
 	const system = await writeTempFile("code-reviewer-system", parsed.body);
 	const args = ["--mode", "json", "-p", "--no-session", "--append-system-prompt", system.file];
 	if (parsed.data.tools) args.push("--tools", parsed.data.tools);
-	if (parsed.data.model) args.push("--model", parsed.data.model);
+	// Project agent-models.json is source of truth (role > class > inherit); ignore frontmatter model.
+	const resolved = resolveAgentModelFromCwd(cwd, "code-reviewer");
+	if (resolved.model) args.push("--model", resolved.model);
 	args.push(`Task: ${prompt}`);
 	try {
 		const invocation = getPiInvocation(args);

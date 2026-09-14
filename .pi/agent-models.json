@@ -1,0 +1,20 @@
+{
+  "classes": {
+    "strong": "xai/grok-4.5",
+    "standard": "xai/grok-4.5",
+    "cheap": "xai/grok-4.5"
+  },
+  "roles": {},
+  "agentClasses": {
+    "code-reviewer": "strong",
+    "architect": "strong",
+    "vue-supervisor": "standard",
+    "tauri-supervisor": "standard",
+    "test-supervisor": "standard",
+    "detective": "standard",
+    "documentation-expert": "cheap",
+    "plan-edge-reviewer": "cheap",
+    "plan-consistency-reviewer": "cheap",
+    "plan-dead-zone-reviewer": "cheap"
+  }
+}
