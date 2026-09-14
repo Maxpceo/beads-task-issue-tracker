@@ -28,7 +28,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    - Return `status=spawned` is **not** DONE.
    - Child ping uses `AGENT_NAME=code-reviewer` and the quoted `DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body.
    - Orchestrator: inbound ping → one `complete_visible_dispatch({ taskId })`. `status=verdict` → do not call `review_bead`.
-   - `APPROVED` → continue acceptance/close below. `NOT APPROVED` → keep `inreview`; `complete_visible_dispatch` does not spawn a supervisor (5o03 owns supervisor-pane reuse).
+   - `APPROVED` → continue acceptance/close below. `NOT APPROVED` → keep `inreview`; `complete_visible_dispatch` does not spawn a supervisor (5o03 owns supervisor-pane reuse). Do **not** call `close_visible_dispatch` on NOT APPROVED / pending-fix — keep the pane for `followup_visible_dispatch`.
    - No cmux → `BLOCKED`, not silent headless.
    - Hung/reuse of the live reviewer pane: `followup_visible_dispatch({ beadId, role: "code-reviewer", task })`.
 4. Explicit headless fallback only: omit `transport` or call `review_bead`. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
@@ -44,7 +44,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    - record `SIMPLIFY: DONE ...`, or
    - record `SIMPLIFY: SKIPPED. docs/config only` when no code simplification is applicable.
 7. Code review must check spec compliance first, then quality. Review context must include `SUPERVISOR ARTIFACT` handoff evidence when present, or explicit `ARTIFACT STATUS: N/A` when absent. Durable review comments must record artifact status as accepted / insufficient / missing / N/A. The artifact is implementation evidence only: it may be cited in an `ACCEPTANCE MATRIX` row when mapped to a criterion plus fresh verification, but it is not acceptance by itself and must not auto-advance the bead.
-8. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and do not advance to `reviewed`, `accepted`, or `closed`. Visible `complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`.
+8. If reviewer returns `NOT APPROVED`, keep/return bead `inreview` and do not advance to `reviewed`, `accepted`, or `closed`. Visible `complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`. Do not `close_visible_dispatch` while pending-fix reuse is needed.
 9. If approved, record `CODE REVIEW: APPROVED`, run relevant acceptance checks with fresh evidence, then write an `ACCEPTANCE MATRIX:` bd comment before moving `reviewed -> accepted -> closed`. The matrix must map every `### Acceptance criteria` bullet and applicable `### Verification / acceptance checks` bullet to command/manual evidence, exit code or observed result, and `result: PASS|FAIL|NOT RUN|N/A`. `FAIL`, `NOT RUN`, `BLOCKED`, or `SCOPE GAP` stops close unless Maxim gives an explicit `HUMAN ACCEPTANCE OVERRIDE` with `approver:` and `reason:`. If the user explicitly accepts completed/inreview work with phrases such as “завершай”, “закрывай”, “принято”, “всё ок”, or “accepted”, treat that as human acceptance: record an `ACCEPTANCE MATRIX:` and override/evidence when needed, run `workflow_update(bead=<ID>, session=accepted)`, close through the standard `bd close` path, then clear/update session context to `closed`/idle. After close, `land` is not required before the next bead.
 10. For frontend Vue diffs, run the Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo` (i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion, responsive/layout, regression evidence). This intentionally replaces undefined Claude RAMS/WIG requirements in Pi.
 11. If diff touches `$t(...)` or `i18n/locales/`, verify en/ru locale key parity.
@@ -60,7 +60,9 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
 13. Update state after terminal close:
     ```text
     workflow_complete(state=closed, reason=<review accepted and bd closed>)
+    close_visible_dispatch({ beadId: <ID> })
     ```
+    After `bd close` (or terminal blocked/deferred without continuation) and no pending-fix: close **this bead's** live registry panes only (`cmux close-surface` + tombstone). NOT APPROVED / pending-fix → do not close; reuse `followup_visible_dispatch`. Never sweep foreign/historical panes.
 
 ## Acceptance failure loop breaker
 

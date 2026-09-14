@@ -9,6 +9,7 @@ import beadsDispatchExtension, {
   buildCmuxRenameArgv,
   buildVisibleChildArgv,
   buildVisibleChildSpawnPayload,
+  closeVisibleDispatch,
   completeVisibleDispatch,
   findRegistryByTaskId,
   followupVisibleDispatch,
@@ -1191,5 +1192,166 @@ describe('followup_visible_dispatch', () => {
     expect(closed).toEqual(['surface:new'])
     expect(findRegistryByTaskId('task-1')?.entry.status).toBe('spawned')
     expect(findRegistryByTaskId('task-1')?.entry.pane).toBe('surface:1')
+  })
+})
+
+describe('close_visible_dispatch', () => {
+  let tmp: string
+  const prevOrch = process.env.ORCH_ROOT
+  const prevHome = process.env.HOME
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ld67-close-'))
+    process.env.ORCH_ROOT = tmp
+    process.env.HOME = tmp
+    setCmuxAdapterForTests(null)
+  })
+
+  afterEach(() => {
+    setCmuxAdapterForTests(null)
+    if (prevOrch === undefined) delete process.env.ORCH_ROOT
+    else process.env.ORCH_ROOT = prevOrch
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  function seed(entry: Record<string, unknown> = {}) {
+    const promptFile = path.join(tmp, 'p.md')
+    const taskFile = path.join(tmp, 't.md')
+    const resultFile = path.join(tmp, 'r.md')
+    const digestFile = path.join(tmp, 'd.digest')
+    fs.writeFileSync(promptFile, '# prompt')
+    fs.writeFileSync(taskFile, 'task')
+    fs.writeFileSync(resultFile, 'result')
+    fs.writeFileSync(digestFile, 'digest')
+    const file = path.join(tmp, 'ns', 'ws-close', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [{
+        taskId: 'task-ld67',
+        beadId: 'bead-a',
+        pane: 'surface:99',
+        worktree: tmp,
+        role: 'test-supervisor',
+        model: '',
+        taskFile,
+        resultFile,
+        digestFile,
+        promptFile,
+        status: 'spawned',
+        submitStatus: 'submitted',
+        startCommit: 'aaa1111',
+        createdAt: 't',
+        ...entry,
+      }],
+    })
+    return { file, promptFile, taskFile, resultFile, digestFile }
+  }
+
+  it('registers close_visible_dispatch tool', () => {
+    const { tools } = makePi({ toolName: 'close_visible_dispatch' })
+    expect(tools.close_visible_dispatch).toBeDefined()
+  })
+
+  it('calls closeSurface once with registry pane and tombstones after terminal hop', async () => {
+    const files = seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'closed' })
+    const result = await closeVisibleDispatch(pi as any, { beadId: 'bead-a' })
+    expect(result.status).toBe('closed')
+    expect(closed).toEqual(['surface:99'])
+    expect(result.closed).toEqual(['surface:99'])
+    expect(result.tombstoned).toEqual(['task-ld67'])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('tombstone')
+    expect(fs.existsSync(files.promptFile)).toBe(false)
+    expect(fs.existsSync(files.taskFile)).toBe(false)
+  })
+
+  it('does not call closeSurface when pendingFix (NOT APPROVED path)', async () => {
+    seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'inreview' })
+    const result = await closeVisibleDispatch(pi as any, { beadId: 'bead-a', pendingFix: true })
+    expect(result.status).toBe('skipped')
+    expect(closed).toEqual([])
+    expect(result.closed).toEqual([])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('spawned')
+  })
+
+  it('blocks close when bead is still live (in_progress / inreview)', async () => {
+    seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'inreview' })
+    await expect(closeVisibleDispatch(pi as any, { beadId: 'bead-a' })).rejects.toThrow(/not terminal/)
+    expect(closed).toEqual([])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('spawned')
+  })
+
+  it('closes only this bead panes and leaves foreign live entries alone', async () => {
+    seed()
+    const foreignFile = path.join(tmp, 'ns', 'ws-close', 'dispatch-registry.json')
+    const registry = loadRegistry(foreignFile)
+    registry.entries.push({
+      taskId: 'task-foreign',
+      beadId: 'bead-foreign',
+      pane: 'surface:foreign',
+      worktree: tmp,
+      role: 'test-supervisor',
+      model: '',
+      taskFile: path.join(tmp, 'ft.md'),
+      resultFile: path.join(tmp, 'fr.md'),
+      digestFile: path.join(tmp, 'fd.digest'),
+      promptFile: path.join(tmp, 'fp.md'),
+      status: 'spawned',
+      createdAt: 't',
+    })
+    saveRegistry(foreignFile, registry)
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'closed' })
+    await closeVisibleDispatch(pi as any, { beadId: 'bead-a' })
+    expect(closed).toEqual(['surface:99'])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('tombstone')
+    expect(findRegistryByTaskId('task-foreign')?.entry.status).toBe('spawned')
+  })
+
+  it('skill and AGENTS document close-surface after terminal and not on pending-fix', () => {
+    const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+    const review = fs.readFileSync(path.join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
+    const agents = fs.readFileSync(path.join(process.cwd(), 'AGENTS.md'), 'utf8')
+    expect(skill).toContain('close_visible_dispatch')
+    expect(skill).toContain('close-surface')
+    expect(review).toContain('close_visible_dispatch')
+    expect(review).toContain('Do not `close_visible_dispatch` while pending-fix')
+    expect(agents).toContain('close-surface')
+    expect(agents).toContain('close_visible_dispatch')
+    expect(agents).toContain('pending-fix')
   })
 })

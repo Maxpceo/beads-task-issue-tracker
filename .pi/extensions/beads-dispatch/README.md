@@ -6,6 +6,9 @@ Typed Pi dispatch wrappers for the beads workflow.
 
 - `dispatch_supervisor` — dispatches an in-progress bead to the selected or inferred supervisor.
 - `dispatch_reviewer` — dispatches an inreview bead to `code-reviewer` by default.
+- `complete_visible_dispatch` — after visible child ping, record DISPATCH RESULT / CODE REVIEW verdict.
+- `followup_visible_dispatch` — reuse a live supervisor/reviewer pane (NOT APPROVED / pending-fix).
+- `close_visible_dispatch` — after terminal bead + no pending-fix: `cmux close-surface` this bead's live panes and tombstone registry entries.
 - `dispatch_docs_agent` — dispatches documentation review/update work to `documentation-expert` by default.
 
 ## Why typed wrappers instead of raw subagent

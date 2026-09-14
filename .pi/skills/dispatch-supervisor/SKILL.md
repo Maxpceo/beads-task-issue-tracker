@@ -70,6 +70,7 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
    Visible: spawn-ack skips wait. Child stdout is not the trigger. Ping/Maxim-complete delivery follows exclusive A/B in step 4. STOP/BLOCKED A/B do not call review-bead. Frozen A/B status=verdict → стоп, не review-bead. Step 7 — incomplete artifacts; step 8 — review-bead only after submitted/noop/inreview (headless/resume).
 7. If the supervisor artifact is incomplete, missing verification/commit evidence, or reports `BLOCKED`/`NEEDS_CONTEXT`, do not submit for review; report the exact blocker and evidence.
 8. Continue with `review-bead` automatically after the bead is `inreview`; do not start another bead or stop with a normal final report while this one is `inreview`. If `review_bead` or `dispatch_reviewer` appears unavailable, first require concrete evidence from the current tool surface or a failed typed call; do not infer unavailability from memory or compacted context. If review truly cannot run, return an explicit Russian `BLOCKED` report with evidence, blocker, and exact next action.
+9. After terminal bead (`bd close` / blocked-deferred handoff) **and** no pending-fix reuse: orchestrator calls `close_visible_dispatch({ beadId })` to `cmux close-surface` this bead's live registry panes and tombstone them. NOT APPROVED / pending-fix → do **not** close; keep pane for `followup_visible_dispatch`. Do not sweep foreign panes. See AGENTS.md «Close supervisor pane after terminal bead».
 
 ## Supervisor selection
 
