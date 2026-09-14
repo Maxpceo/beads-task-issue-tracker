@@ -507,4 +507,86 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
       expect(docs).toContain(field)
     }
   })
+
+  it('headless dryRun reports resolved model from project agent-models.json', async () => {
+    let registeredTool: any
+    const branch = currentBranch()
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-model', status: 'in_progress', labels: ['pi'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-model', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-model', branch, 'abc1234'))
+    expect(result.details.model).toBe('xai/grok-4.5')
+    expect(result.content[0].text).toContain('model=xai/grok-4.5')
+  })
+
+  it('headless spawn argv includes --model when class resolves and omits it when empty', async () => {
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    const modelsPath = path.join(cwd, '.pi', 'agent-models.json')
+    const originalModels = await fs.readFile(modelsPath, 'utf8')
+
+    const captured: string[][] = []
+    setSpawnForDispatchTestOverride(((command: string, args: string[]) => {
+      captured.push(args)
+      const proc: any = new EventEmitter()
+      proc.stdout = new PassThrough()
+      proc.stderr = new PassThrough()
+      proc.kill = () => true
+      queueMicrotask(() => {
+        proc.stdout.write(JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE\n- Verification: skip exit code 0\n- Commit: abc\n- Artifact status: complete' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'xai/grok-4.5' } }) + '\n')
+        proc.stdout.end()
+        proc.stderr.end()
+        proc.emit('close', 0)
+      })
+      return proc
+    }) as any)
+
+    let registeredTool: any
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-argv', status: 'in_progress', labels: ['pi'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') return { stdout: JSON.stringify({ id: 'bead-argv', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    try {
+      beadsDispatchExtension(pi as any)
+      await registeredTool.execute('call-1', { beadId: 'bead-argv', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-argv', branch, 'abc1234'))
+      expect(captured.length).toBeGreaterThan(0)
+      const spawnArgs = captured[0]
+      expect(spawnArgs).toBeDefined()
+      expect(spawnArgs!).toContain('--model')
+      expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+
+      // Empty classes → inherit (no --model)
+      await fs.writeFile(modelsPath, JSON.stringify({ classes: {}, roles: {}, agentClasses: {} }, null, 2))
+      captured.length = 0
+      await registeredTool.execute('call-2', { beadId: 'bead-argv', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-argv', branch, 'abc1234'))
+      expect(captured.length).toBeGreaterThan(0)
+      expect(captured[0]).not.toContain('--model')
+    } finally {
+      await fs.writeFile(modelsPath, originalModels)
+    }
+  })
 })

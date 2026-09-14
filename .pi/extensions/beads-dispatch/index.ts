@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent, registerDashboardRenderer } from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
+import { resolveAgentModelFromCwd } from "../agent-models/index";
 import {
 	appendPanesEnv,
 	beadSuffixFromId,
@@ -119,6 +120,8 @@ interface DispatchResult {
 	exitCode: number;
 	output: string;
 	stderr: string;
+	/** Resolved child model id when set; omit/empty means session inherit. */
+	model?: string;
 	transport?: DispatchTransport;
 	status?: string;
 	pane?: string;
@@ -260,12 +263,15 @@ function loadAgent(cwd: string, name: string): AgentConfig {
 		throw new Error(`Agent not found: ${filePath}. Create .pi/agents/${name}.md first.`);
 	}
 	const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
+	// Project .pi/agent-models.json is source of truth (role override > class > inherit).
+	// Frontmatter model is not used for routing.
+	const resolved = resolveAgentModelFromCwd(cwd, name);
 	return {
 		name: parsed.data.name || name,
 		filePath,
 		systemPrompt: parsed.body,
 		tools: parsed.data.tools,
-		model: parsed.data.model,
+		model: resolved.model,
 	};
 }
 
@@ -1101,9 +1107,9 @@ function cmuxSpawnAckResult(
 	branch: string,
 	worktreePath: string,
 	startCommit: string,
-	ack: { pane: string; taskFile: string; resultFile: string; registryKey: string; taskId: string },
+	ack: { pane: string; taskFile: string; resultFile: string; registryKey: string; taskId: string; model?: string },
 ): DispatchResult {
-	const output = JSON.stringify({ status: "spawned", ...ack }, null, 2);
+	const output = JSON.stringify({ status: "spawned", model: ack.model ?? null, ...ack }, null, 2);
 	return {
 		agent: agentName,
 		beadId,
@@ -1113,6 +1119,7 @@ function cmuxSpawnAckResult(
 		exitCode: 0,
 		output,
 		stderr: "",
+		model: ack.model,
 		transport: "cmux",
 		status: "spawned",
 		pane: ack.pane,
@@ -1223,6 +1230,7 @@ async function dispatchVisibleCmux(input: {
 			resultFile: `/tmp/dry-result-${taskId}.md`,
 			registryKey: taskId,
 			taskId,
+			model: agent.model,
 		});
 	}
 	const testAdapter = getCmuxAdapterForTests();
@@ -1335,6 +1343,7 @@ Next step is review, same as today. Do not call review yourself.
 		resultFile: files.resultFile,
 		registryKey: taskId,
 		taskId,
+		model: agent.model,
 	});
 }
 
@@ -1408,7 +1417,19 @@ async function dispatch(
 	} else if (mode === "reviewer") {
 		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "reviewing", sessionMode: "reviewing", branch, worktreePath, startCommit });
 	}
-	if (params.dryRun) return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, exitCode: 0, output: prompt, stderr: "" };
+	if (params.dryRun) {
+		return {
+			agent: agentName,
+			beadId: bead.id,
+			branch,
+			worktreePath,
+			startCommit,
+			exitCode: 0,
+			output: prompt,
+			stderr: "",
+			model: agent.model,
+		};
+	}
 
 	const result = await runPiAgentForDispatch(agent, prompt, cwd, signal, ctx);
 	if (mode === "supervisor") {
@@ -1429,9 +1450,9 @@ async function dispatch(
 			startCommit,
 			endCommit,
 		});
-		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, ...result };
+		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, model: agent.model, ...result };
 	}
-	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, ...result };
+	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, model: agent.model, ...result };
 }
 
 function renderDispatchResult(result: DispatchResult): string {
@@ -1444,6 +1465,7 @@ function renderDispatchResult(result: DispatchResult): string {
 		result.endCommit ? `end=${result.endCommit}` : "",
 		result.transport ? `transport=${result.transport}` : "",
 		result.status ? `status=${result.status}` : "",
+		result.model ? `model=${result.model}` : "model=(session inherit)",
 		`exit=${result.exitCode}`,
 		result.stderr ? `stderr:\n${result.stderr}` : "",
 		result.output ? `output:\n${result.output.slice(-8000)}` : "",

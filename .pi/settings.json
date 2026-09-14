@@ -6,6 +6,7 @@
     "extensions/workflow-state/index.ts",
     "extensions/bead-purpose/index.ts",
     "extensions/beads-policy/index.ts",
+    "extensions/agent-models/index.ts",
     "extensions/beads-dispatch/index.ts",
     "extensions/review-workflow/index.ts",
     "extensions/workflow-chain/index.ts",

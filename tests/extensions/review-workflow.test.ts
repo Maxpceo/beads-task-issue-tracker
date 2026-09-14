@@ -1,10 +1,16 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { PassThrough } from 'node:stream'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import reviewWorkflowExtension, { isReviewApproved } from '../../.pi/extensions/review-workflow/index'
+import reviewWorkflowExtension, { isReviewApproved, setSpawnForReviewTestOverride } from '../../.pi/extensions/review-workflow/index'
+
+afterEach(() => {
+  setSpawnForReviewTestOverride(null)
+})
 
 describe('review_workflow scoped review', () => {
   it('uses endCommit for stacked branch diff scope in dryRun', async () => {
@@ -1051,5 +1057,96 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('followup_visible_dispatch({ beadId, role: "code-reviewer", task })')
     expect(skill).toContain('complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`')
     expect(skill).toContain('While a live code-reviewer pane exists, do not call `review_bead`')
+  })
+})
+
+describe('review_bead agent model routing', () => {
+  it('passes --model from project agent-models.json for code-reviewer', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'review-model-'))
+    mkdirSync(join(cwd, '.pi', 'agents'), { recursive: true })
+    writeFileSync(join(cwd, '.pi', 'agents', 'code-reviewer.md'), '---\nname: code-reviewer\ndescription: fixture\n---\nReview body\n')
+    writeFileSync(
+      join(cwd, '.pi', 'agent-models.json'),
+      JSON.stringify({
+        classes: { strong: 'xai/grok-4.5' },
+        roles: {},
+        agentClasses: { 'code-reviewer': 'strong' },
+      }, null, 2),
+    )
+
+    const captured: string[][] = []
+    setSpawnForReviewTestOverride(((command: string, args: string[]) => {
+      captured.push(args)
+      const proc: any = new EventEmitter()
+      proc.stdout = new PassThrough()
+      proc.stderr = new PassThrough()
+      proc.kill = () => true
+      queueMicrotask(() => {
+        proc.stdout.write('VERDICT: NOT APPROVED\nneed more evidence\n')
+        proc.stdout.end()
+        proc.stderr.end()
+        proc.emit('close', 0)
+      })
+      return proc
+    }) as any)
+
+    let registeredTool: any
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview', description: '### Acceptance criteria\n- x\n### Verification / acceptance checks\n- echo ok' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') {
+          return {
+            stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: ${cwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`,
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'git' && args.join(' ') === `-C ${cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${cwd} rev-parse --show-toplevel`) return { stdout: `${cwd}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${cwd} diff --name-only aaa1111..bbb2222`) return { stdout: 'README.md\n', stderr: '', code: 0 }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    reviewWorkflowExtension(pi as any)
+    await registeredTool.execute('call-1', { beadId: 'bead-a', worktreePath: cwd }, undefined, undefined, {
+      cwd,
+      sessionManager: {
+        getEntries: () => [{
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-a', branch: 'task/bead-a', worktreePath: cwd, startCommit: 'aaa1111' },
+        }],
+      },
+    })
+
+    expect(captured.length).toBeGreaterThan(0)
+    const spawnArgs = captured[0]
+    expect(spawnArgs).toBeDefined()
+    expect(spawnArgs!).toContain('--model')
+    expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+
+    writeFileSync(join(cwd, '.pi', 'agent-models.json'), JSON.stringify({ classes: {}, roles: {}, agentClasses: {} }, null, 2))
+    captured.length = 0
+    await registeredTool.execute('call-2', { beadId: 'bead-a', worktreePath: cwd }, undefined, undefined, {
+      cwd,
+      sessionManager: {
+        getEntries: () => [{
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-a', branch: 'task/bead-a', worktreePath: cwd, startCommit: 'aaa1111' },
+        }],
+      },
+    })
+    expect(captured.length).toBeGreaterThan(0)
+    expect(captured[0]).not.toContain('--model')
+
+    rmSync(cwd, { recursive: true, force: true })
   })
 })
