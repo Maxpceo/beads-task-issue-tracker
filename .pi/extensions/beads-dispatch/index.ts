@@ -1447,7 +1447,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_reviewer",
 		label: "Dispatch Reviewer",
-		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. transport=cmux opens one visible pane; omit transport for headless fallback.",
+		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. Interactive MUST pass transport=cmux; omit/default = blocking headless until abort/SIGTERM. transport=cmux opens one visible pane; explicit transport=headless remains the CI/dark-window path.",
 		parameters: ReviewerDispatchParams,
 		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {

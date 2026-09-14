@@ -49,6 +49,9 @@ const MANDATORY_WORKFLOW_TOOLS = [
 	"dispatch_reviewer",
 	"dispatch_docs_agent",
 	"review_bead",
+	"complete_visible_dispatch",
+	"followup_visible_dispatch",
+	"close_visible_dispatch",
 ];
 
 const WorkflowPlanModeParams = {

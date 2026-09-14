@@ -10,6 +10,11 @@ import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
 const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
+const hopWorkflowTools = [
+  'complete_visible_dispatch',
+  'followup_visible_dispatch',
+  'close_visible_dispatch',
+]
 const mandatoryWorkflowTools = [
   'workflow_status',
   'workflow_claim',
@@ -21,6 +26,7 @@ const mandatoryWorkflowTools = [
   'dispatch_reviewer',
   'dispatch_docs_agent',
   'review_bead',
+  ...hopWorkflowTools,
 ]
 const expectedNormalTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'subagent', 'plan_subagent', ...mandatoryWorkflowTools]
 let mockPlanReviewGateOk = true
@@ -79,7 +85,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }>, failPreDispatchProgressMessage?: boolean } = {}) {
+function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }>, failPreDispatchProgressMessage?: boolean, initialActiveTools?: string[], registeredTools?: string[] } = {}) {
   const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
@@ -95,8 +101,9 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const statuses: Record<string, string | undefined> = {}
   const widgets: Record<string, string[] | undefined> = {}
   const activeTools: string[][] = []
-  let currentActiveTools = [...expectedNormalTools]
-  const allTools = [...new Set([...expectedNormalTools, ...expectedPlanTools])].map((name) => ({ name }))
+  let currentActiveTools = [...(options.initialActiveTools ?? expectedNormalTools)]
+  // getAllTools always registers hop tools when present in expectedNormalTools, even if pre-plan active surface omitted them.
+  const allTools = [...new Set([...(options.registeredTools ?? expectedNormalTools), ...expectedPlanTools, ...hopWorkflowTools])].map((name) => ({ name }))
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
   const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
   const agentEndHandlers: Array<(event: any, ctx: any) => unknown> = []
@@ -391,7 +398,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(activeTools.at(-1)).toEqual(expectedPlanTools)
     expect(activeTools.at(-1)).toContain('plan_subagent')
     expect(activeTools.at(-1)).not.toContain('subagent')
-    for (const mutatingWorkflowTool of ['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead', 'workflow_submit_for_review', 'workflow_complete']) {
+    for (const mutatingWorkflowTool of ['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead', 'workflow_submit_for_review', 'workflow_complete', ...hopWorkflowTools]) {
       expect(activeTools.at(-1)).not.toContain(mutatingWorkflowTool)
     }
 
@@ -402,6 +409,35 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(activeTools.at(-2)).toEqual(expectedPlanTools)
     expect(activeTools.at(-1)).toEqual(expectedNormalTools)
     expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
+    expect(activeTools.at(-1)).toEqual(expect.arrayContaining(hopWorkflowTools))
+  })
+
+  it('restores hop tools after plan-mode off when prePlan active surface omitted them but getAllTools still registers them', async () => {
+    const prePlanWithoutHops = expectedNormalTools.filter((name) => !hopWorkflowTools.includes(name))
+    expect(prePlanWithoutHops).not.toEqual(expect.arrayContaining(hopWorkflowTools))
+
+    const { toolHandlers, activeTools, ctx } = makeHarness({
+      initialActiveTools: prePlanWithoutHops,
+      // registered surface includes hop tools even though pre-plan active did not
+      registeredTools: expectedNormalTools,
+    })
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-1', { mode: 'strict', reason: 'plan first' }, undefined, undefined, ctx)
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
+    for (const hop of hopWorkflowTools) {
+      expect(activeTools.at(-1)).not.toContain(hop)
+    }
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-2', { mode: 'off', reason: 'cancel' }, undefined, undefined, ctx)
+
+    const restored = activeTools.at(-1) ?? []
+    expect(restored).toEqual(expect.arrayContaining(hopWorkflowTools))
+    expect(restored).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
+    // Mandatory path must re-add hops, not merely replay the prePlan snapshot that lacked them.
+    for (const hop of hopWorkflowTools) {
+      expect(prePlanWithoutHops).not.toContain(hop)
+      expect(restored).toContain(hop)
+    }
   })
 
   it('plan-mode bash block message points agents to workflow_plan_mode, not slash-only recovery', async () => {
