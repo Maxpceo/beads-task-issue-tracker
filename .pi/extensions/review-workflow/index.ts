@@ -747,9 +747,10 @@ async function runReviewer(cwd: string, prompt: string, signal?: AbortSignal, ct
 	const system = await writeTempFile("code-reviewer-system", parsed.body);
 	const args = ["--mode", "json", "-p", "--no-session", "--append-system-prompt", system.file];
 	if (parsed.data.tools) args.push("--tools", parsed.data.tools);
-	// Project agent-models.json is source of truth (role > class > inherit); ignore frontmatter model.
+	// Project agent-models.json is source of truth (role > class > inherit); ignore frontmatter model/thinking.
 	const resolved = resolveAgentModelFromCwd(cwd, "code-reviewer");
 	if (resolved.model) args.push("--model", resolved.model);
+	if (resolved.thinking) args.push("--thinking", resolved.thinking);
 	args.push(`Task: ${prompt}`);
 	try {
 		const invocation = getPiInvocation(args);

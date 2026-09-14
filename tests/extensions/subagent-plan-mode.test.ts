@@ -62,8 +62,8 @@ function loadSubagentExtension(spawnCalls: Array<{ command: string, args: string
     }
     if (id === '../agent-models/index' || id.endsWith('/agent-models/index') || id.includes('agent-models')) {
       return {
-        resolveAgentModelFromCwd: () => ({ model: undefined, source: 'inherit', className: undefined }),
-        resolveAgentModel: () => ({ model: undefined, source: 'inherit', className: undefined }),
+        resolveAgentModelFromCwd: () => ({ model: undefined, thinking: undefined, source: 'inherit', thinkingSource: 'inherit', className: undefined }),
+        resolveAgentModel: () => ({ model: undefined, thinking: undefined, source: 'inherit', thinkingSource: 'inherit', className: undefined }),
         AGENT_MODELS_FILENAME: 'agent-models.json',
       }
     }

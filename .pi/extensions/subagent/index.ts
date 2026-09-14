@@ -400,10 +400,11 @@ async function runSingleAgent(
 		};
 	}
 
-	// Project .pi/agent-models.json overrides frontmatter model (role > class > inherit).
-	const resolvedModel = resolveAgentModelFromCwd(cwd ?? defaultCwd, agentName).model;
+	// Project .pi/agent-models.json overrides frontmatter model/thinking (role > class > inherit).
+	const resolvedRouting = resolveAgentModelFromCwd(cwd ?? defaultCwd, agentName);
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (resolvedModel) args.push("--model", resolvedModel);
+	if (resolvedRouting.model) args.push("--model", resolvedRouting.model);
+	if (resolvedRouting.thinking) args.push("--thinking", resolvedRouting.thinking);
 	const tools = toolOverride ?? agent.tools;
 	if (tools && tools.length > 0) args.push("--tools", tools.join(","));
 
@@ -420,7 +421,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: resolvedModel,
+		model: resolvedRouting.model,
 		step,
 	};
 

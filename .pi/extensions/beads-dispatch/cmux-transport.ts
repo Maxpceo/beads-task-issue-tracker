@@ -8,6 +8,8 @@ export type VisibleSessionMode = { kind: "no-session" } | { kind: "session-dir";
 
 export interface VisibleChildArgvInput {
 	model?: string;
+	/** Explicit thinking level including "off"; omit/undefined = session inherit (no --thinking). */
+	thinking?: string;
 	systemPromptFile: string;
 	tools?: string;
 	session: VisibleSessionMode;
@@ -21,6 +23,8 @@ export interface DispatchRegistryEntry {
 	worktree: string;
 	role: string;
 	model: string;
+	/** Optional resolved thinking for respawn; empty/omit = inherit. */
+	thinking?: string;
 	taskFile: string;
 	resultFile: string;
 	digestFile: string;
@@ -126,6 +130,8 @@ export function buildVisibleChildArgv(input: VisibleChildArgvInput): string[] {
 	const tools = input.tools?.trim() || DEFAULT_SUPERVISOR_TOOLS;
 	const args = ["pi"];
 	if (input.model) args.push("--model", input.model);
+	const thinking = typeof input.thinking === "string" ? input.thinking.trim() : "";
+	if (thinking) args.push("--thinking", thinking);
 	if (input.session.kind === "no-session") args.push("--no-session");
 	else args.push("--session", input.session.dir);
 	args.push("--append-system-prompt", input.systemPromptFile, "--tools", tools, `Task: read ${input.taskFile} and execute it.`);
