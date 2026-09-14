@@ -1152,6 +1152,7 @@ function findLatestWorktreeFreshMarker(
 	while ((match = WORKTREE_FRESH_MARKER_RE.exec(comments)) !== null) {
 		if (match.index < minIndex) continue;
 		const sha = match[1];
+		if (!sha) continue;
 		if (expectedWorktreeSha && sha !== expectedWorktreeSha) continue;
 		latest = { index: match.index, end: match.index + match[0].length, sha };
 	}
