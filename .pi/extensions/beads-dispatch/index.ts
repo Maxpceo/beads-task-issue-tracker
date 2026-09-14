@@ -14,6 +14,7 @@ import {
 	buildVisibleChildSpawnPayload,
 	classifyVisiblePane,
 	findLiveFollowupEntry,
+	findLiveRegistryEntriesForBead,
 	findRegistryByTaskId,
 	getCmuxAdapterForTests,
 	liveEntriesForBead,
@@ -23,7 +24,9 @@ import {
 	persistIsolationFiles,
 	readDigestPreview,
 	saveRegistry,
+	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
+	unlinkIsolationFiles,
 	validateVisibleChildArgv,
 	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
@@ -40,7 +43,9 @@ export {
 	classifyVisiblePane,
 	followupPayloadLooksLikeSpawnArgv,
 	findLiveFollowupEntry,
+	findLiveRegistryEntriesForBead,
 	ORCHESTRATOR_TAB_TITLE,
+	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
 	posixQuote,
 	validateVisibleChildArgv,
@@ -298,6 +303,8 @@ const REQUIRED_HANDOFF_SECTIONS = [
 ];
 
 const TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred"]);
+/** Terminal for happy-path pane close: includes blocked (no reuse planned). */
+const CLOSE_VISIBLE_TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred", "blocked"]);
 const ALLOWED_SUPERVISOR_STATUSES = new Set(["in_progress"]);
 
 const VAGUE_ACCEPTANCE_PATTERN = /\b(done|works|fixed|complete|completed|ok|looks good|as expected|готово|работает|исправлено|завершено|нормально)\b/i;
@@ -760,6 +767,81 @@ function followupBindState(role: string): "implementing" | "reviewing" {
 	return role === "code-reviewer" ? "reviewing" : "implementing";
 }
 
+export type CloseVisibleDispatchResult = {
+	status: "closed" | "skipped" | "noop";
+	text: string;
+	closed: string[];
+	tombstoned: string[];
+};
+
+/**
+ * Orchestrator hop after bead is terminal and no pending-fix reuse is needed.
+ * Closes only this bead's live registry panes (close-surface) and tombstones them.
+ * Does not touch foreign panes. pendingFix keeps the pane for followup_visible_dispatch.
+ */
+export async function closeVisibleDispatch(
+	pi: ExtensionAPI,
+	params: { beadId: string; pendingFix?: boolean },
+	_ctx?: ToolContext,
+): Promise<CloseVisibleDispatchResult> {
+	if (params.pendingFix) {
+		return {
+			status: "skipped",
+			text: "pending-fix: pane kept for followup_visible_dispatch; close-surface not called",
+			closed: [],
+			tombstoned: [],
+		};
+	}
+	const bead = await getBead(pi, params.beadId);
+	const status = bead.status ?? "unknown";
+	if (!CLOSE_VISIBLE_TERMINAL_STATUSES.has(status)) {
+		throw new Error(
+			`close_visible_dispatch: bead not terminal (status=${status}); keep pane for live work/review: BLOCKED`,
+		);
+	}
+	const live = findLiveRegistryEntriesForBead(params.beadId);
+	if (live.length === 0) {
+		return {
+			status: "noop",
+			text: `no live panes for ${params.beadId}`,
+			closed: [],
+			tombstoned: [],
+		};
+	}
+	const adapter = resolveFollowupAdapter(pi);
+	const closed: string[] = [];
+	const tombstoned: string[] = [];
+	// Group by registry file so we can reload after each write safely.
+	for (const item of live) {
+		const pane = item.entry.pane;
+		if (pane) {
+			try {
+				await adapter.closeSurface(pane);
+				closed.push(pane);
+			} catch (error) {
+				// Surface may already be gone; still tombstone so registry is not live.
+				closed.push(`${pane} (close-error: ${(error as Error).message})`);
+			}
+		}
+		const registry = loadRegistry(item.file);
+		const index = registry.entries.findIndex(
+			(entry) => entry.taskId === item.entry.taskId && entry.pane === item.entry.pane,
+		);
+		if (index >= 0) {
+			const next = tombstoneRegistryEntry(item.file, registry, index);
+			tombstoned.push(next.taskId);
+			unlinkIsolationFiles(next);
+			unlinkFollowupArtifacts(next);
+		}
+	}
+	return {
+		status: "closed",
+		text: `closed ${closed.length} pane(s) for ${params.beadId}: ${closed.join(", ") || "-"}; tombstoned=${tombstoned.join(",") || "-"}`,
+		closed,
+		tombstoned,
+	};
+}
+
 export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only" | "verdict"; text: string }> {
 	const found = findRegistryByTaskId(params.taskId);
 	if (!found) throw new Error(`complete_visible_dispatch: нет registry для ${params.taskId}`);
@@ -1038,7 +1120,8 @@ function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { call
 		},
 		async newSplit() {
 			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
-			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface]);
+			// Explicit --focus false: pin non-stealing spawn across cmux versions (default is already false).
+			const result = await exec("cmux", ["new-split", "right", "--surface", callerSurface, "--focus", "false"]);
 			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
 			const match = `${result.stdout || ""}`.match(/surface:\S+/);
 			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
@@ -1407,6 +1490,46 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				return { content: [{ type: "text", text: `complete_visible_dispatch status=${result.status}\n${result.text}` }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `complete_visible_dispatch не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "close_visible_dispatch",
+		label: "Close Visible Dispatch",
+		description:
+			"Orchestrator-only happy-path: after bead is terminal (closed/blocked/deferred) and no pending-fix reuse, cmux close-surface each live registry pane for this bead and tombstone them. pendingFix=true skips close (NOT APPROVED / followup reuse). Does not sweep foreign panes.",
+		parameters: {
+			type: "object",
+			properties: {
+				beadId: { type: "string", description: "Bead whose live supervisor/reviewer panes should be closed" },
+				pendingFix: {
+					type: "boolean",
+					description: "When true (NOT APPROVED / pending-fix), do not close-surface; keep pane for followup_visible_dispatch",
+					default: false,
+				},
+			},
+			required: ["beadId"],
+			additionalProperties: false,
+		},
+		async execute(
+			_id: string,
+			params: { beadId: string; pendingFix?: boolean },
+			_signal: AbortSignal | undefined,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			try {
+				const result = await closeVisibleDispatch(pi, params, ctx);
+				return {
+					content: [{ type: "text", text: `close_visible_dispatch status=${result.status}\n${result.text}` }],
+					details: result,
+				};
+			} catch (error) {
+				return {
+					content: [{ type: "text", text: `close_visible_dispatch не выполнен: ${(error as Error).message}` }],
+					details: { error: (error as Error).message },
+				};
 			}
 		},
 	});

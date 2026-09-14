@@ -147,6 +147,19 @@ Visible cmux agent panes must be distinguishable by tab title:
 
 Visible `dispatch_supervisor` / `dispatch_reviewer` (`transport=cmux`) auto-renames after spawn (`cmux tab-action rename`, `--focus false`). Do not rely on manual rename each spawn. Geometry 1/2 layout is a separate concern (evxj).
 
+### Close supervisor pane after terminal bead
+
+After the bead is terminal (`closed` / `blocked` / `deferred` without continuation) **and** no pending-fix reuse is needed, the orchestrator closes **this bead's** live registry panes only:
+
+```text
+close_visible_dispatch({ beadId: <ID> })
+```
+
+- Uses spawn-ack / `dispatch-registry.json` pane ids → `cmux close-surface --surface <pane>` + registry `tombstone` (not live for followup).
+- `NOT APPROVED` / pending-fix: **do not** close — keep the pane and use `followup_visible_dispatch` (`pendingFix: true` skips close).
+- Do not sweep foreign/historical panes, HTML boards, or Haasbot surfaces.
+- Prefer `--focus false` paths; do not speculative `select-workspace` / `focus-pane` just to find the surface.
+
 ## Fast Path / Large Change Discipline
 
 Fast Path разрешён только когда orchestrator явно считает изменение trivial, low-risk и более дешёвым, чем supervisor dispatch.

@@ -242,6 +242,41 @@ export function liveEntriesForBead(registry: DispatchRegistry, beadId: string, r
 	return registry.entries.filter((entry) => entry.beadId === beadId && entry.status === "spawned" && (role ? entry.role === role : true));
 }
 
+/** All live (spawned) registry rows for a bead across every ns dispatch-registry. */
+export function findLiveRegistryEntriesForBead(
+	beadId: string,
+	env: NodeJS.ProcessEnv = process.env,
+): Array<{ file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number }> {
+	const matches: Array<{ file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number }> = [];
+	const root = path.join(orchRoot(env), "ns");
+	if (!fs.existsSync(root)) return matches;
+	for (const name of fs.readdirSync(root)) {
+		const file = path.join(root, name, "dispatch-registry.json");
+		if (!fs.existsSync(file)) continue;
+		const registry = loadRegistry(file);
+		registry.entries.forEach((entry, index) => {
+			if (entry.beadId === beadId && entry.status === "spawned") {
+				matches.push({ file, registry, entry, index });
+			}
+		});
+	}
+	return matches;
+}
+
+/** Mark a registry row tombstone in place and persist. */
+export function tombstoneRegistryEntry(
+	file: string,
+	registry: DispatchRegistry,
+	index: number,
+): DispatchRegistryEntry {
+	const entry = registry.entries[index];
+	if (!entry) throw new Error(`tombstoneRegistryEntry: no entry at index ${index}`);
+	const next: DispatchRegistryEntry = { ...entry, status: "tombstone", hung: false };
+	registry.entries[index] = next;
+	saveRegistry(file, registry);
+	return next;
+}
+
 function isSupervisorRole(role: string): boolean {
 	return role.includes("supervisor");
 }

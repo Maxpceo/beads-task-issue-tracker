@@ -1,5 +1,8 @@
 #!/bin/bash
 # poll.sh <taskId> — one-shot digest read. No loop. No bd comments.
+# Orchestrator on-demand insurance when ping never arrives (dispatch-supervisor path B /
+# review-bead reviewer hop). Not the primary channel — primary remains ping.sh →
+# complete_visible_dispatch. Never auto-timer / scheduler_create / hang loop.
 set -euo pipefail
 ID="${1:?taskId}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
