@@ -60,8 +60,8 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
        5. Two hang / false-complete / insurance-poll cycles without progress → stop, ask Maxim (no third poll, no re-dispatch).
        Forbid: background 20-min timer, `scheduler_create`, read-screen as normal path, `watchdog.sh` auto, pane dump, send-key, wait loops, re-dispatch same-turn, same-turn second complete.
    - No cmux in interactive → BLOCKED. Not silent headless.
-   - Explicit old path: `dispatch_supervisor(beadId=<ID>, transport="headless")`.
-   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_docs_agent` does not accept `transport`. Reviewer `transport=cmux` lives in review-bead.
+   - Explicit CI/dark-window path: `dispatch_supervisor(beadId=<ID>, transport="headless")`. Interactive omit (hasUI) resolves to cmux automatically — do not rely on headless-by-omit.
+   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_docs_agent` does not accept `transport`. Reviewer interactive omit/hasUI → cmux (same resolve as supervisor).
 5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, execution contract, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 
 ## Supervisor execution contract

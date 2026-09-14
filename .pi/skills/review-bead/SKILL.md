@@ -34,12 +34,12 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    - `APPROVED` → continue acceptance/close below. `NOT APPROVED` → keep `inreview`; `complete_visible_dispatch` does not spawn a supervisor (5o03 owns supervisor-pane reuse). Do **not** call `close_visible_dispatch` on NOT APPROVED / pending-fix — keep the pane for `followup_visible_dispatch`.
    - No cmux → `BLOCKED`, not silent headless.
    - Hung/reuse of the live reviewer pane: `followup_visible_dispatch({ beadId, role: "code-reviewer", task })`.
-4. Explicit headless fallback only: omit `transport` or call `review_bead`. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
+4. Headless fallback only with **explicit** `transport=headless` or `review_bead` (not omit in interactive UI). Runtime: omit + interactive `hasUI` → cmux pane automatically; omit without UI (CI) → headless; CI must pass `transport=headless` when a dark window is required. For stacked branches, pass `endCommit=<sha>` or ensure comments contain `END_COMMIT: <sha>` so later unrelated commits are excluded:
    ```text
    review_bead(beadId=<ID>, startCommit=<sha>, endCommit=<sha>)
    # optional explicit override when needed: review_bead(beadId=<ID>, worktreePath=<task-worktree-path>)
-   dispatch_reviewer(beadId=<ID>)
-   # optional: dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>)
+   dispatch_reviewer(beadId=<ID>, transport=headless)
+   # optional: dispatch_reviewer(beadId=<ID>, cwd=<workflowState.worktreePath>, transport=headless)
    ```
    In a main-start session, headless `review_bead` still resolves `workflowState.worktreePath`. Do not run raw mutating review/check shell commands from `main`; only read-only inspection may happen there.
 5. Enforce checkpoint model: `inreview -> simplified -> reviewed -> accepted -> closed` using bd statuses plus structured comments.

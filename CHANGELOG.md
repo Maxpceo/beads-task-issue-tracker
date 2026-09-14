@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Interactive omit transport → cmux** (`beads-task-issue-tracker-m94j`): `dispatch_supervisor` / `dispatch_reviewer` resolve omitted `transport` to `cmux` when the host has interactive UI (`hasUI`), so forgetting `transport=cmux` no longer starts a multi-minute headless hang. Explicit `transport=headless` remains the CI/dark-window path; omit without UI still headless. Schema no longer advertises a headless default.
+
 ### Added
 
 - **Close visible dispatch panes after terminal bead** (`beads-task-issue-tracker-ovxe`): typed `close_visible_dispatch({ beadId })` closes only this bead's live cmux registry panes (`cmux close-surface`) and tombstones registry entries after `closed` / `blocked` / `deferred` with no pending-fix reuse. `pendingFix: true` / NOT APPROVED keeps the pane for `followup_visible_dispatch`. Skills (`dispatch-supervisor`, `review-bead`) and `AGENTS.md` document the happy-path hop; foreign/historical panes are never swept.

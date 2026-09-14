@@ -25,6 +25,7 @@ import beadsDispatchExtension, {
   visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
+  resolveDispatchTransport,
   saveRegistry,
   setCmuxAdapterForTests,
   validateVisibleChildArgv,
@@ -81,9 +82,17 @@ function currentBranch(cwd = process.cwd()) {
   return execFileSync('git', ['-C', cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim() || 'task/current'
 }
 
-function workflowCtx(cwd: string, beadId: string, branch: string, startCommit: string, worktreePath = cwd) {
+function workflowCtx(
+  cwd: string,
+  beadId: string,
+  branch: string,
+  startCommit: string,
+  worktreePath = cwd,
+  opts: { hasUI?: boolean } = {},
+) {
   return {
     cwd,
+    hasUI: opts.hasUI,
     sessionManager: {
       getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: beadId, branch, worktreePath, startCommit, sessionKey: 'session:test' } }],
     },
@@ -240,7 +249,7 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
   })
 
-  it('omitted transport stays headless and writes DISPATCH on dryRun', async () => {
+  it('omitted transport without UI stays headless and writes DISPATCH on dryRun', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
     const result = await registered.execute('call-1', { beadId, dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
@@ -252,6 +261,37 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(headlessComment).toBeDefined()
     expect(headlessComment!.args.join(' ')).toContain('DISPATCH (')
     expect(headlessComment!.args.join(' ')).not.toContain('DISPATCH RESULT')
+  })
+
+  it('omitted transport with hasUI uses cmux spawn-ack on dryRun', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
+    const result = await registered.execute(
+      'call-1',
+      { beadId, dryRun: true, agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.transport).toBe('cmux')
+    expect(result.details.pane).toBe('')
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(comments).toEqual([])
+  })
+
+  it('explicit transport=headless stays headless even with hasUI', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
+    const result = await registered.execute(
+      'call-1',
+      { beadId, dryRun: true, agent: 'test-supervisor', transport: 'headless' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.transport).toBeUndefined()
+    expect(result.details.status).not.toBe('spawned')
   })
 
   it('requestSupervisorDispatch passes transport=cmux', async () => {
@@ -565,6 +605,20 @@ describe('dispatch_supervisor transport=cmux', () => {
   })
 })
 
+describe('resolveDispatchTransport', () => {
+  it('explicit transport always wins', () => {
+    expect(resolveDispatchTransport({ transport: 'headless' }, { hasUI: true })).toBe('headless')
+    expect(resolveDispatchTransport({ transport: 'cmux' }, { hasUI: false })).toBe('cmux')
+  })
+
+  it('omit with hasUI → cmux; omit without UI → headless', () => {
+    expect(resolveDispatchTransport({}, { hasUI: true })).toBe('cmux')
+    expect(resolveDispatchTransport({}, { hasUI: false })).toBe('headless')
+    expect(resolveDispatchTransport({}, null)).toBe('headless')
+    expect(resolveDispatchTransport({})).toBe('headless')
+  })
+})
+
 describe('reviewer/docs transport', () => {
   it('dispatch_docs_agent execute rejects transport', async () => {
     const { tools, cwd, branch } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
@@ -576,6 +630,9 @@ describe('reviewer/docs transport', () => {
     const { tools } = makePi({})
     expect(tools.dispatch_supervisor.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
     expect(tools.dispatch_reviewer.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
+    expect(tools.dispatch_supervisor.parameters.properties.transport.default).toBeUndefined()
+    expect(tools.dispatch_reviewer.parameters.properties.transport.default).toBeUndefined()
+    expect(tools.dispatch_supervisor.parameters.properties.transport.description).toMatch(/Omit: cmux when interactive/)
     expect(tools.followup_visible_dispatch).toBeDefined()
     expect(tools.followup_visible_dispatch.description).toMatch(/Единственный typed hop/)
     expect(tools.dispatch_docs_agent.parameters.properties.transport).toBeUndefined()
@@ -614,10 +671,37 @@ describe('dispatch_reviewer transport=cmux', () => {
     })
   }
 
-  it('omitted transport stays headless', async () => {
+  it('omitted transport without UI stays headless', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { tools, cwd, branch, beadId, head } = reviewerPi({ execCalls })
     const result = await tools.dispatch_reviewer.execute('call-1', { beadId, dryRun: true }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.transport).toBeUndefined()
+    expect(result.details.status).not.toBe('spawned')
+  })
+
+  it('omitted transport with hasUI uses cmux for reviewer', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { tools, cwd, branch, beadId, head } = reviewerPi({ execCalls })
+    const result = await tools.dispatch_reviewer.execute(
+      'call-1',
+      { beadId, dryRun: true },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.transport).toBe('cmux')
+  })
+
+  it('explicit transport=headless stays headless for reviewer even with hasUI', async () => {
+    const { tools, cwd, branch, beadId, head } = reviewerPi()
+    const result = await tools.dispatch_reviewer.execute(
+      'call-1',
+      { beadId, dryRun: true, transport: 'headless' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
     expect(result.details.transport).toBeUndefined()
     expect(result.details.status).not.toBe('spawned')
   })

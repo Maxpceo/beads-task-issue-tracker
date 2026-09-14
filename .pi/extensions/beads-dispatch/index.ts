@@ -130,6 +130,19 @@ interface DispatchResult {
 type DispatchTransport = "headless" | "cmux";
 type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?: string; dryRun?: boolean; transport?: DispatchTransport };
 
+/**
+ * Explicit transport always wins.
+ * Omit + interactive UI (ctx.hasUI) → cmux (no headless hang when agent forgets transport).
+ * Omit + no UI (CI/headless host) → headless.
+ */
+export function resolveDispatchTransport(
+	params: { transport?: DispatchTransport | string },
+	ctx?: { hasUI?: boolean } | null,
+): DispatchTransport {
+	if (params.transport === "cmux" || params.transport === "headless") return params.transport;
+	return ctx?.hasUI ? "cmux" : "headless";
+}
+
 interface SupervisorDispatchApi<Ctx = unknown> {
 	dispatchSupervisor(params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
 }
@@ -189,8 +202,8 @@ const SupervisorDispatchParams = {
 		transport: {
 			type: "string",
 			enum: ["headless", "cmux"],
-			default: "headless",
-			description: "headless (blocking) or cmux (spawn-ack; DISPATCH on spawn; complete_visible_dispatch after ping)",
+			description:
+				"cmux = visible pane spawn-ack; headless = blocking dark window. Omit: cmux when interactive UI (hasUI), headless when no UI (CI). Explicit transport=headless required for CI/dark-window.",
 		},
 	},
 	required: ["beadId"],
@@ -204,8 +217,8 @@ const ReviewerDispatchParams = {
 		transport: {
 			type: "string",
 			enum: ["headless", "cmux"],
-			default: "headless",
-			description: "headless (blocking fallback) or cmux (one visible code-reviewer pane; spawn-ack; complete_visible_dispatch records CODE REVIEW verdict)",
+			description:
+				"cmux = one visible code-reviewer pane; headless = blocking fallback. Omit: cmux when interactive UI (hasUI), headless when no UI (CI). Explicit transport=headless required for CI/dark-window.",
 		},
 	},
 	required: ["beadId"],
@@ -1340,6 +1353,7 @@ async function dispatch(
 	if (mode === "docs" && params.transport) {
 		throw new Error("dispatch_docs_agent does not accept transport");
 	}
+	const transport = mode === "docs" ? undefined : resolveDispatchTransport(params, ctx);
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments);
 		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);
@@ -1351,7 +1365,7 @@ async function dispatch(
 	const branch = supervisorPreflight?.branch ?? await getGitValue(pi, cwd, ["branch", "--show-current"]);
 	const worktreePath = supervisorPreflight?.worktreePath ?? await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
 	let startCommit = supervisorPreflight?.startCommit ?? await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
-	if (mode === "reviewer" && params.transport === "cmux") {
+	if (mode === "reviewer" && transport === "cmux") {
 		const reviewerScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
 		if (reviewerScope.ok && reviewerScope.scope.activeBead === params.beadId) {
 			if (reviewerScope.scope.branch && reviewerScope.scope.branch !== branch) {
@@ -1383,7 +1397,7 @@ async function dispatch(
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
-	if ((mode === "supervisor" || mode === "reviewer") && params.transport === "cmux") {
+	if ((mode === "supervisor" || mode === "reviewer") && transport === "cmux") {
 		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx });
 	}
 
@@ -1456,7 +1470,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_supervisor",
 		label: "Dispatch Supervisor",
-		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress.",
+		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress. Interactive omit/hasUI → cmux pane; explicit transport=headless for CI/dark-window.",
 		parameters: SupervisorDispatchParams,
 		execute: dispatchSupervisorTool,
 	});
@@ -1464,7 +1478,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_reviewer",
 		label: "Dispatch Reviewer",
-		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. Interactive MUST pass transport=cmux; omit/default = blocking headless until abort/SIGTERM. transport=cmux opens one visible pane; explicit transport=headless remains the CI/dark-window path.",
+		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. Interactive omit/hasUI → cmux pane (no headless hang). Explicit transport=headless for CI/dark-window; explicit transport=cmux always pane.",
 		parameters: ReviewerDispatchParams,
 		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
