@@ -137,10 +137,11 @@ type DispatchToolParams = { beadId: string; agent?: string; task?: string; cwd?:
  */
 export function resolveDispatchTransport(
 	params: { transport?: DispatchTransport | string },
-	ctx?: { hasUI?: boolean } | null,
+	ctx?: { hasUI?: boolean } | null | Record<string, unknown>,
 ): DispatchTransport {
 	if (params.transport === "cmux" || params.transport === "headless") return params.transport;
-	return ctx?.hasUI ? "cmux" : "headless";
+	const hasUI = Boolean(ctx && typeof ctx === "object" && "hasUI" in ctx && (ctx as { hasUI?: boolean }).hasUI);
+	return hasUI ? "cmux" : "headless";
 }
 
 interface SupervisorDispatchApi<Ctx = unknown> {
