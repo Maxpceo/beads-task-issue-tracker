@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **Pi plan-approve worktree path sanitize** (`beads-task-issue-tracker-5jsl`): `workflow_plan_approved` now strips noisy worktree evidence wrappers (backticks/quotes, trailing `(created)` / `[already created]` notes, list markers) before validating and recording `WORKTREE`, so PLAN APPROVED no longer fails on otherwise valid absolute paths or embeds the noise into recovery commands and bd comments.
 - **Interactive omit transport → cmux** (`beads-task-issue-tracker-m94j`): `dispatch_supervisor` / `dispatch_reviewer` resolve omitted `transport` to `cmux` when the host has interactive UI (`hasUI`), so forgetting `transport=cmux` no longer starts a multi-minute headless hang. Explicit `transport=headless` remains the CI/dark-window path; omit without UI still headless. Schema no longer advertises a headless default.
 
 ### Added

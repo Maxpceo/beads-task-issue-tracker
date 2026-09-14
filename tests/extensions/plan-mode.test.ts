@@ -585,6 +585,69 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123', planApproved: true })
   })
 
+  async function approveWithEvidence(toolHandlers: Map<string, any>, ctx: any, callId: string, evidence: string[]) {
+    return toolHandlers.get('workflow_plan_approved')?.execute(callId, {
+      beadId: 'bead-plan',
+      planEvidence: evidence.join('\n'),
+    }, undefined, undefined, ctx)
+  }
+
+  function worktreeCommentHeader(execCalls: Array<{ command: string, args: string[] }>): string | undefined {
+    const commentCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    return String(commentCall?.args[3] ?? '').split('\n').find((line) => line.startsWith('WORKTREE:'))
+  }
+
+  it('workflow_plan_approved sanitizes Worktree backtick path with trailing (created) note', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+    const approved = await approveWithEvidence(toolHandlers, ctx, 'call-worktree-created-note', [
+      'Plan: continue in the approved task worktree.',
+      'Files: .pi/extensions/plan-mode/index.ts.',
+      'Acceptance: workflow state keeps task scope.',
+      'Branch: task/plan-approved',
+      'Worktree: `/tmp/task` (created)',
+      'START_COMMIT: task123',
+    ])
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(worktreeCommentHeader(execCalls)).toBe('WORKTREE: /tmp/task')
+    expect(workflowUpdates.at(-1)).toMatchObject({ branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123', planApproved: true })
+  })
+
+  it('workflow_plan_approved sanitizes Worktree / cwd next-line list noisy path with trailing note', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+    const approved = await approveWithEvidence(toolHandlers, ctx, 'call-worktree-list-created-note', [
+      'Plan: continue in the approved task worktree.',
+      'Files: .pi/extensions/plan-mode/index.ts.',
+      'Acceptance: workflow state keeps task scope.',
+      'Branch: task/plan-approved',
+      'Worktree / cwd:',
+      '- `/tmp/task` (already created)',
+      'START_COMMIT: task123',
+    ])
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(worktreeCommentHeader(execCalls)).toBe('WORKTREE: /tmp/task')
+    expect(workflowUpdates.at(-1)).toMatchObject({ branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123', planApproved: true })
+  })
+
+  it('workflow_plan_approved blocks missing sanitized noisy worktree with clean recovery path', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+    const blocked = await approveWithEvidence(toolHandlers, ctx, 'call-missing-noisy-worktree', [
+      'Plan: continue in the approved task worktree.',
+      'Files: .pi/extensions/plan-mode/index.ts.',
+      'Acceptance: workflow state keeps task scope.',
+      'Branch: task/plan-approved',
+      'Worktree: `/tmp/missing` (created)',
+    ])
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('not a readable git worktree')
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/missing --branch task/plan-approved')
+    expect(blocked.content[0].text).not.toContain('(created)')
+    expect(blocked.content[0].text).not.toContain('`/tmp/missing`')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+  })
+
   it('workflow_plan_approved blocks normalized invalid explicit evidence worktree without bd comment, state update, or continuation', async () => {
     const { toolHandlers, workflowUpdates, execCalls, sendMessages, sendUserMessages, ctx } = makeHarness({ taskScopeGit: true })
 
