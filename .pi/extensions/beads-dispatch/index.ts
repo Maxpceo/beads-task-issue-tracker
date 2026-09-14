@@ -128,6 +128,10 @@ interface DispatchResult {
 	taskFile?: string;
 	resultFile?: string;
 	registryKey?: string;
+	/** Sticky tab-title rename outcomes (cmux visible spawn). */
+	renameAttempts?: number;
+	renameFailures?: number;
+	renameLastError?: string;
 }
 
 type DispatchTransport = "headless" | "cmux";
@@ -982,7 +986,8 @@ async function respawnVisibleFollowup(
 	found: { file: string; registry: ReturnType<typeof loadRegistry>; entry: DispatchRegistryEntry; index: number },
 	task: string,
 	branch: string,
-): Promise<DispatchRegistryEntry> {
+	signal?: AbortSignal,
+): Promise<{ entry: DispatchRegistryEntry; rename: StickyRenameMetrics }> {
 	const entry = found.entry;
 	const taskBody = task.endsWith("\n") ? task : `${task}\n`;
 	if (entry.taskFile) {
@@ -1003,6 +1008,7 @@ async function respawnVisibleFollowup(
 	await adapter.identify();
 	const livePanes = liveEntriesForBead(found.registry, entry.beadId);
 	const callerSurface = resolveCallerSurface(adapter, entry);
+	const orchSurface = callerSurface || entry.callerSurface || "";
 	const anchorSurface = resolveVisibleSplitAnchor({
 		callerSurface,
 		liveAgentPanes: livePanes,
@@ -1017,24 +1023,45 @@ async function respawnVisibleFollowup(
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	await safeRenameSurface(adapter, surface, visibleChildTabTitle(entry.role, entry.beadId));
-	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
-	else if (entry.callerSurface) await safeRenameSurface(adapter, entry.callerSurface, ORCHESTRATOR_TAB_TITLE);
+	const childTitle = visibleChildTabTitle(entry.role, entry.beadId);
+	const stickyOpts = {
+		childSurface: surface,
+		childTitle,
+		orchSurface: orchSurface || undefined,
+		orchTitle: ORCHESTRATOR_TAB_TITLE,
+		signal,
+	};
+	// Immediate pair, then registry/tombstone ASAP, then remaining sticky retries.
+	let rename = await ensureStickyTabTitles(adapter, { ...stickyOpts, schedule: [0] });
 	await adapter.closeSurface(entry.pane);
 	unlinkFollowupArtifacts(entry);
-	return patchFollowupEntry(found, {
+	const next = patchFollowupEntry(found, {
 		pane: surface,
 		submitStatus: "none",
 		sendFailCount: 0,
 		hung: false,
 	});
+	const restSchedule = STICKY_TAB_TITLE_DELAYS_MS.slice(1);
+	if (restSchedule.length > 0) {
+		rename = mergeStickyRenameMetrics(rename, await ensureStickyTabTitles(adapter, { ...stickyOpts, schedule: restSchedule }));
+	}
+	return { entry: next, rename };
 }
 
 export async function followupVisibleDispatch(
 	pi: ExtensionAPI,
 	params: FollowupVisibleParams,
 	ctx?: ToolContext,
-): Promise<{ status: "sent" | "busy" | "spawned"; text: string; taskId: string; pane: string }> {
+	signal?: AbortSignal,
+): Promise<{
+	status: "sent" | "busy" | "spawned";
+	text: string;
+	taskId: string;
+	pane: string;
+	renameAttempts?: number;
+	renameFailures?: number;
+	renameLastError?: string;
+}> {
 	const found = findLiveFollowupEntry(params.beadId, params.role);
 	let entry = found.entry;
 	if (entry.hung) {
@@ -1058,18 +1085,51 @@ export async function followupVisibleDispatch(
 	}
 	const health = classifyVisiblePane(screen);
 	if (health === "busy") {
-		return { status: "busy", text: "visible pane busy (thinking); 0 send, 0 spawn", taskId: entry.taskId, pane: entry.pane };
+		return {
+			status: "busy",
+			text: `visible pane busy (thinking); 0 send, 0 spawn; renameAttempts=0 renameFailures=0`,
+			taskId: entry.taskId,
+			pane: entry.pane,
+			renameAttempts: 0,
+			renameFailures: 0,
+		};
 	}
 	if (health === "shell" || health === "dead") {
-		entry = await respawnVisibleFollowup(adapter, found, params.task, branch);
+		const respawned = await respawnVisibleFollowup(adapter, found, params.task, branch, signal);
+		entry = respawned.entry;
 		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: followupBindState(entry.role), branch, worktreePath, startCommit: entry.startCommit }, ctx);
-		return { status: "spawned", text: `followup respawn pane=${entry.pane} taskId=${entry.taskId}`, taskId: entry.taskId, pane: entry.pane };
+		return {
+			status: "spawned",
+			text: `followup respawn pane=${entry.pane} taskId=${entry.taskId} ${formatStickyRenameMetrics(respawned.rename)}`,
+			taskId: entry.taskId,
+			pane: entry.pane,
+			renameAttempts: respawned.rename.renameAttempts,
+			renameFailures: respawned.rename.renameFailures,
+			renameLastError: respawned.rename.renameLastError,
+		};
 	}
 	unlinkFollowupArtifacts(entry);
 	entry = patchFollowupEntry(found, { submitStatus: "none", sendFailCount: 0, hung: false });
 	await sendFollowupWithHungCap(adapter, found, payload);
+	// waiting reuse: one re-apply pair after successful send (no multi-delay).
+	const orchSurface = resolveCallerSurface(adapter, entry);
+	const rename = await renameTitlePair(
+		adapter,
+		entry.pane,
+		visibleChildTabTitle(entry.role, entry.beadId),
+		orchSurface || entry.callerSurface,
+		ORCHESTRATOR_TAB_TITLE,
+	);
 	emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: followupBindState(entry.role), branch, worktreePath, startCommit: entry.startCommit }, ctx);
-	return { status: "sent", text: `followup sent pane=${entry.pane} taskId=${entry.taskId}`, taskId: entry.taskId, pane: found.entry.pane };
+	return {
+		status: "sent",
+		text: `followup sent pane=${entry.pane} taskId=${entry.taskId} ${formatStickyRenameMetrics(rename)}`,
+		taskId: entry.taskId,
+		pane: found.entry.pane,
+		renameAttempts: rename.renameAttempts,
+		renameFailures: rename.renameFailures,
+		renameLastError: rename.renameLastError,
+	};
 }
 
 async function validateSupervisorPreflight(pi: ExtensionAPI, params: { beadId: string; cwd?: string }, ctx?: ToolContext): Promise<{ scope: TaskScope; cwd: string; branch: string; worktreePath: string; startCommit: string; currentHead: string; evidence: string }> {
@@ -1107,7 +1167,17 @@ function cmuxSpawnAckResult(
 	branch: string,
 	worktreePath: string,
 	startCommit: string,
-	ack: { pane: string; taskFile: string; resultFile: string; registryKey: string; taskId: string; model?: string },
+	ack: {
+		pane: string;
+		taskFile: string;
+		resultFile: string;
+		registryKey: string;
+		taskId: string;
+		model?: string;
+		renameAttempts?: number;
+		renameFailures?: number;
+		renameLastError?: string;
+	},
 ): DispatchResult {
 	const output = JSON.stringify({ status: "spawned", model: ack.model ?? null, ...ack }, null, 2);
 	return {
@@ -1126,6 +1196,9 @@ function cmuxSpawnAckResult(
 		taskFile: ack.taskFile,
 		resultFile: ack.resultFile,
 		registryKey: ack.registryKey,
+		renameAttempts: ack.renameAttempts,
+		renameFailures: ack.renameFailures,
+		renameLastError: ack.renameLastError,
 	};
 }
 
@@ -1184,7 +1257,7 @@ function resolveCallerSurface(adapter: CmuxAdapter, entry?: DispatchRegistryEntr
 	return String(fromMethod || entry?.callerSurface || "").trim();
 }
 
-/** Fail-soft tab rename: never fails spawn, never closeSurface. */
+/** Fail-soft tab rename: never fails spawn, never closeSurface. Single-shot without metrics. */
 async function safeRenameSurface(adapter: CmuxAdapter, surface: string, title: string): Promise<void> {
 	if (!surface || !title || typeof adapter.renameSurface !== "function") return;
 	try {
@@ -1192,6 +1265,159 @@ async function safeRenameSurface(adapter: CmuxAdapter, surface: string, title: s
 	} catch {
 		/* title-only best effort */
 	}
+}
+
+/**
+ * Relative ms offsets from the first immediate rename pair.
+ * Immediate + 4 delayed re-applies hedge Pi/cmux cwd-title overwrite after child start.
+ */
+export const STICKY_TAB_TITLE_DELAYS_MS = [0, 300, 800, 1500, 3000] as const;
+
+export type StickyRenameMetrics = {
+	renameAttempts: number;
+	renameFailures: number;
+	renameLastError?: string;
+};
+
+export type StickyDelayFn = (ms: number, signal?: AbortSignal) => Promise<void>;
+
+let stickyDelayForTests: StickyDelayFn | null = null;
+
+/** Test hook: inject delay (use 0ms). Null restores default. */
+export function setStickyTabTitleDelayForTests(fn: StickyDelayFn | null): void {
+	stickyDelayForTests = fn;
+}
+
+function emptyStickyRenameMetrics(): StickyRenameMetrics {
+	return { renameAttempts: 0, renameFailures: 0 };
+}
+
+function mergeStickyRenameMetrics(a: StickyRenameMetrics, b: StickyRenameMetrics): StickyRenameMetrics {
+	const out: StickyRenameMetrics = {
+		renameAttempts: a.renameAttempts + b.renameAttempts,
+		renameFailures: a.renameFailures + b.renameFailures,
+	};
+	const last = b.renameLastError ?? a.renameLastError;
+	if (last) out.renameLastError = last;
+	return out;
+}
+
+function formatStickyRenameMetrics(metrics: StickyRenameMetrics): string {
+	const parts = [`renameAttempts=${metrics.renameAttempts}`, `renameFailures=${metrics.renameFailures}`];
+	if (metrics.renameLastError) parts.push(`renameLastError=${metrics.renameLastError}`);
+	return parts.join(" ");
+}
+
+async function defaultStickyDelay(ms: number, signal?: AbortSignal): Promise<void> {
+	if (ms <= 0) return;
+	if (signal?.aborted) return;
+	await new Promise<void>((resolve) => {
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		if (signal) signal.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+function resolveStickyDelay(explicit?: StickyDelayFn): StickyDelayFn {
+	if (explicit) return explicit;
+	if (stickyDelayForTests) return stickyDelayForTests;
+	// Unit/integration tests (VITEST or injected adapter) skip wall-clock sticky waits unless a test opts in.
+	if (getCmuxAdapterForTests() || process.env.VITEST) return async () => {};
+	return defaultStickyDelay;
+}
+
+/** Outcome-aware single rename (metrics path). Does not use void safeRenameSurface. */
+export async function renameOnce(
+	adapter: CmuxAdapter,
+	surface: string,
+	title: string,
+): Promise<{ ok: boolean; error?: string }> {
+	if (!surface || !title || typeof adapter.renameSurface !== "function") {
+		return { ok: false, error: "renameSurface unavailable" };
+	}
+	try {
+		await adapter.renameSurface(surface, title);
+		return { ok: true };
+	} catch (error) {
+		return { ok: false, error: (error as Error).message || String(error) };
+	}
+}
+
+async function renameTitlePair(
+	adapter: CmuxAdapter,
+	childSurface: string,
+	childTitle: string,
+	orchSurface: string | undefined,
+	orchTitle: string,
+): Promise<StickyRenameMetrics> {
+	const metrics = emptyStickyRenameMetrics();
+	// Missing renameSurface → 0 attempts (edge case); sticky still fail-soft.
+	if (typeof adapter.renameSurface !== "function") return metrics;
+	if (childSurface && childTitle) {
+		metrics.renameAttempts += 1;
+		const child = await renameOnce(adapter, childSurface, childTitle);
+		if (!child.ok) {
+			metrics.renameFailures += 1;
+			if (child.error) metrics.renameLastError = child.error;
+		}
+	}
+	const orch = (orchSurface ?? "").trim();
+	if (orch && orchTitle) {
+		metrics.renameAttempts += 1;
+		const orchResult = await renameOnce(adapter, orch, orchTitle);
+		if (!orchResult.ok) {
+			metrics.renameFailures += 1;
+			if (orchResult.error) metrics.renameLastError = orchResult.error;
+		}
+	}
+	return metrics;
+}
+
+/**
+ * Re-apply child (+ optional orch) titles on a full delay schedule.
+ * Always runs the full schedule unless signal aborts; no title-read early-exit.
+ */
+export async function ensureStickyTabTitles(
+	adapter: CmuxAdapter,
+	opts: {
+		childSurface: string;
+		childTitle: string;
+		orchSurface?: string;
+		orchTitle?: string;
+		delay?: StickyDelayFn;
+		signal?: AbortSignal;
+		/** Absolute ms offsets from the start of this call (default full sticky window). */
+		schedule?: readonly number[];
+	},
+): Promise<StickyRenameMetrics> {
+	const schedule = opts.schedule ?? STICKY_TAB_TITLE_DELAYS_MS;
+	const delayFn = resolveStickyDelay(opts.delay);
+	const orchTitle = opts.orchTitle ?? ORCHESTRATOR_TAB_TITLE;
+	let metrics = emptyStickyRenameMetrics();
+	let prevAt = 0;
+	for (let i = 0; i < schedule.length; i++) {
+		if (opts.signal?.aborted) break;
+		const at = schedule[i] ?? 0;
+		const gap = Math.max(0, at - prevAt);
+		prevAt = at;
+		if (gap > 0) await delayFn(gap, opts.signal);
+		if (opts.signal?.aborted) break;
+		const tick = await renameTitlePair(
+			adapter,
+			opts.childSurface,
+			opts.childTitle,
+			opts.orchSurface,
+			orchTitle,
+		);
+		metrics = mergeStickyRenameMetrics(metrics, tick);
+	}
+	return metrics;
 }
 
 function posixSingleQuote(value: string): string {
@@ -1211,8 +1437,9 @@ async function dispatchVisibleCmux(input: {
 	cwd: string;
 	mode: "supervisor" | "reviewer";
 	ctx?: ToolContext;
+	signal?: AbortSignal;
 }): Promise<DispatchResult> {
-	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, mode, ctx } = input;
+	const { pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, mode, ctx, signal } = input;
 	const taskId = visibleDispatchTaskId(bead.id, agentName);
 	if (params.dryRun) {
 		const argv = buildVisibleChildArgv({
@@ -1308,8 +1535,16 @@ Next step is review, same as today. Do not call review yourself.
 		if (surface) await adapter.closeSurface(surface);
 		throw error;
 	}
-	await safeRenameSurface(adapter, surface, visibleChildTabTitle(agentName, bead.id));
-	if (callerSurface) await safeRenameSurface(adapter, callerSurface, ORCHESTRATOR_TAB_TITLE);
+	const childTitle = visibleChildTabTitle(agentName, bead.id);
+	const stickyOpts = {
+		childSurface: surface,
+		childTitle,
+		orchSurface: callerSurface || undefined,
+		orchTitle: ORCHESTRATOR_TAB_TITLE,
+		signal,
+	};
+	// 1) immediate rename pair → 2) registry ASAP → 3) remaining sticky retries → 4) ack+metrics
+	let rename = await ensureStickyTabTitles(adapter, { ...stickyOpts, schedule: [0] });
 	appendPanesEnv(dir, taskId, surface, callerSurface || undefined);
 	const entry: DispatchRegistryEntry = {
 		taskId,
@@ -1335,7 +1570,20 @@ Next step is review, same as today. Do not call review yourself.
 		await adapter.closeSurface(surface);
 		throw error;
 	}
-	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, `transport=cmux spawn-ack taskId=${taskId} pane=${surface}\nDIGEST_FILE=${files.digestFile}\nRESULT_FILE=${files.resultFile}`);
+	const restSchedule = STICKY_TAB_TITLE_DELAYS_MS.slice(1);
+	if (restSchedule.length > 0) {
+		rename = mergeStickyRenameMetrics(rename, await ensureStickyTabTitles(adapter, { ...stickyOpts, schedule: restSchedule }));
+	}
+	const renameLine = formatStickyRenameMetrics(rename);
+	await addDispatchComment(
+		pi,
+		bead.id,
+		agentName,
+		branch,
+		worktreePath,
+		startCommit,
+		`transport=cmux spawn-ack taskId=${taskId} pane=${surface} ${renameLine}\nDIGEST_FILE=${files.digestFile}\nRESULT_FILE=${files.resultFile}`,
+	);
 	emitVisibleDispatchBind(pi, { beadId: bead.id, state: mode === "reviewer" ? "reviewing" : "implementing", branch, worktreePath, startCommit }, ctx);
 	return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
 		pane: surface,
@@ -1344,6 +1592,9 @@ Next step is review, same as today. Do not call review yourself.
 		registryKey: taskId,
 		taskId,
 		model: agent.model,
+		renameAttempts: rename.renameAttempts,
+		renameFailures: rename.renameFailures,
+		renameLastError: rename.renameLastError,
 	});
 }
 
@@ -1408,7 +1659,7 @@ async function dispatch(
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
 	if ((mode === "supervisor" || mode === "reviewer") && transport === "cmux") {
-		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx });
+		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx, signal });
 	}
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
@@ -1456,6 +1707,14 @@ async function dispatch(
 }
 
 function renderDispatchResult(result: DispatchResult): string {
+	const renameBits =
+		typeof result.renameAttempts === "number"
+			? formatStickyRenameMetrics({
+					renameAttempts: result.renameAttempts,
+					renameFailures: result.renameFailures ?? 0,
+					renameLastError: result.renameLastError,
+			  })
+			: "";
 	return [
 		`agent=${result.agent}`,
 		`bead=${result.beadId}`,
@@ -1467,6 +1726,7 @@ function renderDispatchResult(result: DispatchResult): string {
 		result.status ? `status=${result.status}` : "",
 		result.model ? `model=${result.model}` : "model=(session inherit)",
 		`exit=${result.exitCode}`,
+		renameBits,
 		result.stderr ? `stderr:\n${result.stderr}` : "",
 		result.output ? `output:\n${result.output.slice(-8000)}` : "",
 	]
@@ -1520,7 +1780,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		parameters: FollowupVisibleDispatchParams,
 		async execute(_id: string, params: FollowupVisibleParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
-				const result = await followupVisibleDispatch(pi, params, ctx);
+				const result = await followupVisibleDispatch(pi, params, ctx, signal);
 				return { content: [{ type: "text", text: `followup_visible_dispatch status=${result.status}\n${result.text}` }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `followup_visible_dispatch не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };

@@ -11,6 +11,7 @@ import beadsDispatchExtension, {
   buildVisibleChildSpawnPayload,
   closeVisibleDispatch,
   completeVisibleDispatch,
+  ensureStickyTabTitles,
   findRegistryByTaskId,
   followupVisibleDispatch,
   followupPayloadLooksLikeSpawnArgv,
@@ -21,13 +22,16 @@ import beadsDispatchExtension, {
   persistIsolationFiles,
   posixQuote,
   pruneRegistry,
+  renameOnce,
   resolveVisibleSplitAnchor,
+  STICKY_TAB_TITLE_DELAYS_MS,
   visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
   resolveDispatchTransport,
   saveRegistry,
   setCmuxAdapterForTests,
+  setStickyTabTitleDelayForTests,
   validateVisibleChildArgv,
 } from '../../.pi/extensions/beads-dispatch/index'
 
@@ -246,10 +250,12 @@ describe('dispatch_supervisor transport=cmux', () => {
     process.env.ORCH_ROOT = tmp
     process.env.HOME = tmp
     setCmuxAdapterForTests(null)
+    setStickyTabTitleDelayForTests(null)
   })
 
   afterEach(() => {
     setCmuxAdapterForTests(null)
+    setStickyTabTitleDelayForTests(null)
     if (prevOrch === undefined) delete process.env.ORCH_ROOT
     else process.env.ORCH_ROOT = prevOrch
     if (prevHome === undefined) delete process.env.HOME
@@ -494,6 +500,7 @@ describe('dispatch_supervisor transport=cmux', () => {
 
   it('renames child and orchestrator tabs after visible spawn', async () => {
     const renames: Array<{ surface: string; title: string }> = []
+    setStickyTabTitleDelayForTests(async () => {})
     setCmuxAdapterForTests({
       async identify() { return { workspaceId: 'ws-rename' } },
       callerSurface() { return 'surface:orch' },
@@ -507,16 +514,21 @@ describe('dispatch_supervisor transport=cmux', () => {
     const { registered, cwd, branch, head } = makePi({ beadId })
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
     expect(result.details.status).toBe('spawned')
-    expect(renames).toEqual([
-      { surface: 'surface:child', title: 'test-supervisor · fo5d' },
-      { surface: 'surface:orch', title: ORCHESTRATOR_TAB_TITLE },
-    ])
+    // Immediate pair first; full sticky schedule re-applies (not exact length-2).
+    expect(renames[0]).toEqual({ surface: 'surface:child', title: 'test-supervisor · fo5d' })
+    expect(renames[1]).toEqual({ surface: 'surface:orch', title: ORCHESTRATOR_TAB_TITLE })
+    expect(renames.length).toBeGreaterThan(2)
+    expect(renames.length).toBe(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(result.details.renameAttempts).toBe(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(result.details.renameFailures).toBe(0)
+    expect(result.content[0].text).toMatch(/renameAttempts=/)
     expect(visibleChildTabTitle('test-supervisor', beadId)).toBe('test-supervisor · fo5d')
     expect(beadSuffixFromId(beadId)).toBe('fo5d')
   })
 
   it('live adapter rename uses tab-action argv with --focus false', async () => {
     setCmuxAdapterForTests(null)
+    setStickyTabTitleDelayForTests(async () => {})
     const cmuxCalls: string[][] = []
     const beadId = 'beads-task-issue-tracker-fo5d'
     const { registered, cwd, branch, head } = makePi({
@@ -535,11 +547,143 @@ describe('dispatch_supervisor transport=cmux', () => {
     const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
     expect(result.details.status).toBe('spawned')
     const renames = cmuxCalls.filter((args) => args[0] === 'tab-action')
+    expect(renames.length).toBeGreaterThan(2)
     expect(renames).toContainEqual(buildCmuxRenameArgv('surface:child', 'test-supervisor · fo5d'))
     expect(renames).toContainEqual(buildCmuxRenameArgv('surface:orch', ORCHESTRATOR_TAB_TITLE))
     expect(buildCmuxRenameArgv('surface:x', 't')).toEqual([
       'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
     ])
+  })
+
+  it('sticky multi-rename race-sim restores titles after Pi clobber', async () => {
+    const renames: Array<{ surface: string; title: string }> = []
+    const titles = new Map<string, string>()
+    setStickyTabTitleDelayForTests(async () => {})
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-sticky-race' } },
+      callerSurface() { return 'surface:orch' },
+      async newSplit() { return { surface: 'surface:child' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface(surface, title) {
+        renames.push({ surface, title })
+        titles.set(surface, title)
+        // After first immediate pair, simulate Pi cwd-title overwrite.
+        if (renames.length === 2) {
+          titles.set('surface:child', 'π - worktree-basename')
+          titles.set('surface:orch', 'π - beads-task-issue-tracker')
+        }
+      },
+    })
+    const beadId = 'beads-task-issue-tracker-7kiq'
+    const { registered, cwd, branch, head } = makePi({ beadId })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    expect(renames.length).toBe(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(titles.get('surface:child')).toBe('test-supervisor · 7kiq')
+    expect(titles.get('surface:orch')).toBe(ORCHESTRATOR_TAB_TITLE)
+    expect(titles.get('surface:child')).not.toMatch(/^π -/)
+  })
+
+  it('sticky rename failures stay fail-soft with metrics', async () => {
+    setStickyTabTitleDelayForTests(async () => {})
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-sticky-fail' } },
+      callerSurface() { return 'surface:orch' },
+      async newSplit() { return { surface: 'surface:child' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface() { throw new Error('rename boom') },
+    })
+    const beadId = 'beads-task-issue-tracker-fail'
+    const { registered, cwd, branch, head } = makePi({ beadId })
+    const result = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.renameAttempts).toBe(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(result.details.renameFailures).toBe(result.details.renameAttempts)
+    expect(result.details.renameLastError).toMatch(/rename boom/)
+    expect(result.content[0].text).toMatch(/renameFailures=/)
+  })
+
+  it('dual spawn applies own role titles without peer overwrite', async () => {
+    const renames: Array<{ surface: string; title: string }> = []
+    let splitN = 0
+    setStickyTabTitleDelayForTests(async () => {})
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-sticky-dual' } },
+      callerSurface() { return 'surface:orch' },
+      async newSplit() {
+        splitN += 1
+        return { surface: splitN === 1 ? 'surface:sup' : 'surface:rev' }
+      },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface(surface, title) { renames.push({ surface, title }) },
+    })
+    const beadId = 'beads-task-issue-tracker-dual'
+    const firstPi = makePi({ beadId })
+    const ctx = workflowCtx(firstPi.cwd, beadId, firstPi.branch, firstPi.head)
+    const first = await firstPi.registered.execute(
+      'call-1',
+      { beadId, transport: 'cmux', agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(first.details.status).toBe('spawned')
+    const secondPi = makePi({
+      toolName: 'dispatch_reviewer',
+      beadId,
+      status: 'inreview',
+      cwd: firstPi.cwd,
+      branch: firstPi.branch,
+      head: firstPi.head,
+    })
+    const second = await secondPi.registered.execute(
+      'call-2',
+      { beadId, transport: 'cmux', agent: 'code-reviewer' },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(second.details.status).toBe('spawned')
+    expect(renames.some((r) => r.surface === 'surface:sup' && r.title === 'test-supervisor · dual')).toBe(true)
+    expect(renames.some((r) => r.surface === 'surface:rev' && r.title === 'code-reviewer · dual')).toBe(true)
+    expect(renames.some((r) => r.surface === 'surface:sup' && r.title.includes('code-reviewer'))).toBe(false)
+    expect(renames.some((r) => r.surface === 'surface:rev' && r.title.includes('test-supervisor'))).toBe(false)
+    expect(renames.every((r) => r.surface === 'surface:sup' || r.surface === 'surface:rev' || r.surface === 'surface:orch')).toBe(true)
+  })
+
+  it('ensureStickyTabTitles honors AbortSignal mid-schedule', async () => {
+    const renames: Array<{ surface: string; title: string }> = []
+    const adapter = {
+      async identify() { return { workspaceId: 'x' } },
+      async newSplit() { return { surface: 'c' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface(surface: string, title: string) { renames.push({ surface, title }) },
+    }
+    const controller = new AbortController()
+    let ticks = 0
+    const metrics = await ensureStickyTabTitles(adapter as any, {
+      childSurface: 'surface:c',
+      childTitle: 'role · x',
+      orchSurface: 'surface:o',
+      orchTitle: ORCHESTRATOR_TAB_TITLE,
+      schedule: [...STICKY_TAB_TITLE_DELAYS_MS],
+      delay: async () => {
+        ticks += 1
+        if (ticks >= 1) controller.abort()
+      },
+      signal: controller.signal,
+    })
+    expect(metrics.renameAttempts).toBeGreaterThan(0)
+    expect(metrics.renameAttempts).toBeLessThan(STICKY_TAB_TITLE_DELAYS_MS.length * 2)
+    expect(typeof renameOnce).toBe('function')
   })
 
   it('live adapter new-split argv includes --focus false', async () => {
@@ -1120,21 +1264,32 @@ describe('followup_visible_dispatch', () => {
   })
 
   it('sends task text into a waiting Pi and does not new-split', async () => {
-    seed()
+    seed({ callerSurface: 'surface:orch' })
     const splits: string[] = []
     const sent: string[] = []
+    const renames: Array<{ surface: string; title: string }> = []
     setCmuxAdapterForTests({
       async identify() { return { workspaceId: 'ws-follow' } },
+      callerSurface() { return 'surface:orch' },
       async newSplit() { splits.push('surface:99'); return { surface: 'surface:99' } },
       async send(_surface, text) { sent.push(text) },
       async closeSurface() {},
       async readScreen() { return 'session idle\n$\n' },
+      async renameSurface(surface, title) { renames.push({ surface, title }) },
     })
     const { pi, cwd, branch, beadId, emitted } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
     const result = await followupVisibleDispatch(pi as any, { beadId, task: 'Fix the pane' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('sent')
     expect(sent).toEqual(['Fix the pane\n'])
     expect(splits).toEqual([])
+    // waiting reuse: one re-apply pair + metrics in text
+    expect(renames).toEqual([
+      { surface: 'surface:1', title: 'test-supervisor · a' },
+      { surface: 'surface:orch', title: ORCHESTRATOR_TAB_TITLE },
+    ])
+    expect(result.renameAttempts).toBe(2)
+    expect(result.renameFailures).toBe(0)
+    expect(result.text).toMatch(/renameAttempts=2/)
     expect(followupPayloadLooksLikeSpawnArgv(sent[0] ?? '')).toBe(false)
     expect(emitted.find((item) => item.name === 'workflow-state:update')?.event).toMatchObject({
       activeBead: beadId,
@@ -1260,18 +1415,24 @@ describe('followup_visible_dispatch', () => {
     seed()
     const splits: string[] = []
     const sent: string[] = []
+    const renames: Array<{ surface: string; title: string }> = []
     setCmuxAdapterForTests({
       async identify() { return { workspaceId: 'ws-follow' } },
       async newSplit() { splits.push('x'); return { surface: 'x' } },
       async send(_surface, text) { sent.push(text) },
       async closeSurface() {},
       async readScreen() { return 'thinking\nsession implementing' },
+      async renameSurface(surface, title) { renames.push({ surface, title }) },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
     const result = await followupVisibleDispatch(pi as any, { beadId, task: 'wait' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('busy')
     expect(sent).toEqual([])
     expect(splits).toEqual([])
+    expect(renames).toEqual([])
+    expect(result.renameAttempts).toBe(0)
+    expect(result.renameFailures).toBe(0)
+    expect(result.text).toMatch(/renameAttempts=0/)
   })
 
   it('keeps spawned entry when read-screen fails', async () => {
