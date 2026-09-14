@@ -1128,8 +1128,9 @@ describe('review_bead agent model routing', () => {
 
     expect(captured.length).toBeGreaterThan(0)
     const spawnArgs = captured[0]
-    expect(spawnArgs).toContain('--model')
-    expect(spawnArgs[spawnArgs.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+    expect(spawnArgs).toBeDefined()
+    expect(spawnArgs!).toContain('--model')
+    expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.5')
 
     writeFileSync(join(cwd, '.pi', 'agent-models.json'), JSON.stringify({ classes: {}, roles: {}, agentClasses: {} }, null, 2))
     captured.length = 0

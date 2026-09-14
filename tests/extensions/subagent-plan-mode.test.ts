@@ -60,6 +60,13 @@ function loadSubagentExtension(spawnCalls: Array<{ command: string, args: string
         setSharedDashboardState: () => undefined,
       }
     }
+    if (id === '../agent-models/index' || id.endsWith('/agent-models/index') || id.includes('agent-models')) {
+      return {
+        resolveAgentModelFromCwd: () => ({ model: undefined, source: 'inherit', className: undefined }),
+        resolveAgentModel: () => ({ model: undefined, source: 'inherit', className: undefined }),
+        AGENT_MODELS_FILENAME: 'agent-models.json',
+      }
+    }
     throw new Error(`Unexpected require: ${id}`)
   }
   new Function('require', 'module', 'exports', outputText)(mockRequire, module, module.exports)

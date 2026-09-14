@@ -575,8 +575,9 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
       await registeredTool.execute('call-1', { beadId: 'bead-argv', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-argv', branch, 'abc1234'))
       expect(captured.length).toBeGreaterThan(0)
       const spawnArgs = captured[0]
-      expect(spawnArgs).toContain('--model')
-      expect(spawnArgs[spawnArgs.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+      expect(spawnArgs).toBeDefined()
+      expect(spawnArgs!).toContain('--model')
+      expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.5')
 
       // Empty classes → inherit (no --model)
       await fs.writeFile(modelsPath, JSON.stringify({ classes: {}, roles: {}, agentClasses: {} }, null, 2))
