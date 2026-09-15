@@ -82,12 +82,22 @@ export function interpretPick(v: unknown): "back" | "other" | { modelId: string 
 	return { modelId };
 }
 
+/**
+ * Call Keybindings.matches on the object (keep `this`).
+ * Never extract unbound `matches` — live pi Keybindings reads this.keysById.
+ */
 function matchSelectKey(kb: unknown, data: string, id: string): boolean {
-	const matches = (kb as { matches?: (d: string, key: string) => boolean } | undefined)?.matches;
-	return matches?.(data, id) === true;
+	const obj = kb as { matches?: (d: string, key: string) => boolean } | null | undefined;
+	if (obj == null || typeof obj.matches !== "function") return false;
+	try {
+		return obj.matches(data, id) === true;
+	} catch {
+		return false;
+	}
 }
 
 function isPageKey(kb: unknown, data: string): boolean {
+	// Prefer raw bytes so printable keys never need matches.
 	if (data === Key.pageUp || data === Key.pageDown) return true;
 	return (
 		matchSelectKey(kb, data, "tui.select.pageUp") || matchSelectKey(kb, data, "tui.select.pageDown")
@@ -95,7 +105,18 @@ function isPageKey(kb: unknown, data: string): boolean {
 }
 
 function shouldSkipInput(kb: unknown, data: string): boolean {
-	if (data === "\r" || data === "\n" || data.startsWith("\x1b")) return true;
+	// Prefer raw bytes before matches: printable keys do not need keybindings.
+	if (
+		data === "\r" ||
+		data === "\n" ||
+		data === Key.enter ||
+		data === Key.escape ||
+		data === Key.up ||
+		data === Key.down ||
+		data.startsWith("\x1b")
+	) {
+		return true;
+	}
 	return (
 		matchSelectKey(kb, data, "tui.select.confirm") ||
 		matchSelectKey(kb, data, "tui.select.cancel") ||

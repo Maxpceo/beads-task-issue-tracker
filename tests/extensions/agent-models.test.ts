@@ -1324,6 +1324,57 @@ describe('searchable model picker (khec / 2aqh)', () => {
     })
   })
 
+  it('bound keybindings.matches (this.keysById): printable + Down do not crash; Down+Enter selects', async () => {
+    // Live pi Keybindings.matches reads this.keysById. Detaching matches unbound crashes.
+    const keybindings = {
+      keysById: {
+        'tui.select.confirm': [Key.enter],
+        'tui.select.cancel': [Key.escape],
+        'tui.select.up': [Key.up],
+        'tui.select.down': [Key.down],
+        'tui.select.pageUp': [Key.pageUp],
+        'tui.select.pageDown': [Key.pageDown],
+      } as Record<string, string[]>,
+      matches(this: { keysById: Record<string, string[]> }, data: string, id: string): boolean {
+        if (this === undefined || this.keysById === undefined) {
+          throw new TypeError("Cannot read properties of undefined (reading 'keysById')")
+        }
+        const keys = this.keysById[id]
+        return Array.isArray(keys) && keys.includes(data)
+      },
+    }
+    const models = [
+      { id: 'prov/model-a', provider: 'prov', modelId: 'model-a' },
+      { id: 'prov/model-b', provider: 'prov', modelId: 'model-b' },
+    ]
+    const picked = await runSearchableModelPicker({
+      title: 'Pick',
+      models,
+      initial: models[0].id,
+      custom: async (factory) => {
+        let settled: unknown
+        const mk = () =>
+          factory(
+            { requestRender: () => undefined },
+            { fg: (_c: string, t: string) => t },
+            keybindings,
+            (v) => { settled = v },
+          )
+        // Crash regression: live Keybindings.matches needs this.keysById on ANY key.
+        const probe = mk()
+        expect(() => probe.handleInput?.('g')).not.toThrow()
+        expect(() => probe.handleInput?.(Key.down)).not.toThrow()
+        // Fresh picker: Down+Enter still selects with the same bound matches object.
+        settled = undefined
+        const pick = mk()
+        pick.handleInput?.(Key.down)
+        pick.handleInput?.(Key.enter)
+        return settled
+      },
+    })
+    expect(picked).toBe(models[1].id)
+  })
+
   it('path (a): throw until first return → notify with error.message + fallback select', async () => {
     const root = tempProject()
     temps.push(root)
