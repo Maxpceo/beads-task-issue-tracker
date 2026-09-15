@@ -110,6 +110,10 @@ export class SelectList implements Component {
   maxVisible: number
   theme?: unknown
   selectedIndex = 0
+  /** Instance callbacks (not ctor) — matches real @earendil-works/pi-tui SelectList. */
+  onSelect?: (item: { value?: string; label?: string }) => void
+  onCancel?: () => void
+  onSelectionChange?: (item: { value?: string; label?: string }) => void
   constructor(items: Array<{ value?: string; label?: string }>, maxVisible: number, theme?: unknown) {
     this.items = items
     this.maxVisible = maxVisible
@@ -122,7 +126,33 @@ export class SelectList implements Component {
   getSelectedItem(): { value?: string; label?: string } | undefined {
     return this.items[this.selectedIndex]
   }
-  handleInput(_data: string): void {}
+  handleInput(data: string): void {
+    const len = this.items.length
+    if (data === Key.up) {
+      if (len === 0) return
+      this.selectedIndex = (this.selectedIndex - 1 + len) % len
+      const item = this.getSelectedItem()
+      if (item) this.onSelectionChange?.(item)
+      return
+    }
+    if (data === Key.down) {
+      if (len === 0) return
+      this.selectedIndex = (this.selectedIndex + 1) % len
+      const item = this.getSelectedItem()
+      if (item) this.onSelectionChange?.(item)
+      return
+    }
+    if (data === Key.enter || data === '\r' || data === '\n') {
+      const item = this.getSelectedItem()
+      if (item) this.onSelect?.(item)
+      return
+    }
+    if (data === Key.escape || data === '\x1b') {
+      this.onCancel?.()
+      return
+    }
+    // pageUp/pageDown: no-op in mock (product path also skips before calling handleInput)
+  }
   invalidate(): void {}
   render(width: number): string[] {
     return this.items.slice(0, this.maxVisible).map((item) => truncateToWidth(item.label ?? item.value ?? '', width, ''))
