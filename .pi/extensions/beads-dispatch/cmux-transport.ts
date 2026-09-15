@@ -65,6 +65,8 @@ export interface CmuxAdapter {
  * Choose the cmux surface to split right-of for the next visible agent pane.
  * - 0 live candidates (after excludePane) → orchestrator/caller surface
  * - ≥1 candidates → oldest createdAt, then taskId; never re-split orch when another live agent exists
+ * - No hard N=2 cap: Nth agent still anchors the first live agent so the right half packs side-by-side
+ *   (practical capacity ~4–6 per AGENTS.md Layout geometry; operator judgment beyond that)
  */
 export function resolveVisibleSplitAnchor(input: {
 	callerSurface: string;

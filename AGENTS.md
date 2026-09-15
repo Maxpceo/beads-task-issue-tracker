@@ -149,13 +149,14 @@ Visible `dispatch_supervisor` / `dispatch_reviewer` (`transport=cmux`) auto-rena
 
 ### Layout geometry (orch exclusive left, agents side-by-side right)
 
-Accepted dual-agent geometry (`beads-task-issue-tracker-kgvd`, Maxim HA f8fl):
+Accepted multi-agent geometry (`beads-task-issue-tracker-kgvd`, Maxim HA f8fl; capacity update 2026-09-15 Maxim / `beads-task-issue-tracker-k9j6`):
 
 - **Оркестратор** stays exclusive on the left (~50%). Agent panes never `new-split` from the orch surface when another live agent already exists.
 - First visible agent: `new-split right --surface <orch-caller> --focus false`.
-- Second visible agent (typical supervisor + reviewer): `new-split right --surface <first-live-agent> --focus false` so agents are **side-by-side** on the right (~25%+25%), not tabs in one pane and not a third column that squeezes orch.
-- Anchor selection uses `resolveVisibleSplitAnchor`: live spawned panes for the bead, oldest `createdAt` then `taskId`; respawn excludes self (solo → orch; with peer → peer).
-- N>2 agents: still right-from-first (never splits orch); simultaneous full visibility is **not** guaranteed — overflow beyond dual side-by-side is documented only (no tabs/down path in this contract). kgvd supersedes the older N=2 tabs geometry note (evxj) for supervisor+reviewer.
+- Each next visible agent: `new-split right --surface <first-live-agent> --focus false` so agents pack **side-by-side on the right half**, not as tabs in one pane and not as a third column that squeezes orch. Typical dual case is supervisor + reviewer (~25%+25% of full width); further agents keep splitting inside that right half.
+- Anchor selection uses `resolveVisibleSplitAnchor`: live spawned panes for the bead, oldest `createdAt` then `taskId`; respawn excludes self (solo → orch; with peer → peer). Code has **no hard N=2 cap** — every additional spawn reuses right-from-first.
+- **Right-half capacity:** dual is live-HA proven (`f8fl`); Maxim accepts **4–6** simultaneous agent panes on the right half as practical. Prefer readable titles (`{role} · {bead-suffix}`); beyond ~6 is operator judgment, not a code block. No tabs/down overflow path is required in this contract.
+- kgvd supersedes the older N=2 tabs geometry note (evxj) and the earlier «N>2 not guaranteed» wording.
 - Parallel cross-role double-spawn race is out of scope; sequential orch dispatch is assumed.
 
 ### Close supervisor pane after terminal bead
