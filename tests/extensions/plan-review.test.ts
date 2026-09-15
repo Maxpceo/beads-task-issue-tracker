@@ -68,12 +68,20 @@ Risks / rollback:
 |---|---|---|---|---|---|---|---|
 | A | Update docs | docs supervisor | .pi/skills/plan-bead/SKILL.md | none | rg matrix | sequential | files are related |`
     const validPlan = invalidPlan.replace('files are related', 'dependency chain: tests consume the docs contract')
+    const invalidRussianPlan = `| Поток | Цель | Агент | Зона изменений | Зависимости | Проверка | Решение | Причина |
+|---|---|---|---|---|---|---|---|
+| A | Обновить docs | docs supervisor | .pi/skills/plan-bead/SKILL.md | нет | rg matrix | sequential | files are related |`
+    const validRussianPlan = invalidRussianPlan.replace('files are related', 'dependency chain: tests consume the docs contract')
 
     expect(findInvalidSequentialReasons(invalidPlan)).toEqual([
       'Sequential stream row 3 has unsupported reason: files are related',
     ])
     expect(missingRevisedPlanSections(invalidPlan)).toContain('Sequential stream row 3 has unsupported reason: files are related')
     expect(findInvalidSequentialReasons(validPlan)).toEqual([])
+    expect(findInvalidSequentialReasons(invalidRussianPlan)).toEqual([
+      'Sequential stream row 3 has unsupported reason: files are related',
+    ])
+    expect(findInvalidSequentialReasons(validRussianPlan)).toEqual([])
   })
 
   it('runs required reviewers through pi json mode and parses assistant output', async () => {
