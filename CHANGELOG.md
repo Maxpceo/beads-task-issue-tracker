@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi visible cmux sticky tab titles** (`beads-task-issue-tracker-7kiq`): after `dispatch_* transport=cmux` spawn, tab titles are re-applied on a sticky schedule so Pi/cmux default `π - <worktree>` does not remain the final label. Child panes keep `{role} · {bead-suffix}` and the orchestrator stays `оркестратор`, with rename metrics in spawn-ack and a safe AbortSignal path on `followup_visible_dispatch`.
+
 - **Pi post-close false `bd:inreview` after failed live status read** (`beads-task-issue-tracker-soco`): when live `bd show` fails or returns empty, workflow reconcile now marks `bdStatus` unreadable instead of keeping a stale snapshot `inreview`. `workflow_complete` and lifecycle gates surface an explicit refresh-failed block (with `blocked|deferred` escape hatch), while a live `closed` still clears the active bead and a real `inreview` still routes to review. `bd` reads prefer an on-disk `worktreePath` over process cwd so main-cwd misses do not invent false review blocks after close.
 - **Pi `getPlanComment` false PLAN APPROVED from BLOCKED/hook text** (`beads-task-issue-tracker-rb7o`): `getPlanComment` now requires `PLAN APPROVED` (optional markdown heading) on the first non-empty line, so later comments that only mention the marker as a substring (for example `BLOCKED` recovery notes or DISPATCH bodies) no longer satisfy supervisor readiness as an approved plan.
 
