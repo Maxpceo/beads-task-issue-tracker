@@ -1,12 +1,14 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { Key, SelectList } from '@earendil-works/pi-tui'
 
 import {
   BACK_MODEL_ID,
   MENU_BACK,
   MENU_EXIT,
+  MODEL_PICKER_OVERLAY_OPTIONS,
   MODEL_PICKER_VIEWPORT,
   UNBOUNDED_SELECT_MAX,
   appendModelArg,
@@ -34,6 +36,10 @@ import {
   saveAgentModels,
   supportedThinkingLevels,
 } from '../../.pi/extensions/agent-models/index'
+import {
+  MODEL_PICKER_MIN_RENDER_LINES,
+  runSearchableModelPicker,
+} from '../../.pi/extensions/agent-models/searchable-picker'
 
 function tempProject(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-models-'))
@@ -871,12 +877,33 @@ function catalogModels(n: number) {
   }))
 }
 
-describe('searchable model picker (khec)', () => {
+describe('searchable model picker (khec / 2aqh)', () => {
+  let selectListHandleInputSpy: ReturnType<typeof vi.spyOn> | undefined
+
+  afterEach(() => {
+    selectListHandleInputSpy?.mockRestore()
+    selectListHandleInputSpy = undefined
+  })
+
   it('exports viewport 12 and unbounded max 40', () => {
     expect(MODEL_PICKER_VIEWPORT).toBe(12)
     expect(UNBOUNDED_SELECT_MAX).toBe(40)
     expect(BACK_MODEL_ID).toBe('__back__')
     expect(BACK_MODEL_ID).not.toBe(MENU_BACK)
+  })
+
+  it('exports MODEL_PICKER_OVERLAY_OPTIONS and MIN_RENDER_LINES from searchable-picker', () => {
+    expect(MODEL_PICKER_OVERLAY_OPTIONS).toEqual({
+      overlay: true,
+      overlayOptions: {
+        width: '90%',
+        minWidth: 50,
+        maxHeight: '85%',
+        anchor: 'center',
+        margin: 1,
+      },
+    })
+    expect(MODEL_PICKER_MIN_RENDER_LINES).toBe(100)
   })
 
   it('filterAvailableModels is case-insensitive substring on id/provider/name', () => {
@@ -1151,10 +1178,12 @@ describe('searchable model picker (khec)', () => {
             { fg: (_c: string, t: string) => t },
             {
               matches: (data: string, id: string) => {
-                if (data === 'enter') return id === 'tui.select.confirm'
-                if (data === 'esc') return id === 'tui.select.cancel'
-                if (data === 'up') return id === 'tui.select.up'
-                if (data === 'down') return id === 'tui.select.down'
+                if (data === Key.enter) return id === 'tui.select.confirm'
+                if (data === Key.escape) return id === 'tui.select.cancel'
+                if (data === Key.up) return id === 'tui.select.up'
+                if (data === Key.down) return id === 'tui.select.down'
+                if (data === Key.pageUp) return id === 'tui.select.pageUp'
+                if (data === Key.pageDown) return id === 'tui.select.pageDown'
                 return false
               },
             },
@@ -1164,7 +1193,7 @@ describe('searchable model picker (khec)', () => {
           expect(comp.focused).toBe(true)
           comp.handleInput?.('g')
           labelsAfterType = comp.render(80)
-          comp.handleInput?.('esc')
+          comp.handleInput?.(Key.escape)
           return settled
         },
         notify: () => undefined,
@@ -1173,6 +1202,229 @@ describe('searchable model picker (khec)', () => {
     )
     expect(renders).toBeGreaterThan(0)
     expect(labelsAfterType.join('\n')).toMatch(/grok/i)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+  })
+
+  it('custom second arg is strictly equal MODEL_PICKER_OVERLAY_OPTIONS; pad >= 100', async () => {
+    let secondArg: unknown
+    let lines: string[] = []
+    await runSearchableModelPicker({
+      title: 'Pick model',
+      models: [
+        { id: 'a/one', provider: 'a', modelId: 'one' },
+        { id: 'b/two', provider: 'b', modelId: 'two' },
+      ],
+      initial: 'a/one',
+      custom: async (factory, opts) => {
+        secondArg = opts
+        const comp = factory(
+          { requestRender: () => undefined },
+          { fg: (_c: string, t: string) => t },
+          { matches: () => false },
+          () => undefined,
+        )
+        lines = comp.render(80)
+        return null
+      },
+    })
+    expect(secondArg).toBe(MODEL_PICKER_OVERLAY_OPTIONS)
+    expect(secondArg).toEqual(MODEL_PICKER_OVERLAY_OPTIONS)
+    expect(lines.length).toBeGreaterThanOrEqual(MODEL_PICKER_MIN_RENDER_LINES)
+    expect(lines.length).toBe(MODEL_PICKER_MIN_RENDER_LINES)
+    // Markers stay in first lines; pad is append-only empty trailing lines.
+    expect(lines[0]).toMatch(/Pick model/)
+    expect(lines.slice(0, 6).join('\n')).toMatch(/Фильтр/)
+    expect(lines[lines.length - 1]).toBe('')
+  })
+
+  it('Down+Enter selects models[1].id when initial is models[0].id', async () => {
+    const models = [
+      { id: 'prov/model-a', provider: 'prov', modelId: 'model-a' },
+      { id: 'prov/model-b', provider: 'prov', modelId: 'model-b' },
+      { id: 'prov/model-c', provider: 'prov', modelId: 'model-c' },
+    ]
+    const picked = await runSearchableModelPicker({
+      title: 'Pick',
+      models,
+      initial: models[0].id,
+      custom: async (factory) => {
+        let settled: unknown
+        const comp = factory(
+          { requestRender: () => undefined },
+          { fg: (_c: string, t: string) => t },
+          {
+            matches: (data: string, id: string) => {
+              if (data === Key.enter) return id === 'tui.select.confirm'
+              if (data === Key.down) return id === 'tui.select.down'
+              return false
+            },
+          },
+          (v) => { settled = v },
+        )
+        comp.handleInput?.(Key.down)
+        comp.handleInput?.(Key.enter)
+        return settled
+      },
+    })
+    expect(picked).toBe(models[1].id)
+  })
+
+  it('Esc finishes null without writing via SelectList onCancel', async () => {
+    const picked = await runSearchableModelPicker({
+      title: 'Pick',
+      models: [
+        { id: 'a/one' },
+        { id: 'b/two' },
+      ],
+      initial: 'a/one',
+      custom: async (factory) => {
+        let settled: unknown = 'unset'
+        const comp = factory(
+          { requestRender: () => undefined },
+          { fg: (_c: string, t: string) => t },
+          {
+            matches: (data: string, id: string) =>
+              data === Key.escape && id === 'tui.select.cancel',
+          },
+          (v) => { settled = v },
+        )
+        comp.handleInput?.(Key.escape)
+        return settled
+      },
+    })
+    expect(picked).toBeNull()
+  })
+
+  it('pageUp/pageDown are no-op (no SelectList.handleInput)', async () => {
+    selectListHandleInputSpy = vi.spyOn(SelectList.prototype, 'handleInput')
+    await runSearchableModelPicker({
+      title: 'Pick',
+      models: [{ id: 'a/one' }, { id: 'b/two' }],
+      custom: async (factory) => {
+        const renders: number[] = []
+        const comp = factory(
+          { requestRender: () => { renders.push(1) } },
+          { fg: (_c: string, t: string) => t },
+          {
+            matches: (data: string, id: string) => {
+              if (data === Key.pageUp) return id === 'tui.select.pageUp'
+              if (data === Key.pageDown) return id === 'tui.select.pageDown'
+              return false
+            },
+          },
+          () => undefined,
+        )
+        const before = selectListHandleInputSpy!.mock.calls.length
+        comp.handleInput?.(Key.pageUp)
+        comp.handleInput?.(Key.pageDown)
+        expect(selectListHandleInputSpy!.mock.calls.length).toBe(before)
+        expect(renders).toHaveLength(0)
+        return null
+      },
+    })
+  })
+
+  it('path (a): throw until first return → notify with error.message + fallback select', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    const notes: string[] = []
+    const queue = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      (opts: string[]) => opts.find((o) => o.includes('xai/fallback-a')) ?? opts[0] ?? null,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async () => {
+          throw new Error('overlay boom path-a')
+        },
+        notify: (msg) => { notes.push(msg) },
+      },
+      {
+        listAvailableModels: async () => [{ id: 'xai/fallback-a', provider: 'xai', modelId: 'fallback-a' }],
+        mode: 'tui',
+      },
+    )
+    expect(notes.some((n) => n.includes('overlay boom path-a'))).toBe(true)
+    expect(result.wrote).toBe(true)
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).classes.strong).toBe('xai/fallback-a')
+  })
+
+  it('path (b): throw inside returned handleInput → finish(null), no notify', async () => {
+    selectListHandleInputSpy = vi.spyOn(SelectList.prototype, 'handleInput').mockImplementation(function (this: InstanceType<typeof SelectList>, data: string) {
+      if (data === Key.down || data === Key.enter) {
+        throw new Error('list handleInput boom path-b')
+      }
+    })
+    const notes: string[] = []
+    const picked = await runSearchableModelPicker({
+      title: 'Pick',
+      models: [{ id: 'a/one' }, { id: 'b/two' }],
+      initial: 'a/one',
+      custom: async (factory) => {
+        let settled: unknown = 'unset'
+        const comp = factory(
+          { requestRender: () => undefined },
+          { fg: (_c: string, t: string) => t },
+          { matches: () => false },
+          (v) => { settled = v },
+        )
+        // Do not replace comp.handleInput — product catch must run.
+        comp.handleInput?.(Key.down)
+        return settled
+      },
+    })
+    expect(picked).toBeNull()
+    expect(notes).toHaveLength(0)
+
+    // Via menu: no notify, no write (interpretPick back).
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const menuNotes: string[] = []
+    const queue = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async (factory) => {
+          let settled: unknown
+          const comp = factory(
+            { requestRender: () => undefined },
+            { fg: (_c: string, t: string) => t },
+            { matches: () => false },
+            (v) => { settled = v },
+          )
+          comp.handleInput?.(Key.enter)
+          return settled
+        },
+        notify: (msg) => { menuNotes.push(msg) },
+      },
+      {
+        listAvailableModels: async () => [{ id: 'a/one' }, { id: 'b/two' }],
+        mode: 'tui',
+      },
+    )
+    expect(result.wrote).toBe(false)
+    expect(menuNotes.filter((n) => n.includes('path-b') || n.includes('boom'))).toHaveLength(0)
     expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
   })
 

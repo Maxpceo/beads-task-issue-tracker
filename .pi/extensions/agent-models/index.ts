@@ -16,6 +16,7 @@ import {
 	FILTER_NOTIFY,
 	filterAvailableModels,
 	interpretPick,
+	MODEL_PICKER_OVERLAY_OPTIONS,
 	MODEL_PICKER_VIEWPORT,
 	pinThenCap,
 	runSearchableModelPicker,
@@ -28,6 +29,7 @@ export {
 	FALLBACK_SELECT_CAP,
 	filterAvailableModels,
 	interpretPick,
+	MODEL_PICKER_OVERLAY_OPTIONS,
 	MODEL_PICKER_VIEWPORT,
 	pinThenCap,
 	UNBOUNDED_SELECT_MAX,
@@ -1258,6 +1260,7 @@ async function pickModelId(
 		typeof ui.custom === "function" && mode === "tui" && customPickerAvailable();
 	if (useCustom && ui.custom) {
 		try {
+			// Path (a): catch only around await runSearchableModelPicker (throw until first return).
 			const raw = await runSearchableModelPicker({
 				custom: ui.custom,
 				title,
@@ -1272,8 +1275,9 @@ async function pickModelId(
 				meta: findModelMeta(catalog.models, interpreted.modelId),
 				catalog: catalog.models,
 			};
-		} catch {
-			ui.notify?.("Searchable picker недоступен, fallback select", "warning");
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			ui.notify?.(`Searchable picker недоступен, fallback select: ${msg}`, "warning");
 		}
 	}
 	return pickModelIdFallback(ui, title, catalog.models, initial);

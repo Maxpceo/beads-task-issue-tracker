@@ -4,6 +4,17 @@ declare module '@earendil-works/pi-tui' {
     handleInput?: (data: string) => void
     invalidate?: () => void
   }
+  export const Key: {
+    escape: string
+    enter: string
+    up: string
+    down: string
+    home: string
+    end: string
+    pageUp: string
+    pageDown: string
+    ctrl: (char: string) => string
+  }
   export class Text implements Component {
     constructor(text: string)
     render(width: number): string[]
@@ -27,6 +38,10 @@ declare module '@earendil-works/pi-tui' {
   }
   export class SelectList implements Component {
     constructor(items: Array<{ value?: string; label?: string }>, maxVisible: number, theme?: unknown)
+    selectedIndex: number
+    onSelect?: (item: { value?: string; label?: string }) => void
+    onCancel?: () => void
+    onSelectionChange?: (item: { value?: string; label?: string }) => void
     setSelectedIndex(index: number): void
     getSelectedItem(): { value?: string; label?: string } | undefined
     handleInput(data: string): void

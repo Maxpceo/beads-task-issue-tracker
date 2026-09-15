@@ -1,9 +1,10 @@
 /**
- * Searchable compact model picker for /agent-models (khec).
+ * Searchable compact model picker for /agent-models (khec / 2aqh).
  * Product filter is NOT SelectList.setFilter (prefix-on-value).
+ * Overlay + SelectList.onSelect/onCancel + pad contract: beads-task-issue-tracker-2aqh.
  */
 
-import { Container, Input, SelectList, Text } from "@earendil-works/pi-tui";
+import { Container, Input, Key, SelectList, Text } from "@earendil-works/pi-tui";
 
 export const MODEL_PICKER_VIEWPORT = 12;
 export const FALLBACK_SELECT_CAP = 30;
@@ -13,6 +14,21 @@ export const OTHER_MODEL_ID = "__other__";
 export const OTHER_MODEL_LABEL = "Другая…";
 export const MENU_BACK_LABEL = "← Назад";
 export const FILTER_NOTIFY = "Уточните фильтр";
+
+/** Near-fullscreen overlay options (session-replay canon). */
+export const MODEL_PICKER_OVERLAY_OPTIONS = {
+	overlay: true,
+	overlayOptions: {
+		width: "90%",
+		minWidth: 50,
+		maxHeight: "85%",
+		anchor: "center",
+		margin: 1,
+	},
+} as const;
+
+/** Append empty lines after root.render so overlay chrome has height (never prepend). */
+export const MODEL_PICKER_MIN_RENDER_LINES = 100;
 
 export type PickerModel = {
 	id: string;
@@ -69,6 +85,23 @@ export function interpretPick(v: unknown): "back" | "other" | { modelId: string 
 function matchSelectKey(kb: unknown, data: string, id: string): boolean {
 	const matches = (kb as { matches?: (d: string, key: string) => boolean } | undefined)?.matches;
 	return matches?.(data, id) === true;
+}
+
+function isPageKey(kb: unknown, data: string): boolean {
+	if (data === Key.pageUp || data === Key.pageDown) return true;
+	return (
+		matchSelectKey(kb, data, "tui.select.pageUp") || matchSelectKey(kb, data, "tui.select.pageDown")
+	);
+}
+
+function shouldSkipInput(kb: unknown, data: string): boolean {
+	if (data === "\r" || data === "\n" || data.startsWith("\x1b")) return true;
+	return (
+		matchSelectKey(kb, data, "tui.select.confirm") ||
+		matchSelectKey(kb, data, "tui.select.cancel") ||
+		matchSelectKey(kb, data, "tui.select.up") ||
+		matchSelectKey(kb, data, "tui.select.down")
+	);
 }
 
 function selectListTheme(theme: unknown): {
@@ -140,8 +173,6 @@ export async function runSearchableModelPicker(input: {
 		root.addChild(listContainer);
 
 		let prevQuery = "";
-		let items: SelectItem[] = [];
-		let selectedIndex = 0;
 		let list: InstanceType<typeof SelectList> | undefined;
 		let settled = false;
 		let focusedFlag = false;
@@ -162,9 +193,13 @@ export async function runSearchableModelPicker(input: {
 			];
 		};
 
-		const rebuild = (query: string, previousId?: string): void => {
-			items = buildItems(query);
+		const rebuild = (): void => {
+			const query = typeof searchInput.getValue === "function" ? searchInput.getValue() : "";
+			const items = buildItems(query);
+			const want = list?.getSelectedItem()?.value;
 			const next = new SelectList(items, MODEL_PICKER_VIEWPORT, selectListTheme(theme));
+			next.onSelect = (item: SelectItem) => finish(item.value);
+			next.onCancel = () => finish(null);
 			if (typeof (listContainer as { clear?: () => void }).clear === "function") {
 				(listContainer as { clear: () => void }).clear();
 			} else {
@@ -172,61 +207,50 @@ export async function runSearchableModelPicker(input: {
 				if (Array.isArray(children)) children.length = 0;
 			}
 			listContainer.addChild(next);
+			let idx = want != null ? items.findIndex((i) => i.value === want) : -1;
+			// Pin initial only on empty query when no prior selection.
+			if (query.trim() === "" && want == null && initial) {
+				idx = items.findIndex((i) => i.value === initial);
+			}
+			next.setSelectedIndex(idx >= 0 ? idx : 0);
 			list = next;
-			const want = previousId ?? (query.trim() === "" ? initial : undefined);
-			const idx = want ? items.findIndex((i) => i.value === want) : -1;
-			selectedIndex = idx >= 0 ? idx : 0;
-			list.setSelectedIndex(selectedIndex);
 		};
 
-		rebuild(typeof searchInput.getValue === "function" ? searchInput.getValue() : "", initial);
+		rebuild();
 
 		return {
-			render: (width: number) => root.render(width),
+			render: (width: number) => {
+				const lines = root.render(width);
+				while (lines.length < MODEL_PICKER_MIN_RENDER_LINES) {
+					lines.push("");
+				}
+				return lines;
+			},
 			invalidate: () => {
 				root.invalidate?.();
 			},
 			handleInput: (data: string) => {
 				if (settled) return;
-				if (matchSelectKey(keybindings, data, "tui.select.cancel")) {
+				try {
+					if (isPageKey(keybindings, data)) {
+						return;
+					}
+					list?.handleInput?.(data);
+					if (settled) return;
+					if (shouldSkipInput(keybindings, data)) {
+						if (!settled) requestRender();
+						return;
+					}
+					searchInput.handleInput?.(data);
+					const q = typeof searchInput.getValue === "function" ? searchInput.getValue() : "";
+					if (q !== prevQuery) {
+						prevQuery = q;
+						rebuild();
+					}
+					if (!settled) requestRender();
+				} catch {
+					// Path (b): runtime error inside returned handleInput → cancel without notify/rethrow.
 					finish(null);
-					return;
-				}
-				if (matchSelectKey(keybindings, data, "tui.select.confirm")) {
-					const item = items[selectedIndex];
-					if (!item) return;
-					finish(item.value);
-					return;
-				}
-				if (matchSelectKey(keybindings, data, "tui.select.up")) {
-					const len = items.length;
-					if (len === 0) return;
-					selectedIndex = (selectedIndex - 1 + len) % len;
-					list?.setSelectedIndex(selectedIndex);
-					requestRender();
-					return;
-				}
-				if (matchSelectKey(keybindings, data, "tui.select.down")) {
-					const len = items.length;
-					if (len === 0) return;
-					selectedIndex = (selectedIndex + 1) % len;
-					list?.setSelectedIndex(selectedIndex);
-					requestRender();
-					return;
-				}
-				if (
-					matchSelectKey(keybindings, data, "tui.select.pageUp") ||
-					matchSelectKey(keybindings, data, "tui.select.pageDown")
-				) {
-					return;
-				}
-				searchInput.handleInput?.(data);
-				const q = typeof searchInput.getValue === "function" ? searchInput.getValue() : "";
-				if (q !== prevQuery) {
-					const prevId = items[selectedIndex]?.value;
-					prevQuery = q;
-					rebuild(q, prevId);
-					requestRender();
 				}
 			},
 			get focused() {
@@ -237,5 +261,5 @@ export async function runSearchableModelPicker(input: {
 				searchInput.focused = value;
 			},
 		};
-	});
+	}, MODEL_PICKER_OVERLAY_OPTIONS);
 }
