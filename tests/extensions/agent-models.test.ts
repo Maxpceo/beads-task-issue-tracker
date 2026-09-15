@@ -4,21 +4,27 @@ import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  BACK_MODEL_ID,
   MENU_BACK,
   MENU_EXIT,
+  MODEL_PICKER_VIEWPORT,
+  UNBOUNDED_SELECT_MAX,
   appendModelArg,
   appendThinkingArg,
   buildListAvailableModelsFromContext,
   collectModelsFromRegistry,
   defaultAgentModelsConfig,
+  filterAvailableModels,
   formatCompactOverview,
   handleAgentModelsCommand,
   handleAgentModelsInvocation,
+  interpretPick,
   isThinkingSupported,
   listProjectAgents,
   listStaleAgentKeys,
   loadAgentModels,
   normalizeConfig,
+  pinThenCap,
   pushModelArg,
   pushThinkingArg,
   resolveAgentModel,
@@ -853,5 +859,347 @@ describe('menu / hasUI', () => {
       },
     })
     expect(sawLive).toBe(true)
+  })
+})
+
+function catalogModels(n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `prov/model-${String(i).padStart(3, '0')}`,
+    provider: 'prov',
+    modelId: `model-${String(i).padStart(3, '0')}`,
+    name: i === 35 ? 'Grok special' : undefined,
+  }))
+}
+
+describe('searchable model picker (khec)', () => {
+  it('exports viewport 12 and unbounded max 40', () => {
+    expect(MODEL_PICKER_VIEWPORT).toBe(12)
+    expect(UNBOUNDED_SELECT_MAX).toBe(40)
+    expect(BACK_MODEL_ID).toBe('__back__')
+    expect(BACK_MODEL_ID).not.toBe(MENU_BACK)
+  })
+
+  it('filterAvailableModels is case-insensitive substring on id/provider/name', () => {
+    const models = [
+      { id: 'xai/grok-4.5', provider: 'xai', modelId: 'grok-4.5', name: 'Grok' },
+      { id: 'anthropic/claude', provider: 'anthropic', modelId: 'claude' },
+      { id: 'openai/gpt', provider: 'openai', modelId: 'gpt' },
+    ]
+    expect(filterAvailableModels(models, '')).toHaveLength(3)
+    expect(filterAvailableModels(models, '  ')).toHaveLength(3)
+    expect(filterAvailableModels(models, 'Grok').map((m) => m.id)).toEqual(['xai/grok-4.5'])
+    expect(filterAvailableModels(models, 'anthropic').map((m) => m.id)).toEqual(['anthropic/claude'])
+    expect(filterAvailableModels(models, 'gpt').map((m) => m.id)).toEqual(['openai/gpt'])
+    expect(filterAvailableModels([{ id: 'bare' }], 'bare')).toHaveLength(1)
+  })
+
+  it('interpretPick treats null/undefined/BACK/MENU_BACK as back', () => {
+    expect(interpretPick(null)).toBe('back')
+    expect(interpretPick(undefined)).toBe('back')
+    expect(interpretPick(BACK_MODEL_ID)).toBe('back')
+    expect(interpretPick(MENU_BACK)).toBe('back')
+    expect(interpretPick('Другая…')).toBe('other')
+    expect(interpretPick('xai/grok-4.5')).toEqual({ modelId: 'xai/grok-4.5' })
+  })
+
+  it('pinThenCap keeps initial first when n>=40', () => {
+    const models = catalogModels(40)
+    const initial = 'prov/model-035'
+    const capped = pinThenCap(models, initial, 30)
+    expect(capped).toHaveLength(30)
+    expect(capped[0]?.id).toBe(initial)
+    expect(pinThenCap(catalogModels(39), initial, 30)).toHaveLength(39)
+  })
+
+  it('39 models no-input stay unbounded; 40 cap+notify', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let modelCount39 = 0
+    let modelCount40 = 0
+    const notes: string[] = []
+    const queue39 = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      (opts: string[]) => {
+        modelCount39 = opts.filter((o) => o.includes('prov/model-')).length
+        return MENU_BACK
+      },
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue39.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => catalogModels(39) },
+    )
+    expect(modelCount39).toBe(39)
+
+    const queue40 = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      (opts: string[]) => {
+        modelCount40 = opts.filter((o) => o.includes('prov/model-')).length
+        return MENU_BACK
+      },
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue40.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        notify: (m) => notes.push(m),
+      },
+      { listAvailableModels: async () => catalogModels(40) },
+    )
+    expect(modelCount40).toBe(30)
+    expect(notes.some((n) => n.includes('Уточните фильтр'))).toBe(true)
+  })
+
+  it('mode tui + custom factory invoked; rpc does not invoke custom', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let tuiCustom = 0
+    let rpcCustom = 0
+    const live = [{ id: 'xai/live-model', provider: 'xai', modelId: 'live-model' }]
+
+    const queueTui = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const tuiResult = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queueTui.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async () => {
+          tuiCustom += 1
+          return 'xai/live-model'
+        },
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => live, mode: 'tui' },
+    )
+    expect(tuiCustom).toBe(1)
+    expect(tuiResult.wrote).toBe(true)
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).classes.strong).toBe('xai/live-model')
+
+    const queueRpc = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      (opts: string[]) => opts.find((o) => o.includes('xai/live-model')) ?? MENU_BACK,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queueRpc.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async () => {
+          rpcCustom += 1
+          return 'should-not-run'
+        },
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => live, mode: 'rpc' },
+    )
+    expect(rpcCustom).toBe(0)
+  })
+
+  it('handleAgentModelsInvocation forwards mode tui to custom; missing mode skips custom', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let customCalls = 0
+    let step = 0
+    await handleAgentModelsInvocation('', {
+      cwd: root,
+      hasUI: true,
+      mode: 'tui',
+      ui: {
+        select: async (_t, options) => {
+          step += 1
+          if (step === 1) return 'Настроить мощность (class)'
+          if (step === 2) return options.find((o) => o.startsWith('strong ')) ?? options[0]
+          if (step === 3) return MENU_BACK
+          return MENU_EXIT
+        },
+        custom: async () => {
+          customCalls += 1
+          return 'xai/from-custom'
+        },
+        notify: () => undefined,
+      },
+      listAvailableModels: async () => [{ id: 'xai/from-custom', provider: 'xai', modelId: 'from-custom' }],
+    })
+    expect(customCalls).toBe(1)
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).classes.strong).toBe('xai/from-custom')
+
+    customCalls = 0
+    step = 0
+    await handleAgentModelsInvocation('', {
+      cwd: root,
+      hasUI: true,
+      ui: {
+        select: async (_t, options) => {
+          step += 1
+          if (step === 1) return 'Настроить мощность (class)'
+          if (step === 2) return options.find((o) => o.startsWith('cheap ')) ?? options[0]
+          if (step === 3) return MENU_BACK
+          return MENU_EXIT
+        },
+        custom: async () => {
+          customCalls += 1
+          return 'nope'
+        },
+        notify: () => undefined,
+      },
+      listAvailableModels: async () => [{ id: 'xai/from-custom', provider: 'xai', modelId: 'from-custom' }],
+    })
+    expect(customCalls).toBe(0)
+  })
+
+  it('custom undefined and BACK do not write; typing rebuilds via factory', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const live = catalogModels(5)
+    live[0] = { id: 'xai/grok-4.5', provider: 'xai', modelId: 'grok-4.5', name: 'Grok' }
+
+    const queueUndef = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      MENU_EXIT,
+    ]
+    const r1 = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queueUndef.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async () => undefined,
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => live, mode: 'tui' },
+    )
+    expect(r1.wrote).toBe(false)
+
+    const queueBack = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      MENU_EXIT,
+    ]
+    const r2 = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queueBack.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async () => BACK_MODEL_ID,
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => live, mode: 'tui' },
+    )
+    expect(r2.wrote).toBe(false)
+    expect(JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).classes.strong).toBe('xai/grok-4.5')
+
+    let renders = 0
+    let labelsAfterType: string[] = []
+    const queueFactory = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queueFactory.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        custom: async (factory) => {
+          let settled: unknown
+          const comp = factory(
+            { requestRender: () => { renders += 1 } },
+            { fg: (_c: string, t: string) => t },
+            {
+              matches: (data: string, id: string) => {
+                if (data === 'enter') return id === 'tui.select.confirm'
+                if (data === 'esc') return id === 'tui.select.cancel'
+                if (data === 'up') return id === 'tui.select.up'
+                if (data === 'down') return id === 'tui.select.down'
+                return false
+              },
+            },
+            (v) => { settled = v },
+          )
+          comp.focused = true
+          expect(comp.focused).toBe(true)
+          comp.handleInput?.('g')
+          labelsAfterType = comp.render(80)
+          comp.handleInput?.('esc')
+          return settled
+        },
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => live, mode: 'tui' },
+    )
+    expect(renders).toBeGreaterThan(0)
+    expect(labelsAfterType.join('\n')).toMatch(/grok/i)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+  })
+
+  it('has-input filter Esc does not write', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const queue = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null) ?? null
+        },
+        input: async () => null,
+        notify: () => undefined,
+      },
+      { listAvailableModels: async () => catalogModels(5) },
+    )
+    expect(result.wrote).toBe(false)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
   })
 })

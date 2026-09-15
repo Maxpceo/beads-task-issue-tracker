@@ -76,7 +76,55 @@ export class Spacer implements Component {
 export class Markdown extends Text {}
 
 export class Container implements Component {
-  private readonly children: Component[] = []
+  children: Component[] = []
   addChild(child: Component): void { this.children.push(child) }
+  removeChild(child: Component): void {
+    this.children = this.children.filter(c => c !== child)
+  }
+  clear(): void { this.children = [] }
+  invalidate(): void {}
   render(width: number): string[] { return this.children.flatMap(child => child.render(width)) }
+}
+
+export class Input implements Component {
+  focused = false
+  onSubmit?: (value: string) => void
+  onEscape?: () => void
+  private value = ''
+  constructor(_opts?: unknown) {}
+  getValue(): string { return this.value }
+  setValue(next: string): void { this.value = next }
+  handleInput(data: string): void {
+    if (data === '\x7f' || data === '\b') {
+      this.value = this.value.slice(0, -1)
+      return
+    }
+    if (data && data.length === 1 && data >= ' ') this.value += data
+  }
+  invalidate(): void {}
+  render(width: number): string[] { return [truncateToWidth(`> ${this.value}`, width, '')] }
+}
+
+export class SelectList implements Component {
+  items: Array<{ value?: string; label?: string }>
+  maxVisible: number
+  theme?: unknown
+  selectedIndex = 0
+  constructor(items: Array<{ value?: string; label?: string }>, maxVisible: number, theme?: unknown) {
+    this.items = items
+    this.maxVisible = maxVisible
+    this.theme = theme
+  }
+  setSelectedIndex(index: number): void {
+    const max = Math.max(0, this.items.length - 1)
+    this.selectedIndex = Math.min(Math.max(0, index), max)
+  }
+  getSelectedItem(): { value?: string; label?: string } | undefined {
+    return this.items[this.selectedIndex]
+  }
+  handleInput(_data: string): void {}
+  invalidate(): void {}
+  render(width: number): string[] {
+    return this.items.slice(0, this.maxVisible).map((item) => truncateToWidth(item.label ?? item.value ?? '', width, ''))
+  }
 }

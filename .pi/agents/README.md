@@ -34,6 +34,8 @@ Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`.
 
 **Primary UX:** `/agent-models` with **no args** opens an interactive menu (`ctx.ui.select` / model picker / thinking picker) when UI is available. Without UI (CI/headless host) the same empty invocation falls back to a text `show` dump — it never blocks on `select`.
 
+**Searchable compact picker:** when `ctx.mode === "tui"` and `ctx.ui.custom` exists, the model step is a compact searchable list (search `Input` + `SelectList` viewport 12, sibling `Text` «Фильтр моделей: »). Filter is case-insensitive substring on `id` / `provider` / `modelId` / `name` — **not** `SelectList.setFilter`. Always keep **Другая…** and **← Назад**. Cancel/Esc does not write JSON. RPC/json/print and missing `custom` use fallback: optional `ui.input("Фильтр моделей")`, then `select`; catalogs ≥ 40 models are capped at 30 + notify «Уточните фильтр». Handler forwards `ctx.mode` and `ctx.ui.custom` (must not strip them).
+
 **Menu IA (Russian-first root):**
 
 1. **Обзор** — compact human summary or raw dump («подробнее»)
