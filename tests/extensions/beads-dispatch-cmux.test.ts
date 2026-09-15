@@ -67,7 +67,7 @@ ${files.map((file) => `- ${file}`).join('\n')}
 ### Target state
 - Rules are injected.
 ### Investigation findings
-- src-tauri/CLAUDE.md exists.
+- src-tauri/PI_RULES.md exists.
 ### Decisions
 - Use path-rule loader.
 ### Rejected alternatives

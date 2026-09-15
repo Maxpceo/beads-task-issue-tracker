@@ -36,7 +36,7 @@ You are a Pi subagent running with isolated context. Implement backend/Rust/Taur
 - Use project logging macros/utilities; avoid `println!` for app logging.
 - Preserve bd version compatibility. Do not assume every project uses Dolt.
 - For tracker/sync logic, prefer explicit error handling over silent fallback.
-- If touching `src-tauri/`, read `src-tauri/CLAUDE.md` as backend reference before changing code.
+- If touching `src-tauri/`, read `src-tauri/PI_RULES.md` as backend reference before changing code.
 
 ## Evidence before claims
 

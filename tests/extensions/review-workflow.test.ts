@@ -67,7 +67,8 @@ describe('review_workflow scoped review', () => {
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true }, undefined, undefined, { cwd: process.cwd() })
 
     expect(result.content[0].text).toContain('PATH_RULES_LOADED:')
-    expect(result.content[0].text).toContain('--- src-tauri/CLAUDE.md')
+    expect(result.content[0].text).toContain('--- src-tauri/PI_RULES.md')
+    expect(result.content[0].text).not.toContain('--- src-tauri/CLAUDE.md')
     expect(result.details.pathRulesLoaded).toContain('# src-tauri/ — Rust backend')
   })
 

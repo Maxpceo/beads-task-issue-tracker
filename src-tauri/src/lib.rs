@@ -5810,7 +5810,7 @@ pub fn run() {
         .setup(|app| {
             // MCP server for AI-driven UI testing. Gated by the `dev-mcp` Cargo
             // feature — opens an IPC channel so Claude Code can drive the webview.
-            // See CLAUDE.md → "AI-Driven UI Testing".
+            // See src-tauri/PI_RULES.md → "AI-Driven UI Testing".
             //
             // We pin the socket path to literal `/tmp/tauri-mcp.sock` because the
             // npm bridge (`tauri-plugin-mcp-server`) hard-codes that path, while
