@@ -1122,8 +1122,25 @@ const OTHER_MODEL_LABEL = "Другая…";
 
 const ROOT_OVERVIEW = "overview";
 const ROOT_CLASS = "class-wizard";
+const ROOT_MEMBERSHIP = "class-membership";
 const ROOT_AGENT = "agent-wizard";
 const ROOT_CLEANUP = "cleanup";
+
+/** Agents currently mapped to `className` (includes stale JSON keys). */
+function listClassMembers(config: AgentModelsConfig, className: string): string[] {
+	return Object.entries(config.agentClasses)
+		.filter(([, mapped]) => mapped === className)
+		.map(([name]) => name)
+		.sort((a, b) => a.localeCompare(b));
+}
+
+function formatClassRoster(config: AgentModelsConfig, className: string): string {
+	const members = listClassMembers(config, className);
+	if (members.length === 0) return `Состав ${className} (${classDisplayLabel(className)}): (пусто)`;
+	const lines = [`Состав ${className} (${classDisplayLabel(className)}):`];
+	for (const name of members) lines.push(`  • ${name} — ${agentBadge(config, name)}`);
+	return lines.join("\n");
+}
 
 type NavPick = { type: "pick"; id: string } | { type: "back" } | { type: "exit" };
 
@@ -1423,6 +1440,121 @@ export async function runAgentModelsMenu(
 		}
 	};
 
+	const runClassMembershipWizard = async (): Promise<"root" | "exit"> => {
+		while (true) {
+			const { config } = reload();
+			const classes = Object.keys(config.classes).sort();
+			if (classes.length === 0) {
+				ui.notify?.("Нет classes в конфиге", "warning");
+				return "root";
+			}
+			const classPick = await selectWithNav(
+				ui,
+				"Состав class — выберите class",
+				classes.map((name) => {
+					const count = listClassMembers(config, name).length;
+					return {
+						id: name,
+						label: `${name} (${classDisplayLabel(name)}) — ${count} агент(ов)`,
+					};
+				}),
+				"nested",
+			);
+			if (classPick.type === "exit") return "exit";
+			if (classPick.type === "back") return "root";
+			const className = classPick.id;
+
+			while (true) {
+				const latest = reload().config;
+				ui.notify?.(formatClassRoster(latest, className), "info");
+				const action = await selectWithNav(
+					ui,
+					`Состав ${className} (${classDisplayLabel(className)})`,
+					[
+						{ id: "add", label: "Добавить" },
+						{ id: "remove", label: "Убрать (inherit)" },
+						{ id: "move", label: "Перекинуть" },
+					],
+					"nested",
+				);
+				if (action.type === "exit") return "exit";
+				if (action.type === "back") break;
+
+				const cfg = reload().config;
+
+				if (action.id === "add") {
+					const memberSet = new Set(listClassMembers(cfg, className));
+					const candidates = listKnownAgents(projectRoot, cfg).filter((name) => !memberSet.has(name));
+					if (candidates.length === 0) {
+						ui.notify?.("Нет кандидатов", "warning");
+						continue;
+					}
+					const agentPick = await selectWithNav(
+						ui,
+						`Добавить в ${className}`,
+						candidates.map((name) => ({ id: name, label: `${name} — ${agentBadge(cfg, name)}` })),
+						"nested",
+					);
+					if (agentPick.type !== "pick") continue;
+					cfg.agentClasses[agentPick.id] = className;
+					const p = save(cfg);
+					ui.notify?.(`set agent-class ${agentPick.id} → ${className}\nfile: ${p}`, "info");
+					continue;
+				}
+
+				if (action.id === "remove") {
+					const members = listClassMembers(cfg, className);
+					if (members.length === 0) {
+						ui.notify?.("Нет участников для удаления", "warning");
+						continue;
+					}
+					const agentPick = await selectWithNav(
+						ui,
+						`Убрать из ${className} (inherit)`,
+						members.map((name) => ({ id: name, label: `${name} — ${agentBadge(cfg, name)}` })),
+						"nested",
+					);
+					if (agentPick.type !== "pick") continue;
+					delete cfg.agentClasses[agentPick.id];
+					const p = save(cfg);
+					ui.notify?.(`unset agent-class ${agentPick.id}\nfile: ${p}`, "info");
+					continue;
+				}
+
+				if (action.id === "move") {
+					const members = listClassMembers(cfg, className);
+					if (members.length === 0) {
+						ui.notify?.("Нет участников для переноса", "warning");
+						continue;
+					}
+					const targets = Object.keys(cfg.classes).sort().filter((name) => name !== className);
+					if (targets.length === 0) {
+						ui.notify?.("Нет других classes для переноса", "warning");
+						continue;
+					}
+					const agentPick = await selectWithNav(
+						ui,
+						`Перекинуть из ${className}`,
+						members.map((name) => ({ id: name, label: `${name} — ${agentBadge(cfg, name)}` })),
+						"nested",
+					);
+					if (agentPick.type !== "pick") continue;
+					const targetPick = await selectWithNav(
+						ui,
+						`Куда перекинуть ${agentPick.id}`,
+						targets.map((name) => ({ id: name, label: `${name} (${classDisplayLabel(name)})` })),
+						"nested",
+					);
+					if (targetPick.type !== "pick") continue;
+					cfg.agentClasses[agentPick.id] = targetPick.id;
+					const p = save(cfg);
+					ui.notify?.(`set agent-class ${agentPick.id} → ${targetPick.id}\nfile: ${p}`, "info");
+					continue;
+				}
+			}
+		}
+	};
+
 	const runAgentWizard = async (): Promise<"root" | "exit"> => {
 		while (true) {
 			const { config } = reload();
@@ -1658,6 +1790,7 @@ export async function runAgentModelsMenu(
 			[
 				{ id: ROOT_OVERVIEW, label: "Обзор" },
 				{ id: ROOT_CLASS, label: "Настроить мощность (class)" },
+				{ id: ROOT_MEMBERSHIP, label: "Состав class" },
 				{ id: ROOT_AGENT, label: "Настроить агента" },
 				{ id: ROOT_CLEANUP, label: "Уборка" },
 			],
@@ -1670,6 +1803,7 @@ export async function runAgentModelsMenu(
 		let next: "root" | "exit" = "root";
 		if (root.id === ROOT_OVERVIEW) next = await runOverview();
 		else if (root.id === ROOT_CLASS) next = await runClassWizard();
+		else if (root.id === ROOT_MEMBERSHIP) next = await runClassMembershipWizard();
 		else if (root.id === ROOT_AGENT) next = await runAgentWizard();
 		else if (root.id === ROOT_CLEANUP) next = await runCleanup();
 
