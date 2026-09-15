@@ -232,6 +232,8 @@ Project-facing open-source text вроде `CHANGELOG.md`, `README.md`, release 
 
 Agent-created beads должны быть self-contained handoff packages. Будущая session должна иметь возможность implement или review задачу без истории чата.
 
+Первый `bd create` write = финальный cold-session пакет, а не черновик: всё, что creating session уже знает и что понадобится имплементеру, пишется в description сразу. Вопрос человека «хватит ли контекста?» не должен быть триггером полноты.
+
 Перед любым agent-created `bd create` (new issue, follow-up, discovered bug, split scope или documented work item) загрузи и примени `.pi/skills/create-bead/SKILL.md`. Hand-written `bd create` commands, пропускающие skill checklist, запрещены. Command должен сохранять description visible для Pi guards, обычно через inline heredoc внутри `--description`; не прячь его в shell variables, wrapper scripts или temp files.
 
 Required description sections для non-epic, non-exempt agent-created beads:
