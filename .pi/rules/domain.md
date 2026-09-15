@@ -27,7 +27,7 @@ These are Pi-native project domain rules. Shared codebase rules live in `.pi/rul
 - Use existing component primitives and accessible semantics; icon-only controls need labels.
 - Keyboard access, focus visibility, contrast, reduced motion, responsive layout, touch target size, and non-color-only states are review requirements.
 - Prefer Tailwind defaults and existing theme tokens; avoid arbitrary z-index, gradients, glow effects, and layout-property animation unless explicitly requested.
-- Pi frontend review uses the explicit Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo`; do not require undefined RAMS/WIG tools.
+- Pi frontend review uses the explicit Pi Frontend Review Checklist from `beads-task-issue-tracker-vzwo`.
 
 ## Frontend code organization
 
