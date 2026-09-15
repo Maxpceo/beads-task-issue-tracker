@@ -39,9 +39,10 @@ Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`.
 
 1. **Обзор** — compact human summary or raw dump («подробнее»)
 2. **Настроить мощность (class)** — class wizard: pick class → live model → filtered thinking (per-step save on confirm)
-3. **Настроить агента** — agent wizard with badges: class / model / thinking / clear actions
-4. **Уборка** — stale JSON keys (bulk delete requires confirm) and class-thinking reset
-5. **← Выход**
+3. **Состав class** — class-centric membership: pick class → notify roster (members of this class only, including stale keys) → Добавить / Убрать (inherit) / Перекинуть; bulk Add stays in the membership loop; writes only `agentClasses` on confirmed leaf; unset does not delete role model override
+4. **Настроить агента** — agent wizard with badges: class / model / thinking / clear actions
+5. **Уборка** — stale JSON keys (bulk delete requires confirm) and class-thinking reset
+6. **← Выход**
 
 **Back-nav:** every nested `select` includes **← Назад**. Nested Esc/null/`← Назад` returns to the previous screen. Root Esc/`← Выход` leaves the menu. Unconfirmed mid-step choices do **not** write JSON; a confirmed leaf step saves immediately.
 

@@ -796,6 +796,293 @@ describe('menu / hasUI', () => {
     expect(raw.agentClasses['brand-new-agent']).toBe('cheap')
   })
 
+  it('membership: bulk Add two unmapped agents without returning to root', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'alpha-md')
+    writeAgentMd(root, 'beta-md')
+    saveAgentModels(root, defaultAgentModelsConfig())
+    const notifications: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      'Добавить',
+      (opts) => opts.find((o) => o.startsWith('alpha-md')) ?? opts[0] ?? null,
+      'Добавить',
+      (opts) => opts.find((o) => o.startsWith('beta-md')) ?? opts[0] ?? null,
+      MENU_BACK, // actions → class pick
+      MENU_BACK, // class pick → root
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: (msg) => { notifications.push(msg) },
+    })
+    expect(result.wrote).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.agentClasses['alpha-md']).toBe('cheap')
+    expect(raw.agentClasses['beta-md']).toBe('cheap')
+    expect(notifications.some((n) => n.includes('Состав cheap'))).toBe(true)
+  })
+
+  it('membership: move member cheap → strong', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'mover')
+    const config = defaultAgentModelsConfig()
+    config.agentClasses.mover = 'cheap'
+    saveAgentModels(root, config)
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      'Перекинуть',
+      (opts) => opts.find((o) => o.startsWith('mover')) ?? opts[0] ?? null,
+      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      MENU_BACK,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: () => undefined,
+    })
+    expect(result.wrote).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.agentClasses.mover).toBe('strong')
+  })
+
+  it('membership: remove keeps role model override', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'keeper')
+    const config = defaultAgentModelsConfig()
+    config.agentClasses.keeper = 'standard'
+    config.roles.keeper = { model: 'provider/keep-me' }
+    saveAgentModels(root, config)
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('standard ')) ?? opts[0] ?? null,
+      'Убрать (inherit)',
+      (opts) => opts.find((o) => o.startsWith('keeper')) ?? opts[0] ?? null,
+      MENU_BACK,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: () => undefined,
+    })
+    expect(result.wrote).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.agentClasses.keeper).toBeUndefined()
+    expect(raw.roles.keeper).toEqual({ model: 'provider/keep-me' })
+  })
+
+  it('membership: Back without leaf does not write', async () => {
+    const root = tempProject()
+    temps.push(root)
+    const config = defaultAgentModelsConfig()
+    config.agentClasses.sample = 'cheap'
+    saveAgentModels(root, config)
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      'Добавить',
+      MENU_BACK, // leave candidate pick without write
+      'Перекинуть',
+      MENU_BACK, // leave member pick without write
+      MENU_BACK, // actions → class
+      MENU_BACK, // class → root
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: () => undefined,
+    })
+    expect(result.wrote).toBe(false)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+  })
+
+  it('membership: Add with no candidates notifies and does not write', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'only-one')
+    const config = defaultAgentModelsConfig()
+    config.agentClasses = { 'only-one': 'strong' }
+    // clear default mappings so known agents are only only-one
+    saveAgentModels(root, config)
+    const notifications: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      'Добавить',
+      // no select for candidates — stay on actions
+      MENU_BACK,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: (msg) => { notifications.push(msg) },
+    })
+    expect(result.wrote).toBe(false)
+    expect(notifications.some((n) => n.includes('Нет кандидатов'))).toBe(true)
+  })
+
+  it('membership: single class Move notifies and does not write', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'solo')
+    const config = defaultAgentModelsConfig()
+    config.classes = { only: 'xai/solo' }
+    config.classThinking = {}
+    config.agentClasses = { solo: 'only' }
+    config.roles = {}
+    saveAgentModels(root, config)
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const notifications: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('only ')) ?? opts[0] ?? null,
+      'Перекинуть',
+      MENU_BACK,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: (msg) => { notifications.push(msg) },
+    })
+    expect(result.wrote).toBe(false)
+    expect(notifications.some((n) => n.includes('Нет других classes'))).toBe(true)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+  })
+
+  it('membership: roster lists only this class members including stale', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'live-cheap')
+    writeAgentMd(root, 'other-strong')
+    const config = defaultAgentModelsConfig()
+    config.agentClasses = {
+      'live-cheap': 'cheap',
+      'stale-cheap': 'cheap',
+      'other-strong': 'strong',
+    }
+    saveAgentModels(root, config)
+    const notifications: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      MENU_BACK,
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: (msg) => { notifications.push(msg) },
+    })
+    const roster = notifications.find((n) => n.includes('Состав cheap'))
+    expect(roster).toBeTruthy()
+    expect(roster).toContain('live-cheap')
+    expect(roster).toContain('stale-cheap')
+    expect(roster).not.toContain('other-strong')
+  })
+
+  it('membership: empty classes map notifies and does not write', async () => {
+    const root = tempProject()
+    temps.push(root)
+    const config = defaultAgentModelsConfig()
+    config.classes = {}
+    config.classThinking = {}
+    config.agentClasses = {}
+    config.roles = {}
+    saveAgentModels(root, config)
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const notifications: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: (msg) => { notifications.push(msg) },
+    })
+    expect(result.wrote).toBe(false)
+    expect(notifications.some((n) => n.includes('Нет classes в конфиге'))).toBe(true)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+  })
+
+  it('membership: empty Remove notifies, no write, stays in actions', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    // default config has members; wipe agentClasses so cheap has none
+    const config = defaultAgentModelsConfig()
+    config.agentClasses = {}
+    saveAgentModels(root, config)
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const notifications: string[] = []
+    let sawActionsAgain = false
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Состав class',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
+      'Убрать (inherit)',
+      // after empty notify, next select should still be actions (Добавить/Убрать/Перекинуть)
+      (opts) => {
+        sawActionsAgain = opts.includes('Добавить') && opts.includes('Убрать (inherit)')
+        return MENU_BACK
+      },
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      notify: (msg) => { notifications.push(msg) },
+    })
+    expect(result.wrote).toBe(false)
+    expect(notifications.some((n) => n.includes('Нет участников для удаления'))).toBe(true)
+    expect(sawActionsAgain).toBe(true)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+  })
+
   it('stale bulk delete requires confirm', async () => {
     const root = tempProject()
     temps.push(root)
