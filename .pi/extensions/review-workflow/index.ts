@@ -544,11 +544,11 @@ function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<
 	const manual = checkResults.find((check) => check.result !== "N/A" && /^manual review$/i.test(check.command));
 	if (manual && /\bmanual\b|ручн/i.test(normalizedItem)) return manual;
 
-	const fullTest = findPassingCheck(checkResults, (command) => /^pnpm\s+test$/.test(command));
-	if (fullTest && /\bpnpm\b.*\btest\b/.test(normalizedItem)) return fullTest;
+	const fullTest = findPassingCheck(checkResults, (command) => /^pnpm\s+test$/.test(command) || /^pnpm\s+--dir\s+\S+\s+test$/.test(command));
+	if (fullTest && (/\bpnpm\b.*\btest\b/.test(normalizedItem) || /\bvitest\b/.test(normalizedItem))) return fullTest;
 
-	const vueTsc = findPassingCheck(checkResults, (command) => /^npx\s+vue-tsc\s+--noemit$/.test(command.replace(/--no-?emit/g, "--noemit")));
-	if (vueTsc && /\bnpx\b.*\bvue-tsc\b.*--no-?emit\b/i.test(normalizedItem)) return vueTsc;
+	const vueTsc = findPassingCheck(checkResults, (command) => /^npx\s+vue-tsc\s+--noemit$/.test(command.replace(/--no-?emit/g, "--noemit")) || /vue-tsc\s+--noemit/.test(command.replace(/--no-?emit/g, "--noemit")));
+	if (vueTsc && /\b(npx\b.*)?\bvue-tsc\b.*--no-?emit\b/i.test(normalizedItem)) return vueTsc;
 
 	if (fullTest && /\b(test assertions?|regression|matrix|execcalls|accepted\/close|write failure|order|fail|not run)\b/i.test(item)) return fullTest;
 	return undefined;
@@ -664,7 +664,161 @@ function evaluateGitDiffClaudeConstraint(changedFiles: string[]): MatrixCheckEvi
 	return { command, exitCode: 0, output, result: "PASS" };
 }
 
-function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; frontendChecklist: string[]; changedFiles: string[]; supervisorArtifact: SupervisorArtifactEvidence; comments?: string }): { text: string; rows: AcceptanceMatrixRow[]; blockingRows: AcceptanceMatrixRow[] } {
+const UNSAFE_SHELL_META = /[;|&`$()]/;
+const NON_EXECUTABLE_VERIFICATION_REASON = "N/A: not gate-executable verification; use Acceptance criteria or IMPLEMENTATION evidence";
+
+type AllowlistExec = (command: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
+
+function extractVerificationCommand(item: string): string | undefined {
+	const backtick = item.match(/`([^`]+)`/)?.[1]?.trim();
+	if (backtick) return backtick;
+	const leading = item.match(/^\s*((?:pnpm|npx|vitest|cargo|git|rg|grep|bd)\b[^.]*)/i)?.[1]?.trim();
+	return leading || undefined;
+}
+
+function splitCommandArgs(command: string): string[] {
+	const args: string[] = [];
+	const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+	for (const match of command.matchAll(re)) {
+		args.push(match[1] ?? match[2] ?? match[3] ?? "");
+	}
+	return args.filter((arg) => arg.length > 0);
+}
+
+function formatCommandArgv(argv: string[]): string {
+	return argv
+		.map((arg) => (/[\s"']/.test(arg) ? `"${arg.replace(/"/g, "\\\"")}"` : arg))
+		.join(" ");
+}
+
+function isPathInsideCwd(candidate: string, cwd: string): boolean {
+	const resolved = path.isAbsolute(candidate) ? path.normalize(candidate) : path.normalize(path.join(cwd, candidate));
+	const root = path.normalize(cwd.endsWith(path.sep) ? cwd : `${cwd}${path.sep}`);
+	const normalizedResolved = resolved.endsWith(path.sep) ? resolved : `${resolved}${path.sep}`;
+	return resolved === path.normalize(cwd) || normalizedResolved.startsWith(root) || resolved.startsWith(path.normalize(cwd) + path.sep);
+}
+
+function isNonExecutableVerification(item: string): boolean {
+	if (extractVerificationCommand(item)) return false;
+	const normalized = normalizeVerificationText(item);
+	if (/code review\s*:\s*approved/.test(normalized)) return true;
+	if (/\bmanual\b|ручн|\blive\b|behavioral smoke|\bobserve\b|no requirement|fixture assertions/.test(normalized)) return true;
+	return !/^\s*[`$]?\s*(pnpm|npx|vitest|cargo|git|rg|grep|bd)\b/i.test(item);
+}
+
+function parseSafeRgOrGrep(command: string, cwd: string): { argv: string[] } | "unsafe" | null {
+	const trimmed = command.trim();
+	if (!/^(rg|grep)\b/i.test(trimmed)) return null;
+	if (UNSAFE_SHELL_META.test(trimmed)) return "unsafe";
+	const argv = splitCommandArgs(trimmed);
+	if (argv.length < 2) return "unsafe";
+	const binary = argv[0]?.toLowerCase();
+	if (binary !== "rg" && binary !== "grep") return "unsafe";
+	const operands = argv.slice(1);
+	// Require at least one path-like operand after the pattern; reject absolute escapes outside cwd.
+	const pathOperands = operands.filter((op, index) => index > 0 || !op.startsWith("-"));
+	// Heuristic: last non-flag tokens that look like paths must stay inside cwd.
+	for (const op of operands) {
+		if (op.startsWith("-")) continue;
+		if (op.includes("/") || op.includes(".") || op.endsWith(".ts") || op.endsWith(".md") || op.endsWith(".vue")) {
+			if (!isPathInsideCwd(op, cwd)) return "unsafe";
+		}
+	}
+	if (pathOperands.length === 0) return "unsafe";
+	return { argv };
+}
+
+function parseSafeGitDiffCheck(command: string, cwd: string, startCommit?: string, endCommit?: string): { argv: string[] } | "unsafe" | null {
+	const trimmed = command.trim();
+	const normalized = normalizeVerificationText(trimmed);
+	if (!(/\bgit\b/.test(normalized) && /\bdiff\b/.test(normalized) && /--check\b/.test(normalized))) return null;
+	if (UNSAFE_SHELL_META.test(trimmed)) return "unsafe";
+	const argv = splitCommandArgs(trimmed);
+	if ((argv[0] ?? "").toLowerCase() !== "git") return "unsafe";
+	// Prefer explicit range from bullet; else inject review start..end when available.
+	const hasRange = argv.some((arg) => /\.\./.test(arg));
+	const out = ["-C", cwd, ...argv.slice(1)];
+	if (!hasRange && startCommit && endCommit) {
+		const checkIdx = out.findIndex((arg) => arg === "--check");
+		if (checkIdx >= 0) out.splice(checkIdx + 1, 0, `${startCommit}..${endCommit}`);
+		else out.push("--check", `${startCommit}..${endCommit}`);
+	}
+	// Validate path operands after --
+	let afterDashDash = false;
+	for (const arg of out) {
+		if (arg === "--") {
+			afterDashDash = true;
+			continue;
+		}
+		if (afterDashDash || (/\//.test(arg) && !arg.includes("..") && arg !== "-C" && arg !== cwd)) {
+			if (arg === "-C" || arg === cwd || arg === "--check" || /\.\./.test(arg) || arg.startsWith("-")) continue;
+			if (!isPathInsideCwd(arg, cwd)) return "unsafe";
+		}
+	}
+	return { argv: ["git", ...out] };
+}
+
+async function executeAllowlistVerification(
+	item: string,
+	params: { cwd: string; startCommit?: string; endCommit?: string; exec: AllowlistExec },
+): Promise<MatrixCheckEvidence | "non-executable" | "unresolved"> {
+	if (isNonExecutableVerification(item)) return "non-executable";
+	const commandText = extractVerificationCommand(item);
+	if (!commandText) return "non-executable";
+	if (UNSAFE_SHELL_META.test(commandText)) {
+		return { command: commandText, output: "unsafe verification command (shell metacharacters)", result: "NOT RUN" };
+	}
+
+	const rg = parseSafeRgOrGrep(commandText, params.cwd);
+	if (rg === "unsafe") {
+		return { command: commandText, output: "unsafe rg/grep verification (paths or metachar)", result: "NOT RUN" };
+	}
+	if (rg) {
+		const binary = rg.argv[0] ?? "rg";
+		const args = rg.argv.slice(1);
+		const ran = await params.exec(binary, args);
+		const output = `${ran.stdout}\n${ran.stderr}`.trim();
+		return {
+			command: formatCommandArgv(rg.argv),
+			exitCode: ran.code,
+			output: output || `rg/grep exit ${ran.code}`,
+			result: ran.code === 0 ? "PASS" : "FAIL",
+		};
+	}
+
+	const diffCheck = parseSafeGitDiffCheck(commandText, params.cwd, params.startCommit, params.endCommit);
+	if (diffCheck === "unsafe") {
+		return { command: commandText, output: "unsafe git diff --check verification", result: "NOT RUN" };
+	}
+	if (diffCheck) {
+		const binary = diffCheck.argv[0] ?? "git";
+		const args = diffCheck.argv.slice(1);
+		const ran = await params.exec(binary, args);
+		const output = `${ran.stdout}\n${ran.stderr}`.trim();
+		return {
+			command: formatCommandArgv([binary, ...args]),
+			exitCode: ran.code,
+			output: output || `git diff --check exit ${ran.code}`,
+			result: ran.code === 0 ? "PASS" : "FAIL",
+		};
+	}
+
+	// Known suite commands without matching automatedChecks stay unresolved (NOT RUN unless matched later).
+	return "unresolved";
+}
+
+async function buildAcceptanceMatrix(params: {
+	bead: any;
+	automatedChecks: string[];
+	frontendChecklist: string[];
+	changedFiles: string[];
+	supervisorArtifact: SupervisorArtifactEvidence;
+	comments?: string;
+	reviewCwd?: string;
+	startCommit?: string;
+	endCommit?: string;
+	execAllowlist?: AllowlistExec;
+}): Promise<{ text: string; rows: AcceptanceMatrixRow[]; blockingRows: AcceptanceMatrixRow[] }> {
 	const description = typeof params.bead.description === "string" ? params.bead.description : "";
 	const acceptanceItems = extractSectionBullets(description, ["Acceptance criteria", "Acceptance"]);
 	const verificationItems = extractSectionBullets(description, ["Verification / acceptance checks", "Verification", "Acceptance checks"]);
@@ -699,13 +853,41 @@ function buildAcceptanceMatrix(params: { bead: any; automatedChecks: string[]; f
 			});
 			continue;
 		}
+		// Non-command observational bullets never inherit supervisor PASS and never block close.
+		if (isNonExecutableVerification(item)) {
+			rows.push({
+				item,
+				evidence: NON_EXECUTABLE_VERIFICATION_REASON,
+				result: "N/A",
+			});
+			continue;
+		}
+
 		const matching = matchingVerificationCheck(item, checkResults);
 		const fallback = checkResults.length === 1 && checkResults[0]?.result !== "N/A" ? checkResults[0] : undefined;
-		const check = matching ?? fallback;
-		const conditionalEvidence = check ? undefined : conditionalNaEvidence(item, evidenceBlock, params.changedFiles);
+		let check = matching ?? fallback;
+		let conditionalEvidence = check ? undefined : conditionalNaEvidence(item, evidenceBlock, params.changedFiles);
+
+		if (!check && !conditionalEvidence && params.execAllowlist && params.reviewCwd) {
+			const allowlisted = await executeAllowlistVerification(item, {
+				cwd: params.reviewCwd,
+				startCommit: params.startCommit,
+				endCommit: params.endCommit,
+				exec: params.execAllowlist,
+			});
+			if (allowlisted === "non-executable") {
+				conditionalEvidence = NON_EXECUTABLE_VERIFICATION_REASON;
+			} else if (allowlisted !== "unresolved") {
+				check = allowlisted;
+			}
+		}
+
 		rows.push({
 			item,
-			evidence: check ? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}` : conditionalEvidence ?? `Required verification evidence missing: no applicable automated check or supervisor artifact output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`,
+			evidence: check
+				? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}`
+				: conditionalEvidence
+					?? `Required verification evidence missing: no applicable automated check or supervisor artifact output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`,
 			result: check ? check.result : conditionalEvidence ? "N/A" : "NOT RUN",
 		});
 	}
@@ -1465,7 +1647,21 @@ Artifact evidence may be cited in acceptance matrix, but it is not acceptance by
 					if (isReviewApproved(reviewer.output)) {
 						await exec(pi, "bd", ["comments", "add", params.beadId, `CODE REVIEW: APPROVED\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\n${supervisorArtifact.evidence}\n\nreview_bead evidence:\n${automatedChecks.join("\n\n")}\n\n${frontendChecklist.length > 0 ? `FRONTEND REVIEW CHECKLIST:\n- ${frontendChecklist.join("\n- ")}` : "FRONTEND REVIEW CHECKLIST: not applicable"}`]);
 						await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
-						const matrix = buildAcceptanceMatrix({ bead, automatedChecks, frontendChecklist, changedFiles, supervisorArtifact, comments });
+						const matrix = await buildAcceptanceMatrix({
+							bead,
+							automatedChecks,
+							frontendChecklist,
+							changedFiles,
+							supervisorArtifact,
+							comments,
+							reviewCwd,
+							startCommit,
+							endCommit,
+							execAllowlist: async (command, args) => {
+								const ran = await exec(pi, command, args);
+								return { stdout: ran.stdout, stderr: ran.stderr, code: ran.code ?? 1 };
+							},
+						});
 						await execRequired(pi, "bd", ["comments", "add", params.beadId, matrix.text]);
 						if (matrix.blockingRows.length > 0) {
 							throw new Error(`review_bead blocked accepted/close: ACCEPTANCE MATRIX contains blocking rows (${matrix.blockingRows.map((row) => row.result).join(", ")}). Fix failed/missing checks or record an explicit human override before closing.`);
