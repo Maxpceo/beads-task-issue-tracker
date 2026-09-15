@@ -4,11 +4,16 @@ import * as path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  MENU_BACK,
+  MENU_EXIT,
   appendModelArg,
   appendThinkingArg,
+  buildListAvailableModelsFromContext,
   defaultAgentModelsConfig,
+  formatCompactOverview,
   handleAgentModelsCommand,
   handleAgentModelsInvocation,
+  isThinkingSupported,
   listProjectAgents,
   listStaleAgentKeys,
   loadAgentModels,
@@ -17,8 +22,10 @@ import {
   pushThinkingArg,
   resolveAgentModel,
   resolveAgentModelFromCwd,
+  resolveModelCatalog,
   runAgentModelsMenu,
   saveAgentModels,
+  supportedThinkingLevels,
 } from '../../.pi/extensions/agent-models/index'
 
 function tempProject(): string {
@@ -359,6 +366,104 @@ describe('load/save + command roundtrip', () => {
   })
 })
 
+describe('supportedThinkingLevels (Pi-canon)', () => {
+  it('!reasoning → only off', () => {
+    expect(supportedThinkingLevels({ reasoning: false })).toEqual(['off'])
+  })
+
+  it('no map → off..high (no xhigh/max)', () => {
+    expect(supportedThinkingLevels({ reasoning: true })).toEqual([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+    ])
+    expect(supportedThinkingLevels(undefined)).toEqual([
+      'off',
+      'minimal',
+      'low',
+      'medium',
+      'high',
+    ])
+  })
+
+  it('map null hides; string shows; omitted standard shows; omitted xhigh/max hide', () => {
+    const levels = supportedThinkingLevels({
+      reasoning: true,
+      thinkingLevelMap: {
+        off: null,
+        low: 'LOW',
+        high: 'HIGH',
+        max: 'MAX',
+      },
+    })
+    expect(levels).toEqual(['minimal', 'low', 'medium', 'high', 'max'])
+    expect(isThinkingSupported('off', { reasoning: true, thinkingLevelMap: { off: null } })).toBe(false)
+    expect(isThinkingSupported('xhigh', { reasoning: true, thinkingLevelMap: { max: 'MAX' } })).toBe(false)
+  })
+})
+
+describe('resolveModelCatalog / listAvailableModels', () => {
+  it('uses live catalog when listAvailableModels returns models', async () => {
+    const config = defaultAgentModelsConfig()
+    const result = await resolveModelCatalog(config, async () => [
+      {
+        id: 'xai/grok-live',
+        provider: 'xai',
+        modelId: 'grok-live',
+        reasoning: true,
+        thinkingLevelMap: { high: 'high' },
+      },
+    ])
+    expect(result.source).toBe('live')
+    expect(result.models.map((m) => m.id)).toEqual(['xai/grok-live'])
+  })
+
+  it('falls back on timeout', async () => {
+    const config = defaultAgentModelsConfig()
+    const result = await resolveModelCatalog(
+      config,
+      () => new Promise(() => {
+        /* hang */
+      }),
+      20,
+    )
+    expect(result.source).toBe('fallback')
+    expect(result.models.some((m) => m.id === 'xai/grok-4.5')).toBe(true)
+  })
+
+  it('falls back when registry missing / empty live list', async () => {
+    const config = defaultAgentModelsConfig()
+    const empty = await resolveModelCatalog(config, async () => [])
+    expect(empty.source).toBe('fallback')
+    const missing = await resolveModelCatalog(config, undefined)
+    expect(missing.source).toBe('fallback')
+  })
+
+  it('buildListAvailableModelsFromContext prefers scopedModels then registry', async () => {
+    const fromScoped = buildListAvailableModelsFromContext({
+      scopedModels: [{ model: { provider: 'openai', id: 'gpt-test', reasoning: true } }],
+      modelRegistry: {
+        getAvailable: () => [{ provider: 'xai', id: 'ignored' }],
+      },
+    })
+    expect(fromScoped).toBeTypeOf('function')
+    const scoped = await fromScoped!(defaultAgentModelsConfig())
+    expect(scoped.map((m) => m.id)).toEqual(['openai/gpt-test'])
+
+    const fromRegistry = buildListAvailableModelsFromContext({
+      modelRegistry: {
+        getAvailable: () => [{ provider: 'xai', id: 'grok-reg', reasoning: false }],
+      },
+    })
+    const reg = await fromRegistry!(defaultAgentModelsConfig())
+    expect(reg.map((m) => m.id)).toEqual(['xai/grok-reg'])
+
+    expect(buildListAvailableModelsFromContext({})).toBeUndefined()
+  })
+})
+
 describe('menu / hasUI', () => {
   it('empty args + !hasUI → show text, select not called', async () => {
     const root = tempProject()
@@ -414,23 +519,293 @@ describe('menu / hasUI', () => {
     expect(after).toBe(before)
   })
 
-  it('happy path assign agent-class via menu writes JSON', async () => {
+  it('nested Back/Esc returns previous without write; root Exit leaves', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    const before = fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')
+    const titles: string[] = []
+    const queue = [
+      'Настроить мощность (class)', // root
+      MENU_BACK, // nested class list → root
+      'Настроить агента',
+      null, // Esc nested agent list → root
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (title, options) => {
+        titles.push(title)
+        expect(options.includes(MENU_BACK) || options.includes(MENU_EXIT)).toBe(true)
+        return queue.shift() ?? null
+      },
+      notify: () => undefined,
+    })
+    expect(result.wrote).toBe(false)
+    expect(result.cancelled).toBe(true)
+    expect(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8')).toBe(before)
+    expect(titles.some((t) => t.includes('Мощность'))).toBe(true)
+  })
+
+  it('live catalog appears in model picker; Другая remains', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let modelOptions: string[] = []
+    const queue = [
+      'Настроить мощность (class)',
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0],
+      (opts: string[]) => {
+        modelOptions = opts
+        return opts.find((o) => o.includes('xai/live-model')) ?? null
+      },
+      // after model save, thinking step — back out of orphan/thinking if shown, then exit
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_title, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null | undefined) ?? null
+        },
+        notify: () => undefined,
+      },
+      {
+        listAvailableModels: async () => [
+          { id: 'xai/live-model', provider: 'xai', modelId: 'live-model', reasoning: true },
+        ],
+      },
+    )
+    expect(modelOptions.some((o) => o.includes('xai/live-model'))).toBe(true)
+    expect(modelOptions).toContain('Другая…')
+    expect(modelOptions).toContain(MENU_BACK)
+    expect(result.wrote).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.classes.strong).toBe('xai/live-model')
+  })
+
+  it('catalog timeout falls back without hang', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let sawFallbackModel = false
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Настроить мощность (class)',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0],
+      (opts) => {
+        sawFallbackModel = opts.some((o) => o.includes('xai/grok-4.5'))
+        return MENU_BACK
+      },
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return next ?? null
+        },
+        notify: () => undefined,
+      },
+      {
+        catalogTimeoutMs: 30,
+        listAvailableModels: () => new Promise(() => {
+          /* hang */
+        }),
+      },
+    )
+    expect(sawFallbackModel).toBe(true)
+  })
+
+  it('thinking picker filters by model map; unsupported not listed', async () => {
+    const root = tempProject()
+    temps.push(root)
+    const config = defaultAgentModelsConfig()
+    config.classes.strong = 'xai/limited'
+    saveAgentModels(root, config)
+    let thinkingOptions: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Настроить мощность (class)',
+      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0],
+      (opts) => opts.find((o) => o.includes('xai/limited')) ?? opts[0],
+      (opts) => {
+        thinkingOptions = opts
+        return opts.find((o) => o === 'low') ?? MENU_BACK
+      },
+      MENU_EXIT,
+    ]
+    await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return next ?? null
+        },
+        notify: () => undefined,
+      },
+      {
+        listAvailableModels: async () => [
+          {
+            id: 'xai/limited',
+            provider: 'xai',
+            modelId: 'limited',
+            reasoning: true,
+            thinkingLevelMap: { off: null, low: 'low', high: 'high' },
+          },
+        ],
+      },
+    )
+    expect(thinkingOptions).toContain('low')
+    expect(thinkingOptions).toContain('high')
+    expect(thinkingOptions).toContain('minimal') // omitted standard still shown
+    expect(thinkingOptions.some((o) => o.startsWith('off'))).toBe(false)
+    expect(thinkingOptions).not.toContain('xhigh')
+    expect(thinkingOptions).not.toContain('max')
+    expect(thinkingOptions).toContain(MENU_BACK)
+  })
+
+  it('model-change orphan thinking warns and can clear', async () => {
+    const root = tempProject()
+    temps.push(root)
+    const config = defaultAgentModelsConfig()
+    config.classes.strong = 'xai/old'
+    config.classThinking = { strong: 'medium' }
+    saveAgentModels(root, config)
+    const notifications: string[] = []
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Настроить мощность (class)',
+      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0],
+      (opts) => opts.find((o) => o.includes('xai/no-reason')) ?? opts[0],
+      // orphan prompt
+      (opts) => opts.find((o) => o.includes('Сбросить')) ?? opts[0],
+      // thinking after clear path still offered — inherit
+      (opts) => opts.find((o) => o.includes('inherit')) ?? MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_t, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return next ?? null
+        },
+        notify: (msg) => {
+          notifications.push(msg)
+        },
+      },
+      {
+        listAvailableModels: async () => [
+          { id: 'xai/no-reason', provider: 'xai', modelId: 'no-reason', reasoning: false },
+        ],
+      },
+    )
+    expect(result.wrote).toBe(true)
+    expect(notifications.some((n) => /не поддерживается|неподдерживается|Orphan|medium/i.test(n))).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.classes.strong).toBe('xai/no-reason')
+    expect(raw.classThinking?.strong).toBeUndefined()
+  })
+
+  it('happy path assign agent-class via agent wizard writes JSON', async () => {
     const root = tempProject()
     temps.push(root)
     writeAgentMd(root, 'brand-new-agent')
     saveAgentModels(root, defaultAgentModelsConfig())
-    const queue = [
-      'Назначить agent → class',
-      'brand-new-agent — inherit (unmapped)',
-      'cheap (Дешёвая)',
-      null,
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Настроить агента',
+      (opts) => opts.find((o) => o.startsWith('brand-new-agent')) ?? opts[0],
+      'Назначить class (strong/standard/cheap)',
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0],
+      MENU_BACK, // back to agent list
+      MENU_BACK, // back to root
+      MENU_EXIT,
     ]
     const result = await runAgentModelsMenu(root, {
-      select: async () => queue.shift() ?? null,
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
       notify: () => undefined,
     })
     expect(result.wrote).toBe(true)
     const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
     expect(raw.agentClasses['brand-new-agent']).toBe('cheap')
+  })
+
+  it('stale bulk delete requires confirm', async () => {
+    const root = tempProject()
+    temps.push(root)
+    writeAgentMd(root, 'only-md')
+    const config = defaultAgentModelsConfig()
+    config.agentClasses['ghost-stale'] = 'standard'
+    config.agentClasses['ghost-two'] = 'cheap'
+    saveAgentModels(root, config)
+    let confirmed = false
+    const queue: Array<string | null | ((opts: string[]) => string | null)> = [
+      'Уборка',
+      'Убрать stale JSON keys',
+      'Удалить все stale',
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(root, {
+      select: async (_t, options) => {
+        const next = queue.shift()
+        if (typeof next === 'function') return next(options)
+        return next ?? null
+      },
+      confirm: async () => {
+        confirmed = true
+        return true
+      },
+      notify: () => undefined,
+    })
+    expect(confirmed).toBe(true)
+    expect(result.wrote).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.agentClasses['ghost-stale']).toBeUndefined()
+    expect(raw.agentClasses['ghost-two']).toBeUndefined()
+  })
+
+  it('compact overview is human-readable', () => {
+    const config = defaultAgentModelsConfig()
+    const text = formatCompactOverview(config)
+    expect(text).toContain('Обзор agent-models')
+    expect(text).toContain('Мощность')
+    expect(text).toContain('strong')
+  })
+
+  it('forwards modelRegistry into invocation menu path', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let sawLive = false
+    let step = 0
+    await handleAgentModelsInvocation('', {
+      cwd: root,
+      hasUI: true,
+      modelRegistry: {
+        getAvailable: () => [{ provider: 'xai', id: 'from-registry', reasoning: true }],
+      },
+      ui: {
+        select: async (_t, options) => {
+          step += 1
+          if (step === 1) return 'Настроить мощность (class)'
+          if (step === 2) return options.find((o) => o.startsWith('standard ')) ?? options[0]
+          if (step === 3) {
+            sawLive = options.some((o) => o.includes('xai/from-registry'))
+            return MENU_BACK
+          }
+          return MENU_EXIT
+        },
+        notify: () => undefined,
+      },
+    })
+    expect(sawLive).toBe(true)
   })
 })

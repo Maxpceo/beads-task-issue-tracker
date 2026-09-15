@@ -34,6 +34,27 @@ Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`.
 
 **Primary UX:** `/agent-models` with **no args** opens an interactive menu (`ctx.ui.select` / model picker / thinking picker) when UI is available. Without UI (CI/headless host) the same empty invocation falls back to a text `show` dump — it never blocks on `select`.
 
+**Menu IA (Russian-first root):**
+
+1. **Обзор** — compact human summary or raw dump («подробнее»)
+2. **Настроить мощность (class)** — class wizard: pick class → live model → filtered thinking (per-step save on confirm)
+3. **Настроить агента** — agent wizard with badges: class / model / thinking / clear actions
+4. **Уборка** — stale JSON keys (bulk delete requires confirm) and class-thinking reset
+5. **← Выход**
+
+**Back-nav:** every nested `select` includes **← Назад**. Nested Esc/null/`← Назад` returns to the previous screen. Root Esc/`← Выход` leaves the menu. Unconfirmed mid-step choices do **not** write JSON; a confirmed leaf step saves immediately.
+
+**Live model catalog:** the model picker prefers non-empty `ctx.scopedModels`, else `ctx.modelRegistry.getAvailable()` (via injectable `listAvailableModels`, with timeout/catch). Ids are `provider/id`. When the registry is missing, empty, throws, or times out, the menu falls back to models already present in `.pi/agent-models.json` plus **Другая…** free-text. Handler **forwards** `modelRegistry` / `scopedModels` and must not strip them.
+
+**Thinking filter (Pi-canon `thinkingLevelMap`, mirror of `getSupportedThinkingLevels`):**
+
+- `reasoning === false` → only `off`
+- no map → `off..high` (`xhigh`/`max` hidden)
+- map value `null` → hide level; string → show; omitted standard levels still show; omitted `xhigh`/`max` stay hidden
+- free-text / unknown model → default `off..high`
+- menu **blocks** unsupported levels; after a model change, if stored thinking is unsupported the menu **warns** and offers reset/repick
+- CLI still accepts the full Pi enum only (no registry filter on CLI path)
+
 **Discovery:** menu/show list agents from a filesystem scan of project `.pi/agents/*.md` (skip `README.md`), unioned with keys already in `agentClasses` / `roles`. A new `foo.md` is visible immediately as **unmapped → session inherit** with an assign action; creating the file does **not** auto-write `agentClasses`. Stale JSON keys (no matching `.md`) are shown and can be removed. Visible cmux and headless use the **same** policy per agent name.
 
 **Model resolve** when spawning a child Pi process (`dispatch_supervisor` / `dispatch_reviewer` headless+cmux, `review_bead`, `subagent` / `plan_subagent`):
@@ -48,7 +69,7 @@ Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`.
 2. else `classThinking[agentClasses[agent]]` — per-class thinking
 3. else **session inherit** — do **not** pass `--thinking`
 
-Important: explicit **`off` ≠ inherit**. Inherit omits the flag (child uses session/default thinking). Explicit `off` passes `--thinking off`. Menu label «как у class/сессии» is inherit, not `off`.
+Important: explicit **`off` ≠ inherit**. Inherit omits the flag (child uses session/default thinking). Explicit `off` passes `--thinking off`. Menu label «как у class/сессии» is inherit, not `off`. Spawn remains pass-through for stored levels (menu-time validation preferred over spawn clamp).
 
 Empty string model ids and missing/invalid JSON are treated as inherit for spawn (spawn does not fail solely because the file is absent). Mutating commands require a valid project `.pi/` and reject unknown class names on `set agent-class` / `set class-thinking`. Role `set`/`unset` **merge** fields: setting model preserves thinking and vice versa; unsetting one field keeps the other; empty role entry is deleted.
 

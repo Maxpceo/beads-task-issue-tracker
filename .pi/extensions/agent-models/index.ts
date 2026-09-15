@@ -537,10 +537,46 @@ type CommandUi = {
 	confirm?: (title: string, message: string) => Promise<boolean>;
 };
 
+/** Model entry for live catalog / thinking filter (provider/id + optional Pi meta). */
+export type AvailableModelInfo = {
+	/** Canonical id `provider/modelId` (or bare id when provider unknown). */
+	id: string;
+	provider?: string;
+	modelId?: string;
+	name?: string;
+	reasoning?: boolean;
+	thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+};
+
+export type ListAvailableModelsFn = (
+	config: AgentModelsConfig,
+) => AvailableModelInfo[] | Promise<AvailableModelInfo[]>;
+
+/** Minimal model meta for Pi-canon thinking filter. */
+export type ThinkingModelMeta = {
+	reasoning?: boolean;
+	thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+};
+
+export type ModelRegistryLike = {
+	getAvailable?: () => unknown;
+};
+
+export type ScopedModelLike = {
+	model?: unknown;
+	thinkingLevel?: string;
+};
+
 export type AgentModelsCommandContext = {
 	cwd?: string;
 	hasUI?: boolean;
 	ui?: CommandUi;
+	/** Pi extension ctx.modelRegistry — optional live catalogue source. */
+	modelRegistry?: ModelRegistryLike;
+	/** Pi extension ctx.scopedModels — preferred when non-empty. */
+	scopedModels?: ReadonlyArray<ScopedModelLike>;
+	/** Injectable catalog for tests; overrides registry/scoped wiring when set. */
+	listAvailableModels?: ListAvailableModelsFn;
 };
 
 function notify(ctx: AgentModelsCommandContext | undefined, message: string, level: "info" | "error" | "warning" = "info"): void {
@@ -774,39 +810,392 @@ export function defaultModelCatalog(config: AgentModelsConfig): string[] {
 	return Array.from(set).sort();
 }
 
+export const DEFAULT_CATALOG_TIMEOUT_MS = 2500;
+
+/** Normalize a raw Pi model / string into AvailableModelInfo. */
+export function normalizeAvailableModel(raw: unknown): AvailableModelInfo | null {
+	if (typeof raw === "string") {
+		const id = normalizeModelId(raw);
+		return id ? { id } : null;
+	}
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const m = raw as Record<string, unknown>;
+	const provider = typeof m.provider === "string" && m.provider.trim() ? m.provider.trim() : undefined;
+	const rawId = typeof m.id === "string" && m.id.trim() ? m.id.trim() : undefined;
+	const rawName = typeof m.name === "string" && m.name.trim() ? m.name.trim() : undefined;
+	let id: string | undefined;
+	let modelId: string | undefined;
+	// Pi Model: { provider, id } where id is bare model id. Our info.id is always provider/id.
+	// Also accept already-canonical id ("provider/model") without double-prefixing.
+	if (provider && rawId) {
+		if (rawId.includes("/")) {
+			id = rawId;
+			const prefix = `${provider}/`;
+			modelId = rawId.startsWith(prefix) ? rawId.slice(prefix.length) : rawId.split("/").slice(1).join("/");
+		} else {
+			modelId = rawId;
+			id = `${provider}/${rawId}`;
+		}
+	} else if (rawId) {
+		id = rawId;
+		modelId = rawId.includes("/") ? rawId.split("/").slice(1).join("/") : rawId;
+	} else if (provider && rawName) {
+		modelId = rawName;
+		id = `${provider}/${rawName}`;
+	} else {
+		id = normalizeModelId(rawName);
+	}
+	if (!id) return null;
+	const info: AvailableModelInfo = { id };
+	if (provider) info.provider = provider;
+	else if (id.includes("/")) info.provider = id.split("/")[0];
+	if (modelId) info.modelId = modelId;
+	if (rawName) info.name = rawName;
+	if (typeof m.reasoning === "boolean") info.reasoning = m.reasoning;
+	if (m.thinkingLevelMap && typeof m.thinkingLevelMap === "object" && !Array.isArray(m.thinkingLevelMap)) {
+		const map: Partial<Record<ThinkingLevel, string | null>> = {};
+		for (const level of THINKING_LEVELS) {
+			if (!(level in (m.thinkingLevelMap as object))) continue;
+			const v = (m.thinkingLevelMap as Record<string, unknown>)[level];
+			if (v === null) map[level] = null;
+			else if (typeof v === "string") map[level] = v;
+		}
+		if (Object.keys(map).length > 0) info.thinkingLevelMap = map;
+	}
+	return info;
+}
+
+export function normalizeAvailableModels(rawList: unknown): AvailableModelInfo[] {
+	if (!Array.isArray(rawList)) return [];
+	const out: AvailableModelInfo[] = [];
+	const seen = new Set<string>();
+	for (const raw of rawList) {
+		const info = normalizeAvailableModel(raw);
+		if (!info || seen.has(info.id)) continue;
+		seen.add(info.id);
+		out.push(info);
+	}
+	return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * Build injectable listAvailableModels from Pi command ctx.
+ * Prefer non-empty scopedModels; else modelRegistry.getAvailable().
+ * Returns undefined when neither source exists (caller uses config fallback).
+ */
+export function buildListAvailableModelsFromContext(ctx: {
+	modelRegistry?: ModelRegistryLike;
+	scopedModels?: ReadonlyArray<ScopedModelLike>;
+	listAvailableModels?: ListAvailableModelsFn;
+}): ListAvailableModelsFn | undefined {
+	if (ctx.listAvailableModels) return ctx.listAvailableModels;
+	const scoped = ctx.scopedModels;
+	const hasScoped = Array.isArray(scoped) && scoped.length > 0;
+	const getAvailable = ctx.modelRegistry?.getAvailable;
+	const hasRegistry = typeof getAvailable === "function";
+	if (!hasScoped && !hasRegistry) return undefined;
+	return async () => {
+		if (hasScoped) {
+			return normalizeAvailableModels(scoped!.map((entry) => entry?.model ?? entry));
+		}
+		const raw = getAvailable!();
+		const list = await Promise.resolve(raw);
+		return normalizeAvailableModels(list);
+	};
+}
+
+export type ModelCatalogResult = {
+	models: AvailableModelInfo[];
+	source: "live" | "fallback";
+};
+
+/**
+ * Resolve picker catalog: live listAvailableModels with timeout/catch,
+ * else defaultModelCatalog fallback. Empty live list also falls back.
+ */
+export async function resolveModelCatalog(
+	config: AgentModelsConfig,
+	listAvailableModels?: ListAvailableModelsFn,
+	timeoutMs: number = DEFAULT_CATALOG_TIMEOUT_MS,
+): Promise<ModelCatalogResult> {
+	const fallback = (): ModelCatalogResult => ({
+		models: defaultModelCatalog(config).map((id) => ({ id })),
+		source: "fallback",
+	});
+	if (!listAvailableModels) return fallback();
+	try {
+		const raced = await Promise.race([
+			Promise.resolve()
+				.then(() => listAvailableModels(config))
+				.then((models) => ({ ok: true as const, models }))
+				.catch(() => ({ ok: false as const, models: null })),
+			new Promise<{ ok: false; models: null }>((resolve) => {
+				setTimeout(() => resolve({ ok: false, models: null }), Math.max(0, timeoutMs));
+			}),
+		]);
+		if (!raced.ok || !raced.models || raced.models.length === 0) return fallback();
+		return { models: normalizeAvailableModels(raced.models), source: "live" };
+	} catch {
+		return fallback();
+	}
+}
+
+/**
+ * Pi-canon mirror of getSupportedThinkingLevels:
+ * - reasoning === false → ["off"]
+ * - no map → off..high (xhigh/max hidden)
+ * - map null → hide; string → show; omitted standard → show; omitted xhigh/max → hide
+ * - unknown/free-text model (no meta) → off..high defaults
+ */
+export function supportedThinkingLevels(model?: ThinkingModelMeta | null): ThinkingLevel[] {
+	if (model && model.reasoning === false) return ["off"];
+	return THINKING_LEVELS.filter((level) => {
+		const mapped = model?.thinkingLevelMap?.[level];
+		if (mapped === null) return false;
+		if (level === "xhigh" || level === "max") return mapped !== undefined;
+		return true;
+	});
+}
+
+export function isThinkingSupported(level: ThinkingLevel, model?: ThinkingModelMeta | null): boolean {
+	return supportedThinkingLevels(model).includes(level);
+}
+
+export function findModelMeta(models: AvailableModelInfo[], modelId: string | undefined | null): AvailableModelInfo | undefined {
+	const needle = normalizeModelId(modelId);
+	if (!needle) return undefined;
+	const lower = needle.toLowerCase();
+	return models.find((m) => {
+		if (m.id.toLowerCase() === lower) return true;
+		if (m.modelId && m.provider && `${m.provider}/${m.modelId}`.toLowerCase() === lower) return true;
+		if (m.modelId && m.modelId.toLowerCase() === lower) return true;
+		return false;
+	});
+}
+
+/** Compact human overview for menu «Обзор». */
+export function formatCompactOverview(config: AgentModelsConfig, projectRoot?: string): string {
+	const lines: string[] = [];
+	lines.push("Обзор agent-models");
+	const classNames = Object.keys(config.classes).sort();
+	lines.push(`Мощность (${classNames.length}):`);
+	if (classNames.length === 0) lines.push("  (нет)");
+	else {
+		for (const name of classNames) {
+			const thinking = config.classThinking?.[name] ?? "inherit";
+			lines.push(`  ${name} (${classDisplayLabel(name)}): ${config.classes[name]} · thinking=${thinking}`);
+		}
+	}
+	const agents = projectRoot
+		? listKnownAgents(projectRoot, config)
+		: Array.from(new Set([...Object.keys(config.agentClasses), ...Object.keys(config.roles)])).sort();
+	const mapped = agents.filter((a) => config.agentClasses[a] || roleEntry(config.roles, a));
+	const unmapped = agents.filter((a) => !config.agentClasses[a] && !roleEntry(config.roles, a));
+	lines.push(`Агенты: ${agents.length} (настроено ${mapped.length}, inherit ${unmapped.length})`);
+	for (const name of agents.slice(0, 12)) {
+		const resolved = resolveAgentModel(name, config);
+		const cls = resolved.className ?? "—";
+		const model = resolved.model ?? "session";
+		const thinking = resolved.thinking ?? "inherit";
+		lines.push(`  ${name}: ${cls} · ${model} · ${thinking}`);
+	}
+	if (agents.length > 12) lines.push(`  … ещё ${agents.length - 12}`);
+	if (projectRoot) {
+		const stale = listStaleAgentKeys(projectRoot, config);
+		if (stale.length > 0) lines.push(`Stale keys: ${stale.join(", ")}`);
+	}
+	return lines.join("\n");
+}
+
 export type MenuUi = {
 	select: (title: string, options: string[]) => Promise<string | undefined | null>;
 	input?: (title: string, initial?: string) => Promise<string | undefined | null>;
 	notify?: (message: string, level?: string) => void;
+	confirm?: (title: string, message: string) => Promise<boolean>;
 };
 
 export type MenuResult = { ok: boolean; text: string; cancelled?: boolean; wrote?: boolean };
 
-const MENU_EXIT = "← Выход";
-const MENU_BACK = "← Назад";
+export type RunAgentModelsMenuOptions = {
+	listAvailableModels?: ListAvailableModelsFn;
+	catalogTimeoutMs?: number;
+};
+
+export const MENU_EXIT = "← Выход";
+export const MENU_BACK = "← Назад";
+const INHERIT_THINKING_ID = "__inherit__";
+const OTHER_MODEL_ID = "__other__";
 const INHERIT_THINKING_LABEL = "как у class/сессии (inherit, без --thinking)";
 const OTHER_MODEL_LABEL = "Другая…";
 
-function thinkingMenuOptions(includeInherit: boolean): string[] {
-	const levels = THINKING_LEVELS.map((level) => level === "off" ? "off (явно --thinking off)" : level);
-	return includeInherit ? [INHERIT_THINKING_LABEL, ...levels] : levels;
+const ROOT_OVERVIEW = "overview";
+const ROOT_CLASS = "class-wizard";
+const ROOT_AGENT = "agent-wizard";
+const ROOT_CLEANUP = "cleanup";
+
+type NavPick = { type: "pick"; id: string } | { type: "back" } | { type: "exit" };
+
+type SelectOption = { id: string; label: string };
+
+function uniqueLabels(options: SelectOption[]): SelectOption[] {
+	const seen = new Map<string, number>();
+	return options.map((opt) => {
+		const count = seen.get(opt.label) ?? 0;
+		seen.set(opt.label, count + 1);
+		if (count === 0) return opt;
+		return { id: opt.id, label: `${opt.label} [${opt.id}]` };
+	});
 }
 
-function parseThinkingChoice(choice: string | undefined | null): ThinkingLevel | "inherit" | null {
-	if (choice == null) return null;
-	if (choice === INHERIT_THINKING_LABEL || choice === MENU_BACK) return choice === MENU_BACK ? null : "inherit";
-	if (choice.startsWith("off")) return "off";
-	const level = normalizeThinkingLevel(choice);
-	return level ?? null;
+async function selectWithNav(
+	ui: MenuUi,
+	title: string,
+	options: SelectOption[],
+	mode: "root" | "nested",
+): Promise<NavPick> {
+	const opts = uniqueLabels(options);
+	const labelToId = new Map(opts.map((o) => [o.label, o.id]));
+	const display = mode === "nested"
+		? [...opts.map((o) => o.label), MENU_BACK]
+		: [...opts.map((o) => o.label), MENU_EXIT];
+	const choice = await ui.select(title, display);
+	if (choice == null) return mode === "nested" ? { type: "back" } : { type: "exit" };
+	if (choice === MENU_BACK) return { type: "back" };
+	if (choice === MENU_EXIT) return { type: "exit" };
+	const id = labelToId.get(choice);
+	if (id == null) return mode === "nested" ? { type: "back" } : { type: "exit" };
+	return { type: "pick", id };
+}
+
+function thinkingSelectOptions(includeInherit: boolean, model?: ThinkingModelMeta | null): SelectOption[] {
+	const levels = supportedThinkingLevels(model);
+	const opts: SelectOption[] = levels.map((level) => ({
+		id: level,
+		label: level === "off" ? "off (явно --thinking off)" : level,
+	}));
+	if (includeInherit) opts.unshift({ id: INHERIT_THINKING_ID, label: INHERIT_THINKING_LABEL });
+	return opts;
+}
+
+function modelSelectOptions(models: AvailableModelInfo[]): SelectOption[] {
+	const opts = models.map((m) => {
+		const provider = m.provider ?? (m.id.includes("/") ? m.id.split("/")[0] : undefined);
+		const label = provider ? `${m.id}` : m.id;
+		const suffix = m.name && m.name !== m.modelId && m.name !== m.id ? ` — ${m.name}` : "";
+		return { id: m.id, label: `${label}${suffix}` };
+	});
+	opts.push({ id: OTHER_MODEL_ID, label: OTHER_MODEL_LABEL });
+	return opts;
+}
+
+function agentBadge(config: AgentModelsConfig, name: string): string {
+	const parts: string[] = [];
+	const cls = config.agentClasses[name];
+	if (cls) parts.push(`class=${cls}`);
+	else parts.push("unmapped");
+	const role = roleEntry(config.roles, name);
+	if (role?.model) parts.push(`model=${role.model}`);
+	if (role?.thinking) parts.push(`thinking=${role.thinking}`);
+	const resolved = resolveAgentModel(name, config);
+	if (!role?.model && resolved.model) parts.push(`→ ${resolved.model}`);
+	return parts.join(", ");
+}
+
+async function confirmDestructive(ui: MenuUi, title: string, message: string): Promise<boolean> {
+	if (ui.confirm) return ui.confirm(title, message);
+	const pick = await selectWithNav(
+		ui,
+		`${title}: ${message}`,
+		[
+			{ id: "yes", label: "Да, удалить" },
+			{ id: "no", label: "Нет" },
+		],
+		"nested",
+	);
+	return pick.type === "pick" && pick.id === "yes";
+}
+
+async function pickModelId(
+	ui: MenuUi,
+	title: string,
+	config: AgentModelsConfig,
+	listAvailableModels: ListAvailableModelsFn | undefined,
+	catalogTimeoutMs: number,
+	initial?: string,
+): Promise<{ modelId: string; meta?: AvailableModelInfo; catalog: AvailableModelInfo[] } | "back"> {
+	const catalog = await resolveModelCatalog(config, listAvailableModels, catalogTimeoutMs);
+	if (catalog.source === "fallback") {
+		ui.notify?.("Каталог моделей: fallback из конфига (registry/таймаут)", "warning");
+	}
+	const pick = await selectWithNav(ui, title, modelSelectOptions(catalog.models), "nested");
+	if (pick.type !== "pick") return "back";
+	if (pick.id === OTHER_MODEL_ID) {
+		const typed = await ui.input?.("Model id (provider/id)", initial ?? "");
+		if (typed == null || !typed.trim()) return "back";
+		const modelId = typed.trim();
+		return { modelId, meta: findModelMeta(catalog.models, modelId), catalog: catalog.models };
+	}
+	const meta = findModelMeta(catalog.models, pick.id);
+	return { modelId: pick.id, meta, catalog: catalog.models };
+}
+
+async function pickThinkingLevel(
+	ui: MenuUi,
+	title: string,
+	includeInherit: boolean,
+	model?: ThinkingModelMeta | null,
+): Promise<ThinkingLevel | "inherit" | "back"> {
+	const pick = await selectWithNav(ui, title, thinkingSelectOptions(includeInherit, model), "nested");
+	if (pick.type !== "pick") return "back";
+	if (pick.id === INHERIT_THINKING_ID) return "inherit";
+	const level = normalizeThinkingLevel(pick.id);
+	if (!level || !isThinkingSupported(level, model)) {
+		ui.notify?.(`Уровень thinking "${pick.id}" неподдерживается моделью`, "warning");
+		return "back";
+	}
+	return level;
+}
+
+async function warnOrphanThinking(
+	ui: MenuUi,
+	stored: ThinkingLevel | undefined,
+	modelMeta: ThinkingModelMeta | undefined,
+	contextLabel: string,
+): Promise<"keep" | "clear" | "repick" | "back"> {
+	if (!stored || isThinkingSupported(stored, modelMeta)) return "keep";
+	const allowed = supportedThinkingLevels(modelMeta).join(", ");
+	ui.notify?.(
+		`Thinking "${stored}" для ${contextLabel} не поддерживается новой моделью. Доступно: ${allowed}`,
+		"warning",
+	);
+	const pick = await selectWithNav(
+		ui,
+		`Orphan thinking (${stored}) — ${contextLabel}`,
+		[
+			{ id: "repick", label: "Выбрать другой уровень" },
+			{ id: "clear", label: "Сбросить (inherit)" },
+			{ id: "keep", label: "Оставить как есть" },
+		],
+		"nested",
+	);
+	if (pick.type !== "pick") return "back";
+	if (pick.id === "repick" || pick.id === "clear" || pick.id === "keep") return pick.id;
+	return "back";
 }
 
 /**
- * Pure-ish interactive menu. Uses ui.select/input; cancel (null/undefined) → no write.
- * Testable with mocked ui.
+ * Interactive menu with back-nav, live catalog, thinking filter, IA wizards.
+ * Nested Esc/null/← Назад → previous; root Esc/← Выход → leave. No write on unconfirmed step.
  */
-export async function runAgentModelsMenu(cwd: string, ui: MenuUi): Promise<MenuResult> {
+export async function runAgentModelsMenu(
+	cwd: string,
+	ui: MenuUi,
+	options: RunAgentModelsMenuOptions = {},
+): Promise<MenuResult> {
 	const projectRoot = requireProjectRoot(cwd);
 	let wrote = false;
+	const listAvailableModels = options.listAvailableModels;
+	const catalogTimeoutMs = options.catalogTimeoutMs ?? DEFAULT_CATALOG_TIMEOUT_MS;
 
 	const reload = () => {
 		const loaded = loadAgentModels(projectRoot);
@@ -821,239 +1210,326 @@ export async function runAgentModelsMenu(cwd: string, ui: MenuUi): Promise<MenuR
 		return filePath;
 	};
 
-	const topLoop = true;
-	while (topLoop) {
-		const { config } = reload();
-		const main = await ui.select("agent-models — что настроить?", [
-			"Показать текущие настройки",
-			"Мощность class (model)",
-			"Thinking class",
-			"Назначить agent → class",
-			"Override model агента",
-			"Override thinking агента",
-			"Сбросить override model агента",
-			"Сбросить override thinking агента",
-			"Сбросить class thinking",
-			"Сбросить agent-class",
-			"Убрать stale JSON keys",
-			MENU_EXIT,
-		]);
-		if (main == null || main === MENU_EXIT) {
-			return { ok: true, text: wrote ? "menu done (saved)" : "menu cancelled", cancelled: !wrote, wrote };
-		}
-
-		if (main === "Показать текущие настройки") {
-			const loaded = loadAgentModels(cwd);
-			const text = formatAgentModelsShow(loaded, cwd);
-			ui.notify?.(text, "info");
-			continue;
-		}
-
-		if (main === "Мощность class (model)") {
+	const runClassWizard = async (): Promise<"root" | "exit"> => {
+		while (true) {
+			const { config } = reload();
 			const classes = Object.keys(config.classes).sort();
 			if (classes.length === 0) {
 				ui.notify?.("Нет classes в конфиге", "warning");
-				continue;
+				return "root";
 			}
-			const classChoice = await ui.select(
-				"Class model",
-				classes.map((name) => `${name} (${classDisplayLabel(name)}) — ${config.classes[name]}`),
+			const classPick = await selectWithNav(
+				ui,
+				"Мощность — выберите class",
+				classes.map((name) => ({
+					id: name,
+					label: `${name} (${classDisplayLabel(name)}) — ${config.classes[name]} · thinking=${config.classThinking?.[name] ?? "inherit"}`,
+				})),
+				"nested",
 			);
-			if (classChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const className = classes.find((name) => classChoice.startsWith(`${name} `) || classChoice.startsWith(`${name}(`))
-				?? classChoice.split(" ")[0];
-			if (!className || !(className in config.classes)) continue;
-			const models = [...defaultModelCatalog(config), OTHER_MODEL_LABEL];
-			const modelChoice = await ui.select(`Model for ${className}`, models);
-			if (modelChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			let modelId = modelChoice;
-			if (modelChoice === OTHER_MODEL_LABEL) {
-				const typed = await ui.input?.("Model id (provider/id)", config.classes[className]);
-				if (typed == null || !typed.trim()) return { ok: true, text: "cancelled", cancelled: true, wrote };
-				modelId = typed.trim();
-			}
-			config.classes[className] = modelId;
-			const filePath = save(config);
-			ui.notify?.(`set class ${className} → ${modelId}\nfile: ${filePath}`, "info");
-			continue;
-		}
+			if (classPick.type === "exit") return "exit";
+			if (classPick.type === "back") return "root";
+			const className = classPick.id;
 
-		if (main === "Thinking class") {
-			const classes = Object.keys(config.classes).sort();
-			if (classes.length === 0) {
-				ui.notify?.("Нет classes в конфиге", "warning");
-				continue;
-			}
-			const classChoice = await ui.select(
-				"Class thinking",
-				classes.map((name) => {
-					const current = config.classThinking?.[name] ?? "inherit";
-					return `${name} (${classDisplayLabel(name)}) — thinking=${current}`;
-				}),
+			// Step: model
+			const modelResult = await pickModelId(
+				ui,
+				`Модель для ${className} (${classDisplayLabel(className)})`,
+				config,
+				listAvailableModels,
+				catalogTimeoutMs,
+				config.classes[className],
 			);
-			if (classChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const className = classes.find((name) => classChoice.startsWith(`${name} `)) ?? classChoice.split(" ")[0];
-			if (!className) continue;
-			const levelChoice = await ui.select(`Thinking for class ${className}`, thinkingMenuOptions(true));
-			const parsed = parseThinkingChoice(levelChoice);
-			if (parsed == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			if (parsed === "inherit") {
+			if (modelResult === "back") continue;
+
+			config.classes[className] = modelResult.modelId;
+			const modelPath = save(config);
+			ui.notify?.(`set class ${className} → ${modelResult.modelId}\nfile: ${modelPath}`, "info");
+
+			const storedThinking = config.classThinking?.[className];
+			const orphan = await warnOrphanThinking(ui, storedThinking, modelResult.meta, `class ${className}`);
+			if (orphan === "back") continue;
+			if (orphan === "clear") {
 				if (config.classThinking) delete config.classThinking[className];
-				const filePath = save(config);
-				ui.notify?.(`unset class-thinking ${className}\nfile: ${filePath}`, "info");
-			} else {
-				config.classThinking = { ...(config.classThinking ?? {}), [className]: parsed };
-				const filePath = save(config);
-				ui.notify?.(`set class-thinking ${className} → ${parsed}\nfile: ${filePath}`, "info");
+				const p = save(config);
+				ui.notify?.(`unset class-thinking ${className}\nfile: ${p}`, "info");
+			} else if (orphan === "repick" || orphan === "keep") {
+				// fall through to thinking step when repick; keep skips forced change but still offers thinking step
 			}
-			continue;
-		}
 
-		if (main === "Назначить agent → class") {
+			const thinkingChoice = await pickThinkingLevel(
+				ui,
+				`Thinking для class ${className}`,
+				true,
+				modelResult.meta,
+			);
+			if (thinkingChoice === "back") continue;
+			if (thinkingChoice === "inherit") {
+				if (config.classThinking) delete config.classThinking[className];
+				const p = save(config);
+				ui.notify?.(`unset class-thinking ${className}\nfile: ${p}`, "info");
+			} else {
+				config.classThinking = { ...(config.classThinking ?? {}), [className]: thinkingChoice };
+				const p = save(config);
+				ui.notify?.(`set class-thinking ${className} → ${thinkingChoice}\nfile: ${p}`, "info");
+			}
+			return "root";
+		}
+	};
+
+	const runAgentWizard = async (): Promise<"root" | "exit"> => {
+		while (true) {
+			const { config } = reload();
 			const agents = listKnownAgents(projectRoot, config);
 			if (agents.length === 0) {
 				ui.notify?.("Нет агентов (.pi/agents и JSON пусты)", "warning");
-				continue;
+				return "root";
 			}
-			const agentChoice = await ui.select(
-				"Agent → class",
-				agents.map((name) => {
-					const mapped = config.agentClasses[name];
-					const label = mapped ? `class=${mapped}` : "inherit (unmapped)";
-					return `${name} — ${label}`;
-				}),
+			const agentPick = await selectWithNav(
+				ui,
+				"Настроить агента",
+				agents.map((name) => ({ id: name, label: `${name} — ${agentBadge(config, name)}` })),
+				"nested",
 			);
-			if (agentChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const agent = agents.find((name) => agentChoice.startsWith(`${name} `) || agentChoice === name) ?? agentChoice.split(" ")[0];
-			if (!agent) continue;
-			const classes = Object.keys(config.classes).sort();
-			const classChoice = await ui.select(
-				`Class for ${agent}`,
-				classes.map((name) => `${name} (${classDisplayLabel(name)})`),
+			if (agentPick.type === "exit") return "exit";
+			if (agentPick.type === "back") return "root";
+			const agent = agentPick.id;
+
+			while (true) {
+				const latest = reload().config;
+				const action = await selectWithNav(
+					ui,
+					`Агент ${agent} — ${agentBadge(latest, agent)}`,
+					[
+						{ id: "class", label: "Назначить class (strong/standard/cheap)" },
+						{ id: "model", label: "Override model" },
+						{ id: "thinking", label: "Override thinking" },
+						{ id: "clear-model", label: "Сбросить override model" },
+						{ id: "clear-thinking", label: "Сбросить override thinking" },
+						{ id: "clear-class", label: "Сбросить agent-class" },
+					],
+					"nested",
+				);
+				if (action.type === "exit") return "exit";
+				if (action.type === "back") break;
+
+				const cfg = reload().config;
+
+				if (action.id === "class") {
+					const classes = Object.keys(cfg.classes).sort();
+					const classPick = await selectWithNav(
+						ui,
+						`Class для ${agent}`,
+						classes.map((name) => ({ id: name, label: `${name} (${classDisplayLabel(name)})` })),
+						"nested",
+					);
+					if (classPick.type !== "pick") continue;
+					if (!(classPick.id in cfg.classes)) continue;
+					cfg.agentClasses[agent] = classPick.id;
+					const p = save(cfg);
+					ui.notify?.(`set agent-class ${agent} → ${classPick.id}\nfile: ${p}`, "info");
+					continue;
+				}
+
+				if (action.id === "model") {
+					const modelResult = await pickModelId(
+						ui,
+						`Model override для ${agent}`,
+						cfg,
+						listAvailableModels,
+						catalogTimeoutMs,
+						roleEntry(cfg.roles, agent)?.model,
+					);
+					if (modelResult === "back") continue;
+					setRoleModel(cfg, agent, modelResult.modelId);
+					const p = save(cfg);
+					ui.notify?.(`set role ${agent} → ${modelResult.modelId}\nfile: ${p}`, "info");
+
+					const stored = roleEntry(cfg.roles, agent)?.thinking;
+					const orphan = await warnOrphanThinking(ui, stored, modelResult.meta, `agent ${agent}`);
+					if (orphan === "clear") {
+						unsetRoleThinking(cfg, agent);
+						const p2 = save(cfg);
+						ui.notify?.(`unset role-thinking ${agent}\nfile: ${p2}`, "info");
+					} else if (orphan === "repick") {
+						const t = await pickThinkingLevel(ui, `Thinking для ${agent}`, true, modelResult.meta);
+						if (t !== "back" && t !== "inherit") {
+							setRoleThinking(cfg, agent, t);
+							const p2 = save(cfg);
+							ui.notify?.(`set role-thinking ${agent} → ${t}\nfile: ${p2}`, "info");
+						} else if (t === "inherit") {
+							unsetRoleThinking(cfg, agent);
+							const p2 = save(cfg);
+							ui.notify?.(`unset role-thinking ${agent}\nfile: ${p2}`, "info");
+						}
+					}
+					continue;
+				}
+
+				if (action.id === "thinking") {
+					const resolved = resolveAgentModel(agent, cfg);
+					const catalog = await resolveModelCatalog(cfg, listAvailableModels, catalogTimeoutMs);
+					const meta = findModelMeta(catalog.models, resolved.model);
+					const t = await pickThinkingLevel(ui, `Thinking для ${agent}`, true, meta);
+					if (t === "back") continue;
+					if (t === "inherit") {
+						unsetRoleThinking(cfg, agent);
+						const p = save(cfg);
+						ui.notify?.(`unset role-thinking ${agent}\nfile: ${p}`, "info");
+					} else {
+						setRoleThinking(cfg, agent, t);
+						const p = save(cfg);
+						ui.notify?.(`set role-thinking ${agent} → ${t}\nfile: ${p}`, "info");
+					}
+					continue;
+				}
+
+				if (action.id === "clear-model") {
+					unsetRoleModel(cfg, agent);
+					const p = save(cfg);
+					ui.notify?.(`unset role model ${agent}\nfile: ${p}`, "info");
+					continue;
+				}
+
+				if (action.id === "clear-thinking") {
+					unsetRoleThinking(cfg, agent);
+					const p = save(cfg);
+					ui.notify?.(`unset role-thinking ${agent}\nfile: ${p}`, "info");
+					continue;
+				}
+
+				if (action.id === "clear-class") {
+					delete cfg.agentClasses[agent];
+					const p = save(cfg);
+					ui.notify?.(`unset agent-class ${agent}\nfile: ${p}`, "info");
+					continue;
+				}
+			}
+		}
+	};
+
+	const runCleanup = async (): Promise<"root" | "exit"> => {
+		while (true) {
+			const { config } = reload();
+			const action = await selectWithNav(
+				ui,
+				"Уборка",
+				[
+					{ id: "stale", label: "Убрать stale JSON keys" },
+					{ id: "class-thinking", label: "Сбросить class thinking" },
+				],
+				"nested",
 			);
-			if (classChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const className = classes.find((name) => classChoice.startsWith(name)) ?? classChoice.split(" ")[0];
-			if (!className || !(className in config.classes)) continue;
-			config.agentClasses[agent] = className;
-			const filePath = save(config);
-			ui.notify?.(`set agent-class ${agent} → ${className}\nfile: ${filePath}`, "info");
-			continue;
-		}
+			if (action.type === "exit") return "exit";
+			if (action.type === "back") return "root";
 
-		if (main === "Override model агента") {
-			const agents = listKnownAgents(projectRoot, config);
-			const agentChoice = await ui.select("Agent model override", agents);
-			if (agentChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const models = [...defaultModelCatalog(config), OTHER_MODEL_LABEL];
-			const modelChoice = await ui.select(`Model for ${agentChoice}`, models);
-			if (modelChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			let modelId = modelChoice;
-			if (modelChoice === OTHER_MODEL_LABEL) {
-				const typed = await ui.input?.("Model id (provider/id)", "");
-				if (typed == null || !typed.trim()) return { ok: true, text: "cancelled", cancelled: true, wrote };
-				modelId = typed.trim();
-			}
-			setRoleModel(config, agentChoice, modelId);
-			const filePath = save(config);
-			ui.notify?.(`set role ${agentChoice} → ${modelId}\nfile: ${filePath}`, "info");
-			continue;
-		}
-
-		if (main === "Override thinking агента") {
-			const agents = listKnownAgents(projectRoot, config);
-			const agentChoice = await ui.select("Agent thinking override", agents);
-			if (agentChoice == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const levelChoice = await ui.select(`Thinking for ${agentChoice}`, thinkingMenuOptions(true));
-			const parsed = parseThinkingChoice(levelChoice);
-			if (parsed == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			if (parsed === "inherit") {
-				unsetRoleThinking(config, agentChoice);
-				const filePath = save(config);
-				ui.notify?.(`unset role-thinking ${agentChoice}\nfile: ${filePath}`, "info");
-			} else {
-				setRoleThinking(config, agentChoice, parsed);
-				const filePath = save(config);
-				ui.notify?.(`set role-thinking ${agentChoice} → ${parsed}\nfile: ${filePath}`, "info");
-			}
-			continue;
-		}
-
-		if (main === "Сбросить override model агента") {
-			const roleAgents = Object.keys(config.roles).filter((name) => roleEntry(config.roles, name)?.model).sort();
-			if (roleAgents.length === 0) {
-				ui.notify?.("Нет role model overrides", "info");
+			if (action.id === "stale") {
+				const stale = listStaleAgentKeys(projectRoot, config);
+				if (stale.length === 0) {
+					ui.notify?.("Stale keys нет", "info");
+					continue;
+				}
+				const pick = await selectWithNav(
+					ui,
+					"Удалить stale key",
+					[
+						...stale.map((name) => ({ id: name, label: name })),
+						{ id: "__all__", label: "Удалить все stale" },
+					],
+					"nested",
+				);
+				if (pick.type !== "pick") continue;
+				const targets = pick.id === "__all__" ? stale : [pick.id];
+				if (pick.id === "__all__") {
+					const ok = await confirmDestructive(
+						ui,
+						"Удалить все stale",
+						`Удалить ${targets.length} keys: ${targets.join(", ")}?`,
+					);
+					if (!ok) continue;
+				}
+				for (const name of targets) {
+					delete config.agentClasses[name];
+					delete config.roles[name];
+				}
+				const p = save(config);
+				ui.notify?.(`removed stale: ${targets.join(", ")}\nfile: ${p}`, "info");
 				continue;
 			}
-			const agent = await ui.select("Unset role model", roleAgents);
-			if (agent == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			unsetRoleModel(config, agent);
-			const filePath = save(config);
-			ui.notify?.(`unset role model ${agent}\nfile: ${filePath}`, "info");
-			continue;
-		}
 
-		if (main === "Сбросить override thinking агента") {
-			const roleAgents = Object.keys(config.roles).filter((name) => roleEntry(config.roles, name)?.thinking).sort();
-			if (roleAgents.length === 0) {
-				ui.notify?.("Нет role thinking overrides", "info");
+			if (action.id === "class-thinking") {
+				const names = Object.keys(config.classThinking ?? {}).sort();
+				if (names.length === 0) {
+					ui.notify?.("Нет classThinking", "info");
+					continue;
+				}
+				const pick = await selectWithNav(
+					ui,
+					"Сбросить class thinking",
+					names.map((name) => ({ id: name, label: `${name} = ${config.classThinking?.[name]}` })),
+					"nested",
+				);
+				if (pick.type !== "pick") continue;
+				if (config.classThinking) delete config.classThinking[pick.id];
+				const p = save(config);
+				ui.notify?.(`unset class-thinking ${pick.id}\nfile: ${p}`, "info");
 				continue;
 			}
-			const agent = await ui.select("Unset role thinking", roleAgents);
-			if (agent == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			unsetRoleThinking(config, agent);
-			const filePath = save(config);
-			ui.notify?.(`unset role-thinking ${agent}\nfile: ${filePath}`, "info");
-			continue;
 		}
+	};
 
-		if (main === "Сбросить class thinking") {
-			const names = Object.keys(config.classThinking ?? {}).sort();
-			if (names.length === 0) {
-				ui.notify?.("Нет classThinking", "info");
+	const runOverview = async (): Promise<"root" | "exit"> => {
+		while (true) {
+			const { config } = reload();
+			const pick = await selectWithNav(
+				ui,
+				"Обзор",
+				[
+					{ id: "compact", label: "Краткий обзор" },
+					{ id: "raw", label: "Подробнее (raw dump)" },
+				],
+				"nested",
+			);
+			if (pick.type === "exit") return "exit";
+			if (pick.type === "back") return "root";
+			if (pick.id === "compact") {
+				ui.notify?.(formatCompactOverview(config, projectRoot), "info");
 				continue;
 			}
-			const name = await ui.select("Unset class thinking", names);
-			if (name == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			if (config.classThinking) delete config.classThinking[name];
-			const filePath = save(config);
-			ui.notify?.(`unset class-thinking ${name}\nfile: ${filePath}`, "info");
-			continue;
-		}
-
-		if (main === "Сбросить agent-class") {
-			const agents = Object.keys(config.agentClasses).sort();
-			if (agents.length === 0) {
-				ui.notify?.("Нет agentClasses", "info");
+			if (pick.id === "raw") {
+				const loaded = loadAgentModels(cwd);
+				ui.notify?.(formatAgentModelsShow(loaded, cwd), "info");
 				continue;
 			}
-			const agent = await ui.select("Unset agent-class", agents);
-			if (agent == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			delete config.agentClasses[agent];
-			const filePath = save(config);
-			ui.notify?.(`unset agent-class ${agent}\nfile: ${filePath}`, "info");
-			continue;
+		}
+	};
+
+	while (true) {
+		const root = await selectWithNav(
+			ui,
+			"agent-models — что настроить?",
+			[
+				{ id: ROOT_OVERVIEW, label: "Обзор" },
+				{ id: ROOT_CLASS, label: "Настроить мощность (class)" },
+				{ id: ROOT_AGENT, label: "Настроить агента" },
+				{ id: ROOT_CLEANUP, label: "Уборка" },
+			],
+			"root",
+		);
+		if (root.type === "exit" || root.type === "back") {
+			return { ok: true, text: wrote ? "menu done (saved)" : "menu cancelled", cancelled: !wrote, wrote };
 		}
 
-		if (main === "Убрать stale JSON keys") {
-			const stale = listStaleAgentKeys(projectRoot, config);
-			if (stale.length === 0) {
-				ui.notify?.("Stale keys нет", "info");
-				continue;
-			}
-			const agent = await ui.select("Remove stale key", [...stale, "Удалить все stale"]);
-			if (agent == null) return { ok: true, text: "cancelled", cancelled: true, wrote };
-			const targets = agent === "Удалить все stale" ? stale : [agent];
-			for (const name of targets) {
-				delete config.agentClasses[name];
-				delete config.roles[name];
-			}
-			const filePath = save(config);
-			ui.notify?.(`removed stale: ${targets.join(", ")}\nfile: ${filePath}`, "info");
-			continue;
+		let next: "root" | "exit" = "root";
+		if (root.id === ROOT_OVERVIEW) next = await runOverview();
+		else if (root.id === ROOT_CLASS) next = await runClassWizard();
+		else if (root.id === ROOT_AGENT) next = await runAgentWizard();
+		else if (root.id === ROOT_CLEANUP) next = await runCleanup();
+
+		if (next === "exit") {
+			return { ok: true, text: wrote ? "menu done (saved)" : "menu cancelled", cancelled: !wrote, wrote };
 		}
 	}
-
-	return { ok: true, text: "menu done", wrote };
 }
 
 /**
@@ -1069,11 +1545,17 @@ export async function handleAgentModelsInvocation(
 	if (!trimmed) {
 		if (ctx.hasUI && ctx.ui?.select) {
 			try {
-				const result = await runAgentModelsMenu(cwd, {
-					select: ctx.ui.select,
-					input: ctx.ui.input,
-					notify: ctx.ui.notify,
-				});
+				const listAvailableModels = buildListAvailableModelsFromContext(ctx);
+				const result = await runAgentModelsMenu(
+					cwd,
+					{
+						select: ctx.ui.select,
+						input: ctx.ui.input,
+						notify: ctx.ui.notify,
+						confirm: ctx.ui.confirm,
+					},
+					{ listAvailableModels },
+				);
 				return { ok: result.ok, text: result.text };
 			} catch (error) {
 				return { ok: false, text: (error as Error).message };
@@ -1099,6 +1581,10 @@ export default function agentModelsExtension(pi: ExtensionAPI): void {
 				cwd: ctx.cwd || process.cwd(),
 				hasUI: ctx.hasUI,
 				ui: ctx.ui,
+				// Forward Pi catalogue sources — do not strip.
+				modelRegistry: ctx.modelRegistry,
+				scopedModels: ctx.scopedModels,
+				listAvailableModels: ctx.listAvailableModels,
 			});
 			notify(ctx, result.text, result.ok ? "info" : "error");
 		},
