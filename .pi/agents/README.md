@@ -1,14 +1,14 @@
-# Pi Agent Parity Notes
+# Pi Agent Notes
 
-Claude agent files are read-only references. Pi keeps an active project-local agent set in `.pi/agents/` and moves shared workflow/codebase rules into `AGENTS.md`, `.pi/rules/domain.md`, `.pi/rules/codebase.md`, and typed tools (`dispatch_supervisor`, `review_bead`, `dispatch_docs_agent`).
+Pi keeps an active project-local agent set in `.pi/agents/` and shared workflow/codebase rules in `AGENTS.md`, `.pi/rules/domain.md`, `.pi/rules/codebase.md`, and typed tools (`dispatch_supervisor`, `review_bead`, `dispatch_docs_agent`).
 
-| Claude role | Pi replacement | Status |
+| Agent role | Pi location | Status |
 |---|---|---|
-| `vue-supervisor` | `.pi/agents/vue-supervisor.md` + typed `dispatch_supervisor` + path rules | Ported with shared parity contract |
-| `tauri-supervisor` | `.pi/agents/tauri-supervisor.md` + typed `dispatch_supervisor` + path rules | Ported with shared parity contract |
-| `test-supervisor` | `.pi/agents/test-supervisor.md` + typed `dispatch_supervisor` + path rules | Ported with shared parity contract |
-| `code-reviewer` | `.pi/agents/code-reviewer.md` + `review_bead` / `dispatch_reviewer` + path rules | Ported/replaced with typed review workflow |
-| `documentation-expert` | `.pi/agents/documentation-expert.md` + `dispatch_docs_agent` + path rules | Ported |
+| `vue-supervisor` | `.pi/agents/vue-supervisor.md` + typed `dispatch_supervisor` + path rules | Active |
+| `tauri-supervisor` | `.pi/agents/tauri-supervisor.md` + typed `dispatch_supervisor` + path rules | Active |
+| `test-supervisor` | `.pi/agents/test-supervisor.md` + typed `dispatch_supervisor` + path rules | Active |
+| `code-reviewer` | `.pi/agents/code-reviewer.md` + `review_bead` / `dispatch_reviewer` + path rules | Active with typed review workflow |
+| `documentation-expert` | `.pi/agents/documentation-expert.md` + `dispatch_docs_agent` + path rules | Active |
 | `architect` | `.pi/agents/architect.md` | Active planning/design agent for plan review, trade-offs, task breakdowns, and architecture gaps |
 | `detective` | `.pi/agents/detective.md` | Active investigation agent for root-cause analysis, dead-zone discovery, evidence gathering, and fix recommendations |
 | `discovery`, `scout`, `scribe`, `merge-supervisor` | No active Pi workflow caller | Intentionally omitted until a Pi workflow invokes them |
@@ -18,7 +18,6 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
 ## Rule delivery model
 
 - Pi source of truth for project behavior is `AGENTS.md` plus `.pi/*`.
-- `.claude/*` and `PROJECT-CONTEXT.md` are reference inputs for explicit parity/migration work, not active Pi workflow rules.
 - `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, and `review_bead` render `PATH_RULES_LOADED` from global rules and relevant path-scoped rules.
 - Global path rules include:
   - `AGENTS.md`

@@ -27,8 +27,7 @@ Use this agent for:
 3. Gather evidence with read-only inspection. Prefer `read`, `grep`, `find`, and `ls`; use `bash` only for read-only commands such as `git diff`, `git log`, `git show`, `bd show`, `bd comments`, or targeted test/log inspection when explicitly needed.
 4. Do not edit, write, stage, commit, push, close beads, or set orchestrator statuses.
 5. Treat `AGENTS.md`, `.pi/rules/domain.md`, `.pi/rules/codebase.md`, and any provided `PATH_RULES_LOADED` as Pi source-of-truth rules.
-6. Do not rely on `.claude/*` as active Pi workflow rules. Claude files may be read only when the task is explicitly about parity/migration.
-7. If symptoms, reproduction, expected behavior, or evidence scope are unclear, return `NEEDS_CONTEXT` with specific questions instead of guessing.
+6. If symptoms, reproduction, expected behavior, or evidence scope are unclear, return `NEEDS_CONTEXT` with specific questions instead of guessing.
 
 ## Investigation process
 
@@ -73,9 +72,8 @@ CONCERNS: <only if applicable>
 BLOCKER: <only if applicable>
 ```
 
-## Claude-to-Pi parity contract
+## Delivery contract
 
-- Preserve the Claude detective role boundary: investigate and recommend, do not fix production code.
+- Preserve the detective role boundary: investigate and recommend, do not fix production code.
 - Use strict status vocabulary: `DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`.
 - Keep reports concise and factual.
-- Do not modify `.claude/*`; Claude files are read-only references for explicit parity tasks.

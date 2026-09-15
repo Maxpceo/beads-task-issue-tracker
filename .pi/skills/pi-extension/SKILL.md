@@ -140,7 +140,7 @@ const result = await ui.custom<string | undefined>((tui, theme, keybindings, don
 - Реализация конкретного picker (khec / agent-models) — отдельный bead
 - Копирование Pi docs / preset.ts в репо
 - npm dependency на `pi-tui`
-- `.claude/*`, global `~/.pi` skill
+- global `~/.pi` skill
 - Авто-lint описаний bd
 
 ## Verification после правки extension

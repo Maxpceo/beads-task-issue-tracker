@@ -103,7 +103,8 @@ Non-epic agent-created beads must include all sections below. Keep headings exac
 
 ### Verification / acceptance checks
 - Только gate-executable / gate-mapped команды для `review_bead` ACCEPTANCE MATRIX.
-- Допустимо: `pnpm test` / focused `vitest`, `npx vue-tsc --noEmit`, `cargo check`, `git diff --name-only` (no `.claude`/`CLAUDE.md`), `git diff --check`, safe `rg`/`grep` с path under worktree.
+- Допустимо: `pnpm test` / focused `vitest`, `npx vue-tsc --noEmit`, `cargo check`, `git diff --name-only`, `git diff --check`, safe `rg`/`grep` с path under worktree.
+- Не добавляй verification bullets про legacy reference trees или path exclusion checks, которые не являются gate-executable acceptance.
 - Нельзя класть сюда manual/live/prose/«CODE REVIEW: APPROVED…» — это Acceptance criteria или IMPLEMENTATION comment; иначе раньше был ложный NOT RUN, теперь non-executable → N/A, но verification должна оставаться executable-first.
 - Команда с ожидаемым exit 0 / PASS.
 

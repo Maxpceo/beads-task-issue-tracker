@@ -1,6 +1,6 @@
 # Pi Codebase Rules
 
-These are Pi-native codebase rules migrated from `PROJECT-CONTEXT.md`. Pi sessions use `AGENTS.md` and `.pi/*` as the source of truth; `.claude/*` and `PROJECT-CONTEXT.md` are references unless an explicit task says otherwise.
+These are Pi-native codebase rules. Pi sessions use `AGENTS.md` and `.pi/*` as the source of truth.
 
 ## Stack and compatibility
 
