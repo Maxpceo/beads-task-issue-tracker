@@ -290,10 +290,73 @@ describe('cmux-sidebar extension', () => {
     }
   })
 
-  it('e) owned entry without activeBead → clear×3', async () => {
+  it('e) owned entry without activeBead and empty lastApplied → no-op (agent never-set)', async () => {
     const h = createHarness()
     await h.trigger('tool_result', { state: 'implementing', sessionMode: 'implementing' })
-    expectClearTriple(h.cmuxCalls())
+    expect(h.cmuxCalls()).toEqual([])
+    expect(h.bdCalls()).toEqual([])
+  })
+
+  it('e2) own set/blocked/suffix-only → reset → clear×3; second idle → 0 cmux', async () => {
+    // Full set (title present)
+    {
+      const h = createHarness({
+        bd: async () => ({ code: 0, stdout: JSON.stringify([{ title: 'Owner title' }]), stderr: '' }),
+      })
+      await h.trigger('tool_result', {
+        activeBead: 'beads-task-issue-tracker-own1',
+        sessionMode: 'claimed',
+      })
+      expect(h.cmuxCalls()).toHaveLength(3)
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'idle', sessionMode: 'idle' })
+      expectClearTriple(h.cmuxCalls())
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'idle', sessionMode: 'idle' })
+      expect(h.cmuxCalls()).toEqual([])
+    }
+
+    // Blocked set (title present → action set)
+    {
+      const h = createHarness({
+        bd: async () => ({ code: 0, stdout: JSON.stringify([{ title: 'Blocked owner' }]), stderr: '' }),
+      })
+      await h.trigger('tool_result', {
+        activeBead: 'beads-task-issue-tracker-own2',
+        sessionMode: 'blocked',
+      })
+      expect(h.cmuxCalls()).toHaveLength(3)
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'idle', sessionMode: 'idle' })
+      expectClearTriple(h.cmuxCalls())
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'idle', sessionMode: 'idle' })
+      expect(h.cmuxCalls()).toEqual([])
+    }
+
+    // Suffix-only set (bd fail → action set-suffix-only)
+    {
+      const h = createHarness({
+        bd: async () => ({ code: 1, stdout: '', stderr: 'missing' }),
+      })
+      await h.trigger('tool_result', {
+        activeBead: 'beads-task-issue-tracker-own3',
+        sessionMode: 'claimed',
+      })
+      expect(h.cmuxCalls()).toHaveLength(2)
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'idle', sessionMode: 'idle' })
+      expectClearTriple(h.cmuxCalls())
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'idle', sessionMode: 'idle' })
+      expect(h.cmuxCalls()).toEqual([])
+    }
   })
 
   it('f) session_start hydration', async () => {
@@ -612,7 +675,7 @@ describe('cmux-sidebar extension', () => {
     expect(h.bdCalls()).toEqual([])
   })
 
-  it('q) in-flight claimed with deferred bd + owned idle before resolve → claimed set×3 dropped; clear×3 from idle', async () => {
+  it('q) in-flight claimed with deferred bd + owned idle before resolve → claimed set×3 dropped; idle no-op (never applied)', async () => {
     let resolveBd!: (value: ExecResult) => void
     const h = createHarness({
       bd: () => new Promise<ExecResult>(resolve => {
@@ -629,6 +692,7 @@ describe('cmux-sidebar extension', () => {
     await flush()
 
     // Supersede with owned idle/reset before bd resolves.
+    // lastApplied never cached a set → ownership-gated clear is a no-op.
     h.setEntries({ state: 'idle', sessionMode: 'idle' })
     h.handlers.tool_result?.({}, h.ctx())
     await flush()
@@ -640,6 +704,7 @@ describe('cmux-sidebar extension', () => {
     expect(cmux.some(c => c.args[0] === 'set-status')).toBe(false)
     expect(cmux.some(c => c.args[0] === 'set-progress')).toBe(false)
     expect(cmux.some(c => c.args.includes('set-description'))).toBe(false)
-    expectClearTriple(cmux)
+    expect(cmux.some(c => c.args[0] === 'clear-status')).toBe(false)
+    expect(cmux).toEqual([])
   })
 })

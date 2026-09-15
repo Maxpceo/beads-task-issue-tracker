@@ -266,6 +266,16 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 			const activeBead = typeof snapshot.activeBead === "string" ? snapshot.activeBead.trim() : "";
 
 			if (!activeBead || TERMINAL_MODES.has(effectiveMode)) {
+				// No bead: clear only if this session previously wrote set/set-suffix-only
+				// (ownership-gated). Agent sessions that never set must not wipe the shared sidebar.
+				// Terminal mode with a bead still clears unconditionally.
+				const ownsWrittenStatus =
+					lastApplied?.action === "set" || lastApplied?.action === "set-suffix-only";
+				const shouldClear = activeBead
+					? TERMINAL_MODES.has(effectiveMode)
+					: ownsWrittenStatus;
+				if (!shouldClear) return;
+
 				const signature: AppliedSignature = {
 					workspaceId,
 					action: "clear",
