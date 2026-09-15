@@ -31,7 +31,17 @@ import {
 	runPlanReviewers,
 	type PlanReviewResult,
 } from "../plan-review/index";
-import { requestSupervisorDispatch } from "../beads-dispatch/index";
+import {
+	closeVisibleDispatch,
+	completeVisibleDispatch,
+	findLiveRegistryEntriesForBead,
+	findRegistryByTaskId,
+	parseVisiblePing,
+	requestReviewerDispatch,
+	requestSupervisorDispatch,
+	type ParsedVisiblePing,
+} from "../beads-dispatch/index";
+import { finalizeVisibleReviewClose } from "../review-workflow/index";
 import { PROTECTED_BRANCHES, validateTaskScopePath } from "../worktree-scope/index";
 
 // Tools
@@ -912,9 +922,182 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		persistState();
 	}
 
+	function sendAutopilotHopMessage(content: string, customType = "autopilot-hop"): void {
+		try {
+			pi.sendMessage(
+				{ customType, content, display: true },
+				{ triggerTurn: false },
+			);
+		} catch {
+			// Best-effort visible hop progress only.
+		}
+	}
+
+	function artifactReportsStop(text: string): boolean {
+		return /\bStatus:\s*(?:BLOCKED|NEEDS_CONTEXT)\b/i.test(text)
+			|| /\bBEAD\s+\S+\s+STATUS:\s*(?:BLOCKED|NEEDS_CONTEXT)\b/i.test(text)
+			|| /\bSTATUS:\s*(?:BLOCKED|NEEDS_CONTEXT)\b/i.test(text);
+	}
+
+	async function handleAutopilotRuntimeHop(ctx: ExtensionContext, ping: ParsedVisiblePing): Promise<void> {
+		if (ping.missingId || !ping.taskId) {
+			sendAutopilotHopMessage(
+				"STOP: autopilot runtime hop получил [PING] без taskId= / задача <id>. complete_visible_dispatch не вызывался. Укажите taskId или повторите ping.sh.",
+				"autopilot-hop-stop",
+			);
+			return;
+		}
+		if (ping.kind === "error") {
+			sendAutopilotHopMessage(
+				`STOP: [PING-ERROR] taskId=${ping.taskId}. Autopilot hop остановлен; panes не закрывались. Действие Максима: разберите ошибку child или followup_visible_dispatch.`,
+				"autopilot-hop-stop",
+			);
+			return;
+		}
+
+		let completeResult: { status: string; text: string };
+		try {
+			completeResult = await completeVisibleDispatch(pi as any, { taskId: ping.taskId }, ctx as any);
+		} catch (error) {
+			sendAutopilotHopMessage(
+				`STOP: complete_visible_dispatch failed for ${ping.taskId}: ${(error as Error).message}`,
+				"autopilot-hop-stop",
+			);
+			return;
+		}
+
+		sendAutopilotHopMessage(
+			`Autopilot hop: complete_visible_dispatch status=${completeResult.status} taskId=${ping.taskId}\n${completeResult.text.slice(0, 1200)}`,
+		);
+
+		if (completeResult.status === "noop") {
+			// submitted/verdict already recorded — no second reviewer/complete.
+			return;
+		}
+
+		if (completeResult.status === "incomplete" || completeResult.status === "result-only") {
+			if (artifactReportsStop(completeResult.text)) {
+				sendAutopilotHopMessage(
+					`STOP: supervisor/reviewer artifact reports BLOCKED/NEEDS_CONTEXT for ${ping.taskId}. Autopilot hop paused; panes live. Действие Максима: fix/followup или снять autopilot.`,
+					"autopilot-hop-stop",
+				);
+			}
+			// incomplete/result-only: later ping may complete again.
+			return;
+		}
+
+		const found = findRegistryByTaskId(ping.taskId);
+		if (!found?.entry) {
+			sendAutopilotHopMessage(
+				`STOP: registry entry missing after complete for ${ping.taskId}.`,
+				"autopilot-hop-stop",
+			);
+			return;
+		}
+		const entry = found.entry;
+
+		if (completeResult.status === "submitted") {
+			if (artifactReportsStop(completeResult.text)) {
+				sendAutopilotHopMessage(
+					`STOP: submitted artifact still reports BLOCKED/NEEDS_CONTEXT for ${entry.beadId}. Reviewer not spawned.`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			const live = findLiveRegistryEntriesForBead(entry.beadId);
+			const liveReviewer = live.some((item) => item.entry.role === "code-reviewer" && item.entry.status !== "tombstone");
+			if (liveReviewer) {
+				sendAutopilotHopMessage(`Autopilot hop: live reviewer already on ${entry.beadId}; skip second requestReviewerDispatch.`);
+				return;
+			}
+			if (!entry.worktree) {
+				sendAutopilotHopMessage(
+					`STOP: no worktree on registry entry for ${entry.beadId}; cannot dispatch_reviewer.`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			const reviewer = await requestReviewerDispatch(
+				pi as any,
+				{ beadId: entry.beadId, cwd: entry.worktree, transport: "cmux" },
+				ctx as any,
+			);
+			if (!reviewer.ok) {
+				sendAutopilotHopMessage(
+					`STOP: requestReviewerDispatch failed for ${entry.beadId}: ${reviewer.error ?? reviewer.text}`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			sendAutopilotHopMessage(`Autopilot hop: reviewer dispatched for ${entry.beadId}\n${reviewer.text.slice(0, 800)}`);
+			return;
+		}
+
+		if (completeResult.status === "verdict") {
+			if (/NOT APPROVED/i.test(completeResult.text)) {
+				sendAutopilotHopMessage(
+					`STOP: CODE REVIEW NOT APPROVED for ${entry.beadId}. Bead remains inreview; panes live for followup_visible_dispatch. Действие Максима: fix list / followup.`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			if (!entry.worktree || !entry.beadId) {
+				sendAutopilotHopMessage(
+					`STOP: missing bead/worktree after APPROVED verdict for ${ping.taskId}.`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			const finalize = await finalizeVisibleReviewClose(pi as any, {
+				beadId: entry.beadId,
+				worktreePath: entry.worktree,
+				startCommit: entry.startCommit,
+			});
+			if (!finalize.ok) {
+				sendAutopilotHopMessage(
+					`STOP: autopilot close path blocked for ${entry.beadId}: ${finalize.text}`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			// workflow_complete(state=closed) equivalent via workflow-state update (local terminal).
+			syncWorkflowPlanMode(ctx, "off", "closed", {
+				state: "closed",
+				sessionMode: "closed",
+				activeBead: undefined,
+				planApproved: false,
+				bdStatus: "closed",
+			});
+			try {
+				const closeResult = await closeVisibleDispatch(pi as any, { beadId: entry.beadId }, ctx as any);
+				sendAutopilotHopMessage(`Autopilot hop: bead closed; close_visible_dispatch status=${closeResult.status}\n${closeResult.text}`);
+			} catch (error) {
+				sendAutopilotHopMessage(
+					`STOP: bd closed but close_visible_dispatch failed for ${entry.beadId}: ${(error as Error).message}`,
+					"autopilot-hop-stop",
+				);
+			}
+			autopilotEnabled = false;
+			persistState();
+			updateStatus(ctx);
+			sendAutopilotHopMessage(`Autopilot hop complete: ${entry.beadId} closed without «закрывай?»; autopilot cleared.`);
+		}
+	}
+
 	// Natural-language activation for claim+plan, autopilot, and clear enter-plan-mode requests.
+	// Autopilot runtime hop consumes [PING]/[PING-ERROR] only when autopilotEnabled && plan=off (exclusive consumer).
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return;
+
+		// Runtime hop before NL plan activation: /plan-auto does not set durable autopilot and does not consume ping.
+		if (autopilotEnabled && !planModeEnabled) {
+			const ping = parseVisiblePing(event.text ?? "");
+			if (ping) {
+				await handleAutopilotRuntimeHop(ctx, ping);
+				return { action: "handled" };
+			}
+		}
+
 		const workflowIntent = parseWorkflowIntent(event.text);
 		if (shouldAutoClaimAndPlan(workflowIntent)) {
 			const claimed = await claimWorkflowBead(workflowIntent.beadId, ctx);

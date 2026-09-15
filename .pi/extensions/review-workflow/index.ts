@@ -807,7 +807,7 @@ async function executeAllowlistVerification(
 	return "unresolved";
 }
 
-async function buildAcceptanceMatrix(params: {
+export async function buildAcceptanceMatrix(params: {
 	bead: any;
 	automatedChecks: string[];
 	frontendChecklist: string[];
@@ -921,7 +921,7 @@ async function buildAcceptanceMatrix(params: {
 	return { text, rows, blockingRows };
 }
 
-function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence {
+export function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence {
 	const marker = /(^|\n)\s*SUPERVISOR ARTIFACT\s*:?\s*(?:\n|$)/gi;
 	const matches = [...comments.matchAll(marker)];
 	if (matches.length === 0) {
@@ -951,6 +951,126 @@ function extractSupervisorArtifact(comments: string): SupervisorArtifactEvidence
 			? "ARTIFACT STATUS: insufficient (SUPERVISOR ARTIFACT present but rejected/failed/missing required evidence)"
 			: "ARTIFACT STATUS: missing (SUPERVISOR ARTIFACT present but lacks sufficient Artifact status/verification evidence)";
 	return { status, statusLine, evidence };
+}
+
+export type FinalizeVisibleReviewCloseResult = {
+	ok: boolean;
+	status: "closed" | "blocked" | "not-approved" | "missing-evidence";
+	text: string;
+	blockingRows?: AcceptanceMatrixRow[];
+};
+
+/**
+ * Autopilot/visible hop close after CODE REVIEW: APPROVED without a second review_bead.
+ * Path: SIMPLIFY (if needed) → simplified → reviewed → matrix gatherer → accepted → bd close.
+ * Blocking/missing matrix → STOP without writing a blocking matrix for show.
+ */
+export async function finalizeVisibleReviewClose(
+	pi: ExtensionAPI,
+	params: {
+		beadId: string;
+		worktreePath: string;
+		startCommit?: string;
+		endCommit?: string;
+		branch?: string;
+	},
+): Promise<FinalizeVisibleReviewCloseResult> {
+	const bead = await getBead(pi, params.beadId);
+	const comments = await getComments(pi, params.beadId);
+	const approvedMatches = [...comments.matchAll(/(?:CODE REVIEW|VERDICT):\s*(APPROVED|NOT APPROVED)/gi)];
+	const latestVerdict = approvedMatches.at(-1)?.[1]?.toUpperCase();
+	if (latestVerdict === "NOT APPROVED") {
+		return {
+			ok: false,
+			status: "not-approved",
+			text: "finalizeVisibleReviewClose: latest CODE REVIEW is NOT APPROVED; keep inreview, panes live",
+		};
+	}
+	if (latestVerdict !== "APPROVED") {
+		return {
+			ok: false,
+			status: "missing-evidence",
+			text: "finalizeVisibleReviewClose: missing CODE REVIEW: APPROVED evidence",
+		};
+	}
+
+	const reviewCwd = params.worktreePath;
+	const branchResult = params.branch
+		? { stdout: params.branch, code: 0 }
+		: await exec(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
+	const branch = (branchResult.stdout ?? "").trim() || "unknown";
+	const startCommit = params.startCommit || findStartCommit(comments);
+	if (!startCommit) {
+		return { ok: false, status: "missing-evidence", text: "finalizeVisibleReviewClose: missing START_COMMIT" };
+	}
+	const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
+	const changedRaw = (await exec(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`])).stdout;
+	const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
+	const supervisorArtifact = extractSupervisorArtifact(comments);
+	if (supervisorArtifact.status === "insufficient" || supervisorArtifact.status === "missing") {
+		return {
+			ok: false,
+			status: "missing-evidence",
+			text: `finalizeVisibleReviewClose: supervisor artifact ${supervisorArtifact.status}; ${supervisorArtifact.statusLine}`,
+		};
+	}
+
+	const status = String(bead?.status ?? "unknown");
+	if (status === "inreview") {
+		await exec(pi, "bd", ["comments", "add", params.beadId, `SIMPLIFY: SKIPPED. visible autopilot hop; scoped diff ${startCommit}..${endCommit} prepared for acceptance.`]);
+		await execRequired(pi, "bd", ["update", params.beadId, "--status", "simplified"]);
+	}
+	const afterSimplify = await getBead(pi, params.beadId);
+	const statusAfterSimplify = String(afterSimplify?.status ?? status);
+	if (statusAfterSimplify === "simplified" || statusAfterSimplify === "inreview") {
+		await execRequired(pi, "bd", ["update", params.beadId, "--status", "reviewed"]);
+	}
+
+	const automatedChecks = await runChecks(pi, changedFiles, reviewCwd);
+	const frontendChecklist = frontendReviewChecklist(changedFiles);
+	const matrix = await buildAcceptanceMatrix({
+		bead: afterSimplify ?? bead,
+		automatedChecks,
+		frontendChecklist,
+		changedFiles,
+		supervisorArtifact,
+		comments,
+		reviewCwd,
+		startCommit,
+		endCommit,
+		execAllowlist: async (command, args) => {
+			const ran = await exec(pi, command, args);
+			return { stdout: ran.stdout, stderr: ran.stderr, code: ran.code ?? 1 };
+		},
+	});
+	if (matrix.blockingRows.length > 0) {
+		// Do not write blocking matrix for show; STOP ask.
+		return {
+			ok: false,
+			status: "blocked",
+			text: `finalizeVisibleReviewClose blocked: ACCEPTANCE MATRIX would contain ${matrix.blockingRows.map((row) => row.result).join(", ")}. Fix evidence before close.`,
+			blockingRows: matrix.blockingRows,
+		};
+	}
+
+	await execRequired(pi, "bd", ["comments", "add", params.beadId, matrix.text]);
+	await exec(pi, "bd", ["comments", "add", params.beadId, `ACCEPTANCE: visible autopilot hop acceptance checks completed.\n\nSUPERVISOR ARTIFACT HANDOFF\n${supervisorArtifact.statusLine}\nArtifact evidence may be cited in ACCEPTANCE MATRIX when mapped to criteria with fresh verification; artifact is not acceptance by itself.\n\n${automatedChecks.join("\n\n")}`]);
+	await execRequired(pi, "bd", ["update", params.beadId, "--status", "accepted"]);
+	await exec(pi, "bd", ["close", params.beadId, "--reason", "Reviewed and accepted by visible autopilot hop"]);
+	pi.events?.emit("workflow-state:update", {
+		activeBead: params.beadId,
+		sessionMode: "closed",
+		state: "closed",
+		branch,
+		worktreePath: reviewCwd,
+		startCommit,
+		endCommit,
+	});
+	return {
+		ok: true,
+		status: "closed",
+		text: `finalizeVisibleReviewClose closed ${params.beadId}; matrix green; no second review_bead`,
+	};
 }
 
 function refreshDashboardWidget(ctx?: { ui?: any }): void {

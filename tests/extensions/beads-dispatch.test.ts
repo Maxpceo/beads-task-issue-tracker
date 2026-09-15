@@ -5,7 +5,7 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, parseVisiblePing, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
 import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
@@ -682,5 +682,20 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     } finally {
       await fs.writeFile(modelsPath, originalModels)
     }
+  })
+})
+
+describe('parseVisiblePing', () => {
+  it('parses [PING] taskId= and задача id forms', () => {
+    const withEquals = parseVisiblePing('[PING] test-supervisor · задача task-abc завершена taskId=task-abc digest=x')
+    expect(withEquals).toMatchObject({ kind: 'ok', taskId: 'task-abc', missingId: false })
+
+    const zadachaOnly = parseVisiblePing('[PING-ERROR] code-reviewer · задача task-xyz: boom')
+    expect(zadachaOnly).toMatchObject({ kind: 'error', taskId: 'task-xyz', missingId: false })
+  })
+
+  it('marks missing id and ignores non-ping text', () => {
+    expect(parseVisiblePing('[PING] finished without markers')).toMatchObject({ kind: 'ok', missingId: true })
+    expect(parseVisiblePing('ordinary chat about ping protocol')).toBeUndefined()
   })
 })

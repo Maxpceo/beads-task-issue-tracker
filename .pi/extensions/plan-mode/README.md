@@ -21,7 +21,7 @@ Project-local Pi plan mode adapted for the beads workflow.
 
 - `/plan` — toggle strict plan mode. User approval is required before execution.
 - `/plan-auto` — enter plan mode and auto-execute only after required plan-review agents run and the revised plan passes the gate. Records `Approved-by: Максим`. Does **not** close the bead by itself and does **not** set the durable autopilot flag.
-- `/plan-autopilot` — same plan-review gate as `/plan-auto`, but records `Approved-by: оркестратор`, sets a durable session `autopilot` flag that survives `plan=off` after approval, and documents the close-without-«закрывай?» contract (full hop/ping/close runtime may live in a follow-up bead). Does **not** call `land` / `merge-to-main`.
+- `/plan-autopilot` — same plan-review gate as `/plan-auto`, but records `Approved-by: оркестратор`, sets a durable session `autopilot` flag that survives `plan=off` after approval, and runs the **runtime hop** (exclusive consumer while `autopilot=true` and `plan=off`): inbound `[PING]`/`[PING-ERROR]` → one `complete_visible_dispatch` → `requestReviewerDispatch` after supervisor submit → green matrix close without «закрывай?». Does **not** call `land` / `merge-to-main`.
 - `/plan-cancel` — cancel plan mode, clear autopilot, and restore normal tools.
 - `/plan-review` — run required plan-review agents against the latest draft plan without approving or executing it.
 - `/todos` — show current plan progress.
@@ -50,6 +50,18 @@ Clear requests to work autonomously activate `/plan-autopilot` (not `/plan-auto`
 - English: `work autonomously`, `working autonomously`, `enable plan-autopilot`.
 
 The same safety guards apply: questions (`можно ли работать автономно?`), negations (`не работай автономно`), and multiple bead ids do **not** auto-activate autopilot.
+
+## Runtime hop (autopilot exclusive consumer)
+
+While `autopilotEnabled===true` and `plan=off`, plan-mode is the **единственный consumer** of inbound visible pings for the hop:
+
+1. Parse `[PING]` / `[PING-ERROR]` via `parseVisiblePing` (`taskId=` or `задача <id>`). Missing id → STOP ask, no complete.
+2. One `complete_visible_dispatch` per ping (concurrent lock only). `incomplete`/`result-only` allows a later ping; `submitted`/`verdict` → noop on repeat.
+3. Supervisor `submitted` → one `requestReviewerDispatch({ beadId, cwd: entry.worktree, transport: cmux })`; live reviewer on bead → noop.
+4. Reviewer `verdict` APPROVED + green matrix → simplified → reviewed → accepted → `bd close` → workflow closed → `close_visible_dispatch` → clear autopilot. No second `review_bead`.
+5. STOP ask (panes live): `[PING-ERROR]`, `BLOCKED`/`NEEDS_CONTEXT`, `NOT APPROVED`, missing bead/worktree, blocking matrix (matrix not written for show).
+
+`/plan-auto` does **not** set durable autopilot and does **not** consume ping. `land` / `merge-to-main` never run from this hop. `poll.sh` remains Maxim path B only (not auto-timer).
 
 ## Multi-agent auto-execute gate
 

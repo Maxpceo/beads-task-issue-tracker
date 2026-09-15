@@ -194,6 +194,73 @@ export async function requestSupervisorDispatch<Ctx = unknown>(pi: object, param
 	}
 }
 
+interface ReviewerDispatchApi<Ctx = unknown> {
+	dispatchReviewer(params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ content: Array<{ type: string; text: string }>; details?: unknown }>;
+}
+
+const REVIEWER_DISPATCH_API_KEY = "__piReviewerDispatchApi";
+
+interface ReviewerDispatchApiRegistryState {
+	byPi: WeakMap<object, ReviewerDispatchApi>;
+	latest?: ReviewerDispatchApi;
+}
+
+function reviewerDispatchApiRegistry(): ReviewerDispatchApiRegistryState {
+	const root = globalThis as typeof globalThis & { [REVIEWER_DISPATCH_API_KEY]?: ReviewerDispatchApiRegistryState };
+	root[REVIEWER_DISPATCH_API_KEY] ??= { byPi: new WeakMap<object, ReviewerDispatchApi>() };
+	return root[REVIEWER_DISPATCH_API_KEY];
+}
+
+export function registerReviewerDispatchApi<Ctx = unknown>(pi: object, api: ReviewerDispatchApi<Ctx>): void {
+	const registry = reviewerDispatchApiRegistry();
+	const typedApi = api as ReviewerDispatchApi;
+	registry.byPi.set(pi, typedApi);
+	registry.latest = typedApi;
+}
+
+export async function requestReviewerDispatch<Ctx = unknown>(pi: object, params: DispatchToolParams, ctx: Ctx, signal?: AbortSignal): Promise<{ ok: boolean; text: string; details?: unknown; error?: string }> {
+	const registry = reviewerDispatchApiRegistry();
+	const api = registry.byPi.get(pi) ?? registry.latest;
+	if (!api) return { ok: false, text: "", error: "runtime hook missing: dispatch_reviewer API is unavailable" };
+	try {
+		const result = await api.dispatchReviewer(params, ctx, signal);
+		const text = result.content.map((item) => item.text).join("\n");
+		const details = result.details as { error?: string } | undefined;
+		if (details?.error) return { ok: false, text, details: result.details, error: details.error };
+		return { ok: true, text, details: result.details };
+	} catch (error) {
+		return { ok: false, text: "", error: (error as Error).message };
+	}
+}
+
+/** Parsed inbound visible ping from ping.sh / cmux send into orch input. */
+export type ParsedVisiblePing = {
+	kind: "ok" | "error";
+	taskId?: string;
+	missingId: boolean;
+	text: string;
+};
+
+/**
+ * Parse orch-inbound `[PING]` / `[PING-ERROR]` lines.
+ * taskId from `taskId=` OR `задача <id>`; missing id → missingId=true (caller STOPs, no complete).
+ */
+export function parseVisiblePing(text: string): ParsedVisiblePing | undefined {
+	const raw = text ?? "";
+	const errorMatch = raw.match(/\[PING-ERROR\]/i);
+	const okMatch = !errorMatch && raw.match(/\[PING\]/i);
+	if (!errorMatch && !okMatch) return undefined;
+	const taskIdEquals = raw.match(/\btaskId\s*=\s*([^\s,;]+)/i)?.[1];
+	const taskIdZadacha = raw.match(/задача\s+([^\s:.,;]+)/iu)?.[1];
+	const taskId = (taskIdEquals ?? taskIdZadacha)?.replace(/[\]'"`]+$/u, "").trim() || undefined;
+	return {
+		kind: errorMatch ? "error" : "ok",
+		taskId,
+		missingId: !taskId,
+		text: raw,
+	};
+}
+
 const DispatchParams = {
 	type: "object",
 	properties: {
@@ -879,7 +946,12 @@ export async function closeVisibleDispatch(
 	};
 }
 
-export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<{ status: "noop" | "incomplete" | "submitted" | "result-only" | "verdict"; text: string }> {
+type CompleteVisibleDispatchResult = { status: "noop" | "incomplete" | "submitted" | "result-only" | "verdict"; text: string };
+
+/** Concurrent lock only: one in-flight complete per taskId; later callers await the same promise. */
+const completeVisibleDispatchInflight = new Map<string, Promise<CompleteVisibleDispatchResult>>();
+
+async function completeVisibleDispatchUnlocked(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<CompleteVisibleDispatchResult> {
 	const found = findRegistryByTaskId(params.taskId);
 	if (!found) throw new Error(`complete_visible_dispatch: нет registry для ${params.taskId}`);
 	const { file, registry, entry, index } = found;
@@ -925,6 +997,18 @@ export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId
 	saveRegistry(file, registry);
 	emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "inreview", branch, worktreePath: entry.worktree, startCommit }, ctx);
 	return { status: "submitted", text: resultText.slice(0, 2000) };
+}
+
+export async function completeVisibleDispatch(pi: ExtensionAPI, params: { taskId: string }, ctx?: ToolContext): Promise<CompleteVisibleDispatchResult> {
+	const existing = completeVisibleDispatchInflight.get(params.taskId);
+	if (existing) return existing;
+	const pending = completeVisibleDispatchUnlocked(pi, params, ctx).finally(() => {
+		if (completeVisibleDispatchInflight.get(params.taskId) === pending) {
+			completeVisibleDispatchInflight.delete(params.taskId);
+		}
+	});
+	completeVisibleDispatchInflight.set(params.taskId, pending);
+	return pending;
 }
 
 function patchFollowupEntry(
@@ -1771,6 +1855,21 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		},
 	});
 
+	const dispatchReviewerTool = async (_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) => {
+		try {
+			const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd, ctx);
+			return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
+		} catch (error) {
+			return { content: [{ type: "text", text: `dispatch_reviewer не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+		}
+	};
+
+	registerReviewerDispatchApi(pi, {
+		dispatchReviewer(params: DispatchToolParams, ctx: ToolContext, signal?: AbortSignal) {
+			return dispatchReviewerTool("autopilot-hop-reviewer", params, signal, undefined, ctx);
+		},
+	});
+
 	pi.registerTool({
 		name: "dispatch_supervisor",
 		label: "Dispatch Supervisor",
@@ -1784,14 +1883,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		label: "Dispatch Reviewer",
 		description: "Typed beads workflow dispatch to the Pi code-reviewer agent. Requires bead status inreview. Interactive omit/hasUI → cmux pane (no headless hang). Explicit transport=headless for CI/dark-window; explicit transport=cmux always pane.",
 		parameters: ReviewerDispatchParams,
-		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
-			try {
-				const result = await dispatch(pi, "reviewer", params, signal, ctx.cwd, ctx);
-				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
-			} catch (error) {
-				return { content: [{ type: "text", text: `dispatch_reviewer не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
-			}
-		},
+		execute: dispatchReviewerTool,
 	});
 
 	pi.registerTool({
