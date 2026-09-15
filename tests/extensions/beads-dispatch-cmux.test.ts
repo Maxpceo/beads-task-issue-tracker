@@ -199,6 +199,37 @@ describe('visible child argv', () => {
     expect(inherit).not.toContain('--model')
   })
 
+  it('includes --thinking when set (including off) and omits it on inherit', () => {
+    const withHigh = buildVisibleChildArgv({
+      thinking: 'high',
+      systemPromptFile: 'a.md',
+      taskFile: 't.md',
+      session: { kind: 'no-session' },
+      tools: 'read,bash,edit,write',
+    })
+    expect(withHigh).toContain('--thinking')
+    expect(withHigh[withHigh.indexOf('--thinking') + 1]).toBe('high')
+    expect(validateVisibleChildArgv(withHigh)).toEqual([])
+
+    const withOff = buildVisibleChildArgv({
+      thinking: 'off',
+      systemPromptFile: 'a.md',
+      taskFile: 't.md',
+      session: { kind: 'no-session' },
+      tools: 'read,bash,edit,write',
+    })
+    expect(withOff).toContain('--thinking')
+    expect(withOff[withOff.indexOf('--thinking') + 1]).toBe('off')
+
+    const inherit = buildVisibleChildArgv({
+      systemPromptFile: 'a.md',
+      taskFile: 't.md',
+      session: { kind: 'no-session' },
+      tools: 'read,bash,edit,write',
+    })
+    expect(inherit).not.toContain('--thinking')
+  })
+
   it('POSIX-quotes cd worktree && argv including spaces', () => {
     const argv = buildVisibleChildArgv({ systemPromptFile: 'a.md', taskFile: '/tmp/task file.md', session: { kind: 'no-session' }, tools: 'read,bash,edit,write' })
     const payload = buildVisibleChildSpawnPayload('/tmp/task worktree', argv)

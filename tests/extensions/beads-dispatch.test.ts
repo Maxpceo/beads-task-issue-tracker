@@ -491,6 +491,47 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     expect(errors[0]).toContain('Implementation intent (Plan: or Problem: + Approach:)')
   })
 
+  it('ignores later BLOCKED/hook text that only mentions PLAN APPROVED as a substring', () => {
+    const blockedHook =
+      'BLOCKED: runtime hook missing\n\nPLAN APPROVED записан, но child cwd остаётся main.\nRecovery: re-dispatch after hook fix.'
+    const errors = validateSupervisorReadiness(validBead(), [
+      { text: currentPlan },
+      { text: blockedHook },
+    ])
+
+    expect(errors.filter((error) => error.includes('в PLAN APPROVED comment отсутствуют fields:'))).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('treats BLOCKED-only comments with PLAN APPROVED substring as missing the plan marker', () => {
+    const blockedOnly =
+      'BLOCKED: runtime hook missing\n\nPLAN APPROVED записан earlier, but this comment is not a plan.'
+    const errors = validateSupervisorReadiness(validBead(), [{ text: blockedOnly }])
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('в PLAN APPROVED comment отсутствуют fields:')
+    expect(errors[0]).toContain('PLAN APPROVED')
+  })
+
+  it('accepts PLAN APPROVED after leading blank lines or markdown heading on the first non-empty line', () => {
+    const withBlanks = `\n\n${currentPlan}`
+    const withHeading = currentPlan.replace(/^PLAN APPROVED/, '## PLAN APPROVED')
+
+    expect(validateSupervisorReadiness(validBead(), [{ text: withBlanks }])).toEqual([])
+    expect(validateSupervisorReadiness(validBead(), [{ text: withHeading }])).toEqual([])
+  })
+
+  it('ignores later DISPATCH comments that embed PLAN APPROVED only in the body prompt', () => {
+    const dispatchWithEmbeddedPlan =
+      `DISPATCH (test-supervisor)\n\nBRANCH: fix/rb7o\n\nPrompt follows:\n${currentPlan}\n\nEnd prompt.`
+    const errors = validateSupervisorReadiness(validBead(), [
+      { text: currentPlan },
+      { text: dispatchWithEmbeddedPlan },
+    ])
+
+    expect(errors).toEqual([])
+  })
+
   it('keeps plan-bead and dispatch-supervisor docs synchronized with the readiness matrix aliases', async () => {
     const planSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/plan-bead/SKILL.md'), 'utf8')
     const dispatchSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
@@ -529,6 +570,46 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     const result = await registeredTool.execute('call-1', { beadId: 'bead-model', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-model', branch, 'abc1234'))
     expect(result.details.model).toBe('xai/grok-4.5')
     expect(result.content[0].text).toContain('model=xai/grok-4.5')
+    expect(result.content[0].text).toContain('thinking=(session inherit)')
+  })
+
+  it('headless dryRun reports resolved thinking including explicit off', async () => {
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    const modelsPath = path.join(cwd, '.pi', 'agent-models.json')
+    const originalModels = await fs.readFile(modelsPath, 'utf8')
+    let registeredTool: any
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-think', status: 'in_progress', labels: ['pi'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    try {
+      const parsed = JSON.parse(originalModels)
+      parsed.classThinking = { ...(parsed.classThinking || {}), standard: 'high' }
+      await fs.writeFile(modelsPath, JSON.stringify(parsed, null, 2))
+      beadsDispatchExtension(pi as any)
+      const high = await registeredTool.execute('call-1', { beadId: 'bead-think', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-think', branch, 'abc1234'))
+      expect(high.details.thinking).toBe('high')
+      expect(high.content[0].text).toContain('thinking=high')
+
+      parsed.classThinking.standard = 'off'
+      await fs.writeFile(modelsPath, JSON.stringify(parsed, null, 2))
+      const off = await registeredTool.execute('call-2', { beadId: 'bead-think', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-think', branch, 'abc1234'))
+      expect(off.details.thinking).toBe('off')
+      expect(off.content[0].text).toContain('thinking=off')
+    } finally {
+      await fs.writeFile(modelsPath, originalModels)
+    }
   })
 
   it('headless spawn argv includes --model when class resolves and omits it when empty', async () => {
@@ -578,13 +659,25 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
       expect(spawnArgs).toBeDefined()
       expect(spawnArgs!).toContain('--model')
       expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+      expect(spawnArgs!).not.toContain('--thinking')
 
-      // Empty classes → inherit (no --model)
+      // With class thinking high → --thinking high
+      const withThinking = JSON.parse(originalModels)
+      withThinking.classThinking = { standard: 'high' }
+      await fs.writeFile(modelsPath, JSON.stringify(withThinking, null, 2))
+      captured.length = 0
+      await registeredTool.execute('call-think', { beadId: 'bead-argv', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-argv', branch, 'abc1234'))
+      expect(captured.length).toBeGreaterThan(0)
+      expect(captured[0]).toContain('--thinking')
+      expect(captured[0]![captured[0]!.indexOf('--thinking') + 1]).toBe('high')
+
+      // Empty classes → inherit (no --model / no --thinking)
       await fs.writeFile(modelsPath, JSON.stringify({ classes: {}, roles: {}, agentClasses: {} }, null, 2))
       captured.length = 0
       await registeredTool.execute('call-2', { beadId: 'bead-argv', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-argv', branch, 'abc1234'))
       expect(captured.length).toBeGreaterThan(0)
       expect(captured[0]).not.toContain('--model')
+      expect(captured[0]).not.toContain('--thinking')
     } finally {
       await fs.writeFile(modelsPath, originalModels)
     }

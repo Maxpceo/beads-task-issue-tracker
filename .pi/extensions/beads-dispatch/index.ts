@@ -108,6 +108,8 @@ interface AgentConfig {
 	systemPrompt: string;
 	tools?: string;
 	model?: string;
+	/** Explicit thinking including "off"; undefined = session inherit. */
+	thinking?: string;
 }
 
 interface DispatchResult {
@@ -122,6 +124,8 @@ interface DispatchResult {
 	stderr: string;
 	/** Resolved child model id when set; omit/empty means session inherit. */
 	model?: string;
+	/** Resolved thinking when set (including "off"); omit means session inherit. */
+	thinking?: string;
 	transport?: DispatchTransport;
 	status?: string;
 	pane?: string;
@@ -276,6 +280,7 @@ function loadAgent(cwd: string, name: string): AgentConfig {
 		systemPrompt: parsed.body,
 		tools: parsed.data.tools,
 		model: resolved.model,
+		thinking: resolved.thinking,
 	};
 }
 
@@ -384,8 +389,13 @@ function extractSection(text: string, heading: string): string {
 	return (next >= 0 ? after.slice(0, next) : after).trim();
 }
 
+function isPlanApprovedComment(text: string): boolean {
+	const firstLine = firstNonEmptyLine(text) ?? "";
+	return /^(?:#{1,6}\s*)?PLAN APPROVED\b/.test(firstLine);
+}
+
 function getPlanComment(comments: BeadComment[]): string | undefined {
-	return comments.map((comment) => comment.text ?? "").reverse().find((text) => /PLAN APPROVED/.test(text));
+	return comments.map((comment) => comment.text ?? "").reverse().find((text) => isPlanApprovedComment(text));
 }
 
 function extractRecordedStartCommit(comments: BeadComment[]): string | undefined {
@@ -689,6 +699,7 @@ async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signa
 	const systemPrompt = await writeTempPrompt(agent.name, agent.systemPrompt);
 	const args = ["--mode", "json", "-p", "--no-session", "--append-system-prompt", systemPrompt.file];
 	if (agent.model) args.push("--model", agent.model);
+	if (agent.thinking) args.push("--thinking", agent.thinking);
 	if (agent.tools) args.push("--tools", agent.tools);
 	args.push(`Task: ${prompt}`);
 
@@ -996,6 +1007,7 @@ async function respawnVisibleFollowup(
 	}
 	const argv = buildVisibleChildArgv({
 		model: entry.model || undefined,
+		thinking: entry.thinking || undefined,
 		systemPromptFile: entry.promptFile,
 		session: { kind: "no-session" },
 		taskFile: entry.taskFile,
@@ -1174,12 +1186,13 @@ function cmuxSpawnAckResult(
 		registryKey: string;
 		taskId: string;
 		model?: string;
+		thinking?: string;
 		renameAttempts?: number;
 		renameFailures?: number;
 		renameLastError?: string;
 	},
 ): DispatchResult {
-	const output = JSON.stringify({ status: "spawned", model: ack.model ?? null, ...ack }, null, 2);
+	const output = JSON.stringify({ status: "spawned", model: ack.model ?? null, thinking: ack.thinking ?? null, ...ack }, null, 2);
 	return {
 		agent: agentName,
 		beadId,
@@ -1190,6 +1203,7 @@ function cmuxSpawnAckResult(
 		output,
 		stderr: "",
 		model: ack.model,
+		thinking: ack.thinking,
 		transport: "cmux",
 		status: "spawned",
 		pane: ack.pane,
@@ -1444,6 +1458,7 @@ async function dispatchVisibleCmux(input: {
 	if (params.dryRun) {
 		const argv = buildVisibleChildArgv({
 			model: agent.model,
+			thinking: agent.thinking,
 			systemPromptFile: `/tmp/dry-prompt-${taskId}.md`,
 			tools: agent.tools,
 			session: { kind: "no-session" },
@@ -1458,6 +1473,7 @@ async function dispatchVisibleCmux(input: {
 			registryKey: taskId,
 			taskId,
 			model: agent.model,
+			thinking: agent.thinking,
 		});
 	}
 	const testAdapter = getCmuxAdapterForTests();
@@ -1510,6 +1526,7 @@ Next step is review, same as today. Do not call review yourself.
 	files.digestFile = digestFile;
 	const argv = buildVisibleChildArgv({
 		model: agent.model,
+		thinking: agent.thinking,
 		systemPromptFile: files.promptFile,
 		tools: agent.tools,
 		session: { kind: "no-session" },
@@ -1553,6 +1570,7 @@ Next step is review, same as today. Do not call review yourself.
 		worktree: worktreePath,
 		role: agentName,
 		model: agent.model ?? "",
+		thinking: agent.thinking,
 		taskFile: files.taskFile,
 		resultFile: files.resultFile,
 		digestFile: files.digestFile,
@@ -1592,6 +1610,7 @@ Next step is review, same as today. Do not call review yourself.
 		registryKey: taskId,
 		taskId,
 		model: agent.model,
+		thinking: agent.thinking,
 		renameAttempts: rename.renameAttempts,
 		renameFailures: rename.renameFailures,
 		renameLastError: rename.renameLastError,
@@ -1679,6 +1698,7 @@ async function dispatch(
 			output: prompt,
 			stderr: "",
 			model: agent.model,
+			thinking: agent.thinking,
 		};
 	}
 
@@ -1701,9 +1721,9 @@ async function dispatch(
 			startCommit,
 			endCommit,
 		});
-		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, model: agent.model, ...result };
+		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, model: agent.model, thinking: agent.thinking, ...result };
 	}
-	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, model: agent.model, ...result };
+	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, model: agent.model, thinking: agent.thinking, ...result };
 }
 
 function renderDispatchResult(result: DispatchResult): string {
@@ -1725,6 +1745,7 @@ function renderDispatchResult(result: DispatchResult): string {
 		result.transport ? `transport=${result.transport}` : "",
 		result.status ? `status=${result.status}` : "",
 		result.model ? `model=${result.model}` : "model=(session inherit)",
+		result.thinking ? `thinking=${result.thinking}` : "thinking=(session inherit)",
 		`exit=${result.exitCode}`,
 		renameBits,
 		result.stderr ? `stderr:\n${result.stderr}` : "",

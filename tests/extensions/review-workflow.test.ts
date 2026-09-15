@@ -1865,6 +1865,31 @@ describe('review_bead agent model routing', () => {
     expect(spawnArgs).toBeDefined()
     expect(spawnArgs!).toContain('--model')
     expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.5')
+    expect(spawnArgs!).not.toContain('--thinking')
+
+    writeFileSync(
+      join(cwd, '.pi', 'agent-models.json'),
+      JSON.stringify({
+        classes: { strong: 'xai/grok-4.5' },
+        classThinking: { strong: 'off' },
+        roles: {},
+        agentClasses: { 'code-reviewer': 'strong' },
+      }, null, 2),
+    )
+    captured.length = 0
+    await registeredTool.execute('call-think', { beadId: 'bead-a', worktreePath: cwd }, undefined, undefined, {
+      cwd,
+      sessionManager: {
+        getEntries: () => [{
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-a', branch: 'task/bead-a', worktreePath: cwd, startCommit: 'aaa1111' },
+        }],
+      },
+    })
+    expect(captured.length).toBeGreaterThan(0)
+    expect(captured[0]).toContain('--thinking')
+    expect(captured[0]![captured[0]!.indexOf('--thinking') + 1]).toBe('off')
 
     writeFileSync(join(cwd, '.pi', 'agent-models.json'), JSON.stringify({ classes: {}, roles: {}, agentClasses: {} }, null, 2))
     captured.length = 0
@@ -1880,6 +1905,7 @@ describe('review_bead agent model routing', () => {
     })
     expect(captured.length).toBeGreaterThan(0)
     expect(captured[0]).not.toContain('--model')
+    expect(captured[0]).not.toContain('--thinking')
 
     rmSync(cwd, { recursive: true, force: true })
   })

@@ -28,40 +28,78 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
 
 ## Reporting and model guidance
 
-### Per-agent model routing (project-local)
+### Per-agent model + thinking routing (project-local)
 
-Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`. Agent frontmatter `model:` is not the routing source of truth.
+Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`. Agent frontmatter `model:` / `thinking:` is not the routing source of truth for child spawns.
 
-Resolve order when spawning a child Pi process (`dispatch_supervisor` / `dispatch_reviewer` headless+cmux, `review_bead`, `subagent` / `plan_subagent`):
+**Primary UX:** `/agent-models` with **no args** opens an interactive menu (`ctx.ui.select` / model picker / thinking picker) when UI is available. Without UI (CI/headless host) the same empty invocation falls back to a text `show` dump — it never blocks on `select`.
+
+**Menu IA (Russian-first root):**
+
+1. **Обзор** — compact human summary or raw dump («подробнее»)
+2. **Настроить мощность (class)** — class wizard: pick class → live model → filtered thinking (per-step save on confirm)
+3. **Настроить агента** — agent wizard with badges: class / model / thinking / clear actions
+4. **Уборка** — stale JSON keys (bulk delete requires confirm) and class-thinking reset
+5. **← Выход**
+
+**Back-nav:** every nested `select` includes **← Назад**. Nested Esc/null/`← Назад` returns to the previous screen. Root Esc/`← Выход` leaves the menu. Unconfirmed mid-step choices do **not** write JSON; a confirmed leaf step saves immediately.
+
+**Live model catalog:** the model picker prefers non-empty `ctx.scopedModels`, else the project registry path: best-effort `await modelRegistry.refresh()` (Pi availability snapshot is empty until refresh), then `getAvailable()`, then if still empty `getAll()` filtered by `hasConfiguredAuth` when present (via injectable `listAvailableModels`, with timeout/catch). Ids are `provider/id`. Only when the registry is missing, still empty after refresh/getAll, throws, or times out does the menu fall back to models already present in `.pi/agent-models.json` plus **Другая…** free-text. Handler **forwards** `modelRegistry` / `scopedModels` and must not strip them.
+
+**Thinking filter (Pi-canon `thinkingLevelMap`, mirror of `getSupportedThinkingLevels`):**
+
+- `reasoning === false` → only `off`
+- no map → `off..high` (`xhigh`/`max` hidden)
+- map value `null` → hide level; string → show; omitted standard levels still show; omitted `xhigh`/`max` stay hidden
+- free-text / unknown model → default `off..high`
+- menu **blocks** unsupported levels; after a model change, if stored thinking is unsupported the menu **warns** and offers reset/repick
+- CLI still accepts the full Pi enum only (no registry filter on CLI path)
+
+**Discovery:** menu/show list agents from a filesystem scan of project `.pi/agents/*.md` (skip `README.md`), unioned with keys already in `agentClasses` / `roles`. A new `foo.md` is visible immediately as **unmapped → session inherit** with an assign action; creating the file does **not** auto-write `agentClasses`. Stale JSON keys (no matching `.md`) are shown and can be removed. Visible cmux and headless use the **same** policy per agent name.
+
+**Model resolve** when spawning a child Pi process (`dispatch_supervisor` / `dispatch_reviewer` headless+cmux, `review_bead`, `subagent` / `plan_subagent`):
 
 1. `roles[agent].model` — optional per-role override
 2. else `classes[agentClasses[agent]]` — power class mapping
-3. else **session inherit** — do not pass `--model` (child uses the current session model)
+3. else **session inherit** — do not pass `--model`
 
-Empty string model ids and missing/invalid JSON are treated as inherit for spawn (spawn does not fail solely because the file is absent). Mutating commands (`set`) require a valid project `.pi/` and reject unknown class names on `set agent-class`.
+**Thinking resolve** (independent of model; levels `off|minimal|low|medium|high|xhigh|max`):
 
-Default power classes (all start as `xai/grok-4.5`; change with the command, not by editing agent.md):
+1. `roles[agent].thinking` — optional per-role override
+2. else `classThinking[agentClasses[agent]]` — per-class thinking
+3. else **session inherit** — do **not** pass `--thinking`
 
-| Class | Default model | Default agents |
-|---|---|---|
-| `strong` | `xai/grok-4.5` | `code-reviewer`, `architect` |
-| `standard` | `xai/grok-4.5` | `vue-supervisor`, `tauri-supervisor`, `test-supervisor`, `detective` |
-| `cheap` | `xai/grok-4.5` | `documentation-expert`, `plan-edge-reviewer`, `plan-consistency-reviewer`, `plan-dead-zone-reviewer` |
+Important: explicit **`off` ≠ inherit**. Inherit omits the flag (child uses session/default thinking). Explicit `off` passes `--thinking off`. Menu label «как у class/сессии» is inherit, not `off`. Spawn remains pass-through for stored levels (menu-time validation preferred over spawn clamp).
 
-Slash command (project cwd/worktree only; writes only `проект/.pi/agent-models.json`):
+Empty string model ids and missing/invalid JSON are treated as inherit for spawn (spawn does not fail solely because the file is absent). Mutating commands require a valid project `.pi/` and reject unknown class names on `set agent-class` / `set class-thinking`. Role `set`/`unset` **merge** fields: setting model preserves thinking and vice versa; unsetting one field keeps the other; empty role entry is deleted.
+
+Default power classes (all start as `xai/grok-4.5`; change via menu/CLI, not by editing agent.md). Russian menu labels: Сильная / Обычная / Дешёвая.
+
+| Class | Label | Default model | Default agents |
+|---|---|---|---|
+| `strong` | Сильная | `xai/grok-4.5` | `code-reviewer`, `architect` |
+| `standard` | Обычная | `xai/grok-4.5` | `vue-supervisor`, `tauri-supervisor`, `test-supervisor`, `detective` |
+| `cheap` | Дешёвая | `xai/grok-4.5` | `documentation-expert`, `plan-edge-reviewer`, `plan-consistency-reviewer`, `plan-dead-zone-reviewer` |
+
+CLI is **secondary** (project cwd/worktree only; writes only `проект/.pi/agent-models.json`). Primary forms only:
 
 ```text
+/agent-models                 # menu when hasUI; else show
 /agent-models show
 /agent-models set class <name> <modelId>
+/agent-models set class-thinking <name> <level>
+/agent-models unset class-thinking <name>
 /agent-models set role <agent> <modelId>
-/agent-models set agent-class <agent> <class>
 /agent-models unset role <agent>
+/agent-models set role-thinking <agent> <level>
+/agent-models unset role-thinking <agent>
+/agent-models set agent-class <agent> <class>
 /agent-models unset agent-class <agent>
 ```
 
-`followup_visible_dispatch` does not restart a live pane with a new model mid-session; a changed mapping applies on the next spawn. Dry-run dispatch includes the resolved `model=` field (or session inherit).
+`followup_visible_dispatch` does not restart a live pane with a new model/thinking mid-session; a changed mapping applies on the next spawn. Dry-run dispatch includes resolved `model=` and `thinking=` fields (or session inherit).
 
-Out of scope here: dynamic auto-pick by task complexity, provider failover, global `~/.pi` mapping.
+Out of scope here: dynamic auto-pick by task complexity, provider failover, mid-flight pane retune, auto-register into `chooseSupervisor`, global `~/.pi` mapping.
 
 - Completion reports must be evidence-backed: cite commands/manual checks, exit codes, and relevant output excerpts for every claim that work is done, tests pass, docs changed, review is approved, a plan covers a rule, or an investigation found a root cause.
 - Use `DONE` only when assigned scope is complete and verified; use `DONE_WITH_CONCERNS` when complete but there are non-blocking risks or skipped checks with reasons; use `BLOCKED` for missing context, unsafe branch/policy state, failing required checks, or unresolved decisions; use `NEEDS_CONTEXT` when required inputs such as `BEAD_ID`, `BRANCH`, `START_COMMIT`, symptoms, or acceptance criteria are missing.

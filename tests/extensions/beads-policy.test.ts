@@ -4,7 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import beadsPolicyExtension, { activeBeadLifecycleReason, evaluateBashPolicy, evaluatePathPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus } from '../../.pi/extensions/beads-policy/index'
+import beadsPolicyExtension, { BD_STATUS_UNREADABLE, activeBeadLifecycleReason, evaluateBashPolicy, evaluatePathPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus, resolveBdReadCwd } from '../../.pi/extensions/beads-policy/index'
 
 const runtimeOwnerKey = 'runtime:test-beads-policy'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
@@ -2054,6 +2054,72 @@ describe('Pi bd-first active bead policy', () => {
     expect(decision?.policy).not.toBe('enforceActiveBeadLifecycle')
   })
 
+  it('soco: unread live bd status does not preserve false bd:inreview claim', () => {
+    const snapshot = {
+      activeBead: 'bead-soco',
+      state: 'inreview',
+      sessionMode: 'inreview',
+      bdStatus: 'inreview',
+      branch: 'fix/soco',
+      worktreePath: '/repo/soco',
+    }
+
+    const reconciled = reconcileWorkflowStateWithBdStatus(snapshot, undefined)
+    const decision = evaluateToolPolicy('workflow_complete', { state: 'closed' }, reconciled)
+
+    expect(reconciled.bdStatus).toBe(BD_STATUS_UNREADABLE)
+    expect(decision?.block).toBe(true)
+    expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(decision?.reason).toMatch(/unreadable|refresh failed/i)
+    expect(decision?.reason).not.toMatch(/bd:inreview/i)
+    expect(decision?.reason).not.toContain('review-bead / review_bead')
+  })
+
+  it('soco: live closed after snapshot inreview allows workflow_complete(closed)', () => {
+    const reconciled = reconcileWorkflowStateWithBdStatus({
+      activeBead: 'bead-soco',
+      state: 'inreview',
+      sessionMode: 'inreview',
+      bdStatus: 'inreview',
+      branch: 'fix/soco',
+      worktreePath: '/repo/soco',
+    }, 'closed')
+
+    const decision = evaluateToolPolicy('workflow_complete', { state: 'closed' }, reconciled)
+
+    expect(reconciled.activeBead).toBeUndefined()
+    expect(reconciled.state).toBe('idle')
+    expect(reconciled.bdStatus).toBe('closed')
+    expect(decision).toBeUndefined()
+  })
+
+  it('soco: live inreview still blocks workflow_complete(closed)', () => {
+    const reconciled = reconcileWorkflowStateWithBdStatus({
+      activeBead: 'bead-soco',
+      state: 'implementing',
+      sessionMode: 'implementing',
+      bdStatus: 'in_progress',
+    }, 'inreview')
+
+    const decision = evaluateToolPolicy('workflow_complete', { state: 'closed' }, reconciled)
+
+    expect(reconciled.bdStatus).toBe('inreview')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('bd:inreview')
+    expect(decision?.reason).toContain('review-bead / review_bead')
+  })
+
+  it('soco: resolveBdReadCwd prefers existing worktreePath over process cwd', () => {
+    const worktree = mkdtempSync(join(tmpdir(), 'soco-bd-cwd-'))
+    try {
+      expect(resolveBdReadCwd({ worktreePath: worktree }, '/some/other/cwd')).toBe(worktree)
+      expect(resolveBdReadCwd({ worktreePath: '/missing/worktree-path' }, '/fallback/cwd')).toBe('/fallback/cwd')
+      expect(resolveBdReadCwd({}, '/fallback/cwd')).toBe('/fallback/cwd')
+    } finally {
+      rmSync(worktree, { recursive: true, force: true })
+    }
+  })
+
   it('allows next workflow claim after active bead reaches closed terminal bd status', () => {
     const decision = evaluateBashPolicy('/workflow-claim bead-b', {
       activeBead: 'bead-a',
@@ -2252,7 +2318,10 @@ describe('Pi bd-first active bead policy', () => {
 
       expect(result.reason).toContain('enforceActiveBeadLifecycle')
       expect(result.reason).toContain('bead-active')
-      expect(result.reason).toContain('review-bead')
+      // Fake bead id → live bd show fails; must block claim without false bd:inreview / review-bead routing.
+      expect(result.reason).toMatch(/unreadable|refresh failed/i)
+      expect(result.reason).not.toMatch(/bd:inreview/i)
+      expect(result.reason).not.toContain('review-bead')
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
