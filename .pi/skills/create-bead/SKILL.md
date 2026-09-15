@@ -32,6 +32,26 @@ Do not run `bd create` until every item is true:
 - All required `### ...` sections are present with concrete Russian content.
 - `-t` / `--type`, `-p` / `--priority`, and at least one `--label` / `--labels` / `-l` are set.
 - `--deps discovered-from:<id>` is set for follow-ups or discovered work when a source bead exists.
+- First-write / cold-session rule из секции ниже выполнен: все факты, уже известные в этой сессии и нужные имплементеру (anchors, SHA, lineage, naming, recipe), вписаны в description.
+
+## First write = cold-session handoff
+
+Первый `bd create` write — это финальный пакет для холодной сессии, а не черновик. Вопрос человека «хватит ли контекста?» не должен быть триггером полноты.
+
+Проверка перед `bd create` (тест вопроса): если у будущего имплементера возникнет вопрос, ответ на который **уже есть в твоём текущем контексте**, но отсутствует в description — description неполное. Допиши сейчас.
+
+Когда данные уже известны из investigation в этой сессии, description обязан включать их, а не пересказывать шаблон:
+
+- Files: конкретные пути + символы/функции (например `handleSave ~L88`) + что **не трогать**.
+- Investigation findings: выполненные команды, наблюдаемые результаты, SHA/PR, lineage beads.
+- Decisions: выбранный подход + ключевые API/patterns с reference-путями.
+- Suggested branch/worktree naming, если тип работы уже понятен.
+
+Запрещено: тонкий шаблон, где секции заполнены общими фразами; тактика «обогащу, если спросят»; намеренное скрытие известных anchors, SHA или API names ради краткости.
+
+Антипаттерн: все 11 секций формально присутствуют, labels проставлены, но нет ни одной конкретной привязки (symbol, SHA, команда, reference path) — такой bead не является self-contained, несмотря на пройденную структуру.
+
+Это не требование проводить полное investigation до create: правило касается в первую очередь данных, которые сессия уже знает. Но «не знал, потому что не смотрел» — не освобождение: если в description нет ни одной конкретной привязки (path, symbol, команда, SHA, reference), сначала доберись минимального evidence или спроси пользователя — не создавай stub.
 
 ## Pre-flight
 
