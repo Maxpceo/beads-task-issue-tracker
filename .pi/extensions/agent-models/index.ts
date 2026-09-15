@@ -9,6 +9,29 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import {
+	BACK_MODEL_ID,
+	customPickerAvailable,
+	FALLBACK_SELECT_CAP,
+	FILTER_NOTIFY,
+	filterAvailableModels,
+	interpretPick,
+	MODEL_PICKER_VIEWPORT,
+	pinThenCap,
+	runSearchableModelPicker,
+	UNBOUNDED_SELECT_MAX,
+	type CustomFn,
+} from "./searchable-picker";
+
+export {
+	BACK_MODEL_ID,
+	FALLBACK_SELECT_CAP,
+	filterAvailableModels,
+	interpretPick,
+	MODEL_PICKER_VIEWPORT,
+	pinThenCap,
+	UNBOUNDED_SELECT_MAX,
+};
 
 export const AGENT_MODELS_FILENAME = "agent-models.json";
 
@@ -530,11 +553,14 @@ export function formatAgentModelsShow(loaded: AgentModelsLoadResult, cwd: string
 	return lines.join("\n");
 }
 
+export type ExtensionUiMode = "tui" | "rpc" | "json" | "print";
+
 type CommandUi = {
 	notify?: (message: string, level?: string) => void;
 	select?: (title: string, options: string[]) => Promise<string | undefined | null>;
 	input?: (title: string, initial?: string) => Promise<string | undefined | null>;
 	confirm?: (title: string, message: string) => Promise<boolean>;
+	custom?: CustomFn;
 };
 
 /** Model entry for live catalog / thinking filter (provider/id + optional Pi meta). */
@@ -577,6 +603,7 @@ export type ScopedModelLike = {
 export type AgentModelsCommandContext = {
 	cwd?: string;
 	hasUI?: boolean;
+	mode?: ExtensionUiMode;
 	ui?: CommandUi;
 	/** Pi extension ctx.modelRegistry — optional live catalogue source. */
 	modelRegistry?: ModelRegistryLike;
@@ -1073,6 +1100,7 @@ export type MenuUi = {
 	input?: (title: string, initial?: string) => Promise<string | undefined | null>;
 	notify?: (message: string, level?: string) => void;
 	confirm?: (title: string, message: string) => Promise<boolean>;
+	custom?: CustomFn;
 };
 
 export type MenuResult = { ok: boolean; text: string; cancelled?: boolean; wrote?: boolean };
@@ -1080,6 +1108,7 @@ export type MenuResult = { ok: boolean; text: string; cancelled?: boolean; wrote
 export type RunAgentModelsMenuOptions = {
 	listAvailableModels?: ListAvailableModelsFn;
 	catalogTimeoutMs?: number;
+	mode?: ExtensionUiMode;
 };
 
 export const MENU_EXIT = "← Выход";
@@ -1176,6 +1205,42 @@ async function confirmDestructive(ui: MenuUi, title: string, message: string): P
 	return pick.type === "pick" && pick.id === "yes";
 }
 
+async function pickOtherModelId(
+	ui: MenuUi,
+	models: AvailableModelInfo[],
+	initial?: string,
+): Promise<{ modelId: string; meta?: AvailableModelInfo; catalog: AvailableModelInfo[] } | "back"> {
+	const typed = await ui.input?.("Model id (provider/id)", initial ?? "");
+	if (typed == null || !typed.trim()) return "back";
+	const modelId = typed.trim();
+	return { modelId, meta: findModelMeta(models, modelId), catalog: models };
+}
+
+async function pickModelIdFallback(
+	ui: MenuUi,
+	title: string,
+	models: AvailableModelInfo[],
+	initial?: string,
+): Promise<{ modelId: string; meta?: AvailableModelInfo; catalog: AvailableModelInfo[] } | "back"> {
+	let list = models;
+	if (ui.input) {
+		const query = await ui.input("Фильтр моделей");
+		if (query == null) return "back";
+		list = filterAvailableModels(list, query);
+	}
+	if (list.length >= UNBOUNDED_SELECT_MAX) {
+		const total = list.length;
+		list = pinThenCap(list, initial, FALLBACK_SELECT_CAP);
+		ui.notify?.(`Каталог обрезан: показаны ${list.length} из ${total}. ${FILTER_NOTIFY}`, "warning");
+	}
+	const pick = await selectWithNav(ui, title, modelSelectOptions(list), "nested");
+	if (pick.type !== "pick") return "back";
+	const interpreted = interpretPick(pick.id);
+	if (interpreted === "back") return "back";
+	if (interpreted === "other") return pickOtherModelId(ui, models, initial);
+	return { modelId: interpreted.modelId, meta: findModelMeta(models, interpreted.modelId), catalog: models };
+}
+
 async function pickModelId(
 	ui: MenuUi,
 	title: string,
@@ -1183,21 +1248,35 @@ async function pickModelId(
 	listAvailableModels: ListAvailableModelsFn | undefined,
 	catalogTimeoutMs: number,
 	initial?: string,
+	mode?: ExtensionUiMode,
 ): Promise<{ modelId: string; meta?: AvailableModelInfo; catalog: AvailableModelInfo[] } | "back"> {
 	const catalog = await resolveModelCatalog(config, listAvailableModels, catalogTimeoutMs);
 	if (catalog.source === "fallback") {
 		ui.notify?.("Каталог моделей: fallback из конфига (registry/таймаут)", "warning");
 	}
-	const pick = await selectWithNav(ui, title, modelSelectOptions(catalog.models), "nested");
-	if (pick.type !== "pick") return "back";
-	if (pick.id === OTHER_MODEL_ID) {
-		const typed = await ui.input?.("Model id (provider/id)", initial ?? "");
-		if (typed == null || !typed.trim()) return "back";
-		const modelId = typed.trim();
-		return { modelId, meta: findModelMeta(catalog.models, modelId), catalog: catalog.models };
+	const useCustom =
+		typeof ui.custom === "function" && mode === "tui" && customPickerAvailable();
+	if (useCustom && ui.custom) {
+		try {
+			const raw = await runSearchableModelPicker({
+				custom: ui.custom,
+				title,
+				models: catalog.models,
+				initial,
+			});
+			const interpreted = interpretPick(raw);
+			if (interpreted === "back") return "back";
+			if (interpreted === "other") return pickOtherModelId(ui, catalog.models, initial);
+			return {
+				modelId: interpreted.modelId,
+				meta: findModelMeta(catalog.models, interpreted.modelId),
+				catalog: catalog.models,
+			};
+		} catch {
+			ui.notify?.("Searchable picker недоступен, fallback select", "warning");
+		}
 	}
-	const meta = findModelMeta(catalog.models, pick.id);
-	return { modelId: pick.id, meta, catalog: catalog.models };
+	return pickModelIdFallback(ui, title, catalog.models, initial);
 }
 
 async function pickThinkingLevel(
@@ -1257,6 +1336,7 @@ export async function runAgentModelsMenu(
 	let wrote = false;
 	const listAvailableModels = options.listAvailableModels;
 	const catalogTimeoutMs = options.catalogTimeoutMs ?? DEFAULT_CATALOG_TIMEOUT_MS;
+	const uiMode = options.mode;
 
 	const reload = () => {
 		const loaded = loadAgentModels(projectRoot);
@@ -1300,6 +1380,7 @@ export async function runAgentModelsMenu(
 				listAvailableModels,
 				catalogTimeoutMs,
 				config.classes[className],
+				uiMode,
 			);
 			if (modelResult === "back") continue;
 
@@ -1400,6 +1481,7 @@ export async function runAgentModelsMenu(
 						listAvailableModels,
 						catalogTimeoutMs,
 						roleEntry(cfg.roles, agent)?.model,
+					uiMode,
 					);
 					if (modelResult === "back") continue;
 					setRoleModel(cfg, agent, modelResult.modelId);
@@ -1614,8 +1696,9 @@ export async function handleAgentModelsInvocation(
 						input: ctx.ui.input,
 						notify: ctx.ui.notify,
 						confirm: ctx.ui.confirm,
+						custom: ctx.ui.custom,
 					},
-					{ listAvailableModels },
+					{ listAvailableModels, mode: ctx.mode },
 				);
 				return { ok: result.ok, text: result.text };
 			} catch (error) {
@@ -1641,6 +1724,7 @@ export default function agentModelsExtension(pi: ExtensionAPI): void {
 			const result = await handleAgentModelsInvocation(args, {
 				cwd: ctx.cwd || process.cwd(),
 				hasUI: ctx.hasUI,
+				mode: ctx.mode,
 				ui: ctx.ui,
 				// Forward Pi catalogue sources — do not strip.
 				modelRegistry: ctx.modelRegistry,
