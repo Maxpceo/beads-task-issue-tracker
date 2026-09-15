@@ -1088,4 +1088,103 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(activeTools.at(-1)).toEqual(expectedNormalTools)
     expect(activeTools.at(-1)).toEqual(expect.arrayContaining(mandatoryWorkflowTools))
   })
+
+  it('/plan-auto still records Approved-by: Максим and does not set AUTOPILOT', async () => {
+    const { commandHandlers, agentEndHandlers, execCalls, statuses, ctx } = makeHarness()
+
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- reviewers approved\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement gate\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests pass\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, ctx)
+
+    const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('Approved-by: Максим')
+    expect(comment).not.toContain('Approved-by: оркестратор')
+    expect(comment).not.toContain('AUTOPILOT: true')
+    expect(statuses['plan-mode']).toBeUndefined()
+  })
+
+  it('registers /plan-autopilot separately from /plan-auto', async () => {
+    const { commandHandlers, workflowUpdates, statuses, ctx } = makeHarness()
+
+    expect(commandHandlers.has('plan-autopilot')).toBe(true)
+    expect(commandHandlers.has('plan-auto')).toBe(true)
+    await commandHandlers.get('plan-autopilot')?.handler('', ctx)
+
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'auto', sessionMode: 'planning' })
+    expect(statuses['plan-mode']).toBe('⏸ plan-autopilot')
+  })
+
+  it('NL «работаю автономно» / «работать автономно» enters autopilot; questions and negations do not', async () => {
+    for (const phrase of ['работаю автономно', 'работать автономно', 'Work autonomously']) {
+      const { inputHandlers, workflowUpdates, statuses, ctx } = makeHarness()
+      const result = await inputHandlers[0]?.({ text: phrase, source: 'user' }, ctx)
+      expect(result).toEqual({ action: 'handled' })
+      expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'auto', sessionMode: 'planning' })
+      expect(statuses['plan-mode']).toBe('⏸ plan-autopilot')
+    }
+
+    const { commandHandlers, inputHandlers, workflowUpdates, statuses, ctx } = makeHarness()
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const autoUpdatesBefore = workflowUpdates.filter((update: any) => update.planMode === 'auto').length
+    expect(await inputHandlers[0]?.({ text: 'можно ли работать автономно?', source: 'user' }, ctx)).toBeUndefined()
+    expect(await inputHandlers[0]?.({ text: 'не работай автономно', source: 'user' }, ctx)).toBeUndefined()
+    expect(statuses['plan-mode']).toBe('⏸ plan')
+    expect(workflowUpdates.filter((update: any) => update.planMode === 'auto')).toHaveLength(autoUpdatesBefore)
+  })
+
+  it('/plan-autopilot runs plan-review gate and records Approved-by: оркестратор; autopilot flag survives plan=off', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, activeTools, workflowUpdates, execCalls, statuses, ctx } = makeHarness()
+
+    await commandHandlers.get('plan-autopilot')?.handler('', ctx)
+    expect(statuses['plan-mode']).toBe('⏸ plan-autopilot')
+
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-review-findings')
+
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- reviewers approved\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement gate\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests pass\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, ctx)
+
+    const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('PLAN APPROVED')
+    expect(comment).toContain('Approved-by: оркестратор')
+    expect(comment).toContain('AUTOPILOT: true')
+    expect(comment).not.toContain('Approved-by: Максим')
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(activeTools.at(-1)).toEqual(expectedNormalTools)
+    expect(statuses['plan-mode']).toBe('autopilot')
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/task' })
+  })
+
+  it('/plan-autopilot blocks like /plan-auto when a required reviewer blocks the gate', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, activeTools, execCalls, ctx } = makeHarness()
+    mockPlanReviewGateOk = false
+    mockPlanReviewReasons = ['blocked reviewer: plan-dead-zone-reviewer']
+
+    await commandHandlers.get('plan-autopilot')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement gate' }] }] }, ctx)
+
+    expect(sendMessages.at(-1)?.message.customType).toBe('plan-review-gate-blocked')
+    expect(sendMessages.at(-1)?.message.content).toContain('blocked reviewer: plan-dead-zone-reviewer')
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+  })
+
+  it('workflow_plan_mode(mode=autopilot) matches /plan-autopilot entry', async () => {
+    const { toolHandlers, workflowUpdates, statuses, ctx } = makeHarness()
+
+    const result = await toolHandlers.get('workflow_plan_mode')?.execute('call-autopilot', { mode: 'autopilot' }, undefined, undefined, ctx)
+    expect(result.content[0].text).toContain('workflow_plan_mode=autopilot')
+    expect(result.details).toMatchObject({ mode: 'autopilot', autopilot: true })
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'auto', sessionMode: 'planning' })
+    expect(statuses['plan-mode']).toBe('⏸ plan-autopilot')
+  })
+
+  it('documents autopilot stop contract separately from /plan-auto in README', () => {
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/README.md'), 'utf8')
+    expect(readme).toContain('/plan-autopilot')
+    expect(readme).toContain('Approved-by: оркестратор')
+    expect(readme).toContain('работаю автономно')
+    expect(readme).toContain('NOT APPROVED')
+    expect(readme).toContain('land')
+    expect(readme).toMatch(/\/plan-auto.*Does \*\*not\*\* close the bead/s)
+  })
 })

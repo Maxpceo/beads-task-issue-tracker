@@ -5,7 +5,7 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 
 # Dispatch Supervisor
 
-This skill runs only after a bead is claimed and the plan is approved. Approved plan means approved dispatch; do not ask an extra “continue?” question unless there is a real decision point.
+This skill runs only after a bead is claimed and the plan is approved. Approved plan means approved dispatch; do not ask an extra “continue?” question unless there is a real decision point. When the durable plan comment has `Approved-by: оркестратор` / `AUTOPILOT: true`, continue the same automatic path; still stop and ask Maxim on supervisor `BLOCKED`/`NEEDS_CONTEXT`. Autopilot does not authorize `land` or `merge-to-main`.
 
 ## Workflow
 

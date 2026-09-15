@@ -57,7 +57,7 @@ const MANDATORY_WORKFLOW_TOOLS = [
 const WorkflowPlanModeParams = {
 	type: "object",
 	properties: {
-		mode: { type: "string", enum: ["off", "strict", "auto"], description: "Target plan mode" },
+		mode: { type: "string", enum: ["off", "strict", "auto", "autopilot"], description: "Target plan mode. autopilot = auto-execute gate + Approved-by оркестратор + durable autopilot flag after plan=off" },
 		reason: { type: "string", description: "Visible checkpoint reason for the mode change" },
 	},
 	required: ["mode"],
@@ -139,6 +139,34 @@ function isNaturalLanguagePlanModeActivation(text: string): boolean {
 	return [...russianActivationPatterns, ...englishActivationPatterns].some((pattern) => pattern.test(normalized));
 }
 
+/** NL activation for /plan-autopilot. Questions, negations, multi-id claims stay unhandled. */
+function isNaturalLanguageAutopilotActivation(text: string): boolean {
+	if (/[?？]/u.test(text)) return false;
+
+	const normalized = normalizePlanModeActivationText(text);
+	if (!normalized) return false;
+	if (/(?:^|\s)(?:не|нет|без|dont|don't|do not|never|stop)\b/u.test(normalized)) return false;
+	// Multiple bead ids → ambiguous claim+autopilot; leave to agent.
+	const beadIds = normalized.match(/\bbeads?[\w.-]*-\w+/gi) ?? [];
+	if (beadIds.length > 1) return false;
+
+	const russianPatterns = [
+		/^(?:пожалуйста\s+)?(?:я\s+)?работаю\s+автономно$/u,
+		/^(?:пожалуйста\s+)?работать\s+автономно$/u,
+		/^(?:пожалуйста\s+)?(?:работай|работайте)\s+автономно$/u,
+		/^(?:пожалуйста\s+)?включи\s+(?:режим\s+)?autopilot$/u,
+		/^(?:пожалуйста\s+)?включи\s+plan-autopilot$/u,
+	];
+	const englishPatterns = [
+		/^(?:please\s+)?(?:i\s+)?(?:am\s+)?work(?:ing)?\s+autonomously$/u,
+		/^(?:please\s+)?work\s+autonomously$/u,
+		/^(?:please\s+)?enable\s+(?:plan[-\s]?)?autopilot$/u,
+		/^(?:please\s+)?run\s+plan-autopilot$/u,
+	];
+
+	return [...russianPatterns, ...englishPatterns].some((pattern) => pattern.test(normalized));
+}
+
 function isExplicitPlanReviewRequest(text: string): boolean {
 	if (/[?？]/u.test(text)) return false;
 	const normalized = normalizePlanModeActivationText(text);
@@ -162,6 +190,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	};
 	let planModeEnabled = false;
 	let autoExecuteEnabled = false;
+	/** Survives plan=off after approve so hop/close runtime can honor autopilot close contract. Cleared on cancel/exit. */
+	let autopilotEnabled = false;
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
 	let autoPlanReviewState: "idle" | "awaiting_revision" = "idle";
@@ -220,8 +250,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const completed = todoItems.filter((t) => t.completed).length;
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", `📋 ${completed}/${todoItems.length}`));
 		} else if (planModeEnabled) {
-			const label = autoExecuteEnabled ? "⏸ plan-auto" : "⏸ plan";
+			const label = autopilotEnabled ? "⏸ plan-autopilot" : autoExecuteEnabled ? "⏸ plan-auto" : "⏸ plan";
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", label));
+		} else if (autopilotEnabled) {
+			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", "autopilot"));
 		} else {
 			ctx.ui.setStatus("plan-mode", undefined);
 		}
@@ -603,7 +635,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			return { approved: false };
 		}
 
-		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy: "Максим" }, ctx);
+		const approvedBy = autopilotEnabled ? "оркестратор" : "Максим";
+		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy }, ctx);
 		if (!result.details?.ok) {
 			syncWorkflowPlanMode(ctx, planModeEnabled ? (autoExecuteEnabled ? "auto" : "strict") : "off", "blocked", { activeBead: beadId, planApproved: false });
 			pi.sendMessage(
@@ -650,14 +683,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (approvalScopeError) return toolText(`workflow_plan_approved blocked: ${approvalScopeError}`, { ok: false, error: approvalScopeError });
 		const sessionKey = currentSessionKey(ctx);
 		const approvedAt = new Date().toISOString();
+		const defaultApprover = autopilotEnabled ? "оркестратор" : "Максим";
 		const comment = [
 			"PLAN APPROVED",
-			`Approved-by: ${params.approvedBy || "Максим"}`,
+			`Approved-by: ${params.approvedBy || defaultApprover}`,
 			`Approved-at: ${approvedAt}`,
 			branch ? `BRANCH: ${branch}` : undefined,
 			worktreePath ? `WORKTREE: ${worktreePath}` : undefined,
 			startCommit ? `START_COMMIT: ${startCommit}` : undefined,
 			sessionKey ? `PI_SESSION_KEY: ${sessionKey}` : undefined,
+			autopilotEnabled ? "AUTOPILOT: true" : undefined,
 			"",
 			params.planEvidence.trim(),
 		].filter((line) => line !== undefined).join("\n");
@@ -669,13 +704,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		planModeEnabled = false;
 		autoExecuteEnabled = false;
+		// autopilotEnabled intentionally survives plan=off so post-approve hop can close without Maxim re-prompt.
 		executionMode = false;
 		restoreNormalToolSurface();
 		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
 		await triggerApprovedPlanContinuation(ctx, params.beadId, worktreePath);
-		return toolText(`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; continuation attempted`, { ok: true, beadId: params.beadId, branch, worktreePath, startCommit });
+		return toolText(
+			`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`,
+			{ ok: true, beadId: params.beadId, branch, worktreePath, startCommit, autopilot: autopilotEnabled },
+		);
 	}
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
@@ -684,17 +723,20 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return result.ok;
 	}
 
-	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean): void {
+	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean, autopilot = false): void {
 		if (!planModeEnabled) snapshotNormalToolSurface();
 		planModeEnabled = true;
-		autoExecuteEnabled = autoExecute;
+		autoExecuteEnabled = autoExecute || autopilot;
+		autopilotEnabled = autopilot;
 		executionMode = false;
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
 		todoItems = [];
 		pi.setActiveTools(PLAN_MODE_TOOLS);
-		if (ctx.hasUI) ctx.ui.notify(`${autoExecute ? "Auto " : ""}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
-		syncWorkflowPlanMode(ctx, autoExecute ? "auto" : "strict", "planning");
+		const modeLabel = autopilot ? "Autopilot " : autoExecute ? "Auto " : "";
+		if (ctx.hasUI) ctx.ui.notify(`${modeLabel}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
+		// Gate path matches plan=auto; durable autopilot flag is session-local in plan-mode state.
+		syncWorkflowPlanMode(ctx, autoExecute || autopilot ? "auto" : "strict", "planning");
 		updateStatus(ctx);
 		persistState();
 	}
@@ -702,6 +744,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	function exitPlanMode(ctx: ExtensionContext): void {
 		planModeEnabled = false;
 		autoExecuteEnabled = false;
+		autopilotEnabled = false;
 		executionMode = false;
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
@@ -725,6 +768,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		pi.appendEntry("plan-mode", {
 			enabled: planModeEnabled,
 			autoExecute: autoExecuteEnabled,
+			autopilot: autopilotEnabled,
 			todos: todoItems,
 			executing: executionMode,
 			autoPlanReviewState,
@@ -736,18 +780,18 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		workflowPi.registerTool({
 			name: "workflow_plan_mode",
 			label: "Workflow Plan Mode",
-			description: "Enter/exit strict or auto plan mode and update active tool restrictions plus workflow-state metadata. Slash commands are optional human shortcuts.",
+			description: "Enter/exit strict, auto, or autopilot plan mode and update active tool restrictions plus workflow-state metadata. Slash commands are optional human shortcuts. autopilot keeps a durable session flag after plan=off and records Approved-by: оркестратор.",
 			parameters: WorkflowPlanModeParams,
-			async execute(_id: string, params: { mode: "off" | "strict" | "auto"; reason?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+			async execute(_id: string, params: { mode: "off" | "strict" | "auto" | "autopilot"; reason?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				let activeTools: string[];
 				if (params.mode === "off") {
 					exitPlanMode(ctx);
 					activeTools = normalModeTools();
 				} else {
-					enterPlanMode(ctx, params.mode === "auto");
+					enterPlanMode(ctx, params.mode === "auto" || params.mode === "autopilot", params.mode === "autopilot");
 					activeTools = PLAN_MODE_TOOLS;
 				}
-				return toolText(`workflow_plan_mode=${params.mode}${params.reason ? `: ${params.reason}` : ""}`, { mode: params.mode, activeTools });
+				return toolText(`workflow_plan_mode=${params.mode}${params.reason ? `: ${params.reason}` : ""}`, { mode: params.mode, activeTools, autopilot: autopilotEnabled });
 			},
 		});
 
@@ -779,7 +823,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	pi.registerCommand("plan-auto", {
 		description: "Enter plan mode and auto-execute only if the plan passes the required quality gate",
-		handler: async (_args, ctx) => enterPlanMode(ctx, true),
+		handler: async (_args, ctx) => enterPlanMode(ctx, true, false),
+	});
+
+	pi.registerCommand("plan-autopilot", {
+		description: "Enter plan-auto gate with Approved-by: оркестратор; durable autopilot flag survives plan=off (close hop is separate runtime)",
+		handler: async (_args, ctx) => enterPlanMode(ctx, true, true),
 	});
 
 	pi.registerCommand("plan-cancel", {
@@ -863,7 +912,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		persistState();
 	}
 
-	// Natural-language activation for explicit claim+plan requests and clear enter-plan-mode requests.
+	// Natural-language activation for claim+plan, autopilot, and clear enter-plan-mode requests.
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return;
 		const workflowIntent = parseWorkflowIntent(event.text);
@@ -874,6 +923,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 		if (planModeEnabled && isExplicitPlanReviewRequest(event.text)) {
 			await runStrictPlanCritique(ctx);
+			return { action: "handled" };
+		}
+		if (isNaturalLanguageAutopilotActivation(event.text)) {
+			enterPlanMode(ctx, true, true);
 			return { action: "handled" };
 		}
 		if (!isNaturalLanguagePlanModeActivation(event.text)) return;
@@ -952,9 +1005,11 @@ Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header.
 
-For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan. Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections. Do not call workflow_plan_approved yourself unless Maxim explicitly approves.
+For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan. Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections. Do not call workflow_plan_approved yourself unless Maxim explicitly approves — except in /plan-autopilot, where runtime approval records Approved-by: оркестратор after the plan-review gate.
 
-If auto-plan execution was explicitly requested, create a draft plan first. Pi will run required multi-agent plan-review agents before implementation. After reviewer findings are returned, your revised plan MUST include all sections below or execution will remain blocked:
+If /plan-autopilot (or NL «работаю автономно» / «работать автономно») is active: same multi-agent plan-review gate as /plan-auto; durable PLAN APPROVED uses Approved-by: оркестратор; the autopilot session flag survives plan=off. After CODE REVIEW: APPROVED and a green ACCEPTANCE MATRIX the orchestrator closes the bead without asking Maxim «закрывай?». Stop and ask Maxim on plan-review BLOCKED, missing revised sections, missing active bead/worktree, supervisor BLOCKED/NEEDS_CONTEXT, code-review NOT APPROVED, or matrix FAIL/NOT RUN/BLOCKED/SCOPE GAP. Do not call land or merge-to-main from autopilot.
+
+If auto-plan execution was explicitly requested (/plan-auto or /plan-autopilot), create a draft plan first. Pi will run required multi-agent plan-review agents before implementation. After reviewer findings are returned, your revised plan MUST include all sections below or execution will remain blocked:
 
 Reviewer findings summary:
 - Summary of reviewer verdicts and important findings
@@ -1126,12 +1181,13 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		const planModeEntry = entries
 			.filter((e: { type: string; customType?: string }) => e.type === "custom" && e.customType === "plan-mode")
 			.pop() as
-			| { data?: { enabled: boolean; autoExecute?: boolean; todos?: TodoItem[]; executing?: boolean; autoPlanReviewState?: "idle" | "awaiting_revision"; autoPlanReviewResults?: PlanReviewResult[] } }
+			| { data?: { enabled: boolean; autoExecute?: boolean; autopilot?: boolean; todos?: TodoItem[]; executing?: boolean; autoPlanReviewState?: "idle" | "awaiting_revision"; autoPlanReviewResults?: PlanReviewResult[] } }
 			| undefined;
 
 		if (planModeEntry?.data) {
 			planModeEnabled = planModeEntry.data.enabled ?? planModeEnabled;
 			autoExecuteEnabled = planModeEntry.data.autoExecute ?? autoExecuteEnabled;
+			autopilotEnabled = planModeEntry.data.autopilot ?? autopilotEnabled;
 			todoItems = planModeEntry.data.todos ?? todoItems;
 			executionMode = planModeEntry.data.executing ?? executionMode;
 			autoPlanReviewState = planModeEntry.data.autoPlanReviewState ?? autoPlanReviewState;
