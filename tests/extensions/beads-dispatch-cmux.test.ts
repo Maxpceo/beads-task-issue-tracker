@@ -28,6 +28,7 @@ import beadsDispatchExtension, {
   visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
+  requestReviewerDispatch,
   resolveDispatchTransport,
   saveRegistry,
   setCmuxAdapterForTests,
@@ -1059,6 +1060,33 @@ describe('complete_visible_dispatch', () => {
       }],
     })
   }
+
+  it('shares one concurrent completeVisibleDispatch promise per taskId', async () => {
+    seed({})
+    fs.writeFileSync(path.join(tmp, 'd.digest'), 'still working')
+    const { pi } = makePi({ head: 'aaa1111' })
+    const first = completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    const second = completeVisibleDispatch(pi as any, { taskId: 'task-1' })
+    const [a, b] = await Promise.all([first, second])
+    expect(a.status).toBe('result-only')
+    expect(b.status).toBe('result-only')
+    expect(a).toEqual(b)
+  })
+
+  it('requestReviewerDispatch uses registered dispatch_reviewer API', async () => {
+    const { pi, cwd, branch, beadId, head, tools } = makePi({
+      status: 'inreview',
+      head: 'aaa1111',
+    })
+    expect(tools.dispatch_reviewer).toBeDefined()
+    const result = await requestReviewerDispatch(
+      pi,
+      { beadId, dryRun: true, transport: 'headless' },
+      workflowCtx(cwd, beadId, branch, head),
+    )
+    expect(result.ok).toBe(true)
+    expect(result.text).toContain('agent=code-reviewer')
+  })
 
   it('retries incomplete ping and no-ops after submit', async () => {
     seed({})

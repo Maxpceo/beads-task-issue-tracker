@@ -37,6 +37,16 @@ let mockSupervisorDispatchAvailable = true
 let mockSupervisorDispatchCalls: Array<{ beadId: string; cwd?: string; transport?: string }> = []
 let mockSupervisorDispatchGate: Promise<void> | undefined
 let mockSupervisorDispatchSpawned = false
+let mockCompleteVisibleCalls: Array<{ taskId: string }> = []
+let mockCompleteVisibleResult: { status: string; text: string } = { status: 'submitted', text: 'ok' }
+let mockCompleteVisibleImpl: ((taskId: string) => Promise<{ status: string; text: string }>) | undefined
+let mockReviewerDispatchCalls: Array<{ beadId: string; cwd?: string; transport?: string }> = []
+let mockReviewerDispatchResult: { ok: boolean; text: string; error?: string } = { ok: true, text: 'status=spawned' }
+let mockCloseVisibleCalls: Array<{ beadId: string }> = []
+let mockFinalizeCloseResult: { ok: boolean; status: string; text: string } = { ok: true, status: 'closed', text: 'closed' }
+let mockFinalizeCloseCalls: Array<{ beadId: string; worktreePath: string }> = []
+let mockRegistryByTaskId: Record<string, { entry: { beadId: string; worktree: string; role: string; startCommit?: string; status?: string } }> = {}
+let mockLiveRegistryByBead: Record<string, Array<{ entry: { role: string; status?: string } }>> = {}
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -75,6 +85,36 @@ function loadPlanModeExtension(): (pi: unknown) => void {
           }
           return { ok: true, text: `agent=test-supervisor\nbead=${params.beadId}\nworktree=${params.cwd ?? '/tmp/project'}\nexit=0`, details: { beadId: params.beadId, worktreePath: params.cwd } }
         },
+        requestReviewerDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string; transport?: string }) => {
+          mockReviewerDispatchCalls.push(params)
+          return mockReviewerDispatchResult
+        },
+        parseVisiblePing: (text: string) => {
+          const errorMatch = /\[PING-ERROR\]/i.test(text)
+          const okMatch = !errorMatch && /\[PING\]/i.test(text)
+          if (!errorMatch && !okMatch) return undefined
+          const taskId = text.match(/\btaskId\s*=\s*([^\s,;]+)/i)?.[1] ?? text.match(/задача\s+([^\s:.,;]+)/iu)?.[1]
+          return { kind: errorMatch ? 'error' : 'ok', taskId, missingId: !taskId, text }
+        },
+        completeVisibleDispatch: async (_pi: unknown, params: { taskId: string }) => {
+          mockCompleteVisibleCalls.push(params)
+          if (mockCompleteVisibleImpl) return mockCompleteVisibleImpl(params.taskId)
+          return mockCompleteVisibleResult
+        },
+        closeVisibleDispatch: async (_pi: unknown, params: { beadId: string }) => {
+          mockCloseVisibleCalls.push(params)
+          return { status: 'closed', text: `closed panes for ${params.beadId}`, closed: ['surface:1'], tombstoned: ['task-1'] }
+        },
+        findRegistryByTaskId: (taskId: string) => mockRegistryByTaskId[taskId],
+        findLiveRegistryEntriesForBead: (beadId: string) => mockLiveRegistryByBead[beadId] ?? [],
+      }
+    }
+    if (id === '../review-workflow/index') {
+      return {
+        finalizeVisibleReviewClose: async (_pi: unknown, params: { beadId: string; worktreePath: string }) => {
+          mockFinalizeCloseCalls.push(params)
+          return mockFinalizeCloseResult
+        },
       }
     }
     if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
@@ -95,6 +135,19 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   mockSupervisorDispatchCalls = []
   mockSupervisorDispatchGate = undefined
   mockSupervisorDispatchSpawned = false
+  mockCompleteVisibleCalls = []
+  mockCompleteVisibleResult = { status: 'submitted', text: 'ok' }
+  mockCompleteVisibleImpl = undefined
+  mockReviewerDispatchCalls = []
+  mockReviewerDispatchResult = { ok: true, text: 'status=spawned' }
+  mockCloseVisibleCalls = []
+  mockFinalizeCloseResult = { ok: true, status: 'closed', text: 'closed' }
+  mockFinalizeCloseCalls = []
+  mockRegistryByTaskId = {
+    'task-sup': { entry: { beadId: 'bead-plan', worktree: '/tmp/task', role: 'test-supervisor', startCommit: 'task123', status: 'spawned' } },
+    'task-rev': { entry: { beadId: 'bead-plan', worktree: '/tmp/task', role: 'code-reviewer', startCommit: 'task123', status: 'spawned' } },
+  }
+  mockLiveRegistryByBead = {}
   const commandHandlers = new Map<string, { handler: (args: string, ctx: any) => unknown }>()
   const toolHandlers = new Map<string, any>()
   const workflowUpdates: unknown[] = []
@@ -1185,6 +1238,123 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(readme).toContain('работаю автономно')
     expect(readme).toContain('NOT APPROVED')
     expect(readme).toContain('land')
+    expect(readme).toContain('runtime hop')
+    expect(readme).toContain('единственный consumer')
     expect(readme).toMatch(/\/plan-auto.*Does \*\*not\*\* close the bead/s)
+  })
+
+  async function enterAutopilotPlanOff(harness: ReturnType<typeof makeHarness>) {
+    await harness.commandHandlers.get('plan-autopilot')?.handler('', harness.ctx)
+    await harness.agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, harness.ctx)
+    await harness.agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- ok\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests pass\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, harness.ctx)
+    expect(harness.statuses['plan-mode']).toBe('autopilot')
+  }
+
+  it('autopilot+plan off consumes supervisor ping once and dispatches reviewer', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'submitted', text: 'SUPERVISOR ARTIFACT\nStatus: DONE\nArtifact status: complete' }
+
+    const result = await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] test-supervisor · задача task-sup завершена taskId=task-sup digest=x',
+    }, harness.ctx)
+
+    expect(result).toEqual({ action: 'handled' })
+    expect(mockCompleteVisibleCalls).toEqual([{ taskId: 'task-sup' }])
+    expect(mockReviewerDispatchCalls).toEqual([{ beadId: 'bead-plan', cwd: '/tmp/task', transport: 'cmux' }])
+    expect(harness.sendMessages.some((m) => m.options?.triggerTurn === false && String(m.message.content).includes('complete_visible_dispatch'))).toBe(true)
+  })
+
+  it('autopilot hop does not dispatch a second reviewer when one is already live', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'submitted', text: 'Status: DONE' }
+    mockLiveRegistryByBead = { 'bead-plan': [{ entry: { role: 'code-reviewer', status: 'spawned' } }] }
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] test-supervisor · задача task-sup завершена taskId=task-sup',
+    }, harness.ctx)
+
+    expect(mockCompleteVisibleCalls).toHaveLength(1)
+    expect(mockReviewerDispatchCalls).toHaveLength(0)
+  })
+
+  it('repeat ping after submitted/verdict is noop without second reviewer', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'noop', text: 'already submitted' }
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] test-supervisor · задача task-sup завершена taskId=task-sup',
+    }, harness.ctx)
+
+    expect(mockCompleteVisibleCalls).toHaveLength(1)
+    expect(mockReviewerDispatchCalls).toHaveLength(0)
+    expect(mockFinalizeCloseCalls).toHaveLength(0)
+  })
+
+  it('reviewer APPROVED hop closes bead without «закрывай?» and clears autopilot', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'verdict', text: 'CODE REVIEW: APPROVED' }
+    mockFinalizeCloseResult = { ok: true, status: 'closed', text: 'closed bead-plan' }
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] code-reviewer · задача task-rev завершена taskId=task-rev',
+    }, harness.ctx)
+
+    expect(mockCompleteVisibleCalls).toEqual([{ taskId: 'task-rev' }])
+    expect(mockFinalizeCloseCalls).toEqual([{ beadId: 'bead-plan', worktreePath: '/tmp/task', startCommit: 'task123' }])
+    expect(mockCloseVisibleCalls).toEqual([{ beadId: 'bead-plan' }])
+    expect(harness.statuses['plan-mode']).toBeUndefined()
+    expect(harness.sendMessages.some((m) => String(m.message.content).includes('closed without'))).toBe(true)
+  })
+
+  it('NOT APPROVED keeps panes and stops with one ask', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'verdict', text: 'CODE REVIEW: NOT APPROVED' }
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] code-reviewer · задача task-rev завершена taskId=task-rev',
+    }, harness.ctx)
+
+    expect(mockFinalizeCloseCalls).toHaveLength(0)
+    expect(mockCloseVisibleCalls).toHaveLength(0)
+    expect(harness.statuses['plan-mode']).toBe('autopilot')
+    expect(harness.sendMessages.some((m) => m.message.customType === 'autopilot-hop-stop' && String(m.message.content).includes('NOT APPROVED'))).toBe(true)
+  })
+
+  it('ping without id STOPs and does not complete', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] agent finished without id markers',
+    }, harness.ctx)
+
+    expect(mockCompleteVisibleCalls).toHaveLength(0)
+    expect(harness.sendMessages.some((m) => m.message.customType === 'autopilot-hop-stop')).toBe(true)
+  })
+
+  it('/plan-auto does not consume ping after approve', async () => {
+    const harness = makeHarness()
+    await harness.commandHandlers.get('plan-auto')?.handler('', harness.ctx)
+    await harness.agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft' }] }] }, harness.ctx)
+    await harness.agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: `Reviewer findings summary:\n- ok\nAccepted findings:\n- none\nRejected findings:\n- none\nUnresolved blockers: none\nRevised plan:\n1. Implement\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- tests\nRisks / rollback:\n- revert\nAUTO_EXECUTE_ALLOWED: true` }] }] }, harness.ctx)
+
+    const result = await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] test-supervisor · задача task-sup завершена taskId=task-sup',
+    }, harness.ctx)
+
+    expect(result).toBeUndefined()
+    expect(mockCompleteVisibleCalls).toHaveLength(0)
   })
 })

@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import reviewWorkflowExtension, {
+  finalizeVisibleReviewClose,
   isReviewApproved,
   setReviewRuntimeDelegateForTestOverride,
   setSpawnForReviewTestOverride,
@@ -2112,6 +2113,132 @@ describe('review_workflow reviewer verdict handling', () => {
   })
 })
 
+describe('finalizeVisibleReviewClose', () => {
+  it('closes green APPROVED path without second review_bead', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let status = 'inreview'
+    const comments = [
+      'CODE REVIEW: APPROVED',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      'SUPERVISOR ARTIFACT:',
+      'Artifact status: complete',
+      'Verification: exit code 0 observed result pass',
+      'Status: DONE',
+    ].join('\n')
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status,
+              description: '### Acceptance criteria\n- hop works\n### Verification / acceptance checks\n- Manual check: hop closed',
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: comments, stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') {
+          status = String(args[args.indexOf('--status') + 1] ?? status)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'close') {
+          status = 'closed'
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: 'README.md\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/a\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    const result = await finalizeVisibleReviewClose(pi as any, {
+      beadId: 'bead-a',
+      worktreePath: '/tmp/task',
+      startCommit: 'aaa1111',
+      endCommit: 'bbb2222',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe('closed')
+    expect(status).toBe('closed')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(true)
+    expect(execCalls.some((call) => call.args.includes('reviewed'))).toBe(true)
+    expect(execCalls.some((call) => call.args.includes('accepted'))).toBe(true)
+    const matrix = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
+    expect(matrix).toBeDefined()
+  })
+
+  it('STOPs without writing blocking matrix when verification would NOT RUN', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let status = 'inreview'
+    const comments = [
+      'CODE REVIEW: APPROVED',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      'SUPERVISOR ARTIFACT:',
+      'Artifact status: complete',
+      'Status: DONE',
+    ].join('\n')
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status,
+              description: '### Acceptance criteria\n- hop works\n### Verification / acceptance checks\n- `rg "foo"; rm -rf /` file.md exits 0.',
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: comments, stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') {
+          status = String(args[args.indexOf('--status') + 1] ?? status)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: 'file.md\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/a\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    const result = await finalizeVisibleReviewClose(pi as any, {
+      beadId: 'bead-a',
+      worktreePath: '/tmp/task',
+      startCommit: 'aaa1111',
+      endCommit: 'bbb2222',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe('blocked')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))).toBe(false)
+  })
+
+  it('returns not-approved without closing when latest verdict is NOT APPROVED', async () => {
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') return { stdout: 'CODE REVIEW: APPROVED\nCODE REVIEW: NOT APPROVED\nSTART_COMMIT: aaa', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    const result = await finalizeVisibleReviewClose(pi as any, { beadId: 'bead-a', worktreePath: '/tmp/task' })
+    expect(result).toMatchObject({ ok: false, status: 'not-approved' })
+  })
+})
+
 describe('review-bead visible code-reviewer hop', () => {
   const skill = readFileSync(join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
 
@@ -2121,6 +2248,8 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('followup_visible_dispatch({ beadId, role: "code-reviewer", task })')
     expect(skill).toContain('complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`')
     expect(skill).toContain('While a live code-reviewer pane exists, do not call `review_bead`')
+    expect(skill).toContain('runtime hop')
+    expect(skill).toContain('единственный consumer')
   })
 
   it('documents internal runtime hash auto-delegate without changing cmux hop pins', () => {
