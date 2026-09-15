@@ -491,6 +491,47 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     expect(errors[0]).toContain('Implementation intent (Plan: or Problem: + Approach:)')
   })
 
+  it('ignores later BLOCKED/hook text that only mentions PLAN APPROVED as a substring', () => {
+    const blockedHook =
+      'BLOCKED: runtime hook missing\n\nPLAN APPROVED записан, но child cwd остаётся main.\nRecovery: re-dispatch after hook fix.'
+    const errors = validateSupervisorReadiness(validBead(), [
+      { text: currentPlan },
+      { text: blockedHook },
+    ])
+
+    expect(errors.filter((error) => error.includes('в PLAN APPROVED comment отсутствуют fields:'))).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  it('treats BLOCKED-only comments with PLAN APPROVED substring as missing the plan marker', () => {
+    const blockedOnly =
+      'BLOCKED: runtime hook missing\n\nPLAN APPROVED записан earlier, but this comment is not a plan.'
+    const errors = validateSupervisorReadiness(validBead(), [{ text: blockedOnly }])
+
+    expect(errors).toHaveLength(1)
+    expect(errors[0]).toContain('в PLAN APPROVED comment отсутствуют fields:')
+    expect(errors[0]).toContain('PLAN APPROVED')
+  })
+
+  it('accepts PLAN APPROVED after leading blank lines or markdown heading on the first non-empty line', () => {
+    const withBlanks = `\n\n${currentPlan}`
+    const withHeading = currentPlan.replace(/^PLAN APPROVED/, '## PLAN APPROVED')
+
+    expect(validateSupervisorReadiness(validBead(), [{ text: withBlanks }])).toEqual([])
+    expect(validateSupervisorReadiness(validBead(), [{ text: withHeading }])).toEqual([])
+  })
+
+  it('ignores later DISPATCH comments that embed PLAN APPROVED only in the body prompt', () => {
+    const dispatchWithEmbeddedPlan =
+      `DISPATCH (test-supervisor)\n\nBRANCH: fix/rb7o\n\nPrompt follows:\n${currentPlan}\n\nEnd prompt.`
+    const errors = validateSupervisorReadiness(validBead(), [
+      { text: currentPlan },
+      { text: dispatchWithEmbeddedPlan },
+    ])
+
+    expect(errors).toEqual([])
+  })
+
   it('keeps plan-bead and dispatch-supervisor docs synchronized with the readiness matrix aliases', async () => {
     const planSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/plan-bead/SKILL.md'), 'utf8')
     const dispatchSkill = await fs.readFile(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
