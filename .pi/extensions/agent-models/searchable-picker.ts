@@ -103,20 +103,22 @@ export function customPickerAvailable(): boolean {
 	return typeof SelectList === "function" && typeof Input === "function" && typeof Container === "function";
 }
 
-export type CustomFn = <T>(
+export type CustomComponent = {
+	render: (width: number) => string[];
+	invalidate?: () => void;
+	handleInput?: (data: string) => void;
+	focused?: boolean;
+};
+
+export type CustomFn = (
 	factory: (
 		tui: unknown,
 		theme: unknown,
 		keybindings: unknown,
-		done: (value: T) => void,
-	) => {
-		render: (width: number) => string[];
-		invalidate?: () => void;
-		handleInput?: (data: string) => void;
-		focused?: boolean;
-	},
+		done: (value: unknown) => void,
+	) => CustomComponent,
 	opts?: unknown,
-) => Promise<T | undefined>;
+) => Promise<unknown>;
 
 export async function runSearchableModelPicker(input: {
 	custom: CustomFn;
@@ -125,7 +127,7 @@ export async function runSearchableModelPicker(input: {
 	initial?: string;
 }): Promise<unknown> {
 	const { custom, title, models, initial } = input;
-	return custom<unknown>((tui, theme, keybindings, done) => {
+	return custom((tui, theme, keybindings, done) => {
 		const requestRender = (): void => {
 			(tui as { requestRender?: () => void })?.requestRender?.();
 		};
