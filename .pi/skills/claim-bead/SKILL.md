@@ -16,10 +16,10 @@ Claim first, then plan. Do not investigate deeply before claiming.
 3. If closed, stop and propose a follow-up bead. If assigned to someone else, ask before stealing.
 4. Claim and bind session with `workflow_claim(beadId=<ID>)`; this runs bd claim and records active bead, `sessionMode=claimed`, branch, worktree, and start commit.
 5. If the user requested a worktree, create it before plan approval with the canonical branch naming and worktree naming contract: branch `<type>/<bead-suffix>-<domain-or-component>-<purpose>`, worktree basename exactly `<bead-suffix>-<domain-or-component>-<purpose>`, for example `task/lgok-branch-worktree-naming` plus worktree `lgok-branch-worktree-naming`. Type mapping: bug→`fix`, feature→`feat`, docs-only→`docs`, tests/bench→`test`, CI→`ci`, refactor→`refactor`, workflow/task→`task`, maintenance→`chore`. Use the supported command `bd worktree create <absolute-path> --branch <branch>` from the project checkout; do not recover by suggesting raw `git worktree add` when main-mutation policy is active. Run setup, then record the task `worktreePath`/branch/start in workflow-state before `workflow_plan_approved`. Main checkout remains a normal Pi entrypoint: typed workflow tools route through structured task scope (`workflowState.worktreePath`) even when Pi was started from `main`. Raw mutating shell commands, tests, bd writes, and git operations still must run from the task worktree (or use a supported explicit cwd form); read-only inspection from the main checkout remains allowed.
-6. Enter planning with `workflow_plan_mode(mode=strict)` by default, or `workflow_plan_mode(mode=auto)` only when the user explicitly requested automatic implementation.
+6. Enter planning with `workflow_plan_mode(mode=strict)` by default, `workflow_plan_mode(mode=auto)` only when the user explicitly requested automatic implementation, or `workflow_plan_mode(mode=autopilot)` when the user requested autonomous work through close (`/plan-autopilot`, «работаю автономно», «работать автономно»). Claim must not clear an already-set autopilot session flag.
 7. Continue with `plan-bead`.
 
-Slash commands (`/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/plan`, `/plan-auto`) are optional human UI shortcuts, not required agent steps.
+Slash commands (`/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/plan`, `/plan-auto`, `/plan-autopilot`) are optional human UI shortcuts, not required agent steps.
 
 ## Reporting
 

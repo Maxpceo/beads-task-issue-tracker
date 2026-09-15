@@ -6,6 +6,7 @@ Project-local Pi plan mode adapted for the beads workflow.
 
 - Read-only exploration mode via `/plan` or clear natural-language activation phrases.
 - Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation.
+- Autopilot mode via `/plan-autopilot` (separate from `/plan-auto`): same plan-review gate, durable `Approved-by: оркестратор`, and a session `autopilot` flag that survives `plan=off` after approval.
 - Agent-operable `workflow_plan_review` typed tool for autonomous strict plan mode.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands, including `git status`/`git log`/`git diff`/`git show` history inspection and pipelines where every segment is allowlisted read-only (for example `git log ... -- path | head -80`); shell control operators such as `&&`, `||`, and `;` remain blocked.
@@ -19,8 +20,9 @@ Project-local Pi plan mode adapted for the beads workflow.
 ## Commands
 
 - `/plan` — toggle strict plan mode. User approval is required before execution.
-- `/plan-auto` — enter plan mode and auto-execute only after required plan-review agents run and the revised plan passes the gate.
-- `/plan-cancel` — cancel plan mode and restore normal tools.
+- `/plan-auto` — enter plan mode and auto-execute only after required plan-review agents run and the revised plan passes the gate. Records `Approved-by: Максим`. Does **not** close the bead by itself and does **not** set the durable autopilot flag.
+- `/plan-autopilot` — same plan-review gate as `/plan-auto`, but records `Approved-by: оркестратор`, sets a durable session `autopilot` flag that survives `plan=off` after approval, and documents the close-without-«закрывай?» contract (full hop/ping/close runtime may live in a follow-up bead). Does **not** call `land` / `merge-to-main`.
+- `/plan-cancel` — cancel plan mode, clear autopilot, and restore normal tools.
 - `/plan-review` — run required plan-review agents against the latest draft plan without approving or executing it.
 - `/todos` — show current plan progress.
 - `Ctrl+Alt+P` — toggle strict plan mode.
@@ -40,9 +42,18 @@ Combined workflow requests with an explicit bead id are parsed by intent signals
 
 Safety guards intentionally do not auto-run workflow mutations for questions, negated commands, multiple bead ids, missing bead ids, or examples inside fenced code blocks. Informational or ambiguous prompts continue as normal user input, for example: `что такое режим планирования?`, `можно ли взять beads-task-issue-tracker-zzkb в режим планирования?`, `what is plan mode?`.
 
+### Autopilot natural-language activation
+
+Clear requests to work autonomously activate `/plan-autopilot` (not `/plan-auto`) and are handled without sending the phrase to the agent:
+
+- Russian: `работаю автономно`, `работать автономно`, `работай автономно`.
+- English: `work autonomously`, `working autonomously`, `enable plan-autopilot`.
+
+The same safety guards apply: questions (`можно ли работать автономно?`), negations (`не работай автономно`), and multiple bead ids do **not** auto-activate autopilot.
+
 ## Multi-agent auto-execute gate
 
-`/plan-auto` is only for cases where the user explicitly requested “plan and then implement”. It does not execute the first draft plan. Instead:
+`/plan-auto` and `/plan-autopilot` share the multi-agent gate. They are only for cases where the user explicitly requested automatic plan execution. They do not execute the first draft plan. Instead:
 
 1. The main agent produces a draft plan in read-only plan mode.
 2. Pi runs required project-local plan reviewers:
@@ -85,6 +96,26 @@ AUTO_EXECUTE_ALLOWED: true
 
 If any reviewer is missing, fails, returns `BLOCKED`, or reports unresolved blockers, auto-execute is blocked and the session remains in plan mode/read-only.
 
+### `/plan-auto` vs `/plan-autopilot`
+
+| | `/plan-auto` | `/plan-autopilot` |
+|---|---|---|
+| Plan-review trio gate | yes | yes |
+| Durable `Approved-by` | `Максим` | `оркестратор` |
+| Session flag after `plan=off` | cleared | `autopilot` remains on |
+| Close bead without Maxim «закрывай?» | no | contract yes (stop on `NOT APPROVED` / matrix FAIL/NOT RUN/BLOCKED/SCOPE GAP) |
+| `land` / `merge-to-main` | never | never |
+
+Typed tool: `workflow_plan_mode(mode=autopilot)` enters the same path as `/plan-autopilot`.
+
+Autopilot stop conditions (orchestrator must ask Maxim, not silent continue):
+
+- plan-review `BLOCKED` / missing reviewers / missing revised sections
+- no active bead or worktree scope
+- supervisor `BLOCKED` / `NEEDS_CONTEXT`
+- code-review `NOT APPROVED`
+- `ACCEPTANCE MATRIX` row `FAIL` / `NOT RUN` / `BLOCKED` / `SCOPE GAP`
+
 ## Strict plan critique
 
 Strict `/plan` remains manual: it never auto-executes. When the user explicitly asks to check the current plan with agents (or runs `/plan-review`), Pi runs the same required reviewers against the latest draft plan and prints findings without mutating files, bd status, workflow approval state, or leaving plan mode. The user must still approve execution explicitly.
@@ -97,7 +128,8 @@ This extension owns real plan-mode behavior: tool access, read-only command gate
 
 - `/plan` or a supported natural-language activation phrase -> `plan=strict`, `sessionMode=planning`
 - `/plan-auto` -> `plan=auto`, `sessionMode=planning`
-- `/plan-cancel` -> `plan=off` and `sessionMode=idle` when the current session is still planning
-- executing an approved plan -> `plan=off`, `planApproved=true`, and `sessionMode=implementing` when the current session is still planning
+- `/plan-autopilot` or NL «работаю/работать автономно» -> `plan=auto`, `sessionMode=planning`, plus durable plan-mode `autopilot` flag
+- `/plan-cancel` -> `plan=off`, clears autopilot, and `sessionMode=idle` when the current session is still planning
+- executing an approved plan -> `plan=off`, `planApproved=true`, and `sessionMode=implementing` when the current session is still planning; `/plan-autopilot` keeps the session `autopilot` flag after `plan=off`
 
 The `workflow-state` extension stores session context such as active bead, branch, worktree, merge-slot hint, plan approval, review/acceptance session mode, landing, and idle reset. It displays live `bdStatus`, but bd remains the source of truth for bead lifecycle.
