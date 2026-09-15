@@ -56,9 +56,9 @@ export function findInvalidSequentialReasons(planText: string): string[] {
 	const findings: string[] = [];
 	const lines = planText.split("\n");
 	for (let index = 0; index < lines.length; index += 1) {
-		const headers = splitMarkdownRow(lines[index] ?? "").map((cell) => cell.toLowerCase().replace(/[*_`]/g, ""));
-		const decisionIndex = headers.indexOf("decision");
-		const reasonIndex = headers.indexOf("reason");
+		const headers = splitMarkdownRow(lines[index] ?? "").map((cell) => cell.toLowerCase().replace(/[*_`]/g, "").trim());
+		const decisionIndex = headers.findIndex((cell) => cell === "decision" || cell === "решение");
+		const reasonIndex = headers.findIndex((cell) => cell === "reason" || cell === "причина");
 		if (decisionIndex === -1 || reasonIndex === -1) continue;
 		for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
 			const rowLine = lines[rowIndex] ?? "";
