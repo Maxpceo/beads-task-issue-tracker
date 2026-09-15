@@ -1335,7 +1335,81 @@ function parseBdCreateTitle(segment: string): string | undefined {
 	return undefined;
 }
 
-function getBeadLocaleError(command: string): string | undefined {
+/** Tight file-cat only: `$(cat /absolute/path)` with optional quotes around the path. */
+const TIGHT_CAT_FILE_DESCRIPTION =
+	/^\$\(\s*cat\s+(?:'(\/[^'\n]*)'|"(\/[^"\n]*)"|(\/[^\s;|&`$<>()'"\\]+))\s*\)$/;
+
+type ResolvedBeadDescription =
+	| { kind: "inline"; text: string }
+	| { kind: "file"; path: string; text: string }
+	| { kind: "hidden"; detail: string }
+	| { kind: "absent" };
+
+function parseTightCatDescriptionPath(descriptionValue: string): string | undefined {
+	const match = descriptionValue.trim().match(TIGHT_CAT_FILE_DESCRIPTION);
+	if (!match) return undefined;
+	return match[1] ?? match[2] ?? match[3];
+}
+
+function resolveTightCatFileDescription(filePath: string, cwd?: string): ResolvedBeadDescription {
+	if (!path.isAbsolute(filePath) || /[;|&`$<>()\n\r]/.test(filePath)) {
+		return { kind: "hidden", detail: "unsafe cat path" };
+	}
+
+	let realFile: string;
+	try {
+		if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+			return { kind: "hidden", detail: "missing or unreadable description file" };
+		}
+		fs.accessSync(filePath, fs.constants.R_OK);
+		realFile = fs.realpathSync(filePath);
+	} catch {
+		return { kind: "hidden", detail: "missing or unreadable description file" };
+	}
+
+	const repoRoot = cwd ? getRepoRoot(cwd) : undefined;
+	if (repoRoot && isPathInsideOrEqual(realFile, repoRoot)) {
+		return { kind: "hidden", detail: "description file inside git worktree" };
+	}
+
+	try {
+		const text = fs.readFileSync(realFile, "utf8");
+		return { kind: "file", path: realFile, text };
+	} catch {
+		return { kind: "hidden", detail: "missing or unreadable description file" };
+	}
+}
+
+function resolveBeadDescription(segment: string, cwd?: string): ResolvedBeadDescription {
+	const raw = valueAfterFlag(segment, ["--description", "-d"]);
+	if (raw === undefined) return { kind: "absent" };
+	const trimmed = raw.trim();
+	if (!trimmed) return { kind: "absent" };
+
+	if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) {
+		return { kind: "hidden", detail: "$VAR" };
+	}
+	if (/^`[\s\S]*`$/.test(trimmed)) {
+		return { kind: "hidden", detail: "backticks" };
+	}
+
+	const catPath = parseTightCatDescriptionPath(trimmed);
+	if (catPath) {
+		return resolveTightCatFileDescription(catPath, cwd);
+	}
+
+	// Non-heredoc command substitutions stay hidden (pipes, extra commands, relative cat, etc.).
+	if (/\$\((?!cat\s+<<)[\s\S]*\)/.test(trimmed)) {
+		return { kind: "hidden", detail: "command substitution" };
+	}
+
+	return { kind: "inline", text: trimmed };
+}
+
+const HIDDEN_BEAD_DESCRIPTION_REASON =
+	"Заблокировано: `bd create` description скрыт от guard (например `$BUG_DESC`, небезопасный `$(cat /tmp/...)`, backticks или wrapper). Preferred: file-based — write description в `/tmp/...md`, затем `--description \"$(cat /absolute/path)\"` (guard читает файл). Legacy: inline heredoc `--description \"$(cat <<'EOF' ... EOF)\"` (хрупко с `#` и backticks). См. `.pi/skills/create-bead/SKILL.md`.";
+
+function getBeadLocaleError(command: string, cwd?: string): string | undefined {
 	for (const segment of splitShellSegments(command)) {
 		const isCreate = segmentHasBdCommand(segment, new Set(["create", "new"]));
 		const isUpdate = segmentHasBdCommand(segment, new Set(["update"]));
@@ -1346,7 +1420,11 @@ function getBeadLocaleError(command: string): string | undefined {
 			return "Заблокировано: bead title явно на английском. Перепиши title на русском для Максима; technical identifiers (имена файлов, commands, labels, API names) оставляй без перевода. Перед повтором используй `.pi/skills/create-bead/SKILL.md`.";
 		}
 
-		const description = valueAfterFlag(segment, ["--description", "-d"]);
+		const resolved = isCreate ? resolveBeadDescription(segment, cwd) : undefined;
+		const description =
+			resolved?.kind === "file" || resolved?.kind === "inline"
+				? resolved.text
+				: valueAfterFlag(segment, ["--description", "-d"]);
 		if (description && isClearlyEnglishBeadText(description, "description")) {
 			return "Заблокировано: bead description явно на английском. Пиши bead descriptions на русском для Максима, сохраняя required section headings и technical identifiers.";
 		}
@@ -1354,36 +1432,29 @@ function getBeadLocaleError(command: string): string | undefined {
 	return undefined;
 }
 
-function hasHiddenBeadDescription(segment: string): boolean {
-	const description = valueAfterFlag(segment, ["--description", "-d"]);
-	if (!description) return false;
-	const trimmed = description.trim();
-	if (/^\$[A-Za-z_][A-Za-z0-9_]*$/.test(trimmed)) return true;
-	if (/^`[\s\S]*`$/.test(trimmed)) return true;
-	if (/\$\((?!cat\s+<<)[\s\S]*\)/.test(trimmed)) return true;
-	if (/\$\(cat\s+(?:\/tmp\/|[^<][^)]*)\)/.test(trimmed)) return true;
-	return false;
-}
-
-function getBeadEnrichmentError(command: string): string | undefined {
+function getBeadEnrichmentError(command: string, cwd?: string): string | undefined {
 	for (const segment of splitShellSegments(command)) {
 		if (!segmentHasBdCommand(segment, new Set(["create", "new"]))) continue;
 		if (hasCreateExemption(segment)) continue;
 
-		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !segment.includes(section));
+		const resolved = resolveBeadDescription(segment, cwd);
+		if (resolved.kind === "hidden") {
+			return HIDDEN_BEAD_DESCRIPTION_REASON;
+		}
+
+		// File transport: validate exact file bytes. Inline/heredoc: sections live in the shell command text.
+		const contentForSections = resolved.kind === "file" ? resolved.text : segment;
+		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !contentForSections.includes(section));
 		if (missing.length > 0) {
-			if (hasHiddenBeadDescription(segment)) {
-				return "Заблокировано: `bd create` description скрыт от guard (например `$BUG_DESC`, `$(cat /tmp/...)`, backticks или wrapper). Pi проверяет shell-команду до выполнения и не видит hidden content. Используй `.pi/skills/create-bead/SKILL.md` и inline heredoc прямо внутри `--description \"$(cat <<'EOF' ... EOF)\"`, чтобы все required `### ...` sections были видимы.";
-			}
-			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через inline heredoc внутри --description со всеми required ### sections, русским content, type/priority/label/deps и concrete acceptance/verification bullets. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
+			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через Preferred: file-based (write /tmp + --description "$(cat /absolute/path)") или legacy inline heredoc внутри --description со всеми required ### sections, русским content, type/priority/label/deps и concrete acceptance/verification bullets. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
 		}
 
 		if (!hasLabel(segment)) {
 			return "Заблокировано: agent-created beads требуют минимум один label через --label/--labels/-l, чтобы future sessions могли маршрутизировать work.";
 		}
 
-		const acceptance = extractSection(segment, "### Acceptance criteria");
-		const verification = extractSection(segment, "### Verification / acceptance checks");
+		const acceptance = extractSection(contentForSections, "### Acceptance criteria");
+		const verification = extractSection(contentForSections, "### Verification / acceptance checks");
 		if (!hasBullet(acceptance) || !hasBullet(verification)) {
 			return "Заблокировано: Acceptance criteria и Verification / acceptance checks должны содержать конкретные bullet checks. Если неясно, спроси пользователя с 2-4 вариантами перед созданием bead.";
 		}
@@ -2486,7 +2557,13 @@ function hasScopedApprovedSupervisorWorkflowComment(cwd: string, beadId: string,
 	const blocks = commentEvidenceBlocks(comments);
 	const hasScopedApprovedPlan = blocks.some((block) => /PLAN APPROVED/i.test(block) && hasScopeOwnershipEvidence(block, scope));
 	const hasAnyApprovedPlan = /PLAN APPROVED/i.test(comments);
-	const hasSupervisorDispatch = blocks.some((block) => /DISPATCH(?: RESULT)?/i.test(block) && hasScopeOwnershipEvidence(block, scope));
+	// Prefer per-block ownership, but also accept DISPATCH + PLAN APPROVED when latest
+	// BRANCH/WORKTREE/START_COMMIT fields on the full comment thread match scope.
+	// bd comment formatting often inserts a blank line after `DISPATCH (...)`, which
+	// splits the header from ownership fields and broke supervisor commit recovery.
+	const hasSupervisorDispatch =
+		blocks.some((block) => /DISPATCH(?: RESULT)?/i.test(block) && hasScopeOwnershipEvidence(block, scope)) ||
+		(/DISPATCH(?: RESULT)?/i.test(comments) && hasScopeOwnershipEvidence(comments, scope));
 	return hasSupervisorDispatch && (hasScopedApprovedPlan || hasAnyApprovedPlan);
 }
 
@@ -2900,7 +2977,7 @@ export function evaluateBashPolicy(
 	const fastPathDecision = evaluateFastPathDiscipline(command, commandCwd, workflowState);
 	if (fastPathDecision) return fastPathDecision;
 
-	const beadLocaleError = getBeadLocaleError(command);
+	const beadLocaleError = getBeadLocaleError(command, commandCwd);
 	if (beadLocaleError) {
 		return {
 			policy: "enforceBeadRussianLocale",
@@ -2909,7 +2986,7 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	const beadEnrichmentError = getBeadEnrichmentError(command);
+	const beadEnrichmentError = getBeadEnrichmentError(command, commandCwd);
 	if (beadEnrichmentError) {
 		return {
 			policy: "enforceBeadEnrichment",

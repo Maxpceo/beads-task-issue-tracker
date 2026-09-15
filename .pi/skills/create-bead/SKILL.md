@@ -28,7 +28,7 @@ Do not run `bd create` until every item is true:
 
 - Title is Russian for Maxim; keep only technical identifiers (`bd-api`, file names, commands, labels) in English.
 - Duplicate search is done or intentionally skipped because the title/domain is obviously unique.
-- Description is visible to guards via inline heredoc inside `--description`; do not use `$VAR`, `$(cat /tmp/...)`, repo temp files, or Python/Node/Ruby wrappers.
+- Description is visible to guards via Preferred: file-based transport (`write` description to `/tmp/...md`, then `--description "$(cat /absolute/path)"`) or legacy inline heredoc; do not use `$VAR`, unsafe/multi-command `$(cat ...)`, repo-path files, or Python/Node/Ruby wrappers.
 - All required `### ...` sections are present with concrete Russian content.
 - `-t` / `--type`, `-p` / `--priority`, and at least one `--label` / `--labels` / `-l` are set.
 - `--deps discovered-from:<id>` is set for follow-ups or discovered work when a source bead exists.
@@ -121,9 +121,35 @@ Required flags:
 
 ## Safe command patterns
 
-### Preferred: inline heredoc command substitution
+### Preferred: file-based description
 
-Use an inline heredoc inside `--description`. This keeps the required sections visible to Pi guards and does not write temporary files into the repo.
+Write the full description with the write tool to an absolute path outside the git worktree (обычно `/tmp/...md`), then pass a tight cat form. Guard reads the file bytes and validates sections/locale; `#` and backticks inside the file are safe because shell does not parse the body.
+
+```bash
+# 1) write tool → /tmp/bead-desc-<slug>.md  (full ### template, Russian prose)
+# 2) short bd create:
+bd create "Русский title с technical identifiers" \
+  -t task \
+  -p 2 \
+  --label pi \
+  --label workflow \
+  --deps discovered-from:<id> \
+  --description "$(cat /tmp/bead-desc-<slug>.md)" \
+  --json
+```
+
+Rules for the tight cat form:
+
+- only `--description "$(cat /absolute/path)"` (optional quotes around the path);
+- no pipes, semicolons, extra commands, command substitution, or backticks inside `$(...)`;
+- absolute path only; file must exist, be readable, and realpath must stay outside the current git worktree;
+- do **not** use `bd create --file` / `--body-file` for this — create exemptions skip enrichment checks.
+
+This pattern is safe from `main`: tracker write only; temp file lives outside the repo.
+
+### Legacy: inline heredoc command substitution
+
+Heredoc remains allowed for backward compatibility, but is fragile: bash treats `#` as a comment and backticks as nested substitution **before** bd/guard run. Prefer file-based when the body may contain `#`, backticks, or complex punctuation.
 
 ```bash
 bd create "Русский title с technical identifiers" \
@@ -160,11 +186,9 @@ EOF
   --json
 ```
 
-This pattern is safe from `main`: it performs a tracker write only and the heredoc content is inspectable before `bd create` runs.
+### Не используйте wrappers / hidden forms для guarded `bd create`
 
-### Не используйте wrappers для guarded `bd create`
-
-Не создавайте guarded beads через Python/Node/Ruby wrappers или через `--description "$(cat /tmp/...)"`: Pi guard проверяет текст shell-команды до выполнения и не может безопасно увидеть `bd create` argv или required `### ...` sections внутри wrapper/file. Если shell quoting сломался, вернитесь к preferred inline heredoc pattern выше и держите все required sections прямо в команде.
+Не создавайте guarded beads через Python/Node/Ruby wrappers, `$VAR`, backticks-обёртки или небезопасный `$(cat ...)` с pipes/extra commands/relative/repo paths: Pi guard либо не видит content, либо блокирует unsafe transport. Preferred: file-based выше; legacy: inline heredoc без `#`/backticks в теле.
 
 ### Tiny reminders: `bd todo add`
 
