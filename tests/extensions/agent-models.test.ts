@@ -553,7 +553,7 @@ describe('menu / hasUI', () => {
     let modelOptions: string[] = []
     const queue = [
       'Настроить мощность (class)',
-      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0],
+      (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
       (opts: string[]) => {
         modelOptions = opts
         return opts.find((o) => o.includes('xai/live-model')) ?? null
@@ -593,7 +593,7 @@ describe('menu / hasUI', () => {
     let sawFallbackModel = false
     const queue: Array<string | null | ((opts: string[]) => string | null)> = [
       'Настроить мощность (class)',
-      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0],
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
       (opts) => {
         sawFallbackModel = opts.some((o) => o.includes('xai/grok-4.5'))
         return MENU_BACK
@@ -629,8 +629,8 @@ describe('menu / hasUI', () => {
     let thinkingOptions: string[] = []
     const queue: Array<string | null | ((opts: string[]) => string | null)> = [
       'Настроить мощность (class)',
-      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0],
-      (opts) => opts.find((o) => o.includes('xai/limited')) ?? opts[0],
+      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      (opts) => opts.find((o) => o.includes('xai/limited')) ?? opts[0] ?? null,
       (opts) => {
         thinkingOptions = opts
         return opts.find((o) => o === 'low') ?? MENU_BACK
@@ -678,10 +678,10 @@ describe('menu / hasUI', () => {
     const notifications: string[] = []
     const queue: Array<string | null | ((opts: string[]) => string | null)> = [
       'Настроить мощность (class)',
-      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0],
-      (opts) => opts.find((o) => o.includes('xai/no-reason')) ?? opts[0],
+      (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
+      (opts) => opts.find((o) => o.includes('xai/no-reason')) ?? opts[0] ?? null,
       // orphan prompt
-      (opts) => opts.find((o) => o.includes('Сбросить')) ?? opts[0],
+      (opts) => opts.find((o) => o.includes('Сбросить')) ?? opts[0] ?? null,
       // thinking after clear path still offered — inherit
       (opts) => opts.find((o) => o.includes('inherit')) ?? MENU_BACK,
       MENU_EXIT,
@@ -718,9 +718,9 @@ describe('menu / hasUI', () => {
     saveAgentModels(root, defaultAgentModelsConfig())
     const queue: Array<string | null | ((opts: string[]) => string | null)> = [
       'Настроить агента',
-      (opts) => opts.find((o) => o.startsWith('brand-new-agent')) ?? opts[0],
+      (opts) => opts.find((o) => o.startsWith('brand-new-agent')) ?? opts[0] ?? null,
       'Назначить class (strong/standard/cheap)',
-      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0],
+      (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
       MENU_BACK, // back to agent list
       MENU_BACK, // back to root
       MENU_EXIT,
