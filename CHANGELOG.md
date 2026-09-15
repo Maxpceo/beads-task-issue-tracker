@@ -5,6 +5,7 @@
 ### Fixed
 
 - **Pi post-close false `bd:inreview` after failed live status read** (`beads-task-issue-tracker-soco`): when live `bd show` fails or returns empty, workflow reconcile now marks `bdStatus` unreadable instead of keeping a stale snapshot `inreview`. `workflow_complete` and lifecycle gates surface an explicit refresh-failed block (with `blocked|deferred` escape hatch), while a live `closed` still clears the active bead and a real `inreview` still routes to review. `bd` reads prefer an on-disk `worktreePath` over process cwd so main-cwd misses do not invent false review blocks after close.
+- **Pi `getPlanComment` false PLAN APPROVED from BLOCKED/hook text** (`beads-task-issue-tracker-rb7o`): `getPlanComment` now requires `PLAN APPROVED` (optional markdown heading) on the first non-empty line, so later comments that only mention the marker as a substring (for example `BLOCKED` recovery notes or DISPATCH bodies) no longer satisfy supervisor readiness as an approved plan.
 
 - **Pi `/agent-models` live model catalog empty without refresh** (`beads-task-issue-tracker-1sg0`): call `modelRegistry.refresh()` before `getAvailable()`, then fall back to `getAll()` filtered by `hasConfiguredAuth` so the model picker lists connected provider models instead of config-only + free-text «Другая…».
 
