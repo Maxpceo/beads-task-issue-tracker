@@ -94,6 +94,8 @@ const TERMINAL_WORKFLOW_STATES = new Set(["closed", "blocked", "deferred", "merg
 const NON_TERMINAL_WORKFLOW_STATES = new Set(["claimed", "planning", "plan_approved", "implementing", "inreview", "reviewing", "accepted", "landing"]);
 const TERMINAL_BD_STATUSES = new Set(["closed", "blocked", "deferred"]);
 const NON_TERMINAL_BD_STATUSES = new Set(["open", "in_progress", "inreview", "simplified", "reviewed", "accepted"]);
+/** Sentinel after a live bd read was attempted but failed/empty — never treat as real inreview. */
+export const BD_STATUS_UNREADABLE = "unreadable";
 const RISKY_FILE_PREFIXES = [
 	".pi/extensions/beads-policy/",
 	".pi/extensions/beads-dispatch/",
@@ -1629,6 +1631,9 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 
 	if (bdStatus) {
 		if (TERMINAL_BD_STATUSES.has(bdStatus)) return undefined;
+		if (bdStatus === BD_STATUS_UNREADABLE) {
+			return `Заблокировано: live bd status для активного bead ${activeBead} unreadable/refresh failed; snapshot status не авторитетен. Повтори bd show в worktreePath (или cwd), либо вызови workflow_reset, если это stale/foreign state, перед ${action}${targetBead ? ` на ${targetBead}` : ""}. /workflow-reset — optional human UI shortcut.`;
+		}
 		const label = NON_TERMINAL_BD_STATUSES.has(bdStatus) ? bdStatus : `unknown bd status ${bdStatus}`;
 		if (bdStatus === "inreview") return `Заблокировано: активный bead ${activeBead} имеет bd:${bdStatus}; после подтверждения current-session branch/worktree ownership следующее допустимое действие — review-bead / review_bead для ${activeBead}, а не ${action}${targetBead ? ` на ${targetBead}` : ""}. Если ownership stale или foreign, agents могут вызвать workflow_reset; /workflow-reset — только optional human UI shortcut.`;
 		return `Заблокировано: активный bead ${activeBead} не terminal (bd:${label}). Доведи его до closed, переведи в blocked/deferred с explicit reason, передай handoff или вызови workflow_reset, если это stale/foreign state, перед ${action}${targetBead ? ` на ${targetBead}` : ""}. /workflow-reset — optional human UI shortcut.`;
@@ -2597,8 +2602,24 @@ function isSupervisorContext(): boolean {
 	return /supervisor/i.test(process.env.PI_AGENT_ROLE ?? "") || /supervisor/i.test(process.env.PI_SUBAGENT_ROLE ?? "");
 }
 
-export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot, bdStatus?: string): WorkflowStateSnapshot {
-	if (!bdStatus) return state;
+/**
+ * Prefer recorded task worktree for `bd show` when it exists on disk; else fallback cwd.
+ * Prevents main-cwd misses that return empty/failed live status while the bead is closed in the worktree db.
+ */
+export function resolveBdReadCwd(state: WorkflowStateSnapshot, fallbackCwd: string): string {
+	if (state.worktreePath && fs.existsSync(state.worktreePath)) return state.worktreePath;
+	return fallbackCwd;
+}
+
+export function reconcileWorkflowStateWithBdStatus(state: WorkflowStateSnapshot, bdStatus?: string | null): WorkflowStateSnapshot {
+	// Live read attempted but empty/failed: do not silent-trust snapshot inreview.
+	if (bdStatus == null || bdStatus === "") {
+		if (!state.activeBead) return state;
+		return {
+			...state,
+			bdStatus: BD_STATUS_UNREADABLE,
+		};
+	}
 	if (TERMINAL_BD_STATUSES.has(bdStatus)) {
 		return {
 			...state,
@@ -2662,16 +2683,17 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 		if (!isCurrentSessionState) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
-		const commentsText = getBdCommentsText(ctx.cwd, state.activeBead);
+		const bdCwd = resolveBdReadCwd(state, ctx.cwd);
+		const commentsText = getBdCommentsText(bdCwd, state.activeBead);
 		const ownershipScope = recordedTaskScopeState && !currentScopeState ? scope : stateScope;
 		if (hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)) {
 			return { ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit };
 		}
-		return reconcileWorkflowStateWithBdStatus(state, getBdIssue(ctx.cwd, state.activeBead)?.status);
+		return reconcileWorkflowStateWithBdStatus(state, getBdIssue(bdCwd, state.activeBead)?.status);
 	}
 	const recoveredBead = recoverableApprovedWorkflowBead(ctx.cwd, scope);
 	if (!recoveredBead) return { ...state, branch: scope.branch };
-	const issue = getBdIssue(ctx.cwd, recoveredBead);
+	const issue = getBdIssue(resolveBdReadCwd({ ...state, worktreePath: state.worktreePath ?? scope.worktreePath }, ctx.cwd), recoveredBead);
 	return {
 		...state,
 		activeBead: recoveredBead,
@@ -2882,9 +2904,18 @@ export function evaluateToolPolicy(toolName: string, input: Record<string, unkno
 	if (worktreeDecision) return worktreeDecision;
 	if (matchesToolName(toolName, "dispatch_supervisor")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
 	if (matchesToolName(toolName, "review_bead")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
-	if (matchesToolName(toolName, "workflow_complete") && workflowState.activeBead && workflowState.bdStatus === "inreview") {
+	if (matchesToolName(toolName, "workflow_complete") && workflowState.activeBead) {
 		const targetState = String(input.state ?? "");
-		if (targetState !== "blocked" && targetState !== "deferred") {
+		const allowEscapeHatch = targetState === "blocked" || targetState === "deferred";
+		if (workflowState.bdStatus === BD_STATUS_UNREADABLE) {
+			if (!allowEscapeHatch) {
+				return {
+					policy: "enforceActiveBeadLifecycle",
+					block: true,
+					reason: `Заблокировано: live bd status для активного bead ${workflowState.activeBead} unreadable/refresh failed; snapshot status не авторитетен. Повтори bd show в worktreePath (или cwd), затем workflow_complete, либо используй workflow_complete state=blocked|deferred с explicit blocker, если status так и не читается.`,
+				};
+			}
+		} else if (workflowState.bdStatus === "inreview" && !allowEscapeHatch) {
 			return {
 				policy: "enforceActiveBeadLifecycle",
 				block: true,
