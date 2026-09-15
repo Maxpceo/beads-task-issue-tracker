@@ -224,7 +224,7 @@ pnpm tauri:build
 The automated gate covers algorithmic regressions in pure logic. SWR cache, IPC roundtrip, and Vue reactivity are **not** visible to it. Before merging a PR that touches `useIssues`, `useBeadsPath`, or any caching layer, run a quick manual check:
 
 1. Start the app: `pnpm tauri:dev`
-2. Connect Tauri MCP (configured per `src-tauri/CLAUDE.md`).
+2. Connect Tauri MCP (configured per `src-tauri/PI_RULES.md`).
 3. Open Project A with a real `.beads` directory (~100+ issues).
 4. Switch to Project B (different path).
 5. Assess: does the issue list appear **instantly** (< 1s subjective)? If it feels sluggish, check the Debug Panel (`Cmd+Shift+L`) for `[perf:bd_poll_data_cached]` log entries showing IPC timing.
@@ -233,7 +233,7 @@ The automated gate covers algorithmic regressions in pure logic. SWR cache, IPC 
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
 
-This repository ships a `.claude/` directory containing agent definitions, workflow hooks, and skills for use with [Claude Code](https://claude.ai/code). If you contribute using Claude Code, these files are picked up automatically and enforce the project's workflow discipline (issue tracking, code review, branch hygiene). `.claude/settings.local.json` is gitignored and stays machine-local.
+Active agent workflow is Pi-native: start from `AGENTS.md` and `.pi/` (skills, agents, rules, and extensions). These files define issue tracking, code review, and branch hygiene for contributors working with Pi agents.
 
 ## License
 
@@ -243,4 +243,4 @@ This repository ships a `.claude/` directory containing agent definitions, workf
 
 ## Acknowledgments
 
-Originally created by Laurent Chapin ([w3dev33](https://github.com/w3dev33)), who has since moved on to other projects and discontinued maintenance of this repository. Active development is now continued by Maksim Posudevskii ([Maxpceo](https://github.com/Maxpceo)) with the help of [Claude Code](https://claude.ai/code).
+Originally created by Laurent Chapin ([w3dev33](https://github.com/w3dev33)), who has since moved on to other projects and discontinued maintenance of this repository. Active development is now continued by Maksim Posudevskii ([Maxpceo](https://github.com/Maxpceo)), with earlier agent-assisted work historically done via Claude Code.
