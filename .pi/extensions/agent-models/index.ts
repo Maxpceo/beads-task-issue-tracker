@@ -559,7 +559,14 @@ export type ThinkingModelMeta = {
 };
 
 export type ModelRegistryLike = {
+	/** Sync snapshot of models with configured auth (may be empty until refresh). */
 	getAvailable?: () => unknown;
+	/** All known models (built-in + custom), independent of availability snapshot. */
+	getAll?: () => unknown;
+	/** Best-effort async reload so getAvailable snapshot fills. */
+	refresh?: (options?: unknown) => unknown | Promise<unknown>;
+	/** True when provider has configured auth (API key/OAuth). */
+	hasConfiguredAuth?: (modelOrProvider: unknown) => boolean;
 };
 
 export type ScopedModelLike = {
@@ -879,8 +886,60 @@ export function normalizeAvailableModels(rawList: unknown): AvailableModelInfo[]
 }
 
 /**
+ * Collect models from a Pi ModelRegistry-like object.
+ * Pi sync getAvailable() reads an availability *snapshot* that stays empty until
+ * refresh()/async getAvailable runs — always try refresh first, then getAvailable,
+ * then getAll filtered by hasConfiguredAuth when available.
+ */
+export async function collectModelsFromRegistry(registry: ModelRegistryLike): Promise<AvailableModelInfo[]> {
+	const refresh = registry.refresh;
+	if (typeof refresh === "function") {
+		try {
+			await Promise.resolve(refresh.call(registry));
+		} catch {
+			// best-effort — still try snapshot / getAll
+		}
+	}
+
+	if (typeof registry.getAvailable === "function") {
+		try {
+			const raw = await Promise.resolve(registry.getAvailable.call(registry));
+			const list = normalizeAvailableModels(raw);
+			if (list.length > 0) return list;
+		} catch {
+			// fall through to getAll
+		}
+	}
+
+	if (typeof registry.getAll === "function") {
+		try {
+			const rawAll = await Promise.resolve(registry.getAll.call(registry));
+			let list = normalizeAvailableModels(rawAll);
+			const hasAuth = registry.hasConfiguredAuth;
+			if (typeof hasAuth === "function" && list.length > 0) {
+				const filtered = list.filter((m) => {
+					try {
+						// Pi accepts Model object or provider id string.
+						if (m.provider && hasAuth.call(registry, m.provider)) return true;
+						return Boolean(hasAuth.call(registry, m));
+					} catch {
+						return true;
+					}
+				});
+				if (filtered.length > 0) list = filtered;
+			}
+			return list;
+		} catch {
+			return [];
+		}
+	}
+
+	return [];
+}
+
+/**
  * Build injectable listAvailableModels from Pi command ctx.
- * Prefer non-empty scopedModels; else modelRegistry.getAvailable().
+ * Prefer non-empty scopedModels; else modelRegistry (refresh → getAvailable → getAll).
  * Returns undefined when neither source exists (caller uses config fallback).
  */
 export function buildListAvailableModelsFromContext(ctx: {
@@ -891,16 +950,18 @@ export function buildListAvailableModelsFromContext(ctx: {
 	if (ctx.listAvailableModels) return ctx.listAvailableModels;
 	const scoped = ctx.scopedModels;
 	const hasScoped = Array.isArray(scoped) && scoped.length > 0;
-	const getAvailable = ctx.modelRegistry?.getAvailable;
-	const hasRegistry = typeof getAvailable === "function";
+	const registry = ctx.modelRegistry;
+	const hasRegistry =
+		!!registry &&
+		(typeof registry.getAvailable === "function" ||
+			typeof registry.getAll === "function" ||
+			typeof registry.refresh === "function");
 	if (!hasScoped && !hasRegistry) return undefined;
 	return async () => {
 		if (hasScoped) {
 			return normalizeAvailableModels(scoped!.map((entry) => entry?.model ?? entry));
 		}
-		const raw = getAvailable!();
-		const list = await Promise.resolve(raw);
-		return normalizeAvailableModels(list);
+		return collectModelsFromRegistry(registry!);
 	};
 }
 
