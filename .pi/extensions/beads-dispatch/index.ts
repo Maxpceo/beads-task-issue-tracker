@@ -385,8 +385,13 @@ function extractSection(text: string, heading: string): string {
 	return (next >= 0 ? after.slice(0, next) : after).trim();
 }
 
+function isPlanApprovedComment(text: string): boolean {
+	const firstLine = firstNonEmptyLine(text) ?? "";
+	return /^(?:#{1,6}\s*)?PLAN APPROVED\b/.test(firstLine);
+}
+
 function getPlanComment(comments: BeadComment[]): string | undefined {
-	return comments.map((comment) => comment.text ?? "").reverse().find((text) => /PLAN APPROVED/.test(text));
+	return comments.map((comment) => comment.text ?? "").reverse().find((text) => isPlanApprovedComment(text));
 }
 
 function extractRecordedStartCommit(comments: BeadComment[]): string | undefined {
