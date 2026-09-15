@@ -25,11 +25,16 @@ import {
 import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/index";
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 import {
+	MAX_PLAN_REVIEW_CYCLES,
+	classifyPlanReviewRisk,
 	evaluatePlanReviewGate,
+	hasImportantOrCriticalFindings,
 	missingRevisedPlanSections,
+	planReviewStopAdvice,
 	renderPlanReviewResults,
 	runPlanReviewers,
 	type PlanReviewResult,
+	type PlanReviewStopAdvice,
 } from "../plan-review/index";
 import {
 	closeVisibleDispatch,
@@ -206,6 +211,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let todoItems: TodoItem[] = [];
 	let autoPlanReviewState: "idle" | "awaiting_revision" = "idle";
 	let autoPlanReviewResults: PlanReviewResult[] = [];
+	/** workflow_plan_review spawn counter only (not /plan-auto runReviewGateForPlan). Reset on plan-mode off→on. */
+	let planReviewCycleCount = 0;
+	let lastPlanReviewStopAdvice: PlanReviewStopAdvice | undefined;
+	let lastPlanReviewResults: PlanReviewResult[] = [];
 	let prePlanActiveToolNames: string[] | undefined;
 
 	pi.registerFlag("plan", {
@@ -662,26 +671,135 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return { approved: true, beadId, worktreePath: result.details?.worktreePath as string | undefined };
 	}
 
+	function planReviewCapReached(): boolean {
+		return planReviewCycleCount >= MAX_PLAN_REVIEW_CYCLES;
+	}
+
+	function shouldInjectMustNotPlanReview(): boolean {
+		return planReviewCapReached() || lastPlanReviewStopAdvice === "STOP_SHOW_USER";
+	}
+
+	function resetPlanReviewCycleState(): void {
+		planReviewCycleCount = 0;
+		lastPlanReviewStopAdvice = undefined;
+		lastPlanReviewResults = [];
+	}
+
+	function buildPlanReviewToolText(input: {
+		advice: PlanReviewStopAdvice;
+		cycle: number;
+		risk: string;
+		gateOk: boolean;
+		renderedResults: string;
+		reasons?: string[];
+		skippedSpawn?: boolean;
+	}): string {
+		const { advice, cycle, risk, gateOk, renderedResults, reasons, skippedSpawn } = input;
+		const cycleLabel = `${cycle}/${MAX_PLAN_REVIEW_CYCLES}`;
+		const riskLine = `risk=${risk} (telemetry only; does not change stop advice)`;
+		const reasonBlock = reasons && reasons.length > 0 ? `\n\n${reasons.map((reason) => `- ${reason}`).join("\n")}` : "";
+		const skipNote = skippedSpawn ? " No additional reviewer spawn (cycle cap)." : "";
+		if (advice === "HARD_BLOCK") {
+			return `workflow_plan_review ${cycleLabel}: HARD_BLOCK. Do not execute or approve the plan until blockers are resolved.${skipNote}\n${riskLine}.${reasonBlock}\n\nReviewer output:\n\n${renderedResults}`;
+		}
+		if (advice === "CONTINUE") {
+			return `workflow_plan_review ${cycleLabel}: CONTINUE. Important/critical findings remain. Revise the plan and call workflow_plan_review again (max ${MAX_PLAN_REVIEW_CYCLES} cycles). Implementation remains blocked until the revised plan adjudicates findings and receives normal approval.\n${riskLine}.\n\nReviewer output:\n\n${renderedResults}`;
+		}
+		const stopLead = gateOk
+			? `workflow_plan_review ${cycleLabel}: STOP_SHOW_USER. Present the plan to Maxim now. MUST NOT call workflow_plan_review again this planning session.`
+			: `workflow_plan_review ${cycleLabel}: STOP_SHOW_USER.`;
+		return `${stopLead}${skipNote} Implementation remains blocked until the revised plan explicitly adjudicates accepted/rejected findings and receives normal approval.\n${riskLine}.${reasonBlock}\n\nReviewer output:\n\n${renderedResults}`;
+	}
+
 	async function planReviewTool(params: { draftPlan: string }, ctx: ExtensionContext) {
 		const draftPlan = params.draftPlan.trim();
 		if (!draftPlan) {
 			return toolText("workflow_plan_review blocked: draftPlan is required", { ok: false, error: "draftPlan is required" });
 		}
 
-		const results = await runReviewGateForPlan(ctx, draftPlan);
-		const gate = evaluatePlanReviewGate(results);
-		const renderedResults = renderPlanReviewResults(results);
-		if (!gate.ok) {
-			const reasons = gate.reasons.map((reason) => `- ${reason}`).join("\n");
+		const risk = classifyPlanReviewRisk(draftPlan);
+
+		// Cap reached: skip spawn, return cached results with STOP_SHOW_USER.
+		if (planReviewCapReached()) {
+			const results = lastPlanReviewResults;
+			const gate = evaluatePlanReviewGate(results);
+			const advice: PlanReviewStopAdvice = "STOP_SHOW_USER";
+			lastPlanReviewStopAdvice = advice;
+			persistState();
+			const renderedResults = results.length > 0
+				? renderPlanReviewResults(results)
+				: "(no cached reviewer output)";
 			return toolText(
-				`workflow_plan_review blocked. Do not execute or approve the plan until blockers are resolved.\n\n${reasons}\n\nReviewer output:\n\n${renderedResults}`,
-				{ ok: false, gate, results },
+				buildPlanReviewToolText({
+					advice,
+					cycle: planReviewCycleCount,
+					risk,
+					gateOk: gate.ok,
+					renderedResults,
+					reasons: gate.reasons,
+					skippedSpawn: true,
+				}),
+				{
+					ok: gate.ok,
+					gate,
+					results,
+					cycle: planReviewCycleCount,
+					risk,
+					stopAdvice: advice,
+					skippedSpawn: true,
+				},
 			);
 		}
 
+		// Reserve cycle slot BEFORE await spawn so overlap ≤2 and failed spawn consumes the slot.
+		planReviewCycleCount += 1;
+		const cycle = planReviewCycleCount;
+		persistState();
+
+		let results: PlanReviewResult[];
+		try {
+			results = await runReviewGateForPlan(ctx, draftPlan);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			results = [{
+				reviewer: "plan-review-runtime",
+				verdict: "BLOCKED",
+				findings: [],
+				unresolvedBlockers: [message || "plan review spawn failed"],
+				raw: "",
+				error: message || "plan review spawn failed",
+			}];
+		}
+
+		const gate = evaluatePlanReviewGate(results);
+		const hasImportantOrCritical = hasImportantOrCriticalFindings(results, gate.importantFindings);
+		const advice = planReviewStopAdvice({
+			cycle,
+			gateOk: gate.ok,
+			hasImportantOrCritical,
+		});
+		lastPlanReviewStopAdvice = advice;
+		lastPlanReviewResults = results;
+		persistState();
+
+		const renderedResults = renderPlanReviewResults(results);
 		return toolText(
-			`workflow_plan_review complete. Implementation remains blocked until the revised plan explicitly adjudicates accepted/rejected findings and receives normal approval.\n\n${renderedResults}`,
-			{ ok: true, gate, results },
+			buildPlanReviewToolText({
+				advice,
+				cycle,
+				risk,
+				gateOk: gate.ok,
+				renderedResults,
+				reasons: gate.ok ? undefined : gate.reasons,
+			}),
+			{
+				ok: gate.ok,
+				gate,
+				results,
+				cycle,
+				risk,
+				stopAdvice: advice,
+			},
 		);
 	}
 
@@ -734,6 +852,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean, autopilot = false): void {
+		const wasEnabled = planModeEnabled;
 		if (!planModeEnabled) snapshotNormalToolSurface();
 		planModeEnabled = true;
 		autoExecuteEnabled = autoExecute || autopilot;
@@ -742,6 +861,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
 		todoItems = [];
+		// Reset cycle only on plan-mode off→on (new /plan or first enable). Repeated workflow_plan_mode while already on does not reset.
+		if (!wasEnabled) resetPlanReviewCycleState();
 		pi.setActiveTools(PLAN_MODE_TOOLS);
 		const modeLabel = autopilot ? "Autopilot " : autoExecute ? "Auto " : "";
 		if (ctx.hasUI) ctx.ui.notify(`${modeLabel}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
@@ -759,6 +880,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
 		todoItems = [];
+		resetPlanReviewCycleState();
 		const restoredTools = restoreNormalToolSurface();
 		if (ctx.hasUI) ctx.ui.notify(`Plan mode disabled. Full access restored: ${restoredTools.join(", ")}`);
 		syncWorkflowPlanMode(ctx, "off", "idle");
@@ -783,6 +905,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			executing: executionMode,
 			autoPlanReviewState,
 			autoPlanReviewResults,
+			planReviewCycleCount,
+			lastPlanReviewStopAdvice,
+			lastPlanReviewResults,
 		});
 	}
 
@@ -1188,7 +1313,10 @@ Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header.
 
-For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan. Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections. Do not call workflow_plan_approved yourself unless Maxim explicitly approves — except in /plan-autopilot, where runtime approval records Approved-by: оркестратор after the plan-review gate.
+${shouldInjectMustNotPlanReview()
+	? `Plan-review cycle state: cycle=${planReviewCycleCount}/${MAX_PLAN_REVIEW_CYCLES}, lastAdvice=${lastPlanReviewStopAdvice ?? "none"}. You MUST NOT call workflow_plan_review again this planning session. Present the current plan (with Reviewer findings summary / Accepted findings / Rejected findings / Unresolved blockers when applicable) to Maxim now. Remaining important/critical findings are visible for Maxim; do not start a third review cycle.`
+	: `For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan (max ${MAX_PLAN_REVIEW_CYCLES} review cycles). After CONTINUE, revise and call again; after STOP_SHOW_USER, show Maxim; after HARD_BLOCK, resolve blockers then retry only if cycle < ${MAX_PLAN_REVIEW_CYCLES}. Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections.`}
+Do not call workflow_plan_approved yourself unless Maxim explicitly approves — except in /plan-autopilot, where runtime approval records Approved-by: оркестратор after the plan-review gate.
 
 If /plan-autopilot (or NL «работаю автономно» / «работать автономно») is active: same multi-agent plan-review gate as /plan-auto; durable PLAN APPROVED uses Approved-by: оркестратор; the autopilot session flag survives plan=off. After CODE REVIEW: APPROVED and a green ACCEPTANCE MATRIX the orchestrator closes the bead without asking Maxim «закрывай?». Stop and ask Maxim on plan-review BLOCKED, missing revised sections, missing active bead/worktree, supervisor BLOCKED/NEEDS_CONTEXT, code-review NOT APPROVED, or matrix FAIL/NOT RUN/BLOCKED/SCOPE GAP. Do not call land or merge-to-main from autopilot.
 
@@ -1364,7 +1492,18 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		const planModeEntry = entries
 			.filter((e: { type: string; customType?: string }) => e.type === "custom" && e.customType === "plan-mode")
 			.pop() as
-			| { data?: { enabled: boolean; autoExecute?: boolean; autopilot?: boolean; todos?: TodoItem[]; executing?: boolean; autoPlanReviewState?: "idle" | "awaiting_revision"; autoPlanReviewResults?: PlanReviewResult[] } }
+			| { data?: {
+				enabled: boolean;
+				autoExecute?: boolean;
+				autopilot?: boolean;
+				todos?: TodoItem[];
+				executing?: boolean;
+				autoPlanReviewState?: "idle" | "awaiting_revision";
+				autoPlanReviewResults?: PlanReviewResult[];
+				planReviewCycleCount?: number;
+				lastPlanReviewStopAdvice?: PlanReviewStopAdvice;
+				lastPlanReviewResults?: PlanReviewResult[];
+			} }
 			| undefined;
 
 		if (planModeEntry?.data) {
@@ -1375,6 +1514,9 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			executionMode = planModeEntry.data.executing ?? executionMode;
 			autoPlanReviewState = planModeEntry.data.autoPlanReviewState ?? autoPlanReviewState;
 			autoPlanReviewResults = planModeEntry.data.autoPlanReviewResults ?? autoPlanReviewResults;
+			planReviewCycleCount = planModeEntry.data.planReviewCycleCount ?? planReviewCycleCount;
+			lastPlanReviewStopAdvice = planModeEntry.data.lastPlanReviewStopAdvice ?? lastPlanReviewStopAdvice;
+			lastPlanReviewResults = planModeEntry.data.lastPlanReviewResults ?? lastPlanReviewResults;
 		}
 
 		// On resume: re-scan messages to rebuild completion state

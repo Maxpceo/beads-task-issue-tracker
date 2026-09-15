@@ -40,6 +40,63 @@ export interface PlanReviewGateResult {
 	reasons: string[];
 }
 
+/** Telemetry-only risk class; never an argument to planReviewStopAdvice. */
+export type PlanReviewRisk = "low" | "high";
+
+/** Exclusive stop advice for workflow_plan_review cycle cap (max 2 spawns). */
+export type PlanReviewStopAdvice = "HARD_BLOCK" | "CONTINUE" | "STOP_SHOW_USER";
+
+export const MAX_PLAN_REVIEW_CYCLES = 2;
+
+const FAST_PATH_STICKER = /FAST_PATH_RATIONALE\s*:/i;
+const PLAN_REVIEW_RISK_DENYLIST = /\.pi\/(extensions|skills|agents|rules)|(?:^|[\s`"'(])scripts\//i;
+
+/**
+ * Classify draft-plan risk for telemetry only.
+ * low iff FAST_PATH_RATIONALE is present AND the plan does not touch denylisted
+ * workflow paths AND does not span both app/ and src-tauri; otherwise high.
+ */
+export function classifyPlanReviewRisk(draftPlan: string): PlanReviewRisk {
+	const text = draftPlan ?? "";
+	if (!FAST_PATH_STICKER.test(text)) return "high";
+	if (PLAN_REVIEW_RISK_DENYLIST.test(text)) return "high";
+	const touchesApp = /(?:^|[\s`"'(])app\//.test(text) || /\bapp\//.test(text);
+	const touchesSrcTauri = /src-tauri/.test(text);
+	if (touchesApp && touchesSrcTauri) return "high";
+	return "low";
+}
+
+/**
+ * Exclusive stop table for plan-review cycles.
+ * Risk is intentionally not an input — telemetry only.
+ *
+ * - !gateOk → HARD_BLOCK
+ * - gateOk && !hasImportantOrCritical → STOP_SHOW_USER (cycle >= 1 after spawn)
+ * - gateOk && hasImportantOrCritical && cycle < 2 → CONTINUE
+ * - gateOk && cycle >= 2 → STOP_SHOW_USER
+ */
+export function planReviewStopAdvice(input: {
+	cycle: number;
+	gateOk: boolean;
+	hasImportantOrCritical: boolean;
+}): PlanReviewStopAdvice {
+	const { cycle, gateOk, hasImportantOrCritical } = input;
+	if (!gateOk) return "HARD_BLOCK";
+	if (cycle >= MAX_PLAN_REVIEW_CYCLES) return "STOP_SHOW_USER";
+	if (!hasImportantOrCritical) return "STOP_SHOW_USER";
+	return "CONTINUE";
+}
+
+export function hasImportantOrCriticalFindings(
+	results: PlanReviewResult[] | undefined,
+	importantFindings?: PlanReviewFinding[],
+): boolean {
+	if (importantFindings && importantFindings.length > 0) return true;
+	return (results ?? []).some((result) =>
+		result.findings.some((finding) => finding.severity === "critical" || finding.severity === "important"),
+	);
+}
+
 export interface PlanReviewExecAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 }
