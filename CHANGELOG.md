@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi `review_bead` Verification classifier + allowlist** (`beads-task-issue-tracker-ofcb`): acceptance matrix no longer leaves false `NOT RUN` for safe gate-executable Verification bullets. `review_bead` executes allowlisted `rg`/`grep` (paths under the review worktree) and `git diff --check` into matrix PASS/FAIL, maps non-executable manual/prose bullets to non-blocking N/A, keeps unknown/unsafe commands fail-closed as `NOT RUN`, and runs allowlist before single-check suite fallback so a lone cargo/pnpm PASS cannot silently map content-proof bullets. `create-bead` / `plan-bead` document gate-executable Verification only.
+
 - **Pi `review_bead` git-diff Claude-constraint matrix mapping** (`beads-task-issue-tracker-rmqu`): verification bullets that require `git diff --name-only` with a Claude-path constraint are scored from the already-executed scoped `changedFiles` list, so the acceptance matrix no longer leaves a false `NOT RUN` when the diff already ran. Forbidden paths stay fail-closed (any `.claude/` path or root `CLAUDE.md`); sibling lists-only and other name-only bullets are unchanged.
 
 - **Pi visible cmux sticky tab titles** (`beads-task-issue-tracker-7kiq`): after `dispatch_* transport=cmux` spawn, tab titles are re-applied on a sticky schedule so Pi/cmux default `π - <worktree>` does not remain the final label. Child panes keep `{role} · {bead-suffix}` and the orchestrator stays `оркестратор`, with rename metrics in spawn-ack and a safe AbortSignal path on `followup_visible_dispatch`.
