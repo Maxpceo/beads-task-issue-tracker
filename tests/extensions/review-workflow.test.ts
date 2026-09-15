@@ -1017,6 +1017,26 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
   })
 
+  it('ofcb: allowlist rg still gate-executes when a single cargo suite check PASSes', async () => {
+    const beadDescription = [
+      '### Verification / acceptance checks',
+      '- `rg "Direct close bypass" src-tauri/src/lib.rs` exits 0.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'src-tauri/src/lib.rs',
+      supervisorComments: 'DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: __WORKTREE__\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222',
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+    expect(execCalls.some((call) => call.command === 'cargo')).toBe(true)
+    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('Direct close bypass') && call.args.includes('src-tauri/src/lib.rs'))).toBe(true)
+    expect(matrix).toContain('command: rg "Direct close bypass" src-tauri/src/lib.rs; exit code: 0')
+    expect(matrix).toContain('| PASS |')
+    expect(matrix).not.toMatch(/rg .*\| command: cargo/)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
   it('does not treat docs/foo.ts as docs-only N/A for conditional test rows', async () => {
     const beadDescription = [
       '### Verification / acceptance checks',

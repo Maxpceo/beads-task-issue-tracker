@@ -864,10 +864,11 @@ async function buildAcceptanceMatrix(params: {
 		}
 
 		const matching = matchingVerificationCheck(item, checkResults);
-		const fallback = checkResults.length === 1 && checkResults[0]?.result !== "N/A" ? checkResults[0] : undefined;
-		let check = matching ?? fallback;
+		let check = matching;
 		let conditionalEvidence = check ? undefined : conditionalNaEvidence(item, evidenceBlock, params.changedFiles);
 
+		// Allowlist (rg/git diff --check) before single-check fallback so a lone cargo/pnpm PASS
+		// cannot silently map content-proof bullets to unrelated suite evidence.
 		if (!check && !conditionalEvidence && params.execAllowlist && params.reviewCwd) {
 			const allowlisted = await executeAllowlistVerification(item, {
 				cwd: params.reviewCwd,
@@ -880,6 +881,15 @@ async function buildAcceptanceMatrix(params: {
 			} else if (allowlisted !== "unresolved") {
 				check = allowlisted;
 			}
+		}
+
+		if (!check && !conditionalEvidence) {
+			const normalizedItem = normalizeVerificationText(item);
+			const suiteShaped = /\b(pnpm|vitest|vue-tsc|cargo)\b/.test(normalizedItem);
+			const fallback = suiteShaped && checkResults.length === 1 && checkResults[0]?.result !== "N/A"
+				? checkResults[0]
+				: undefined;
+			check = fallback;
 		}
 
 		rows.push({
