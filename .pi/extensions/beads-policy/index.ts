@@ -26,6 +26,7 @@ interface ExtensionContext {
 type PolicyName =
 	| "blockGitAddAll"
 	| "requireMergeSlotForPush"
+	| "requireMergeSlotSessionHolder"
 	| "protectPaths"
 	| "blockDestructiveCommand"
 	| "blockBdCloseWithoutReview"
@@ -375,7 +376,12 @@ function remoteOidAncestorOfMain(cwd: string, branchOid: string, mainOid: string
 }
 
 function hasObservableMergeSlotEvidence(workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): boolean {
-	return workflowState.mergeSlotHeld === true || currentActorHoldsBdMergeSlot(cwd, options);
+	const issue = options.bdMergeSlotIssue === undefined ? getBdMergeSlotIssue(cwd) : options.bdMergeSlotIssue;
+	const holder = readBdMergeSlotHolder(issue);
+	// Foreign or legacy (Maxpceo/git user.name) holders deny even when footer mergeSlotHeld is true.
+	if (holder) return isOwnSessionMergeSlotHolder(holder, workflowState.sessionKey);
+	// Footer-only allow iff bd holder is empty/unreadable (null issue, open slot, missing holder).
+	return workflowState.mergeSlotHeld === true;
 }
 
 function mergedRemoteBranchCleanupBlockReason(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): string | undefined {
@@ -895,10 +901,107 @@ function commandHasGitPush(command: string): boolean {
 	return /(^|[;&|]\s*)git\s+push\b/.test(command);
 }
 
-function commandAcquiresMergeSlotBeforePush(command: string): boolean {
-	const acquireIndex = command.search(/\bbd\s+merge-slot\s+acquire\b/);
+function commandAcquiresMergeSlotBeforePush(command: string, workflowState: WorkflowStateSnapshot = {}): boolean {
 	const pushIndex = command.search(/\bgit\s+push\b/);
-	return acquireIndex >= 0 && pushIndex >= 0 && acquireIndex < pushIndex;
+	if (pushIndex < 0) return false;
+	// Same-command push is allowed only when an earlier acquire carries an own-session --holder.
+	for (const part of shellCommandInspectionParts(command.slice(0, pushIndex))) {
+		for (const segment of splitShellSegments(part)) {
+			const holder = parseMergeSlotHolderArg(segment, "acquire");
+			if (holder && isOwnSessionMergeSlotHolder(holder, workflowState.sessionKey)) return true;
+		}
+	}
+	return false;
+}
+
+function parseMergeSlotHolderArg(segment: string, action: "acquire" | "release"): string | undefined {
+	const tokens = shellTokens(segment);
+	for (let index = 0; index < tokens.length; index += 1) {
+		if (tokens[index] !== "bd") continue;
+		if (tokens[index + 1] !== "merge-slot") continue;
+		if (tokens[index + 2] !== action) continue;
+		for (let cursor = index + 3; cursor < tokens.length; cursor += 1) {
+			const token = tokens[cursor];
+			if (!token) break;
+			if (token === "--") break;
+			if (token === "bd") break;
+			if (token === "--holder" || token === "-holder") {
+				const value = tokens[cursor + 1];
+				return value?.trim() || undefined;
+			}
+			if (token.startsWith("--holder=")) {
+				const value = token.slice("--holder=".length).trim();
+				return value || undefined;
+			}
+		}
+	}
+	return undefined;
+}
+
+function segmentHasMergeSlotAction(segment: string, action: "acquire" | "release"): boolean {
+	const tokens = shellTokens(segment);
+	return tokens.some((token, index) => token === "bd" && tokens[index + 1] === "merge-slot" && tokens[index + 2] === action);
+}
+
+function commandHasMergeSlotAction(command: string, action: "acquire" | "release"): boolean {
+	return shellCommandInspectionParts(command).some((part) => splitShellSegments(part).some((segment) => segmentHasMergeSlotAction(segment, action)));
+}
+
+function mergeSlotSessionHolderDecision(command: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
+	const checks: Array<{ action: "acquire" | "release"; label: string }> = [
+		{ action: "acquire", label: "acquire" },
+		{ action: "release", label: "release" },
+	];
+	for (const { action, label } of checks) {
+		if (!commandHasMergeSlotAction(command, action)) continue;
+		let sawValidOwnHolder = false;
+		let sawAction = false;
+		for (const part of shellCommandInspectionParts(command)) {
+			for (const segment of splitShellSegments(part)) {
+				if (!segmentHasMergeSlotAction(segment, action)) continue;
+				sawAction = true;
+				const holder = parseMergeSlotHolderArg(segment, action);
+				if (!holder) {
+					return {
+						policy: "requireMergeSlotSessionHolder",
+						block: true,
+						reason: `Заблокировано: bd merge-slot ${label} требует --holder pi:<SESSION_UNIQ>:<suffix|none> (session-scoped; never bare/Maxpceo/git user.name).`,
+					};
+				}
+				if (!isSessionScopedMergeSlotHolderFormat(holder)) {
+					return {
+						policy: "requireMergeSlotSessionHolder",
+						block: true,
+						reason: `Заблокировано: bd merge-slot ${label} --holder должен быть session-scoped pi:<SESSION_UNIQ>:<suffix|none>; получен ${holder}.`,
+					};
+				}
+				if (workflowState.sessionKey) {
+					if (!isOwnSessionMergeSlotHolder(holder, workflowState.sessionKey)) {
+						return {
+							policy: "requireMergeSlotSessionHolder",
+							block: true,
+							reason: `Заблокировано: bd merge-slot ${label} --holder принадлежит другой Pi-сессии; expected prefix ${ownSessionMergeSlotHolderPrefix(workflowState.sessionKey) ?? "pi:<this-session>:"}.`,
+						};
+					}
+				} else if (!isSessionScopedMergeSlotHolderFormat(holder)) {
+					return {
+						policy: "requireMergeSlotSessionHolder",
+						block: true,
+						reason: `Заблокировано: bd merge-slot ${label} --holder должен быть session-scoped pi:<SESSION_UNIQ>:<suffix|none>.`,
+					};
+				}
+				sawValidOwnHolder = true;
+			}
+		}
+		if (sawAction && !sawValidOwnHolder) {
+			return {
+				policy: "requireMergeSlotSessionHolder",
+				block: true,
+				reason: `Заблокировано: bd merge-slot ${label} требует session-scoped --holder.`,
+			};
+		}
+	}
+	return undefined;
 }
 
 function segmentHasMutatingBdCommand(segment: string): boolean {
@@ -1852,21 +1955,51 @@ function getBdIssue(cwd: string, id: string): BdIssueSummary | undefined {
 	}
 }
 
-function getCurrentActor(cwd: string, override?: string): string | undefined {
-	const actor = override ?? process.env.BEADS_ACTOR ?? runGit(cwd, ["config", "user.name"]) ?? process.env.USER;
-	return actor?.trim() || undefined;
-}
-
 function getBdMergeSlotIssue(cwd: string): BdMergeSlotIssue | undefined {
 	return getBdIssue(cwd, "beads-task-issue-tracker-merge-slot") as BdMergeSlotIssue | undefined;
 }
 
-function currentActorHoldsBdMergeSlot(cwd: string, options: BashPolicyOptions): boolean {
-	const actor = getCurrentActor(cwd, options.currentActor);
-	if (!actor) return false;
-	const issue = options.bdMergeSlotIssue === undefined ? getBdMergeSlotIssue(cwd) : options.bdMergeSlotIssue;
-	if (!issue || issue.status !== "in_progress") return false;
-	return typeof issue.metadata?.holder === "string" && issue.metadata.holder.trim() === actor;
+function readBdMergeSlotHolder(issue: BdMergeSlotIssue | null | undefined): string | undefined {
+	if (!issue || issue.status !== "in_progress") return undefined;
+	if (typeof issue.metadata?.holder !== "string") return undefined;
+	const holder = issue.metadata.holder.trim();
+	return holder || undefined;
+}
+
+/** Session-uniq body from id:-only sessionKey (dashes stripped; never 8-char truncate). */
+export function sessionUniqFromSessionKey(sessionKey: string | undefined): string | undefined {
+	if (!sessionKey) return undefined;
+	const match = /^id:(.+)$/i.exec(sessionKey.trim());
+	if (!match?.[1]) return undefined;
+	const uniq = match[1].replace(/-/g, "").trim();
+	return uniq || undefined;
+}
+
+/** Canonical Pi merge-slot holder: pi:<SESSION_UNIQ>:<beadSuffix|none>. id:-only keys; never file:/leaf: or git user.name. */
+export function resolveMergeSlotHolder(sessionKey: string | undefined, activeBead?: string | null): string | undefined {
+	const uniq = sessionUniqFromSessionKey(sessionKey);
+	if (!uniq) return undefined;
+	const raw = typeof activeBead === "string" ? activeBead.trim() : "";
+	const suffix = raw ? (raw.includes("-") ? raw.slice(raw.lastIndexOf("-") + 1) : raw) : "none";
+	const safeSuffix = suffix && /^[A-Za-z0-9_]+$/.test(suffix) ? suffix : "none";
+	return `pi:${uniq}:${safeSuffix}`;
+}
+
+export function ownSessionMergeSlotHolderPrefix(sessionKey: string | undefined): string | undefined {
+	const uniq = sessionUniqFromSessionKey(sessionKey);
+	return uniq ? `pi:${uniq}:` : undefined;
+}
+
+export function isSessionScopedMergeSlotHolderFormat(holder: string): boolean {
+	return /^pi:[A-Za-z0-9]+:[A-Za-z0-9_]+$/.test(holder.trim());
+}
+
+/** Own session = any suffix under pi:<my SESSION_UNIQ>:. */
+export function isOwnSessionMergeSlotHolder(holder: string, sessionKey: string | undefined): boolean {
+	const prefix = ownSessionMergeSlotHolderPrefix(sessionKey);
+	if (!prefix) return false;
+	const trimmed = holder.trim();
+	return trimmed.startsWith(prefix) && isSessionScopedMergeSlotHolderFormat(trimmed);
 }
 
 function getEpicChildren(cwd: string, id: string): BdIssueSummary[] | undefined {
@@ -2961,16 +3094,18 @@ export function evaluateBashPolicy(
 	const staleDecision = evaluateStaleGuard(command, commandCwd);
 	if (staleDecision) return staleDecision;
 
+	const mergeSlotHolderDecision = mergeSlotSessionHolderDecision(command, workflowState);
+	if (mergeSlotHolderDecision) return mergeSlotHolderDecision;
+
 	if (
 		commandHasGitPush(command) &&
-		!workflowState.mergeSlotHeld &&
-		!commandAcquiresMergeSlotBeforePush(command) &&
-		!currentActorHoldsBdMergeSlot(commandCwd, options)
+		!hasObservableMergeSlotEvidence(workflowState, options, commandCwd) &&
+		!commandAcquiresMergeSlotBeforePush(command, workflowState)
 	) {
 		return {
 			policy: "requireMergeSlotForPush",
 			block: true,
-			reason: "Заблокировано: git push сначала требует bd merge-slot acquire (или workflow state mergeSlotHeld=true, или current bd merge-slot holder evidence).",
+			reason: "Заблокировано: git push сначала требует bd merge-slot acquire --holder pi:<SESSION_UNIQ>:<suffix|none> (own session), либо footer mergeSlotHeld при пустом/unreadable bd holder, либо own-session bd holder evidence. Maxpceo/foreign holder не считаются.",
 		};
 	}
 

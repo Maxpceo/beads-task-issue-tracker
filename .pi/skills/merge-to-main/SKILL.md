@@ -59,16 +59,26 @@ EOF
    ```bash
    pnpm test && npx vue-tsc --noEmit
    ```
-7. Push branch via merge-slot. Сначала один раз сохраните имя ветки, затем синхронизируйтесь с `origin/main` явно; не используйте неявный pull+rebase, потому что у новой ветки может не быть upstream:
+7. Push branch via merge-slot. Сначала один раз сохраните имя ветки, затем синхронизируйтесь с `origin/main` явно; не используйте неявный pull+rebase, потому что у новой ветки может не быть upstream.
+
+   **Holder recipe (identical to `land`; compute once immediately before acquire):**
+   1. `sessionKey` = `workflow_status` → `details.sessionKey`, or latest bead comment `PI_SESSION_KEY:` (`id:…` only; reject `file:`/`leaf:`).
+   2. `SESSION_UNIQ` = body after `id:` with **all dashes stripped** (full string, **not** 8-char truncate).
+   3. `SUFFIX` = last `-` segment of active bead id, or `none` if no active bead.
+   4. Holder = `pi:<SESSION_UNIQ>:<SUFFIX>`.
+   5. Golden vector: `id:01a0a712-68e8-7664-b26e-347042f09f14` + `beads-task-issue-tracker-ho0p` → `pi:01a0a71268e87664b26e347042f09f14:ho0p`.
+   6. Pass a **quoted literal** `--holder 'pi:…'` on every acquire/release (do **not** rely on `$HOLDER` env expansion in the final command). Never bare acquire; never Maxpceo/git `user.name`.
+
    ```bash
    BRANCH=$(git branch --show-current)
-   bd merge-slot acquire
+   # Example holder (replace with this session's literal):
+   bd merge-slot acquire --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
    git fetch origin main
    git rebase origin/main
    git push -u origin "$BRANCH"
-   bd merge-slot release
+   bd merge-slot release --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
    ```
-   Если любая команда после `bd merge-slot acquire` завершается ошибкой, сначала выполните `bd merge-slot release`, затем остановитесь с русскоязычным отчётом: какая команда упала, её exit code, что уже сделано и следующий безопасный шаг. Исключение: trivial rebase conflict можно разрешить без вопроса к Максиму по правилам ниже; push всё равно запрещён до успешного `git rebase --continue` и повторных checks.
+   Если любая команда после `bd merge-slot acquire` завершается ошибкой, сначала выполните `bd merge-slot release --holder '<same-literal>'`, затем остановитесь с русскоязычным отчётом: какая команда упала, её exit code, что уже сделано и следующий безопасный шаг. Исключение: trivial rebase conflict можно разрешить без вопроса к Максиму по правилам ниже; push всё равно запрещён до успешного `git rebase --continue` и повторных checks. Do not auto-release an in_progress slot held by foreign/Maxpceo holders — stop and report.
 
    Trivial rebase conflicts агент разрешает сам без дополнительного вопроса, когда все условия выполняются одновременно:
    - конфликт только additive: docs/markdown/`CHANGELOG.md`, независимые adjacent list entries или непересекающиеся абзацы, где можно сохранить обе стороны без изменения смысла;
@@ -92,9 +102,9 @@ EOF
    - CHANGELOG/README entries must be written in English.
    Documentation can be skipped only for internal/config/test-only changes, workflow-only changes, or explicit user request, and the skip reason must be recorded in the merge report.
 10. Wait for CI when checks exist. Do not merge with failing checks.
-11. Merge PR via merge-slot. If acquire fails, stop before `gh pr merge`:
+11. Merge PR via merge-slot with the same session-scoped literal `--holder` as step 7. If acquire fails, stop before `gh pr merge`:
     ```bash
-    bd merge-slot acquire
+    bd merge-slot acquire --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
     gh pr merge <PR_NUMBER> --merge
     ```
     Do **not** pass `--delete-branch`. GitHub's local checkout/delete path fails under worktree-first layouts when primary already has `main` checked out; remote branch cleanup is an explicit step below.
@@ -103,7 +113,7 @@ EOF
     ```bash
     gh pr view <PR_NUMBER> --json state,mergeCommit
     ```
-    - If `state` is not `MERGED`: run `bd merge-slot release` from the feature worktree, stop with a blocker report (no remote delete, no local worktree remove). Worktree-first conflict text such as `main is already used by worktree` is non-fatal **only** when `state=MERGED`.
+    - If `state` is not `MERGED`: run `bd merge-slot release --holder '<same-literal>'` from the feature worktree, stop with a blocker report (no remote delete, no local worktree remove). Worktree-first conflict text such as `main is already used by worktree` is non-fatal **only** when `state=MERGED`.
     - If `state` is `MERGED` (regardless of `gh pr merge` exit code): remote branch cleanup is **required** for any MERGED PR. Stay in the feature worktree. Do **not** run `git checkout main` in the feature worktree.
 
     Remote cleanup from the feature worktree (literal exact-shape push only; policy is fail-closed):
@@ -112,7 +122,7 @@ EOF
     BRANCH=<session canonical Pi branch>
     BRANCH_OID=$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')
     ```
-    - If `BRANCH_OID` is empty (remote already gone): treat as success (already-gone remote is the only “fallback”). Immediately `bd merge-slot release` from the still-existing feature worktree, then continue local cleanup in step 12.
+    - If `BRANCH_OID` is empty (remote already gone): treat as success (already-gone remote is the only “fallback”). Immediately `bd merge-slot release --holder '<same-literal>'` from the still-existing feature worktree, then continue local cleanup in step 12.
     - If remote still present:
       ```bash
       MAIN_OID=$(git ls-remote --heads origin main | awk '{print $1}')
@@ -127,7 +137,7 @@ EOF
 
     **Immediately after remote delete success or already-gone empty ls-remote**, from the still-existing feature worktree:
     ```bash
-    bd merge-slot release
+    bd merge-slot release --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
     ```
     Local pull / worktree remove / `branch -d` failure must **not** keep the slot held — release first, then report any local cleanup blocker.
 
