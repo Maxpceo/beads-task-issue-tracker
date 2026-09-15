@@ -1246,7 +1246,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
     const picked = await runSearchableModelPicker({
       title: 'Pick',
       models,
-      initial: models[0].id,
+      initial: 'prov/model-a',
       custom: async (factory) => {
         let settled: unknown
         const comp = factory(
@@ -1266,7 +1266,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
         return settled
       },
     })
-    expect(picked).toBe(models[1].id)
+    expect(picked).toBe('prov/model-b')
   })
 
   it('Esc finishes null without writing via SelectList onCancel', async () => {
@@ -1350,7 +1350,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
     const picked = await runSearchableModelPicker({
       title: 'Pick',
       models,
-      initial: models[0].id,
+      initial: 'prov/model-a',
       custom: async (factory) => {
         let settled: unknown
         const mk = () =>
@@ -1372,7 +1372,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
         return settled
       },
     })
-    expect(picked).toBe(models[1].id)
+    expect(picked).toBe('prov/model-b')
   })
 
   it('path (a): throw until first return → notify with error.message + fallback select', async () => {

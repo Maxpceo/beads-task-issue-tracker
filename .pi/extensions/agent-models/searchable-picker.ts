@@ -219,7 +219,9 @@ export async function runSearchableModelPicker(input: {
 			const items = buildItems(query);
 			const want = list?.getSelectedItem()?.value;
 			const next = new SelectList(items, MODEL_PICKER_VIEWPORT, selectListTheme(theme));
-			next.onSelect = (item: SelectItem) => finish(item.value);
+			next.onSelect = (item: { value?: string; label?: string }) => {
+				if (item.value) finish(item.value);
+			};
 			next.onCancel = () => finish(null);
 			if (typeof (listContainer as { clear?: () => void }).clear === "function") {
 				(listContainer as { clear: () => void }).clear();
