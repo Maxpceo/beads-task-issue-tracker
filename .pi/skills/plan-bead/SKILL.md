@@ -24,7 +24,7 @@ Use a full `Где мы в workflow` block when strict planning stops for user a
 - bd status is the lifecycle authority. Do not plan another bead before the current-session active bead has terminal bd status (`closed`, `blocked`, or explicit `deferred`/handoff).
 - If requirements or acceptance are ambiguous, ask a single batched question with 2-4 concrete options and stop until answered.
 - Plans must preserve self-contained handoff context: problem, approach, rejected alternatives, files, acceptance, and verification evidence.
-- Bead/plan `### Verification / acceptance checks` must list only gate-executable or gate-mapped commands (`pnpm test`/`vitest`, `vue-tsc`, `cargo check`, `git diff --name-only` claude-constraint, `git diff --check`, safe `rg`/`grep`). Manual/live/prose checks belong in Acceptance criteria or IMPLEMENTATION evidence, not Verification bullets for `review_bead` matrix.
+- Bead/plan `### Verification / acceptance checks` must list only gate-executable or gate-mapped commands (`pnpm test`/`vitest`, `vue-tsc`, `cargo check`, `git diff --name-only`, `git diff --check`, safe `rg`/`grep`). Manual/live/prose checks belong in Acceptance criteria or IMPLEMENTATION evidence, not Verification bullets for `review_bead` matrix.
 - Follow-up beads created during planning must use the full `AGENTS.md` template, labels, and known dependencies.
 - Decide Fast Path explicitly; risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work requires approved plan/supervisor path unless a documented exception applies.
 - Edge cases are required for non-trivial work.

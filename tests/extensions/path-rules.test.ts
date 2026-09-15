@@ -5,19 +5,21 @@ import { describe, expect, it } from 'vitest'
 import { inferTargetFilesFromText, loadPathRules, renderPathRulesLoaded } from '../../.pi/extensions/path-rules/index'
 
 describe('path-rules loader', () => {
-  it('loads global rules and src-tauri/CLAUDE.md for src-tauri targets', async () => {
+  it('loads global rules and src-tauri/PI_RULES.md for src-tauri targets', async () => {
     const result = await loadPathRules(process.cwd(), ['src-tauri/src/lib.rs'])
 
     expect(result.rules.map((rule) => rule.path)).toContain('AGENTS.md')
     expect(result.rules.map((rule) => rule.path)).toContain('.pi/rules/domain.md')
     expect(result.rules.map((rule) => rule.path)).toContain('.pi/rules/codebase.md')
-    expect(result.rules.map((rule) => rule.path)).toContain('src-tauri/CLAUDE.md')
+    expect(result.rules.map((rule) => rule.path)).toContain('src-tauri/PI_RULES.md')
+    expect(result.rules.map((rule) => rule.path)).not.toContain('src-tauri/CLAUDE.md')
 
     const rendered = await renderPathRulesLoaded(process.cwd(), ['src-tauri/src/lib.rs'])
     expect(rendered).toContain('PATH_RULES_LOADED:')
     expect(rendered).toContain('--- .pi/rules/codebase.md')
     expect(rendered).toContain('# Pi Codebase Rules')
-    expect(rendered).toContain('--- src-tauri/CLAUDE.md')
+    expect(rendered).toContain('--- src-tauri/PI_RULES.md')
+    expect(rendered).not.toContain('--- src-tauri/CLAUDE.md')
     expect(rendered).toContain('# src-tauri/ — Rust backend')
   })
 

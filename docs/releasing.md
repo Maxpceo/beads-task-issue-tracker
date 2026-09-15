@@ -14,7 +14,7 @@
 | Запустить релиз | `./release.sh` в терминале |
 | Опубликовать draft | `./release.sh --publish` или `gh release edit v<VERSION> --draft=false --latest` |
 
-Если работаешь через Claude Code — фразы-триггеры для skills в [§ Skills](#skills).
+Если работаешь через Pi — фразы-триггеры для skills в [§ Skills](#skills).
 
 ---
 
@@ -31,7 +31,7 @@
 
 ### 1.2. Запуск skill `release`
 
-Скажи Claude: **«сделай релиз»** / **«пора релизить»** / **«prepare release»**.
+Скажи Pi: **«сделай релиз»** / **«пора релизить»** / **«prepare release»**.
 
 Skill автоматически:
 
@@ -199,7 +199,7 @@ gh pr create --base main --fill
 
 ---
 
-## Skills (шорткаты для Claude Code) {#skills}
+## Skills (шорткаты для Pi) {#skills}
 
 Все триггеры — обычные фразы на русском/английском.
 
@@ -221,8 +221,9 @@ scripts/release-notes.py          ← парсер CHANGELOG → чистый ma
 .github/release-footer.md         ← Requirements + Installation + macOS workaround
 .github/workflows/release.yml     ← CI: сборка артефактов, склейка body, upload assets
 release.sh                        ← интерактивный локальный запуск (version bump, tag, push)
-.claude/skills/release/SKILL.md   ← процедура для Claude (блоки 1–4)
-.claude/references/release-workflow.md ← справочник для Claude
+.pi/skills/release/SKILL.md      ← процедура release для Pi (блоки 1–4)
+.pi/skills/land/SKILL.md          ← land skill (save/push session work)
+.pi/skills/merge-to-main/SKILL.md ← merge-to-main skill (PR + merge)
 docs/releasing.md                 ← этот файл
 ```
 

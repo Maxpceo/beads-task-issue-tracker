@@ -103,7 +103,6 @@ An epic is an organizational group. Prefer one feature branch for the whole epic
 - Do not silently skip the design-doc step for cross-domain work; either produce the design or record why the contract is already clear.
 - Children inherit context from the epic but must still be self-contained handoff packages.
 - Use `discovered-from:<EPIC_ID>` for follow-ups that are not required children of the epic.
-- No `.claude/*` files are modified for Pi epic workflow changes.
 
 ## Final report
 

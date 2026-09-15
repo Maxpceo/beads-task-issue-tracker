@@ -70,7 +70,7 @@ PARENT_EPIC: <EPIC_ID>
 
 1. Verify all required children are terminal (`closed`, `blocked`, or explicit `deferred` with recorded reason). If not, write `EPIC PROGRESS` and stop.
 2. Classify follow-ups as required blockers or non-blocking `discovered-from` work.
-3. Verify epic-level acceptance, including child evidence, follow-up classification, and `.claude/*` exclusion for Pi workflow epics.
+3. Verify epic-level acceptance, including child evidence and follow-up classification.
 4. Write `EPIC ACCEPTANCE MATRIX` mapping every epic acceptance/verification bullet to evidence.
 5. Close the epic only when every matrix row is `PASS` or `N/A` and no required blocker remains.
 6. If the epic cannot close, write `EPIC HANDOFF` with reason, remaining work, and next action.

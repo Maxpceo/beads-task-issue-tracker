@@ -9,10 +9,9 @@
 ## Pi-native Workflow
 
 Для Pi-сессий source of truth — этот файл `AGENTS.md` плюс `.pi/*`.
-`CLAUDE.md` и `.claude/*` — справочные материалы workflow для Claude Code; их НЕЛЬЗЯ изменять, если пользователь явно не попросил изменить workflow Claude Code.
 
 План миграции Pi workflow: `.pi/plans/pi-native-workflow-migration.md`.
-Pi-планы и design notes хранятся в `.pi/plans/` или bd, а не в `.claude/plans/`.
+Pi-планы и design notes хранятся в `.pi/plans/` или bd.
 Архитектура Pi rules / где размещать новые rules: `.pi/rules/README.md`.
 Доменные Pi rules для logging, locale sync, UI constraints, frontend review и совместимости src-tauri/bd: `.pi/rules/domain.md`.
 Контракты Pi agents, reporting vocabulary и model guidance: `.pi/agents/README.md`.
@@ -208,7 +207,7 @@ Safe/read-only investigation не требует подтверждения: rea
 
 Спрашивай перед действиями, которые destructive, hard to reverse или outside approved plan, включая force-push, reset, deleting worktrees/branches with uncommitted work, closing or stealing someone else’s bead, broad scope expansion или modifying protected/secrets files.
 
-Не изменяй `CLAUDE.md`, `.claude/*` или Claude-specific workflow files, если пользователь явно не попросил изменить workflow Claude Code. Для Pi workflow changes обновляй `AGENTS.md` и `.pi/*`.
+Для Pi workflow changes обновляй `AGENTS.md` и `.pi/*`.
 
 `.pi/extensions/beads-policy` и related Pi policy extensions authoritative, когда они блокируют tool call. Не bypass policy blocks, если пользователь явно не approves documented override.
 
@@ -383,7 +382,7 @@ bd close bd-42 --reason "Выполнено" --json
 - `chore` - Maintenance (dependencies, tooling)
 - `decision` - ADR/design decision record
 
-Claude-era references могут упоминать `spike`, `story` и `milestone`. Не используй их как `--type`, если current bd custom type config их не поддерживает. До тех пор моделируй их так:
+Legacy bd type references могут упоминать `spike`, `story` и `milestone`. Не используй их как `--type`, если current bd custom type config их не поддерживает. До тех пор моделируй их так:
 
 - spike/research → `task` с `dx`, `backend`, `frontend` или relevant domain labels и explicit investigation acceptance;
 - story → `feature` с user-facing acceptance criteria;

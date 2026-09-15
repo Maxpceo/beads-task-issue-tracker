@@ -108,7 +108,7 @@ ${files.map((file) => `- ${file}`).join('\n')}
 ### Target state
 - Rules are injected.
 ### Investigation findings
-- src-tauri/CLAUDE.md exists.
+- src-tauri/PI_RULES.md exists.
 ### Decisions
 - Use path-rule loader.
 ### Rejected alternatives
@@ -161,7 +161,7 @@ describe('beads-dispatch path rules integration', () => {
     expect(execCalls).toContainEqual({ command: 'git', args: ['-C', taskWorktree, 'branch', '--show-current'] })
   })
 
-  it('includes src-tauri/CLAUDE.md in supervisor dryRun prompts for src-tauri targets', async () => {
+  it('includes src-tauri/PI_RULES.md in supervisor dryRun prompts for src-tauri targets', async () => {
     let registeredTool: any
     const branch = currentBranch()
     const pi = {
@@ -183,7 +183,8 @@ describe('beads-dispatch path rules integration', () => {
     const result = await registeredTool.execute('call-1', { beadId: 'bead-a', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-a', branch, 'abc1234'))
 
     expect(result.details.output).toContain('PATH_RULES_LOADED:')
-    expect(result.details.output).toContain('--- src-tauri/CLAUDE.md')
+    expect(result.details.output).toContain('--- src-tauri/PI_RULES.md')
+    expect(result.details.output).not.toContain('--- src-tauri/CLAUDE.md')
     expect(result.details.output).toContain('# src-tauri/ — Rust backend')
   })
 

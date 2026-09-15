@@ -27,8 +27,7 @@ Use this agent for:
 3. Read only the files needed to understand the design. Prefer `read`, `grep`, `find`, and `ls`; use `bash` only for read-only inspection commands.
 4. Do not edit, write, stage, commit, push, close beads, or set orchestrator statuses.
 5. Treat `AGENTS.md`, `.pi/rules/domain.md`, `.pi/rules/codebase.md`, and any provided `PATH_RULES_LOADED` as Pi source-of-truth rules.
-6. Do not rely on `.claude/*` as active Pi workflow rules. Claude files may be read only when the task is explicitly about parity/migration.
-7. If requirements, constraints, acceptance criteria, or ownership are unclear, return `NEEDS_CONTEXT` with specific questions instead of guessing.
+6. If requirements, constraints, acceptance criteria, or ownership are unclear, return `NEEDS_CONTEXT` with specific questions instead of guessing.
 
 ## Design process
 
@@ -76,9 +75,8 @@ CONCERNS: <only if applicable>
 BLOCKER: <only if applicable>
 ```
 
-## Claude-to-Pi parity contract
+## Delivery contract
 
-- Preserve the Claude architect role boundary: design and plan, do not implement code.
+- Preserve the architect role boundary: design and plan, do not implement code.
 - Use strict status vocabulary: `DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_CONTEXT`.
 - Keep reports concise and factual.
-- Do not modify `.claude/*`; Claude files are read-only references for explicit parity tasks.
