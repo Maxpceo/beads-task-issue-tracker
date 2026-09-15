@@ -174,23 +174,68 @@ function commandHasUnsafeForcePush(command: string): boolean {
 	return /(^|\s)(?:--force|-f)(?:\s|$)/.test(withoutLease);
 }
 
-function commandHasRemoteBranchDeletion(command: string): boolean {
-	return splitShellSegments(command).some((segment) => {
-		const tokens = shellTokens(segment);
-		const pushIndex = tokens.findIndex((token, index) => token === "push" && tokens[index - 1] === "git");
-		if (pushIndex < 1) return false;
-		return tokens.slice(pushIndex + 1).some((token) => token === "--delete" || token === "-d" || token.startsWith(":") || token.startsWith("+:"));
-	});
+function isRemoteBranchDeletionToken(token: string): boolean {
+	return token === "--delete" || token === "-d" || token.startsWith(":") || token.startsWith("+:");
 }
 
+function rawShellTokens(input: string): string[] {
+	return input.match(/(?:"[^"]*"|'[^']*'|\S+)/g) ?? [];
+}
+
+/** Fail-closed: any git push deletion token in the full command (including bash -c / $() bodies) enters the deletion path. */
+function segmentHasGitPushRemoteDeletion(segment: string): boolean {
+	const tokens = shellTokens(segment);
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token || !isGitExecutableWord(token)) continue;
+		let cursor = index + 1;
+		while (cursor < tokens.length) {
+			const current = tokens[cursor];
+			if (!current) break;
+			if (current === "-C" || current === "-c") {
+				cursor += 2;
+				continue;
+			}
+			if (current.startsWith("--")) {
+				if (current.includes("=") || current === "--") {
+					cursor += 1;
+					continue;
+				}
+				cursor += tokens[cursor + 1] && !tokens[cursor + 1]!.startsWith("-") ? 2 : 1;
+				continue;
+			}
+			if (current.startsWith("-") && current !== "-") {
+				cursor += 1;
+				continue;
+			}
+			if (current === "push") {
+				return tokens.slice(cursor + 1).some(isRemoteBranchDeletionToken);
+			}
+			break;
+		}
+	}
+	return false;
+}
+
+function commandHasRemoteBranchDeletion(command: string): boolean {
+	return shellCommandInspectionParts(command).some((part) =>
+		splitShellSegments(part).some((segment) => segmentHasGitPushRemoteDeletion(segment) || segmentHasGitPushRemoteDeletion(maskHeredocBodies(segment))),
+	);
+}
 
 interface RemoteBranchDeletionPush {
 	branch: string;
 	leaseOid: string;
 }
 
+type RemoteDeletionParseResult =
+	| { ok: true; value: RemoteBranchDeletionPush }
+	| { ok: false; reason: string };
+
 const GIT_OID_PATTERN = /^[0-9a-f]{40}$/i;
 const CANONICAL_PI_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
+const REMOTE_DELETION_EXACT_FORM_REASON =
+	"Заблокировано: remote branch deletion разрешён только для exact merge-to-main fallback формы `git push --force-with-lease=refs/heads/<branch>:<oid> origin :refs/heads/<branch>` для canonical Pi branch prefix.";
 
 function isSafeCanonicalPiBranchName(branch: string): boolean {
 	const slashIndex = branch.indexOf("/");
@@ -210,68 +255,108 @@ function normalizeDeletedBranchRef(value: string): string | undefined {
 	return ref;
 }
 
-function parseRemoteDeletionPushSegment(segment: string): RemoteBranchDeletionPush | undefined {
-	const tokens = shellTokens(segment);
-	const pushIndex = tokens.findIndex((token, index) => token === "push" && tokens[index - 1] === "git");
-	if (pushIndex !== 1 || tokens[0] !== "git") return undefined;
-
-	let remote: string | undefined;
-	let deleteMode = false;
-	const deletionTargets: string[] = [];
-	let leaseBranch: string | undefined;
-	let leaseOid: string | undefined;
-
-	for (let index = pushIndex + 1; index < tokens.length; index += 1) {
-		const token = tokens[index];
-		if (!token) continue;
-		if (token === "--") continue;
-		if (token === "--delete" || token === "-d") {
-			deleteMode = true;
-			continue;
-		}
-		if (token === "--force-with-lease") return undefined;
-		if (token.startsWith("--force-with-lease=")) {
-			const lease = stripQuotes(token.slice("--force-with-lease=".length));
-			const match = lease.match(/^refs\/heads\/(.+):([0-9a-f]{40})$/i);
-			if (!match) return undefined;
-			leaseBranch = match[1];
-			leaseOid = match[2];
-			continue;
-		}
-		if (token.startsWith("--")) return undefined;
-		if (token.startsWith("-")) return undefined;
-		if (!remote) {
-			remote = token;
-			continue;
-		}
-		if (deleteMode) {
-			const branch = normalizeDeletedBranchRef(token);
-			if (!branch) return undefined;
-			deletionTargets.push(branch);
-			continue;
-		}
-		if (token.startsWith(":")) {
-			const branch = normalizeDeletedBranchRef(token.slice(1));
-			if (!branch) return undefined;
-			deletionTargets.push(branch);
-			continue;
-		}
-		return undefined;
-	}
-
-	if (remote !== "origin" || deletionTargets.length !== 1 || !leaseBranch || !leaseOid) return undefined;
-	const branch = deletionTargets[0];
-	if (branch !== leaseBranch) return undefined;
-	return { branch, leaseOid };
+function commandHasShellSubstitution(command: string): boolean {
+	const inspectable = maskHeredocBodies(command);
+	return /`/.test(inspectable) || /\$\(/.test(inspectable) || /\$\{/.test(inspectable);
 }
 
-function parseSafeRemoteDeletionCommand(command: string): RemoteBranchDeletionPush | undefined {
+function segmentHasGitCBeforePush(tokens: string[]): boolean {
+	for (let index = 0; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token || !isGitExecutableWord(token)) continue;
+		for (let cursor = index + 1; cursor < tokens.length; cursor += 1) {
+			const current = tokens[cursor];
+			if (!current) break;
+			if (current === "-C") return true;
+			if (current === "push") break;
+		}
+	}
+	return false;
+}
+
+/**
+ * Allow only when the entire command is one segment with tokens exactly:
+ * git push --force-with-lease=refs/heads/<canonical>:<40hex> origin :refs/heads/<canonical>
+ * Quotes are OK via raw token strip; path-qualified git, git -C, wrappers, extra flags are not.
+ */
+function parseExactSafeRemoteDeletionCommand(command: string): RemoteDeletionParseResult {
+	if (commandHasShellSubstitution(command)) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:shell-substitution`,
+		};
+	}
+
 	const segments = splitShellSegments(command);
-	const deletionSegments = segments.filter(commandHasRemoteBranchDeletion);
-	if (deletionSegments.length !== 1) return undefined;
-	const segment = deletionSegments[0];
-	if (!segment || segment.includes("|") || /[`$()]/.test(segment)) return undefined;
-	return parseRemoteDeletionPushSegment(segment);
+	if (segments.length !== 1) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+	const segment = segments[0] ?? "";
+	if (!segment || segment.includes("|") || segment.includes(">") || segment.includes("<")) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+
+	const rawTokens = rawShellTokens(segment);
+	const tokens = rawTokens.map(stripQuotes);
+	if (segmentHasGitCBeforePush(tokens)) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:git-C-unsafe`,
+		};
+	}
+
+	if (tokens.length !== 5 || tokens[0] !== "git" || tokens[1] !== "push") {
+		// Path-qualified git (/usr/bin/git) or wrappers land here after deletion detection.
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+
+	const leaseToken = tokens[2] ?? "";
+	if (!leaseToken.startsWith("--force-with-lease=")) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+	const lease = stripQuotes(leaseToken.slice("--force-with-lease=".length));
+	const leaseMatch = lease.match(/^refs\/heads\/(.+):([0-9a-f]{40})$/i);
+	if (!leaseMatch) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+	const leaseBranch = leaseMatch[1] ?? "";
+	const leaseOid = leaseMatch[2] ?? "";
+	if (tokens[3] !== "origin") {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+	const deleteToken = tokens[4] ?? "";
+	if (!deleteToken.startsWith(":") || deleteToken.startsWith("+:")) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+	const branch = normalizeDeletedBranchRef(deleteToken.slice(1));
+	if (!branch || branch !== leaseBranch) {
+		return {
+			ok: false,
+			reason: `${REMOTE_DELETION_EXACT_FORM_REASON} parse:non-exact-shape`,
+		};
+	}
+	return { ok: true, value: { branch, leaseOid } };
 }
 
 function remoteHeadOid(cwd: string, remote: string, branch: string): string | undefined {
@@ -279,6 +364,10 @@ function remoteHeadOid(cwd: string, remote: string, branch: string): string | un
 	const [oid, ref, extra] = output?.split(/\s+/) ?? [];
 	if (!oid || !ref || extra || ref !== `refs/heads/${branch}` || !GIT_OID_PATTERN.test(oid)) return undefined;
 	return oid;
+}
+
+function gitObjectExistsLocally(cwd: string, oid: string): boolean {
+	return commandSucceeds(cwd, "git", ["cat-file", "-e", `${oid}^{object}`]);
 }
 
 function remoteOidAncestorOfMain(cwd: string, branchOid: string, mainOid: string): boolean {
@@ -290,11 +379,10 @@ function hasObservableMergeSlotEvidence(workflowState: WorkflowStateSnapshot, op
 }
 
 function mergedRemoteBranchCleanupBlockReason(command: string, workflowState: WorkflowStateSnapshot, options: BashPolicyOptions, cwd: string): string | undefined {
-	const parsed = parseSafeRemoteDeletionCommand(command);
-	if (!parsed) {
-		return "Заблокировано: remote branch deletion разрешён только для exact merge-to-main fallback формы `git push --force-with-lease=refs/heads/<branch>:<oid> origin :refs/heads/<branch>` для canonical Pi branch prefix.";
-	}
-	const branch = parsed.branch;
+	const parsed = parseExactSafeRemoteDeletionCommand(command);
+	if (!parsed.ok) return parsed.reason;
+
+	const branch = parsed.value.branch;
 	const activeBranch = workflowState.branch;
 	if (activeBranch && !PROTECTED_BRANCHES.has(activeBranch) && branch !== activeBranch) {
 		return `Заблокировано: remote branch deletion target ${branch} не совпадает с active workflow branch ${activeBranch}.`;
@@ -310,8 +398,12 @@ function mergedRemoteBranchCleanupBlockReason(command: string, workflowState: Wo
 	const mainOid = remoteHeadOid(cwd, "origin", "main");
 	if (!branchOid) return `Заблокировано: remote branch deletion fallback не видит origin/${branch}; branch отсутствует или ls-remote вернул неоднозначный результат.`;
 	if (!mainOid) return "Заблокировано: remote branch deletion fallback не видит origin/main; нельзя проверить merged ancestry.";
-	if (branchOid !== parsed.leaseOid) {
-		return `Заблокировано: remote branch deletion fallback lease stale/mismatched для ${branch}; expected ${branchOid}, got ${parsed.leaseOid}.`;
+	if (branchOid !== parsed.value.leaseOid) {
+		return `Заблокировано: remote branch deletion fallback lease stale/mismatched для ${branch}; expected ${branchOid}, got ${parsed.value.leaseOid}.`;
+	}
+	// fetch-first: missing local objects must not be reported as not-ancestor; policy does not fetch.
+	if (!gitObjectExistsLocally(cwd, branchOid) || !gitObjectExistsLocally(cwd, mainOid)) {
+		return `Заблокировано: remote branch deletion fallback не видит local objects для ${branch}@${branchOid} / origin/main@${mainOid}; сначала git fetch origin (policy не fetch). fetch-first`;
 	}
 	if (!remoteOidAncestorOfMain(cwd, branchOid, mainOid)) {
 		return `Заблокировано: remote branch deletion fallback требует, чтобы ${branch}@${branchOid} был ancestor of origin/main@${mainOid}.`;

@@ -540,6 +540,24 @@ describe('Pi safe merged remote branch cleanup policy', () => {
     }
   })
 
+  it('allows k9j6-shaped docs branch deletion with fixture branchOid lease (not historical snapshot oid)', () => {
+    const fixture = createMergedRemoteFixture('docs/k9j6-layout-right-half-capacity')
+    try {
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: fixture.repo },
+      )
+
+      expect(decision?.policy).not.toBe('blockDestructiveCommand')
+      expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+      expect(fixture.branch).toBe('docs/k9j6-layout-right-half-capacity')
+      expect(fixture.branchOid).toMatch(/^[0-9a-f]{40}$/i)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
   it.each([
     ['wrong remote', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} upstream :refs/heads/${f.branch}`],
     ['other branch', (f: ReturnType<typeof createMergedRemoteFixture>) => `git push --force-with-lease=refs/heads/task/other:${f.branchOid} origin :refs/heads/task/other`],
@@ -556,6 +574,51 @@ describe('Pi safe merged remote branch cleanup policy', () => {
 
       expect(decision?.policy).toBe('blockDestructiveCommand')
       expect(decision?.block).toBe(true)
+    } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it.each([
+    [
+      'bash -c wrapper',
+      (f: ReturnType<typeof createMergedRemoteFixture>) =>
+        `bash -c 'git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} origin :refs/heads/${f.branch}'`,
+      'parse:non-exact-shape',
+    ],
+    [
+      'git -C unsafe',
+      (f: ReturnType<typeof createMergedRemoteFixture>) =>
+        `git -C /tmp push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} origin :refs/heads/${f.branch}`,
+      'parse:git-C-unsafe',
+    ],
+    [
+      'path-qualified git',
+      (f: ReturnType<typeof createMergedRemoteFixture>) =>
+        `/usr/bin/git push --force-with-lease=refs/heads/${f.branch}:${f.branchOid} origin :refs/heads/${f.branch}`,
+      'parse:non-exact-shape',
+    ],
+    [
+      'shell substitution oid',
+      (f: ReturnType<typeof createMergedRemoteFixture>) =>
+        `git push --force-with-lease=refs/heads/${f.branch}:$(git rev-parse HEAD) origin :refs/heads/${f.branch}`,
+      'parse:shell-substitution',
+    ],
+    [
+      'extra flags',
+      (f: ReturnType<typeof createMergedRemoteFixture>) =>
+        `git push --verbose --force-with-lease=refs/heads/${f.branch}:${f.branchOid} origin :refs/heads/${f.branch}`,
+      'parse:non-exact-shape',
+    ],
+  ])('blocks fail-closed remote deletion shape: %s', (_name, commandFor, frozenToken) => {
+    const fixture = createMergedRemoteFixture()
+    try {
+      const decision = evaluateBashPolicy(commandFor(fixture), { branch: fixture.branch, mergeSlotHeld: true }, { cwd: fixture.repo })
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain(frozenToken)
+      expect(decision?.reason).toContain('exact merge-to-main fallback')
     } finally {
       cleanupFixture(fixture)
     }
@@ -686,7 +749,33 @@ describe('Pi safe merged remote branch cleanup policy', () => {
       expect(decision?.policy).toBe('blockDestructiveCommand')
       expect(decision?.block).toBe(true)
       expect(decision?.reason).toContain('ancestor of origin/main')
+      expect(decision?.reason).not.toContain('fetch-first')
     } finally {
+      cleanupFixture(fixture)
+    }
+  })
+
+  it('reports fetch-first when remote OIDs are not present as local objects (not not-ancestor)', () => {
+    const fixture = createMergedRemoteFixture()
+    const shallow = mkdtempSync(join(tmpdir(), 'beads-policy-shallow-'))
+    try {
+      execFileSync('git', ['init', '-b', 'main'], { cwd: shallow, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: shallow, stdio: 'ignore' })
+      execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: shallow, stdio: 'ignore' })
+      execFileSync('git', ['remote', 'add', 'origin', fixture.remote], { cwd: shallow, stdio: 'ignore' })
+      // ls-remote sees remote heads, but no local objects for ancestry/cat-file.
+      const decision = evaluateBashPolicy(
+        `git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+        { branch: fixture.branch, mergeSlotHeld: true },
+        { cwd: shallow },
+      )
+
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('fetch-first')
+      expect(decision?.reason).not.toContain('ancestor of origin/main')
+    } finally {
+      rmSync(shallow, { recursive: true, force: true })
       cleanupFixture(fixture)
     }
   })

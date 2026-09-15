@@ -206,7 +206,7 @@ gh pr create --base main --fill
 | Skill | Когда запускается | Что делает |
 |---|---|---|
 | **`release`** | «сделай релиз», «пора релизить», «prepare release» | Всё из §1.2 — pre-flight, курация Highlights, preview body, handoff |
-| **`merge-to-main`** | «мёржим в main», «создай PR» | feature-branch → PR → CI watch → merge-slot → merge → checkout main |
+| **`merge-to-main`** | «мёржим в main», «создай PR» | feature-branch → PR → CI watch → merge-slot → merge (no `--delete-branch`) → remote force-with-lease cleanup → slot release → primary `main` worktree pull/remove |
 | **`land`** | «я закончил», «давай заканчивать», «сохрани работу» | Закрыть beads, commit, push на feature-ветку (через merge-slot) |
 
 Порядок на большой фиче: `land` (внутри сессии) → `merge-to-main` (завершение ветки) → `release` (новая версия).

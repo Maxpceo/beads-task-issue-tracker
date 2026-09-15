@@ -95,25 +95,53 @@ EOF
 11. Merge PR via merge-slot. If acquire fails, stop before `gh pr merge`:
     ```bash
     bd merge-slot acquire
-    gh pr merge <PR_NUMBER> --merge --delete-branch
+    gh pr merge <PR_NUMBER> --merge
     ```
-    If `gh pr merge` returns non-zero after acquire, first check whether the PR was nevertheless merged. If the PR is not merged, release merge-slot before reporting. If the PR is merged but remote branch cleanup failed, keep the merge-slot held and run the narrow fallback cleanup only when all stop conditions below pass:
+    Do **not** pass `--delete-branch`. GitHub's local checkout/delete path fails under worktree-first layouts when primary already has `main` checked out; remote branch cleanup is an explicit step below.
+
+    After every merge attempt (exit 0 **or** non-zero), inspect PR state from the feature worktree:
     ```bash
+    gh pr view <PR_NUMBER> --json state,mergeCommit
+    ```
+    - If `state` is not `MERGED`: run `bd merge-slot release` from the feature worktree, stop with a blocker report (no remote delete, no local worktree remove). Worktree-first conflict text such as `main is already used by worktree` is non-fatal **only** when `state=MERGED`.
+    - If `state` is `MERGED` (regardless of `gh pr merge` exit code): remote branch cleanup is **required** for any MERGED PR. Stay in the feature worktree. Do **not** run `git checkout main` in the feature worktree.
+
+    Remote cleanup from the feature worktree (literal exact-shape push only; policy is fail-closed):
+    ```bash
+    git fetch origin main
     BRANCH=<session canonical Pi branch>
     BRANCH_OID=$(git ls-remote --heads origin "$BRANCH" | awk '{print $1}')
-    MAIN_OID=$(git ls-remote --heads origin main | awk '{print $1}')
-    git merge-base --is-ancestor "$BRANCH_OID" "$MAIN_OID"
-    # Run the final deletion with literal observed values only; do not use $BRANCH or $BRANCH_OID in this git push.
-    git push --force-with-lease=refs/heads/fix/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/fix/example-branch
     ```
-    Replace `fix/example-branch` and `0123456789abcdef0123456789abcdef01234567` in the final `git push` with the exact branch name and branch OID observed above. Stop instead of fallback deletion if any condition is false: `BRANCH` is not the active session branch, branch does not use a canonical Pi branch prefix (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, or `task`), branch is missing on `origin`, `origin/main` is missing, branch OID is not an ancestor of main OID, lease OID does not match fresh `git ls-remote` output, merge-slot evidence is not currently held/observable, more than one deletion target would be pushed, or the target is protected/unsafe (`main`, `master`, or non-canonical prefix). Release merge-slot after successful fallback cleanup or before the blocker report.
-12. Switch to main, pull, and release slot:
+    - If `BRANCH_OID` is empty (remote already gone): treat as success (already-gone remote is the only “fallback”). Immediately `bd merge-slot release` from the still-existing feature worktree, then continue local cleanup in step 12.
+    - If remote still present:
+      ```bash
+      MAIN_OID=$(git ls-remote --heads origin main | awk '{print $1}')
+      # Ensure local objects exist before ancestry (policy reports fetch-first if missing; policy does not fetch).
+      git cat-file -e "${BRANCH_OID}^{object}"
+      git cat-file -e "${MAIN_OID}^{object}"
+      git merge-base --is-ancestor "$BRANCH_OID" "$MAIN_OID"
+      # Final deletion with literal observed values only; do not use $BRANCH or $BRANCH_OID in this git push.
+      git push --force-with-lease=refs/heads/fix/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/fix/example-branch
+      ```
+      Replace `fix/example-branch` and `0123456789abcdef0123456789abcdef01234567` in the final `git push` with the exact branch name and branch OID observed above. Stop instead of deletion if any condition is false: `BRANCH` is not the active session branch, branch does not use a canonical Pi branch prefix (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, or `task`), branch is missing on `origin`, `origin/main` is missing, local objects missing (fetch-first), branch OID is not an ancestor of main OID, lease OID does not match fresh `git ls-remote` output, merge-slot evidence is not currently held/observable, more than one deletion target would be pushed, wrappers/chdir-style git/path-qualified git/extra flags would be required, or the target is protected/unsafe (`main`, `master`, or non-canonical prefix).
+
+    **Immediately after remote delete success or already-gone empty ls-remote**, from the still-existing feature worktree:
     ```bash
-    git checkout main
-    git pull origin main
     bd merge-slot release
     ```
-    If checkout or pull fails, release merge-slot before reporting. The workflow is not complete while the current session remains on the merged feature branch.
+    Local pull / worktree remove / `branch -d` failure must **not** keep the slot held — release first, then report any local cleanup blocker.
+
+12. Local cleanup from the primary `main` worktree (no chdir-style git flags, no feature-worktree checkout of main):
+    - Resolve primary via `git worktree list`: path that has branch `main` checked out and is **not** locked.
+    - Primary cwd cleanup only when the session bead is terminal (`closed` / `blocked` / explicit `deferred`) **and** lock is off. Otherwise STOP before primary pull/remove.
+    - Change agent cwd to the primary path (plain shell `cd` / session cwd), then:
+      ```bash
+      git pull origin main
+      git worktree remove <feature-worktree-path>
+      git branch -d <feature-branch>   # only when branch is ancestor of main; missing branch is OK
+      ```
+    - If pull/remove/`branch -d` fails after slot release, report a local-cleanup blocker (slot must stay free — do not re-acquire just to finish local cleanup).
+    Final verdict checks run from primary.
 13. Verify clean/up-to-date state and session-scoped artifact cleanup.
 
 ## Final verdict: can this Pi session close?

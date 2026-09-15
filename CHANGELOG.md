@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi merge remote-delete fail-closed policy and ordered cleanup** (`beads-task-issue-tracker-ec87`): `beads-policy` allows remote branch deletion only for the exact merge-to-main form `git push --force-with-lease=refs/heads/<canonical>:<oid> origin :refs/heads/<canonical>` (no wrappers, `git -C`, path-qualified git, shell substitution, or extra flags), reports `fetch-first` when remote OIDs are missing as local objects, and keeps unsafe shapes blocked. `merge-to-main` no longer uses `gh pr merge --delete-branch` or feature-worktree `git checkout main`; after `MERGED` it does remote cleanup from the feature worktree, releases merge-slot immediately on delete/already-gone success, then cleans up from the primary unlocked `main` worktree.
+
 - **Pi `/agent-models` fullscreen overlay model picker** (`beads-task-issue-tracker-2aqh`): the TUI searchable model step now opens `ctx.ui.custom` with near-fullscreen overlay options (session-replay canon: 90% width / 85% maxHeight, center anchor), pads render height for overlay chrome, routes selection through `SelectList` `onSelect`/`onCancel` + `handleInput`, keeps `keybindings.matches` bound so live key routing does not crash, surfaces path-(a) picker setup errors in `ui.notify` with the real message before fallback `select`, and cancels quietly on path-(b) runtime faults inside `handleInput`.
 
 - **Pi plan-bead Russian Parallel Decomposition Matrix headings** (`beads-task-issue-tracker-yccb`): restore default human-readable Russian matrix column headers (`Поток`…`Причина`) with technical field mapping, and teach `plan-review` sequential-reason parsing to accept `Решение`/`Причина` aliases so Russian tables do not bypass vague-reason checks.
