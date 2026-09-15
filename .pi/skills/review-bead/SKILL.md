@@ -131,7 +131,7 @@ bd comments add <ID> "PATTERN: <pattern>"
 ## Rules
 
 - Never skip spec compliance.
-- Frontend/UI changes require the explicit Pi Frontend Review Checklist; do not require undefined RAMS/WIG.
+- Frontend/UI changes require the explicit Pi Frontend Review Checklist.
 - Direct terminal status updates are invalid before accepted/reviewed-with-no-acceptance evidence; use standard `bd close` after acceptance evidence is recorded in bd comments and session context.
 - A confirmed current-session bead with bd status `inreview` blocks unrelated next work; the valid next action is this review workflow. Stale/foreign session context must be reset or explicitly confirmed before any review/mutation.
 - Epic completion with incomplete children is blocked by `beads-policy` for both standard close and direct `closed` status updates; close child beads first or use an explicit documented override.

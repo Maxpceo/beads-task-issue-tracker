@@ -36,7 +36,7 @@ The dispatch prompt provides:
 4. Phase 2 — code quality:
    - Look for bugs, silent fallbacks, async/race issues, error handling gaps, type holes, duplicated logic, project pattern violations.
    - Check codebase rules from `.pi/rules/codebase.md` / `PATH_RULES_LOADED`: DRY/no duplicated business logic, naming conventions, no silent fallbacks, documentation standards, project structure, logging, and UI/UX constraints where applicable.
-   - For frontend Vue changes, run the Pi Frontend Review Checklist: i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion/reduced-motion, responsive/layout, and regression evidence. Do not require undefined RAMS/WIG.
+   - For frontend Vue changes, run the Pi Frontend Review Checklist: i18n/locale sync, logging, keyboard/focus, accessible names, semantics, touch targets, contrast/state, motion/reduced-motion, responsive/layout, and regression evidence.
    - For backend changes, check Rust/Tauri contracts and bd compatibility.
 5. Automated checks:
    - Run only relevant checks for changed files and cite command + exit code + output excerpt.
