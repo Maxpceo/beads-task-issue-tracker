@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi `review_bead` git-diff Claude-constraint matrix mapping** (`beads-task-issue-tracker-rmqu`): verification bullets that require `git diff --name-only` with a Claude-path constraint are scored from the already-executed scoped `changedFiles` list, so the acceptance matrix no longer leaves a false `NOT RUN` when the diff already ran. Forbidden paths stay fail-closed (any `.claude/` path or root `CLAUDE.md`); sibling lists-only and other name-only bullets are unchanged.
+
 - **Pi visible cmux sticky tab titles** (`beads-task-issue-tracker-7kiq`): after `dispatch_* transport=cmux` spawn, tab titles are re-applied on a sticky schedule so Pi/cmux default `π - <worktree>` does not remain the final label. Child panes keep `{role} · {bead-suffix}` and the orchestrator stays `оркестратор`, with rename metrics in spawn-ack and a safe AbortSignal path on `followup_visible_dispatch`.
 
 - **Pi post-close false `bd:inreview` after failed live status read** (`beads-task-issue-tracker-soco`): when live `bd show` fails or returns empty, workflow reconcile now marks `bdStatus` unreadable instead of keeping a stale snapshot `inreview`. `workflow_complete` and lifecycle gates surface an explicit refresh-failed block (with `blocked|deferred` escape hatch), while a live `closed` still clears the active bead and a real `inreview` still routes to review. `bd` reads prefer an on-disk `worktreePath` over process cwd so main-cwd misses do not invent false review blocks after close.
