@@ -1018,6 +1018,264 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(result.details.error).toBeUndefined()
   })
 
+  it('maps te7m-like git diff Claude-constraint bullet to PASS from changedFiles and closes', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- review_bead maps Claude-constraint git-diff verification without false NOT RUN.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'tests/extensions/review-workflow.test.ts',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes. | command: git diff --name-only; exit code: 0; output: tests/extensions/review-workflow.test.ts | PASS |')
+    expect(matrix).not.toContain('| NOT RUN |')
+    expect(matrix).toContain('All required acceptance rows are PASS or explicitly N/A.')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(true)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('maps empty changedFiles Claude-constraint bullet to PASS with changed files: (none)', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Empty git diff still satisfies Claude constraint.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: '',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('command: git diff --name-only; exit code: 0; output: changed files: (none)')
+    expect(matrix).toContain('| PASS |')
+    expect(matrix).not.toContain('| NOT RUN |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('does not forbid nested src-tauri/CLAUDE.md for Claude-constraint git-diff bullet', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Nested CLAUDE.md basename is allowed.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'src-tauri/CLAUDE.md',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('command: git diff --name-only; exit code: 0; output: src-tauri/CLAUDE.md')
+    expect(matrix).toContain('| PASS |')
+    expect(matrix).not.toContain('| FAIL |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('matches Claude-constraint bullet that mentions only CLAUDE.md without .claude', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- CLAUDE.md-only bullet still maps.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no CLAUDE.md changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'tests/extensions/review-workflow.test.ts',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `git diff --name-only` confirms no CLAUDE.md changes. | command: git diff --name-only; exit code: 0')
+    expect(matrix).toContain('| PASS |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('fails Claude-constraint verification and acceptance rows when .claude path is present', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- No Claude workflow files changed.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: '.claude/foo',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| No Claude workflow files changed. |')
+    expect(matrix).toContain('Blocked by failed automated/supervisor evidence:')
+    expect(matrix).toContain('forbidden Claude paths in git diff --name-only: .claude/foo')
+    expect(matrix).toContain('| FAIL |')
+    expect(matrix).toContain('command: git diff --name-only; exit code: 1')
+    expect(matrix).toContain('BLOCKER: acceptance matrix contains FAIL')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('fails Claude-constraint verification when root CLAUDE.md is present', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Root CLAUDE.md must stay untouched.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'CLAUDE.md',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('forbidden Claude paths in git diff --name-only: CLAUDE.md')
+    expect(matrix).toContain('command: git diff --name-only; exit code: 1')
+    expect(matrix).toContain('| FAIL |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('normalizes ./ prefixes before Claude-constraint forbidden path checks', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Leading ./ still forbids Claude paths.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: './.claude/foo\n./CLAUDE.md',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('forbidden Claude paths in git diff --name-only: .claude/foo, CLAUDE.md')
+    expect(matrix).toContain('| FAIL |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('does not hijack sibling git diff --name-only bullets without Claude constraint', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Sibling name-only bullets stay fail-closed.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+      '- `git diff --name-only` lists only write-zone files.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'tests/extensions/review-workflow.test.ts',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes. | command: git diff --name-only; exit code: 0')
+    expect(matrix).toContain('| PASS |')
+    expect(matrix).toContain('| `git diff --name-only` lists only write-zone files. | Required verification evidence missing:')
+    expect(matrix).toContain('| NOT RUN |')
+    expect(matrix).toContain('BLOCKER: acceptance matrix contains NOT RUN')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('does not treat lists-only git-diff supervisor wording as PASS by itself', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- lists-only evidence stays fail-closed.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` lists only write-zone files.',
+    ].join('\n')
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: __WORKTREE__',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: tests/extensions/review-workflow.test.ts',
+      'Verification:',
+      '- `git diff --name-only aaa1111..bbb2222` lists only tests/extensions/review-workflow.test.ts',
+      'Artifact status: complete',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'tests/extensions/review-workflow.test.ts',
+      skipChecks: true,
+      supervisorComments,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `git diff --name-only` lists only write-zone files. | Required verification evidence missing:')
+    expect(matrix).toContain('| NOT RUN |')
+    expect(matrix).not.toMatch(/lists only write-zone files\.[^|]*\| PASS \|/)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
+  it('does not forbid lowercase claude.md path for Claude-constraint checks', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- lowercase claude.md is not root CLAUDE.md.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      changedFiles: 'claude.md',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('command: git diff --name-only; exit code: 0; output: claude.md')
+    expect(matrix).toContain('| PASS |')
+    expect(matrix).not.toContain('| FAIL |')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
+    expect(result.details.error).toBeUndefined()
+  })
+
+  it('keeps pnpm/vue-tsc NOT RUN under skipChecks while Claude-constraint row still maps from files', async () => {
+    const beadDescription = [
+      '### Acceptance criteria',
+      '- Claude constraint maps independently of skipped automated checks.',
+      '### Verification / acceptance checks',
+      '- `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes.',
+      '- pnpm test tests/extensions/review-workflow.test.ts --reporter dot',
+      '- npx vue-tsc --noEmit',
+    ].join('\n')
+    const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
+      beadDescription,
+      // Non-runtime docs path: no automated pnpm/vue-tsc selection, Claude constraint still evaluates changedFiles.
+      changedFiles: 'README.md',
+      skipChecks: true,
+    })
+    const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+
+    expect(matrix).toContain('| `git diff --name-only` confirms no `.claude/*` or `CLAUDE.md` changes. | command: git diff --name-only; exit code: 0; output: README.md | PASS |')
+    expect(matrix).toContain('| pnpm test tests/extensions/review-workflow.test.ts --reporter dot |')
+    expect(matrix).toContain('| npx vue-tsc --noEmit |')
+    expect(matrix).toContain('| NOT RUN |')
+    expect(matrix).toContain('BLOCKER: acceptance matrix contains NOT RUN')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+  })
+
   it('delegates once on runtime hash mismatch with cwd+env+forwarded params and never closes on parent stale path', async () => {
     const delegateCalls: Array<Record<string, unknown>> = []
     const { createHash } = await import('node:crypto')
