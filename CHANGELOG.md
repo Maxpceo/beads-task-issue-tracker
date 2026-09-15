@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi `/agent-models` fullscreen overlay model picker** (`beads-task-issue-tracker-2aqh`): the TUI searchable model step now opens `ctx.ui.custom` with near-fullscreen overlay options (session-replay canon: 90% width / 85% maxHeight, center anchor), pads render height for overlay chrome, routes selection through `SelectList` `onSelect`/`onCancel` + `handleInput`, keeps `keybindings.matches` bound so live key routing does not crash, surfaces path-(a) picker setup errors in `ui.notify` with the real message before fallback `select`, and cancels quietly on path-(b) runtime faults inside `handleInput`.
+
 - **Pi plan-bead Russian Parallel Decomposition Matrix headings** (`beads-task-issue-tracker-yccb`): restore default human-readable Russian matrix column headers (`Поток`…`Причина`) with technical field mapping, and teach `plan-review` sequential-reason parsing to accept `Решение`/`Причина` aliases so Russian tables do not bypass vague-reason checks.
 
 - **Pi `review_bead` Verification classifier + allowlist** (`beads-task-issue-tracker-ofcb`): acceptance matrix no longer leaves false `NOT RUN` for safe gate-executable Verification bullets. `review_bead` executes allowlisted `rg`/`grep` (paths under the review worktree) and `git diff --check` into matrix PASS/FAIL, maps non-executable manual/prose bullets to non-blocking N/A, keeps unknown/unsafe commands fail-closed as `NOT RUN`, and runs allowlist before single-check suite fallback so a lone cargo/pnpm PASS cannot silently map content-proof bullets. `create-bead` / `plan-bead` document gate-executable Verification only.
