@@ -44,7 +44,7 @@ Source of truth is **project** `.pi/agent-models.json` (committed). Not `~/.pi`.
 
 **Back-nav:** every nested `select` includes **← Назад**. Nested Esc/null/`← Назад` returns to the previous screen. Root Esc/`← Выход` leaves the menu. Unconfirmed mid-step choices do **not** write JSON; a confirmed leaf step saves immediately.
 
-**Live model catalog:** the model picker prefers non-empty `ctx.scopedModels`, else `ctx.modelRegistry.getAvailable()` (via injectable `listAvailableModels`, with timeout/catch). Ids are `provider/id`. When the registry is missing, empty, throws, or times out, the menu falls back to models already present in `.pi/agent-models.json` plus **Другая…** free-text. Handler **forwards** `modelRegistry` / `scopedModels` and must not strip them.
+**Live model catalog:** the model picker prefers non-empty `ctx.scopedModels`, else the project registry path: best-effort `await modelRegistry.refresh()` (Pi availability snapshot is empty until refresh), then `getAvailable()`, then if still empty `getAll()` filtered by `hasConfiguredAuth` when present (via injectable `listAvailableModels`, with timeout/catch). Ids are `provider/id`. Only when the registry is missing, still empty after refresh/getAll, throws, or times out does the menu fall back to models already present in `.pi/agent-models.json` plus **Другая…** free-text. Handler **forwards** `modelRegistry` / `scopedModels` and must not strip them.
 
 **Thinking filter (Pi-canon `thinkingLevelMap`, mirror of `getSupportedThinkingLevels`):**
 

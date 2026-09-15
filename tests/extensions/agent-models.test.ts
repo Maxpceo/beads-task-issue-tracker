@@ -9,6 +9,7 @@ import {
   appendModelArg,
   appendThinkingArg,
   buildListAvailableModelsFromContext,
+  collectModelsFromRegistry,
   defaultAgentModelsConfig,
   formatCompactOverview,
   handleAgentModelsCommand,
@@ -461,6 +462,51 @@ describe('resolveModelCatalog / listAvailableModels', () => {
     expect(reg.map((m) => m.id)).toEqual(['xai/grok-reg'])
 
     expect(buildListAvailableModelsFromContext({})).toBeUndefined()
+  })
+
+  it('collectModelsFromRegistry refreshes before getAvailable (empty snapshot until refresh)', async () => {
+    let refreshed = false
+    let available: Array<{ provider: string; id: string }> = []
+    const list = await collectModelsFromRegistry({
+      refresh: async () => {
+        refreshed = true
+        available = [{ provider: 'xai', id: 'after-refresh' }]
+      },
+      getAvailable: () => available,
+    })
+    expect(refreshed).toBe(true)
+    expect(list.map((m) => m.id)).toEqual(['xai/after-refresh'])
+  })
+
+  it('collectModelsFromRegistry falls back to getAll + hasConfiguredAuth when getAvailable empty', async () => {
+    const list = await collectModelsFromRegistry({
+      refresh: async () => undefined,
+      getAvailable: () => [],
+      getAll: () => [
+        { provider: 'xai', id: 'with-auth' },
+        { provider: 'openai', id: 'no-auth' },
+      ],
+      hasConfiguredAuth: (providerOrModel: unknown) => {
+        if (typeof providerOrModel === 'string') return providerOrModel === 'xai'
+        return false
+      },
+    })
+    expect(list.map((m) => m.id)).toEqual(['xai/with-auth'])
+  })
+
+  it('buildListAvailableModelsFromContext uses refresh path via registry', async () => {
+    let refreshCalls = 0
+    const fn = buildListAvailableModelsFromContext({
+      modelRegistry: {
+        refresh: async () => {
+          refreshCalls += 1
+        },
+        getAvailable: () => [{ provider: 'anthropic', id: 'claude-test' }],
+      },
+    })
+    const models = await fn!(defaultAgentModelsConfig())
+    expect(refreshCalls).toBe(1)
+    expect(models.map((m) => m.id)).toEqual(['anthropic/claude-test'])
   })
 })
 
