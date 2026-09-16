@@ -1389,6 +1389,223 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
   })
 
+  it('workflow_plan_approved with nonempty FAST_PATH_RATIONALE skips supervisor dispatch (triggerTurn false)', async () => {
+    const { toolHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ taskScopeGit: true })
+
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-fast-path-skip', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'FAST_PATH_RATIONALE: single-file docs tweak cheaper than supervisor',
+        'Plan: edit one skill sentence.',
+        'Files to change:',
+        '- .pi/skills/plan-bead/SKILL.md',
+        'Acceptance: Fast Path skip after approve',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/task',
+        'START_COMMIT: task123',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('PLAN APPROVED')
+    expect(comment).toContain('FAST_PATH_RATIONALE: single-file docs tweak cheaper than supervisor')
+    expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+    expect(approved.content[0].text).toContain('fastPathSkip')
+    expect(approved.content[0].text).not.toContain('continuation attempted')
+    expect(approved.details).toMatchObject({ ok: true, fastPathSkip: true })
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation')).toBe(false)
+    const skipMessage = sendMessages.find((message) => message.message.customType === 'post-approval-fast-path-skip')
+    expect(skipMessage?.message.content).toContain('do not dispatch_supervisor')
+    expect(skipMessage?.message.content).toContain('do not wait for ping')
+    expect(skipMessage?.options).toMatchObject({ triggerTurn: false })
+  })
+
+  it('workflow_plan_approved without FAST_PATH_RATIONALE still dispatches supervisor', async () => {
+    const { toolHandlers, sendMessages, ctx } = makeHarness({ taskScopeGit: true })
+
+    const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-non-fast-path', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: implement supervisor path.',
+        'Files to change:',
+        '- .pi/extensions/plan-mode/index.ts',
+        'Acceptance: dispatch still runs',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/task',
+        'START_COMMIT: task123',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(approved.content[0].text).toContain('continuation attempted')
+    expect(approved.content[0].text).not.toContain('fastPathSkip')
+    expect(approved.details).toMatchObject({ ok: true, fastPathSkip: false })
+    expect(mockSupervisorDispatchCalls).toHaveLength(1)
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/task', transport: 'cmux' })
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(true)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-fast-path-skip')).toBe(false)
+  })
+
+  it('empty FAST_PATH_RATIONALE with next line Plan: still dispatches', async () => {
+    const { toolHandlers, sendMessages, ctx } = makeHarness({ taskScopeGit: true })
+
+    await toolHandlers.get('workflow_plan_approved')?.execute('call-empty-fast-path', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'FAST_PATH_RATIONALE:',
+        'Plan: empty marker must not skip.',
+        'Files to change:',
+        '- .pi/extensions/plan-mode/index.ts',
+        'Acceptance: dispatch runs',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/task',
+        'START_COMMIT: task123',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(mockSupervisorDispatchCalls).toHaveLength(1)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-fast-path-skip')).toBe(false)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(true)
+  })
+
+  it('prose FAST_PATH_RATIONALE without field line still dispatches', async () => {
+    const { toolHandlers, sendMessages, ctx } = makeHarness({ taskScopeGit: true })
+
+    await toolHandlers.get('workflow_plan_approved')?.execute('call-prose-fast-path', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: mention FAST_PATH_RATIONALE in prose without a field line.',
+        'Files to change:',
+        '- .pi/extensions/plan-mode/index.ts',
+        'Acceptance: dispatch runs',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/task',
+        'START_COMMIT: task123',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(mockSupervisorDispatchCalls).toHaveLength(1)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-fast-path-skip')).toBe(false)
+  })
+
+  it('UI Execute Fast Path skips spawn and uses triggerTurn true', async () => {
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+    const plan = [
+      'FAST_PATH_RATIONALE: UI execute should implement without supervisor',
+      SAMPLE_READY_PLAN,
+      'Branch: task/plan-approved',
+      'Worktree: /tmp/task',
+      'START_COMMIT: task123',
+    ].join('\n')
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await markPlanReady(toolHandlers, ctx, plan)
+    await agentEndHandlers[0]?.({
+      messages: [{
+        role: 'assistant',
+        content: [{ type: 'text', text: plan }],
+      }],
+    }, ctx)
+
+    const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('PLAN APPROVED')
+    expect(comment).toContain('FAST_PATH_RATIONALE:')
+    expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', sessionMode: 'implementing', planApproved: true })
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
+    const skipMessage = sendMessages.find((message) => message.message.customType === 'post-approval-fast-path-skip')
+    expect(skipMessage?.message.content).toContain('implement now')
+    expect(skipMessage?.message.content).toContain('do not dispatch_supervisor')
+    expect(skipMessage?.options).toMatchObject({ triggerTurn: true })
+  })
+
+  it('/plan-auto plus nonempty FAST_PATH_RATIONALE skips spawn and uses triggerTurn true', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, ctx } = makeHarness()
+
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
+    await agentEndHandlers[0]?.({
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'text',
+          text: [
+            'Reviewer findings summary:',
+            '- reviewers approved',
+            'Accepted findings:',
+            '- none',
+            'Rejected findings:',
+            '- none',
+            'Unresolved blockers: none',
+            'Revised plan:',
+            '1. Implement gate',
+            'FAST_PATH_RATIONALE: plan-auto Fast Path without supervisor',
+            'Files to change:',
+            '- .pi/extensions/plan-mode/index.ts',
+            'Acceptance:',
+            '- tests pass',
+            'Risks / rollback:',
+            '- revert',
+            'AUTO_EXECUTE_ALLOWED: true',
+          ].join('\n'),
+        }],
+      }],
+    }, ctx)
+
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
+    expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation')).toBe(false)
+    const skipMessage = sendMessages.find((message) => message.message.customType === 'post-approval-fast-path-skip')
+    expect(skipMessage?.message.content).toContain('implement now')
+    expect(skipMessage?.options).toMatchObject({ triggerTurn: true })
+  })
+
+  it('autopilot plus nonempty FAST_PATH_RATIONALE still dispatches supervisor hop', async () => {
+    const { commandHandlers, agentEndHandlers, sendMessages, execCalls, statuses, ctx } = makeHarness()
+
+    await commandHandlers.get('plan-autopilot')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, ctx)
+    await agentEndHandlers[0]?.({
+      messages: [{
+        role: 'assistant',
+        content: [{
+          type: 'text',
+          text: [
+            'Reviewer findings summary:',
+            '- reviewers approved',
+            'Accepted findings:',
+            '- none',
+            'Rejected findings:',
+            '- none',
+            'Unresolved blockers: none',
+            'Revised plan:',
+            '1. Implement gate',
+            'FAST_PATH_RATIONALE: autopilot hop must keep dispatch',
+            'Files to change:',
+            '- .pi/extensions/plan-mode/index.ts',
+            'Acceptance:',
+            '- tests pass',
+            'Risks / rollback:',
+            '- revert',
+            'AUTO_EXECUTE_ALLOWED: true',
+          ].join('\n'),
+        }],
+      }],
+    }, ctx)
+
+    const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('Approved-by: оркестратор')
+    expect(comment).toContain('AUTOPILOT: true')
+    expect(comment).toContain('FAST_PATH_RATIONALE: autopilot hop must keep dispatch')
+    expect(mockSupervisorDispatchCalls).toHaveLength(1)
+    expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/task', transport: 'cmux' })
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-fast-path-skip')).toBe(false)
+    expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(true)
+    expect(statuses['plan-mode']).toBe('autopilot')
+  })
+
   it('UI Execute writes durable PLAN APPROVED comment and shows started/running progress before dispatch resolves', async () => {
     const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
     let releaseDispatch!: () => void
