@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
 import planReviewExtension, {
+  classifyPlanReviewRisk,
   evaluatePlanReviewGate,
   findInvalidSequentialReasons,
+  hasImportantOrCriticalFindings,
   missingRevisedPlanSections,
   parsePlanReviewOutput,
+  planReviewStopAdvice,
   runPlanReviewers,
+  type PlanReviewResult,
 } from '../../.pi/extensions/plan-review/index'
 
 describe('plan-review gate helpers', () => {
@@ -82,6 +86,53 @@ Risks / rollback:
       'Sequential stream row 3 has unsupported reason: files are related',
     ])
     expect(findInvalidSequentialReasons(validRussianPlan)).toEqual([])
+  })
+
+  it('planReviewStopAdvice exclusive matrix ignores risk and caps at cycle 2', () => {
+    expect(planReviewStopAdvice({ cycle: 1, gateOk: false, hasImportantOrCritical: false })).toBe('HARD_BLOCK')
+    expect(planReviewStopAdvice({ cycle: 1, gateOk: false, hasImportantOrCritical: true })).toBe('HARD_BLOCK')
+    expect(planReviewStopAdvice({ cycle: 2, gateOk: false, hasImportantOrCritical: true })).toBe('HARD_BLOCK')
+
+    expect(planReviewStopAdvice({ cycle: 1, gateOk: true, hasImportantOrCritical: false })).toBe('STOP_SHOW_USER')
+    expect(planReviewStopAdvice({ cycle: 2, gateOk: true, hasImportantOrCritical: false })).toBe('STOP_SHOW_USER')
+
+    expect(planReviewStopAdvice({ cycle: 1, gateOk: true, hasImportantOrCritical: true })).toBe('CONTINUE')
+    expect(planReviewStopAdvice({ cycle: 0, gateOk: true, hasImportantOrCritical: true })).toBe('CONTINUE')
+    expect(planReviewStopAdvice({ cycle: 2, gateOk: true, hasImportantOrCritical: true })).toBe('STOP_SHOW_USER')
+    expect(planReviewStopAdvice({ cycle: 3, gateOk: true, hasImportantOrCritical: true })).toBe('STOP_SHOW_USER')
+  })
+
+  it('classifyPlanReviewRisk is telemetry-only with FAST_PATH sticker and denylist', () => {
+    expect(classifyPlanReviewRisk('Plan:\n1. docs only')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: single markdown file\nFiles: docs/note.md')).toBe('low')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: .pi/extensions/plan-mode/index.ts')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: .pi/skills/plan-bead/SKILL.md')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: .pi/agents/plan-edge-reviewer.md')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: .pi/rules/domain.md')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: scripts/ping.sh')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: app/pages/index.vue and src-tauri/src/lib.rs')).toBe('high')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: app/utils/helpers.ts')).toBe('low')
+    expect(classifyPlanReviewRisk('FAST_PATH_RATIONALE: sticker\nFiles: src-tauri/src/lib.rs')).toBe('low')
+  })
+
+  it('gate.ok still ignores NEEDS_CHANGES while important findings are visible for stop advice', () => {
+    const results: PlanReviewResult[] = [
+      {
+        reviewer: 'plan-edge-reviewer',
+        verdict: 'NEEDS_CHANGES',
+        findings: [{ severity: 'important', issue: 'missing rollback', evidence: 'plan', suggestedFix: 'add rollback' }],
+        unresolvedBlockers: [],
+        raw: '',
+      },
+      { reviewer: 'plan-consistency-reviewer', verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: '' },
+      { reviewer: 'plan-dead-zone-reviewer', verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: '' },
+    ]
+    const gate = evaluatePlanReviewGate(results)
+    expect(gate.ok).toBe(true)
+    expect(gate.importantFindings).toHaveLength(1)
+    expect(hasImportantOrCriticalFindings(results, gate.importantFindings)).toBe(true)
+    expect(planReviewStopAdvice({ cycle: 1, gateOk: gate.ok, hasImportantOrCritical: true })).toBe('CONTINUE')
+    expect(planReviewStopAdvice({ cycle: 2, gateOk: gate.ok, hasImportantOrCritical: true })).toBe('STOP_SHOW_USER')
   })
 
   it('runs required reviewers through pi json mode and parses assistant output', async () => {

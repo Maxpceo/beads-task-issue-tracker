@@ -18,6 +18,29 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 
 Use a full `Где мы в workflow` block when strict planning stops for user approval, requirements are ambiguous, or planning is blocked. Do not announce normal plan-mode or bd-status values that the footer already shows. After approval/auto gate, continue silently to the next approved workflow step unless there is a real decision point.
 
+## Plan-review cycle cap (workflow_plan_review)
+
+Typed `workflow_plan_review` has a hard max of **2 spawns** per plan-mode session (cycle counter persists across turns; reset only when plan mode goes off→on / new `/plan`). `/plan-auto` execution path is separate and not capped by this counter.
+
+Exclusive stop advice from `planReviewStopAdvice` (risk is telemetry only and never changes advice):
+
+| Condition | Advice |
+|---|---|
+| `!gateOk` (missing/blocked reviewer or unresolved blockers) | `HARD_BLOCK` |
+| `gateOk` and no important/critical findings | `STOP_SHOW_USER` (from cycle ≥ 1; clean APPROVED / minor-only does **not** force a second spawn) |
+| `gateOk` and important/critical remain and `cycle < 2` | `CONTINUE` |
+| `gateOk` and `cycle >= 2` | `STOP_SHOW_USER` (show Maxim; no third cycle) |
+
+Orchestrator behavior:
+
+- On `CONTINUE`: revise the draft, then call `workflow_plan_review` again.
+- On `STOP_SHOW_USER`: present the plan to Maxim; **MUST NOT call workflow_plan_review** again this planning session. Remaining important/critical findings stay visible for Maxim.
+- On `HARD_BLOCK`: do not approve/execute; fix blockers; one retry is allowed while `cycle < 2`.
+- Empty `draftPlan` does not increment the cycle counter.
+- Failed spawn still consumes a cycle slot (reserved before `await`).
+
+`classifyPlanReviewRisk` is telemetry only (`low` requires `FAST_PATH_RATIONALE:` plus no `.pi/extensions|skills|agents|rules` / `scripts/` and not both `app/` + `src-tauri`; else `high`). Risk never changes stop advice and never auto-approves.
+
 ## Rules
 
 - Planning mode is read-only.
@@ -26,7 +49,7 @@ Use a full `Где мы в workflow` block when strict planning stops for user a
 - Plans must preserve self-contained handoff context: problem, approach, rejected alternatives, files, acceptance, and verification evidence.
 - Bead/plan `### Verification / acceptance checks` must list only gate-executable or gate-mapped commands (`pnpm test`/`vitest`, `vue-tsc`, `cargo check`, `git diff --name-only`, `git diff --check`, safe `rg`/`grep`). Manual/live/prose checks belong in Acceptance criteria or IMPLEMENTATION evidence, not Verification bullets for `review_bead` matrix.
 - Follow-up beads created during planning must use the full `AGENTS.md` template, labels, and known dependencies.
-- Decide Fast Path explicitly; risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work requires approved plan/supervisor path unless a documented exception applies.
+- Decide Fast Path explicitly; risky workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work requires approved plan/supervisor path unless a documented exception applies. Plan-review stop advice does not use Fast Path risk to bypass `HARD_BLOCK` or to auto-approve.
 - Edge cases are required for non-trivial work.
 - Non-trivial plans (anything beyond tiny, low-risk Fast Path work) must include a `Parallel Decomposition Matrix` before approval. For Russian-language beads/plans (default in this project), use human-readable Russian headings: `Поток`, `Цель`, `Агент`, `Зона изменений`, `Зависимости`, `Проверка`, `Решение`, `Причина`. Keep the workflow term `Parallel Decomposition Matrix`. Headings map to technical fields `Stream`, `Goal`, `Agent`, `Write zone`, `Dependencies`, `Verification`, `Decision`, `Reason`: `Поток`/`Цель` selects the work package, `Агент` selects the supervisor type, `Зона изменений` scopes file ownership, `Зависимости` orders streams, `Проверка` defines evidence, `Решение` says `parallel` or `sequential`, and `Причина` explains the routing decision. Do not show English-only column headers to Максим unless he explicitly asks for English.
 - Fast Path exception: simple/trivial work may omit the matrix only when the plan includes `FAST_PATH_RATIONALE:` with why direct execution is lower-risk/cheaper than supervisor dispatch, expected touched files/line budget, and focused verification. Workflow/policy/review/merge, `.pi/agents`, scripts, or cross-domain work still requires approved plan/supervisor path unless the exception is explicit.

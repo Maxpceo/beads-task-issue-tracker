@@ -134,6 +134,30 @@ Strict `/plan` remains manual: it never auto-executes. When the user explicitly 
 
 Autonomous planning agents should use the typed `workflow_plan_review` tool instead of relying on slash/input triggers. The tool accepts the complete `draftPlan`, runs the required reviewers, and returns structured gate details plus rendered reviewer output. It does not write files, mutate bd, approve the plan, acquire/release merge-slot, change git state, or leave plan mode. If a reviewer is missing, fails, returns `BLOCKED`, or reports unresolved blockers, the tool returns `ok: false` and the agent must keep implementation blocked.
 
+### `workflow_plan_review` cycle cap (v1)
+
+Cap and cycle counter live **only** in the typed `workflow_plan_review` tool (`planReviewTool`). The `/plan-auto` / `/plan-autopilot` `runReviewGateForPlan` path is intentionally unchanged.
+
+- Max **2** reviewer spawns per plan-mode session.
+- Cycle count, last `stopAdvice`, and last results are persisted/restored with plan-mode state.
+- Reset only when plan mode transitions off→on (new `/plan` / first enable). Repeated `workflow_plan_mode` while already enabled does **not** reset the counter.
+- Empty `draftPlan` does not increment the counter.
+- Slot is reserved (increment + persist) **before** `await` spawn; a failed spawn still consumes the slot. Concurrent overlap is therefore ≤2.
+- Call 3+ with `cycleCount >= 2` skips spawn and returns cached findings with `STOP_SHOW_USER`.
+
+Exclusive stop table (`planReviewStopAdvice`; risk is never an argument):
+
+| Condition | `stopAdvice` |
+|---|---|
+| `!gateOk` | `HARD_BLOCK` |
+| `gateOk` && no important/critical | `STOP_SHOW_USER` |
+| `gateOk` && important/critical && `cycle < 2` | `CONTINUE` |
+| `gateOk` && `cycle >= 2` | `STOP_SHOW_USER` |
+
+Tool `details` always include `{ cycle, risk, stopAdvice }`. `classifyPlanReviewRisk` is telemetry only (`low` iff `FAST_PATH_RATIONALE:` and no denylisted `.pi/extensions|skills|agents|rules` / `scripts/` and not both `app/` + `src-tauri`; else `high`). Risk does not change advice and does not auto-approve.
+
+Cycle-aware plan-mode injection is exclusive: either `MUST call workflow_plan_review` or `MUST NOT call workflow_plan_review`, never both. After `STOP_SHOW_USER` or when the cap is reached, the agent must show Maxim the plan (remaining important/critical findings stay visible) and must not start a third cycle.
+
 ## Responsibility split
 
 This extension owns real plan-mode behavior: tool access, read-only command gates, plan extraction, and plan execution. It also emits `workflow-state:update` events so `.pi/extensions/workflow-state` keeps session fields synchronized while bd remains lifecycle authority:

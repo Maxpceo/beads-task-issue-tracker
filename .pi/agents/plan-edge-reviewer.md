@@ -26,7 +26,8 @@ Unresolved blockers: none | <blockers that must stop execution>
 ```
 
 Rules:
-- Use `APPROVED` only when no critical/important issue remains.
-- Use `NEEDS_CHANGES` for fixable plan gaps.
+- Use `APPROVED` only when no critical/important issue remains. APPROVED allowed when only minor remain.
+- harness wording without changing acceptance truth (command spelling/path cosmetic nits, meta-token vs literal phrasing, argv/path formatting polish) is `minor`, not `important`.
+- Use `NEEDS_CHANGES` for fixable plan gaps that change acceptance truth, scope, rollback, or safety.
 - Use `BLOCKED` when execution needs missing user input, unavailable tools, unsafe state, or impossible acceptance.
 - If there are no findings, write one finding line with `issue: none`, `evidence: reviewed plan`, `suggested fix: none` and `Unresolved blockers: none`.

@@ -7,6 +7,14 @@ import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim 
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
 import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
+import {
+  classifyPlanReviewRisk,
+  evaluatePlanReviewGate as realEvaluatePlanReviewGate,
+  hasImportantOrCriticalFindings,
+  planReviewStopAdvice,
+  type PlanReviewFinding,
+  type PlanReviewResult,
+} from '../../.pi/extensions/plan-review/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
 const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
@@ -31,6 +39,11 @@ const mandatoryWorkflowTools = [
 const expectedNormalTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'subagent', 'plan_subagent', ...mandatoryWorkflowTools]
 let mockPlanReviewGateOk = true
 let mockPlanReviewReasons: string[] = []
+let mockPlanReviewImportantFindings: PlanReviewFinding[] = []
+let mockPlanReviewResults: PlanReviewResult[] | undefined
+let mockPlanReviewSpawnCount = 0
+let mockPlanReviewSpawnError: Error | undefined
+let mockPlanReviewSpawnGate: Promise<void> | undefined
 let mockMissingRevisedPlanSections: string[] = []
 let mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
 let mockSupervisorDispatchAvailable = true
@@ -47,6 +60,16 @@ let mockFinalizeCloseResult: { ok: boolean; status: string; text: string } = { o
 let mockFinalizeCloseCalls: Array<{ beadId: string; worktreePath: string }> = []
 let mockRegistryByTaskId: Record<string, { entry: { beadId: string; worktree: string; role: string; startCommit?: string; status?: string } }> = {}
 let mockLiveRegistryByBead: Record<string, Array<{ entry: { role: string; status?: string } }>> = {}
+
+function defaultMockPlanReviewResults(): PlanReviewResult[] {
+  return ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({
+    reviewer,
+    verdict: 'APPROVED' as const,
+    findings: [] as PlanReviewFinding[],
+    unresolvedBlockers: [] as string[],
+    raw: 'PLAN REVIEW: APPROVED',
+  }))
+}
 
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
@@ -67,10 +90,51 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     if (id === '../workflow-intent/index') return { parseWorkflowIntent, shouldAutoClaimAndPlan }
     if (id === '../plan-review/index') {
       return {
-        evaluatePlanReviewGate: (results: unknown[]) => ({ ok: mockPlanReviewGateOk, reasons: mockPlanReviewReasons, results, missingReviewers: mockPlanReviewReasons.filter((reason) => reason.startsWith('missing reviewer:')), blockedReviewers: [] }),
+        MAX_PLAN_REVIEW_CYCLES: 2,
+        classifyPlanReviewRisk,
+        planReviewStopAdvice,
+        hasImportantOrCriticalFindings,
+        evaluatePlanReviewGate: (results: PlanReviewResult[]) => {
+          if (!mockPlanReviewGateOk || mockPlanReviewReasons.length > 0) {
+            const importantFindings = mockPlanReviewImportantFindings.length > 0
+              ? mockPlanReviewImportantFindings
+              : results.flatMap((result) => result.findings.filter((finding) => finding.severity === 'critical' || finding.severity === 'important'))
+            return {
+              ok: false,
+              reasons: mockPlanReviewReasons.length > 0 ? mockPlanReviewReasons : ['blocked reviewer: mock'],
+              results,
+              missingReviewers: mockPlanReviewReasons.filter((reason) => reason.startsWith('missing reviewer:')).map((reason) => reason.replace('missing reviewer: ', '')),
+              blockedReviewers: results.filter((result) => result.verdict === 'BLOCKED' || Boolean(result.error)),
+              unresolvedBlockers: [],
+              importantFindings,
+            }
+          }
+          if (mockPlanReviewImportantFindings.length > 0) {
+            return {
+              ok: true,
+              reasons: [],
+              results,
+              missingReviewers: [],
+              blockedReviewers: [],
+              unresolvedBlockers: [],
+              importantFindings: mockPlanReviewImportantFindings,
+            }
+          }
+          return realEvaluatePlanReviewGate(results)
+        },
         missingRevisedPlanSections: () => mockMissingRevisedPlanSections,
-        renderPlanReviewResults: () => mockRenderedPlanReviewResults,
-        runPlanReviewers: async () => ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({ reviewer, verdict: 'APPROVED', findings: [], unresolvedBlockers: [], raw: 'PLAN REVIEW: APPROVED' })),
+        renderPlanReviewResults: (results?: PlanReviewResult[]) => {
+          if (results && results.length > 0 && mockRenderedPlanReviewResults === 'PLAN REVIEW: APPROVED') {
+            return results.map((result) => `## ${result.reviewer}\nPLAN REVIEW: ${result.verdict}`).join('\n\n')
+          }
+          return mockRenderedPlanReviewResults
+        },
+        runPlanReviewers: async () => {
+          mockPlanReviewSpawnCount += 1
+          if (mockPlanReviewSpawnGate) await mockPlanReviewSpawnGate
+          if (mockPlanReviewSpawnError) throw mockPlanReviewSpawnError
+          return mockPlanReviewResults ?? defaultMockPlanReviewResults()
+        },
       }
     }
     if (id === '../worktree-scope/index') return worktreeScope
@@ -129,6 +193,11 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
+  mockPlanReviewImportantFindings = []
+  mockPlanReviewResults = undefined
+  mockPlanReviewSpawnCount = 0
+  mockPlanReviewSpawnError = undefined
+  mockPlanReviewSpawnGate = undefined
   mockMissingRevisedPlanSections = []
   mockRenderedPlanReviewResults = 'PLAN REVIEW: APPROVED'
   mockSupervisorDispatchAvailable = true
@@ -161,6 +230,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
   const agentEndHandlers: Array<(event: any, ctx: any) => unknown> = []
   const sessionStartHandlers: Array<(event: any, ctx: any) => unknown> = []
+  const beforeAgentStartHandlers: Array<(event?: any, ctx?: any) => unknown> = []
   const sendMessages: Array<{ message: any, options?: any }> = []
   const sendUserMessages: string[] = []
   const execCalls: Array<{ command: string, args: string[] }> = []
@@ -181,8 +251,9 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       if (event === 'tool_call') toolCallHandlers.push(handler)
       if (event === 'agent_end') agentEndHandlers.push(handler)
       if (event === 'session_start') sessionStartHandlers.push(handler)
+      if (event === 'before_agent_start') beforeAgentStartHandlers.push(handler)
     },
-    appendEntry: (type: string, data: unknown) => { sessionEntries.push({ type, data }) },
+    appendEntry: (customType: string, data: unknown) => { sessionEntries.push({ type: 'custom', customType, data }) },
     sendMessage: (message: any, sendOptions?: any) => {
       if (options.failPreDispatchProgressMessage && message.customType === 'post-approval-continuation-started') throw new Error('progress display failed')
       sendMessages.push({ message, options: sendOptions })
@@ -277,7 +348,7 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   })
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sessionStartHandlers, sendMessages, sendUserMessages, execCalls, delayedClaimEvents, trace, ctx }
+  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sessionStartHandlers, beforeAgentStartHandlers, sendMessages, sendUserMessages, execCalls, delayedClaimEvents, trace, sessionEntries, ctx }
 }
 
 describe('Pi plan-mode bash allowlist', () => {
@@ -550,17 +621,178 @@ describe('Pi plan-mode typed workflow tools', () => {
     const blocked = await toolHandlers.get('workflow_plan_review')?.execute('call-review-blocked', { draftPlan: `Plan:\n1. Implement typed plan review tool.` }, undefined, undefined, ctx)
 
     expect(activeTools.at(-1)).toEqual(expectedPlanTools)
-    expect(ok.content[0].text).toContain('workflow_plan_review complete')
+    expect(ok.content[0].text).toContain('STOP_SHOW_USER')
     expect(ok.content[0].text).toContain('PLAN REVIEW: APPROVED')
-    expect(ok.details).toMatchObject({ ok: true })
+    expect(ok.details).toMatchObject({ ok: true, cycle: 1, stopAdvice: 'STOP_SHOW_USER' })
+    expect(blocked.content[0].text).toContain('HARD_BLOCK')
     expect(blocked.content[0].text).toContain('missing reviewer: plan-dead-zone-reviewer')
     expect(blocked.content[0].text).toContain('blocked reviewer: plan-consistency-reviewer')
-    expect(blocked.details).toMatchObject({ ok: false })
+    expect(blocked.details).toMatchObject({ ok: false, cycle: 2, stopAdvice: 'HARD_BLOCK' })
     expect(workflowUpdates).toHaveLength(beforeWorkflowUpdates)
     expect(execCalls).toHaveLength(beforeExecCalls)
     expect(source).toEqual(expect.stringContaining('MUST call workflow_plan_review'))
+    expect(source).toEqual(expect.stringContaining('MUST NOT call workflow_plan_review'))
     expect(source).toEqual(expect.stringContaining('Accepted findings'))
     expect(source).toEqual(expect.stringContaining('Rejected findings'))
+  })
+
+  it('workflow_plan_review caps at 2 spawns: clean APPROVED stops without second spawn; important CONTINUE then STOP; empty no increment; third skips spawn', async () => {
+    const { toolHandlers, beforeAgentStartHandlers, sessionEntries, ctx } = makeHarness()
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-setup', { mode: 'strict' }, undefined, undefined, ctx)
+
+    const empty = await toolHandlers.get('workflow_plan_review')?.execute('call-empty', { draftPlan: '   ' }, undefined, undefined, ctx)
+    expect(empty.details).toMatchObject({ ok: false, error: 'draftPlan is required' })
+    expect(mockPlanReviewSpawnCount).toBe(0)
+
+    const mustBefore = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
+    expect(mustBefore?.message?.content).toContain('MUST call workflow_plan_review')
+    expect(mustBefore?.message?.content).not.toContain('MUST NOT call workflow_plan_review')
+
+    const clean = await toolHandlers.get('workflow_plan_review')?.execute('call-clean', {
+      draftPlan: 'FAST_PATH_RATIONALE: docs-only\nPlan:\n1. Add one markdown file.\nFiles: docs/note.md',
+    }, undefined, undefined, ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(clean.details).toMatchObject({ ok: true, cycle: 1, stopAdvice: 'STOP_SHOW_USER', risk: 'low' })
+    expect(clean.content[0].text).toContain('STOP_SHOW_USER')
+    expect(clean.content[0].text).toContain('MUST NOT call workflow_plan_review')
+
+    const mustNotAfterClean = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
+    expect(mustNotAfterClean?.message?.content).toContain('MUST NOT call workflow_plan_review')
+    expect(mustNotAfterClean?.message?.content).not.toMatch(/you MUST call workflow_plan_review/i)
+
+    // New session path for important-finding CONTINUE → STOP → skip third
+    const harness2 = makeHarness()
+    await harness2.toolHandlers.get('workflow_plan_mode')?.execute('call-setup-2', { mode: 'strict' }, undefined, undefined, harness2.ctx)
+    mockPlanReviewImportantFindings = [{
+      severity: 'important',
+      issue: 'missing rollback',
+      evidence: 'plan omits rollback',
+      suggestedFix: 'add rollback',
+    }]
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? {
+          ...result,
+          verdict: 'NEEDS_CHANGES',
+          findings: mockPlanReviewImportantFindings,
+          raw: 'PLAN REVIEW: NEEDS_CHANGES',
+        }
+      : result)
+
+    const continueResult = await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-important-1', {
+      draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, harness2.ctx)
+    expect(continueResult.details).toMatchObject({ ok: true, cycle: 1, stopAdvice: 'CONTINUE', risk: 'high' })
+    expect(continueResult.content[0].text).toContain('CONTINUE')
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    const mustContinue = await harness2.beforeAgentStartHandlers[0]?.({}, harness2.ctx) as { message?: { content?: string } }
+    expect(mustContinue?.message?.content).toContain('MUST call workflow_plan_review')
+    expect(mustContinue?.message?.content).not.toContain('MUST NOT call workflow_plan_review')
+
+    const stopAtTwo = await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-important-2', {
+      draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, harness2.ctx)
+    expect(stopAtTwo.details).toMatchObject({ ok: true, cycle: 2, stopAdvice: 'STOP_SHOW_USER' })
+    expect(mockPlanReviewSpawnCount).toBe(2)
+
+    const skipThird = await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-important-3', {
+      draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, harness2.ctx)
+    expect(skipThird.details).toMatchObject({ ok: true, cycle: 2, stopAdvice: 'STOP_SHOW_USER', skippedSpawn: true })
+    expect(mockPlanReviewSpawnCount).toBe(2)
+    expect(skipThird.content[0].text).toContain('No additional reviewer spawn')
+
+    const mustNotAfterCap = await harness2.beforeAgentStartHandlers[0]?.({}, harness2.ctx) as { message?: { content?: string } }
+    expect(mustNotAfterCap?.message?.content).toContain('MUST NOT call workflow_plan_review')
+    expect(mustNotAfterCap?.message?.content).not.toMatch(/you MUST call workflow_plan_review/i)
+
+    // Persist cycle fields on appendEntry
+    const persisted = sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1)
+    expect(persisted?.data).toMatchObject({ planReviewCycleCount: 1, lastPlanReviewStopAdvice: 'STOP_SHOW_USER' })
+  })
+
+  it('workflow_plan_review persists/restores cycle state, does not reset on repeated plan_mode, failed spawn consumes slot, overlap ≤2', async () => {
+    const { toolHandlers, sessionStartHandlers, sessionEntries, ctx } = makeHarness()
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-on', { mode: 'strict' }, undefined, undefined, ctx)
+    mockPlanReviewImportantFindings = [{
+      severity: 'important',
+      issue: 'gap',
+      evidence: 'plan',
+      suggestedFix: 'fix',
+    }]
+    const first = await toolHandlers.get('workflow_plan_review')?.execute('call-1', { draftPlan: 'Plan:\n1. Keep important finding.' }, undefined, undefined, ctx)
+    expect(first.details).toMatchObject({ cycle: 1, stopAdvice: 'CONTINUE' })
+
+    // Repeated enable while already on must not reset cycle.
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-again', { mode: 'strict' }, undefined, undefined, ctx)
+    const second = await toolHandlers.get('workflow_plan_review')?.execute('call-2', { draftPlan: 'Plan:\n1. Keep important finding.' }, undefined, undefined, ctx)
+    expect(second.details).toMatchObject({ cycle: 2, stopAdvice: 'STOP_SHOW_USER' })
+
+    const persisted = sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1)
+    expect(persisted?.data).toMatchObject({
+      enabled: true,
+      planReviewCycleCount: 2,
+      lastPlanReviewStopAdvice: 'STOP_SHOW_USER',
+    })
+
+    // Restore into a fresh extension instance via session_start entries.
+    const restored = makeHarness({
+      entries: [
+        { type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' } },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            autopilot: false,
+            todos: [],
+            executing: false,
+            autoPlanReviewState: 'idle',
+            autoPlanReviewResults: [],
+            planReviewCycleCount: 2,
+            lastPlanReviewStopAdvice: 'STOP_SHOW_USER',
+            lastPlanReviewResults: defaultMockPlanReviewResults(),
+          },
+        },
+      ],
+    })
+    await restored.sessionStartHandlers[0]?.({}, restored.ctx)
+    const afterRestore = await restored.toolHandlers.get('workflow_plan_review')?.execute('call-restored', {
+      draftPlan: 'Plan:\n1. After restore.',
+    }, undefined, undefined, restored.ctx)
+    expect(afterRestore.details).toMatchObject({ cycle: 2, stopAdvice: 'STOP_SHOW_USER', skippedSpawn: true })
+    expect(mockPlanReviewSpawnCount).toBe(0)
+
+    // Failed spawn still consumes a cycle slot.
+    const failHarness = makeHarness()
+    await failHarness.toolHandlers.get('workflow_plan_mode')?.execute('call-fail-on', { mode: 'strict' }, undefined, undefined, failHarness.ctx)
+    mockPlanReviewSpawnError = new Error('spawn exploded')
+    const failed = await failHarness.toolHandlers.get('workflow_plan_review')?.execute('call-fail', {
+      draftPlan: 'Plan:\n1. Fail closed spawn.',
+    }, undefined, undefined, failHarness.ctx)
+    expect(failed.details).toMatchObject({ ok: false, cycle: 1, stopAdvice: 'HARD_BLOCK' })
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    // Overlap: two concurrent calls reserve distinct slots up to max 2.
+    const overlap = makeHarness()
+    await overlap.toolHandlers.get('workflow_plan_mode')?.execute('call-overlap-on', { mode: 'strict' }, undefined, undefined, overlap.ctx)
+    mockPlanReviewSpawnError = undefined
+    let releaseOverlap!: () => void
+    mockPlanReviewSpawnGate = new Promise<void>((resolve) => { releaseOverlap = resolve })
+    const p1 = overlap.toolHandlers.get('workflow_plan_review')?.execute('overlap-1', { draftPlan: 'Plan:\n1. Overlap A.' }, undefined, undefined, overlap.ctx)
+    const p2 = overlap.toolHandlers.get('workflow_plan_review')?.execute('overlap-2', { draftPlan: 'Plan:\n1. Overlap B.' }, undefined, undefined, overlap.ctx)
+    // Allow both to reserve before spawn resolves.
+    await Promise.resolve()
+    releaseOverlap()
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect([r1.details.cycle, r2.details.cycle].sort()).toEqual([1, 2])
+    expect(mockPlanReviewSpawnCount).toBe(2)
+    const p3 = await overlap.toolHandlers.get('workflow_plan_review')?.execute('overlap-3', { draftPlan: 'Plan:\n1. Overlap C.' }, undefined, undefined, overlap.ctx)
+    expect(p3.details).toMatchObject({ cycle: 2, skippedSpawn: true })
+    expect(mockPlanReviewSpawnCount).toBe(2)
   })
 
   it('workflow_plan_approved requires evidence and only updates state after bd comment succeeds', async () => {
