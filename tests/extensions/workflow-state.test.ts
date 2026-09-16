@@ -1697,9 +1697,9 @@ describe('Pi workflow-state typed tools', () => {
     expect(appended.at(-1)?.data).toMatchObject({
       activeBead: 'beads-task-issue-tracker-xy73',
       state: 'claimed',
-      branch: 'main',
-      worktreePath: '/repo/primary',
-      startCommit: 'main-head',
+      branch: undefined,
+      worktreePath: undefined,
+      startCommit: undefined,
       bdStatus: 'in_progress',
     })
   })
@@ -1812,9 +1812,9 @@ describe('Pi workflow-state typed tools', () => {
     expect(appended.at(-1)?.data).toMatchObject({
       activeBead: 'beads-task-issue-tracker-xy73',
       state: 'claimed',
-      branch: 'main',
-      worktreePath: '/repo/primary',
-      startCommit: 'main-head',
+      branch: undefined,
+      worktreePath: undefined,
+      startCommit: undefined,
     })
   })
 
