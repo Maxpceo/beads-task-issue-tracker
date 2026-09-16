@@ -1224,6 +1224,79 @@ describe('Pi workflow-state typed tools', () => {
     })
   })
 
+  it('workflow_claim from protected main does not record main as task scope and keeps PI_SESSION_KEY only', async () => {
+    const { toolHandlers, ctx, appended, issues } = (() => {
+      const issues = { 'bead-next': { status: 'open', comments: '' } }
+      const harness = makeHarness({
+        branch: 'main',
+        worktreePath: '/repo',
+        startCommit: 'main-head',
+        ctxCwd: '/repo',
+        issues,
+      })
+      return { ...harness, issues }
+    })()
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-main', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      state: 'claimed',
+      sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
+    })
+    expect(appended.at(-1)?.data).toEqual(expect.objectContaining({
+      branch: undefined,
+      worktreePath: undefined,
+      startCommit: undefined,
+    }))
+    expect(issues['bead-next'].comments).toContain('WORKFLOW CLAIM')
+    expect(issues['bead-next'].comments).toContain('PI_SESSION_KEY: id:session-current')
+    expect(issues['bead-next'].comments).not.toContain('BRANCH: main')
+    expect(issues['bead-next'].comments).not.toContain('WORKTREE: /repo')
+    expect(issues['bead-next'].comments).not.toContain('START_COMMIT: main-head')
+  })
+
+  it('reconcile keeps same-session claimed bead with empty task scope on main cwd instead of wiping', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo',
+      startCommit: 'main-head',
+      ctxCwd: '/repo',
+      issues: { 'bead-next': { status: 'in_progress', comments: 'WORKFLOW CLAIM\nPI_SESSION_KEY: id:session-current' } },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-next',
+          state: 'planning',
+          branch: undefined,
+          worktreePath: undefined,
+          startCommit: undefined,
+          sessionKey: 'id:session-current',
+          sessionMode: 'planning',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'strict',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const status = await toolHandlers.get('workflow_status')?.execute('call-status', {}, undefined, undefined, ctx)
+
+    expect(status.content[0].text).toContain('bead=bead-next')
+    expect(status.content[0].text).not.toContain('bead=-')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      sessionKey: 'id:session-current',
+    })
+    expect((appended.at(-1)?.data as any).branch).toBeUndefined()
+    expect((appended.at(-1)?.data as any).worktreePath).toBeUndefined()
+  })
+
   it('workflow_claim allows claiming the same current-session active bead', async () => {
     const { eventHandlers, toolHandlers, ctx, appended, notifications } = makeHarness({
       branch: 'task/current',

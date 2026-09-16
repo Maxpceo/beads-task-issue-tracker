@@ -443,14 +443,38 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return value;
 	}
 
-	function worktreeRecovery(worktreePath: string | undefined, branch?: string, phase: "approval" | "continuation" = "approval"): string {
+	function isCanonicalTaskBranch(branch?: string): branch is string {
+		if (!branch || PROTECTED_BRANCHES.has(branch)) return false;
+		return /^(?:feat|fix|docs|test|ci|refactor|task|chore)\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(branch);
+	}
+
+	function isAbsoluteTaskWorktreePath(worktreePath?: string): worktreePath is string {
+		return Boolean(worktreePath && worktreePath.startsWith("/") && !/\s/.test(worktreePath));
+	}
+
+	function worktreeRecovery(
+		worktreePath: string | undefined,
+		branch?: string,
+		phase: "approval" | "continuation" = "approval",
+		evidence?: { worktreePath?: string; branch?: string },
+	): string {
 		const protectedBranch = Boolean(branch && PROTECTED_BRANCHES.has(branch));
-		const recoveryBranch = !branch || protectedBranch ? "<canonical-task-branch>" : branch;
-		const recoveryPath = !worktreePath || protectedBranch ? "<path>" : worktreePath;
+		const recoveryBranch =
+			(!protectedBranch && isCanonicalTaskBranch(branch) ? branch : undefined)
+			?? (isCanonicalTaskBranch(evidence?.branch) ? evidence?.branch : undefined);
+		const recoveryPath =
+			(!protectedBranch && isAbsoluteTaskWorktreePath(worktreePath) ? worktreePath : undefined)
+			?? (isAbsoluteTaskWorktreePath(evidence?.worktreePath) ? evidence?.worktreePath : undefined);
 		const nextStep = phase === "continuation"
 			? "then retry `dispatch_supervisor` from that task worktree"
-			: "before calling `workflow_plan_approved`";
-		return `Recovery: create the task worktree with \`bd worktree create ${recoveryPath} --branch ${recoveryBranch}\` from the project checkout, or update workflow-state to a readable task worktree ${nextStep}.`;
+			: "then retry `workflow_plan_approved` with WORKTREE and BRANCH (no second human approval)";
+		if (recoveryPath && recoveryBranch) {
+			return `Recovery: create the task worktree with \`bd worktree create ${recoveryPath} --branch ${recoveryBranch}\` from the project checkout (allowed in plan=strict), ${nextStep}.`;
+		}
+		if (recoveryBranch) {
+			return `Recovery: create the canonical task worktree with \`bd worktree create\` under the project worktrees root using \`--branch ${recoveryBranch}\` from the project checkout (allowed in plan=strict), ${nextStep}.`;
+		}
+		return `Recovery: create a canonical task worktree with \`bd worktree create <absolute-path> --branch <type>/<bead-suffix>-<domain-or-component>-<purpose>\` from the project checkout (allowed in plan=strict; not main/master), ${nextStep}.`;
 	}
 
 	function latestRecordedWorkflowScope(ctx: ExtensionContext, beadId: string): WorkflowStateSnapshot | undefined {
@@ -474,7 +498,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return (currentRuntimeCandidates.length > 0 ? currentRuntimeCandidates : candidates).at(-1);
 	}
 
-	async function validatedWorktreeScope(source: "approved plan evidence" | "recorded workflow-state" | "continuation", worktreePath: string, expectedBranch?: string, startCommit?: string, phase: "approval" | "continuation" = "approval"): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string; code?: string }> {
+	async function validatedWorktreeScope(
+		source: "approved plan evidence" | "recorded workflow-state" | "continuation",
+		worktreePath: string,
+		expectedBranch?: string,
+		startCommit?: string,
+		phase: "approval" | "continuation" = "approval",
+		evidence?: { worktreePath?: string; branch?: string },
+	): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string; code?: string }> {
 		const detectedWorktreePath = await detectGitValueAt(worktreePath, ["rev-parse", "--show-toplevel"]);
 		const detectedBranch = detectedWorktreePath ? await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]) : undefined;
 		const validated = validateTaskScopePath(worktreePath, {
@@ -484,7 +515,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			getBranch: () => detectedBranch,
 		});
 		if (!validated.ok) {
-			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase);
+			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase, evidence);
 			if (validated.error.code === "BRANCH_MISMATCH") {
 				return { error: `${source} branch ${expectedBranch} does not match worktree branch ${detectedBranch ?? "<unknown>"}. ${recovery}`, code: validated.error.code };
 			}
@@ -506,27 +537,45 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const evidenceWorktreePath = evidenceWorktreePathRaw ? normalizeWorktreePathEvidence(evidenceWorktreePathRaw) : undefined;
 		const evidenceBranch = latestPlanField(planEvidence, ["BRANCH", "Branch", "branch"]);
 		const evidenceStartCommit = latestPlanField(planEvidence, ["START_COMMIT", "Start-commit", "Start commit", "startCommit", "start"]);
+		const evidenceCanon = {
+			worktreePath: isAbsoluteTaskWorktreePath(evidenceWorktreePath) ? evidenceWorktreePath : undefined,
+			branch: isCanonicalTaskBranch(evidenceBranch) ? evidenceBranch : undefined,
+		};
 
 		if (evidenceWorktreePath) {
-			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit);
+			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit, "approval", evidenceCanon);
 			if (!scoped.error) return scoped;
 			const evidenceProtected = scoped.code === "PROTECTED_BRANCH" || Boolean(evidenceBranch && PROTECTED_BRANCHES.has(evidenceBranch));
 			if (!evidenceProtected) return scoped;
-		} else if (evidenceBranch) {
-			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
+		} else if (evidenceBranch && !PROTECTED_BRANCHES.has(evidenceBranch)) {
+			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found. ${worktreeRecovery(undefined, evidenceBranch, "approval", evidenceCanon)}` };
 		}
 
 		const recordedScope = latestRecordedWorkflowScope(ctx, beadId);
-		if (recordedScope?.worktreePath) {
-			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit);
-			if (scoped.error) return scoped;
+		const recordedProtected = Boolean(recordedScope?.branch && PROTECTED_BRANCHES.has(recordedScope.branch));
+		const recoveryCanon = {
+			worktreePath: evidenceCanon.worktreePath ?? (isAbsoluteTaskWorktreePath(recordedScope?.worktreePath) && !recordedProtected ? recordedScope?.worktreePath : undefined),
+			branch: evidenceCanon.branch ?? (isCanonicalTaskBranch(recordedScope?.branch) ? recordedScope?.branch : undefined),
+		};
+		const noReadableWithCanon = () =>
+			`no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined, "approval", recoveryCanon)}`;
+		if (recordedScope?.worktreePath && !recordedProtected) {
+			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit, "approval", recoveryCanon);
+			if (scoped.error) {
+				if (scoped.code === "PROTECTED_BRANCH") return { error: noReadableWithCanon() };
+				return scoped;
+			}
 			return scoped;
 		}
+		if (recordedProtected) {
+			return { error: noReadableWithCanon() };
+		}
 		if (recordedScope?.branch || recordedScope?.startCommit) {
-			return { error: "recorded workflow-state has branch/start scope but no worktreePath; refusing to approve against ambiguous main-start cwd" };
+			// Incomplete recorded scope without a worktree: recoverable, not a dead-end incomplete-scope message.
+			return { error: noReadableWithCanon() };
 		}
 
-		return { error: `no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined)}` };
+		return { error: noReadableWithCanon() };
 	}
 
 	function currentSessionKey(ctx: ExtensionContext): string | undefined {
@@ -1657,7 +1706,8 @@ Restrictions:
 - After approved/cancelled plan mode, Pi restores the pre-plan active tool surface plus registered mandatory workflow tools.
 - Bash is restricted to an allowlist of read-only commands
 - bd read-only commands are allowed: bd show, bd comments, bd list, bd ready, selected bd dep/dolt status commands
-- bd mutating commands are blocked: bd create, bd update, bd close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull
+- One recovery exception in plan=strict: a single bd worktree create <absolute-path> --branch <type>/<basename> (canonical task branch; not main/master; not remove/prune/git worktree add). After create, retry workflow_plan_approved with WORKTREE+BRANCH — no second human approval and no workflow_plan_mode off.
+- Other bd mutating commands remain blocked: bd create/update/close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull. workflow_update and setup-worktree stay outside PLAN_MODE_TOOLS.
 
 Ask clarifying questions using the questionnaire tool (one question tool only — do not invent a second question tool).
 When the plan is fully ready for human decision, call plan_mode_complete({ plan }) as the last tool in the turn. Do NOT call plan_mode_complete after a clarifying question. Ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review) appears only after plan_mode_complete; the plan-review button runs critique without approving or starting a supervisor.
