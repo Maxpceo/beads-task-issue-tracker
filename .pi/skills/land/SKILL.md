@@ -40,14 +40,24 @@ description: Pi-native landing workflow. Use when user says “пора зака
    bd dolt push || true
    ```
    If this project is in legacy JSONL mode, commit `.beads/` explicitly with named paths.
-7. Acquire merge-slot and push:
+7. Acquire merge-slot and push with a **session-scoped** holder (never bare acquire, never Maxpceo/git `user.name`):
+
+   **Holder recipe (copy-paste; compute once immediately before acquire):**
+   1. `sessionKey` = `workflow_status` → `details.sessionKey`, or latest bead comment `PI_SESSION_KEY:` (`id:…` only; reject `file:`/`leaf:`).
+   2. `SESSION_UNIQ` = body after `id:` with **all dashes stripped** (full string, **not** 8-char truncate).
+   3. `SUFFIX` = last `-` segment of active bead id, or `none` if no active bead.
+   4. `HOLDER` = `pi:<SESSION_UNIQ>:<SUFFIX>`.
+   5. Golden vector: `id:01a0a712-68e8-7664-b26e-347042f09f14` + `beads-task-issue-tracker-ho0p` → `pi:01a0a71268e87664b26e347042f09f14:ho0p`.
+   6. Snapshot the literal holder string, then pass it as a **quoted literal** `--holder 'pi:…'` on every acquire/release (do **not** rely on `$HOLDER` env expansion in the final command).
+
    ```bash
-   bd merge-slot acquire
+   # Example (replace with this session's literal holder):
+   bd merge-slot acquire --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
    git pull --rebase
    git push
-   bd merge-slot release
+   bd merge-slot release --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
    ```
-8. If any error happens after acquire, release merge-slot before reporting.
+8. If any error happens after acquire, release merge-slot with the **same** literal `--holder` before reporting.
 9. Do not require merge evidence for per-task bead close. `land` is only a save/push checkpoint; session-final merge evidence belongs to explicit `merge-to-main`.
 10. Verify final pushed state:
    ```bash
@@ -60,7 +70,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 - Never use `git add .` or `git add -A`.
 - Never say “ready to push”; push during this workflow.
 - Do not run `land` automatically after every bead; after `closed`, the next bead may be claimed without a push checkpoint unless the user asks to save/push.
-- Merge-slot serializes pushes between parallel sessions. Do not run `git push` if `bd merge-slot acquire` failed.
+- Merge-slot serializes pushes between parallel sessions. Always use session-scoped `--holder pi:<SESSION_UNIQ>:<suffix|none>`; bare acquire and Maxpceo/git user.name holders are blocked by Pi policy. Do not run `git push` if `bd merge-slot acquire` failed. Do not auto-release an in_progress slot held by foreign/Maxpceo holders — stop and report.
 - Do not treat `land` as merge completion. Per-task bead close may happen before merge; session-final merge evidence is recorded by explicit `merge-to-main`.
 - Evidence before claims: final report must include commands, exit codes, commits, push evidence, and PR/merge evidence or exception reason.
 - If follow-up beads were created during this session, list them even if already closed.

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Pi session-scoped merge-slot holder** (`beads-task-issue-tracker-ho0p`): replace shared git `user.name` / `Maxpceo` merge-slot identity with `pi:<SESSION_UNIQ>:<suffix|none>` (`SESSION_UNIQ` = full `id:` body, dashes stripped). `beads-policy` requires `--holder` on acquire/release, allows push only for own-session `pi:` holders (footer-only when bd holder empty/unreadable; foreign/Maxpceo denied even if footer held), and teaches `land` / `merge-to-main` / `release` the literal `--holder` recipe. Git commit author is unchanged.
+
 ### Fixed
 
 - **Pi `/plan-autopilot` hop messages to Maxim in human Russian** (`beads-task-issue-tracker-6wwm`): runtime hop no longer dumps English machine status (`complete_visible_dispatch status=…`) or sliced SUPERVISOR ARTIFACT / matrix text. Each hop return sends one Russian status (what happened, ping already consumed, named next step, Maxim action) with an optional technical `Bead:` / `taskId:` footer only. `result-only` stays non-final (not «работа закончена»); close-blocked and post-close pane failures stay single STOP without matrix body. Contract in `.pi/extensions/plan-mode/README.md` (Hop UX).

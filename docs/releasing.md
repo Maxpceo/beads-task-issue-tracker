@@ -206,8 +206,10 @@ gh pr create --base main --fill
 | Skill | Когда запускается | Что делает |
 |---|---|---|
 | **`release`** | «сделай релиз», «пора релизить», «prepare release» | Всё из §1.2 — pre-flight, курация Highlights, preview body, handoff |
-| **`merge-to-main`** | «мёржим в main», «создай PR» | feature-branch → PR → CI watch → merge-slot → merge (no `--delete-branch`) → remote force-with-lease cleanup → slot release → primary `main` worktree pull/remove |
-| **`land`** | «я закончил», «давай заканчивать», «сохрани работу» | Закрыть beads, commit, push на feature-ветку (через merge-slot) |
+| **`merge-to-main`** | «мёржим в main», «создай PR» | feature-branch → PR → CI watch → session-scoped merge-slot (`--holder pi:SESSION_UNIQ:suffix`) → merge (no `--delete-branch`) → remote force-with-lease cleanup → slot release → primary `main` worktree pull/remove |
+| **`land`** | «я закончил», «давай заканчивать», «сохрани работу» | Закрыть beads, commit, push на feature-ветку через session-scoped merge-slot holder (never bare/Maxpceo) |
+
+Merge-slot identity is **not** git `user.name`. Canonical holder: `pi:<SESSION_UNIQ>:<beadSuffix|none>` where `SESSION_UNIQ` is the full `id:` session key body with dashes stripped (example: `id:01a0a712-68e8-7664-b26e-347042f09f14` + bead `…-ho0p` → `pi:01a0a71268e87664b26e347042f09f14:ho0p`). See `land` / `merge-to-main` / `release` skills for the copy-paste recipe.
 
 Порядок на большой фиче: `land` (внутри сессии) → `merge-to-main` (завершение ветки) → `release` (новая версия).
 

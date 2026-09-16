@@ -110,6 +110,20 @@ Recovery: `gh pr merge` returned exit 1 after a local worktree checkout conflict
 Stage and commit только explicit file paths. Не stage whole trees через dot/all shortcuts.
 
 bd status — lifecycle authority для beads. Pi `workflow-state` — только session-local context: active bead binding, branch/worktree/start/end commit, `sessionMode`, plan mode/approval и merge-slot hint. Agents используют typed workflow tools как primary path: `workflow_status`, `workflow_claim`, `workflow_reset`, `workflow_update`, `workflow_plan_mode`, `workflow_plan_approved` и `workflow_complete`, когда нужен local terminal cleanup. Slash commands вроде `/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/workflow-update`, `/plan` и `/plan-auto` — optional human UI shortcuts, а не required agent steps. После каждого mutating workflow tool или blocker дай visible checkpoint с observed state/tool result; не зависай silently. Checkpoint — inline progress marker, а не stop condition: когда next workflow step уже approved или required активным skill, продолжай в том же turn, если нет real decision point/blocker.
+
+### Merge-slot holder (session-scoped)
+
+Pi sessions must not use git `user.name` / `Maxpceo` / bare `BEADS_ACTOR` as merge-slot identity. Canonical holder:
+
+`pi:<SESSION_UNIQ>:<beadSuffix|none>`
+
+- `sessionKey` source: `workflow_status` → `details.sessionKey`, or bead comment `PI_SESSION_KEY:` (`id:…` only; never `file:`/`leaf:` as session identity).
+- `SESSION_UNIQ` = body after `id:` with **all dashes stripped** (full uniqueness; **not** 8-char UUID prefix).
+- `beadSuffix` = last `-` segment of the active bead id, or `none`.
+- Golden vector: `id:01a0a712-68e8-7664-b26e-347042f09f14` + `beads-task-issue-tracker-ho0p` → `pi:01a0a71268e87664b26e347042f09f14:ho0p`.
+- Always pass a quoted literal `--holder 'pi:…'` on `bd merge-slot acquire` and `release` (see `land` / `merge-to-main` / `release` skills). Policy blocks bare acquire/release and foreign/Maxpceo holders.
+- Truth table for push evidence: own `pi:<my SESSION_UNIQ>:` allow; footer-only `mergeSlotHeld` allow **iff** bd holder empty/unreadable; foreign or Maxpceo holder deny even if footer says held.
+- Do not auto-release an occupied Maxpceo/`in_progress` foreign holder — stop and report. Git commit author remains unchanged.
 Не start, claim, implement или dispatch unrelated work, пока current-session active bead имеет non-terminal bd status; terminal bd statuses — `closed`, `blocked` или explicit `deferred`/handoff с recorded reason. Если bd status — `inreview`, next action — `review-bead` / `review_bead`, а не другая задача. Если active local workflow-state stale, foreign или ambiguous, вызови `workflow_reset` или попроси explicit takeover confirmation. Если reset выполнен, чтобы выполнить explicit user request переключиться с open/terminal/stale bead на named next bead, сразу продолжай claim/planning этого next bead в том же turn. `land` — explicit save/push checkpoint, а `merge-to-main` — explicit session-final PR/merge workflow; ни один из них не является automatic per-task stage.
 
 ## Cmux layout and panel names
@@ -174,7 +188,7 @@ bd dolt push          # Push bd/Dolt state when needed
 
 ## Landing the Plane
 
-Используй skill `land`, чтобы save/push session work, или `merge-to-main` для PR + merge. Эти skills отвечают за quality gates, bd/Dolt sync, merge-slot, commit, push, cleanup и final evidence. Работа не завершена, пока соответствующий skill не сообщит successful push/merge; останавливайся раньше только из-за real blocker или решения Максима.
+Используй skill `land`, чтобы save/push session work, или `merge-to-main` для PR + merge. Эти skills отвечают за quality gates, bd/Dolt sync, session-scoped merge-slot (`--holder pi:<SESSION_UNIQ>:<suffix|none>`), commit, push, cleanup и final evidence. Работа не завершена, пока соответствующий skill не сообщит successful push/merge; останавливайся раньше только из-за real blocker или решения Максима.
 
 ## Permissions and Confirmation
 

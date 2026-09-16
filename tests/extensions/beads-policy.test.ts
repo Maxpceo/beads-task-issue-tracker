@@ -4,7 +4,19 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import beadsPolicyExtension, { BD_STATUS_UNREADABLE, activeBeadLifecycleReason, evaluateBashPolicy, evaluatePathPolicy, evaluateToolPolicy, hasSessionOwnershipEvidence, reconcileWorkflowStateWithBdStatus, resolveBdReadCwd } from '../../.pi/extensions/beads-policy/index'
+import beadsPolicyExtension, {
+  BD_STATUS_UNREADABLE,
+  activeBeadLifecycleReason,
+  evaluateBashPolicy,
+  evaluatePathPolicy,
+  evaluateToolPolicy,
+  hasSessionOwnershipEvidence,
+  isOwnSessionMergeSlotHolder,
+  reconcileWorkflowStateWithBdStatus,
+  resolveBdReadCwd,
+  resolveMergeSlotHolder,
+  sessionUniqFromSessionKey,
+} from '../../.pi/extensions/beads-policy/index'
 
 const runtimeOwnerKey = 'runtime:test-beads-policy'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
@@ -510,22 +522,110 @@ describe('Pi worktree naming policy', () => {
 })
 
 describe('Pi merge-slot push policy', () => {
+  const sessionKey = 'id:01a0a712-68e8-7664-b26e-347042f09f14'
+  const ownHolder = 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
+  const foreignHolder = 'pi:01a0a712ffffffffffffffffffff:other'
   const workflowState = {
-    activeBead: 'bead-a',
+    activeBead: 'beads-task-issue-tracker-ho0p',
     state: 'implementing',
     mergeSlotHeld: false,
+    sessionKey,
   }
 
-  it('allows git push when current bd merge-slot holder evidence matches the actor', () => {
+  it('resolveMergeSlotHolder golden vector and UUID uniqueness (no 8-char collision)', () => {
+    expect(resolveMergeSlotHolder(sessionKey, 'beads-task-issue-tracker-ho0p')).toBe(ownHolder)
+    expect(resolveMergeSlotHolder(sessionKey, null)).toBe('pi:01a0a71268e87664b26e347042f09f14:none')
+    expect(resolveMergeSlotHolder('file:/tmp/session.json', 'beads-task-issue-tracker-ho0p')).toBeUndefined()
+    expect(resolveMergeSlotHolder('leaf:abc', 'beads-task-issue-tracker-ho0p')).toBeUndefined()
+
+    const a = 'id:01a0a712-1111-7111-8111-111111111111'
+    const b = 'id:01a0a712-2222-7222-8222-222222222222'
+    expect(sessionUniqFromSessionKey(a)?.slice(0, 8)).toBe(sessionUniqFromSessionKey(b)?.slice(0, 8))
+    expect(resolveMergeSlotHolder(a, 'beads-task-issue-tracker-ho0p')).not.toBe(
+      resolveMergeSlotHolder(b, 'beads-task-issue-tracker-ho0p'),
+    )
+    expect(isOwnSessionMergeSlotHolder(ownHolder, sessionKey)).toBe(true)
+    expect(isOwnSessionMergeSlotHolder('pi:01a0a71268e87664b26e347042f09f14:none', sessionKey)).toBe(true)
+    expect(isOwnSessionMergeSlotHolder(foreignHolder, sessionKey)).toBe(false)
+    expect(isOwnSessionMergeSlotHolder('Maxpceo', sessionKey)).toBe(false)
+  })
+
+  it('allows git push when bd holder is own-session pi: holder (any suffix)', () => {
     const decision = evaluateBashPolicy('git push', workflowState, {
       cwd: tmpdir(),
       currentActor: 'Maxpceo',
       bdMergeSlotIssue: {
         id: 'beads-task-issue-tracker-merge-slot',
         status: 'in_progress',
-        metadata: { holder: 'Maxpceo' },
+        metadata: { holder: ownHolder },
       },
     })
+
+    expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+  })
+
+  it('allows git push for alternate own-session suffix under same SESSION_UNIQ', () => {
+    const decision = evaluateBashPolicy('git push', workflowState, {
+      cwd: tmpdir(),
+      currentActor: 'Maxpceo',
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'in_progress',
+        metadata: { holder: 'pi:01a0a71268e87664b26e347042f09f14:none' },
+      },
+    })
+
+    expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+  })
+
+  it('blocks git push when holder is legacy Maxpceo even if footer mergeSlotHeld is true', () => {
+    const decision = evaluateBashPolicy(
+      'git push',
+      { ...workflowState, mergeSlotHeld: true },
+      {
+        cwd: tmpdir(),
+        currentActor: 'Maxpceo',
+        bdMergeSlotIssue: {
+          id: 'beads-task-issue-tracker-merge-slot',
+          status: 'in_progress',
+          metadata: { holder: 'Maxpceo' },
+        },
+      },
+    )
+
+    expect(decision?.policy).toBe('requireMergeSlotForPush')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('blocks git push when foreign pi holder even if footer mergeSlotHeld is true', () => {
+    const decision = evaluateBashPolicy(
+      'git push',
+      { ...workflowState, mergeSlotHeld: true },
+      {
+        cwd: tmpdir(),
+        currentActor: 'Maxpceo',
+        bdMergeSlotIssue: {
+          id: 'beads-task-issue-tracker-merge-slot',
+          status: 'in_progress',
+          metadata: { holder: foreignHolder },
+        },
+      },
+    )
+
+    expect(decision?.policy).toBe('requireMergeSlotForPush')
+    expect(decision?.block).toBe(true)
+  })
+
+  it('allows footer-only mergeSlotHeld when bdMergeSlotIssue is null (unreadable/empty)', () => {
+    const decision = evaluateBashPolicy(
+      'git push',
+      { ...workflowState, mergeSlotHeld: true },
+      {
+        cwd: tmpdir(),
+        currentActor: 'Maxpceo',
+        bdMergeSlotIssue: null,
+      },
+    )
 
     expect(decision?.policy).not.toBe('requireMergeSlotForPush')
   })
@@ -566,6 +666,72 @@ describe('Pi merge-slot push policy', () => {
 
     expect(decision?.policy).toBe('requireMergeSlotForPush')
     expect(decision?.block).toBe(true)
+  })
+
+  it('blocks bare merge-slot acquire and release without session --holder', () => {
+    const bareAcquire = evaluateBashPolicy('bd merge-slot acquire', workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+    const bareRelease = evaluateBashPolicy('bd merge-slot release', workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+
+    expect(bareAcquire?.policy).toBe('requireMergeSlotSessionHolder')
+    expect(bareAcquire?.block).toBe(true)
+    expect(bareRelease?.policy).toBe('requireMergeSlotSessionHolder')
+    expect(bareRelease?.block).toBe(true)
+  })
+
+  it('blocks acquire/release with foreign or Maxpceo --holder', () => {
+    const foreign = evaluateBashPolicy(`bd merge-slot acquire --holder '${foreignHolder}'`, workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+    const legacy = evaluateBashPolicy("bd merge-slot release --holder 'Maxpceo'", workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+
+    expect(foreign?.policy).toBe('requireMergeSlotSessionHolder')
+    expect(legacy?.policy).toBe('requireMergeSlotSessionHolder')
+  })
+
+  it('allows own-session acquire/release with exact --holder', () => {
+    const acquire = evaluateBashPolicy(`bd merge-slot acquire --holder '${ownHolder}'`, workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+    const release = evaluateBashPolicy(`bd merge-slot release --holder '${ownHolder}'`, workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+
+    expect(acquire?.policy).not.toBe('requireMergeSlotSessionHolder')
+    expect(release?.policy).not.toBe('requireMergeSlotSessionHolder')
+  })
+
+  it('allows same-command push only when acquire carries own-session --holder before push', () => {
+    const bare = evaluateBashPolicy('bd merge-slot acquire && git push', workflowState, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+    const withHolder = evaluateBashPolicy(
+      `bd merge-slot acquire --holder '${ownHolder}' && git push`,
+      workflowState,
+      { cwd: tmpdir(), bdMergeSlotIssue: null },
+    )
+    const foreignAcquire = evaluateBashPolicy(
+      `bd merge-slot acquire --holder '${foreignHolder}' && git push`,
+      workflowState,
+      { cwd: tmpdir(), bdMergeSlotIssue: null },
+    )
+
+    expect(bare?.policy).toBe('requireMergeSlotSessionHolder')
+    expect(withHolder?.policy).not.toBe('requireMergeSlotForPush')
+    expect(withHolder?.policy).not.toBe('requireMergeSlotSessionHolder')
+    expect(foreignAcquire?.policy).toBe('requireMergeSlotSessionHolder')
   })
 })
 

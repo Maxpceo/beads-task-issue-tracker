@@ -168,7 +168,7 @@ Main checkout is a supported Pi entrypoint. For an active bead, workflow-state r
 | `plan` | Session-local `workflow-state.planMode` emitted by `plan-mode` | `/plan`, `/plan-auto`, `/plan-cancel`, and approved execution update it. |
 | `wt` | Live `git -C <ctx.cwd> worktree list --porcelain` | The custom footer omits `wt` in the primary/root checkout. When the current Pi process runs in a linked worktree, it shows `wt:<basename>` for the current linked worktree; absence of `wt` means no linked worktree is active. Workflow-state `worktreePath` is not displayed as a `wt` override because it can point at the primary/root checkout and would make `wt` misleading. |
 | `dirty` / `clean` | Live `git -C <ctx.cwd> status --short` | `dirty:?` means git status could not be read. |
-| `slot` / merge-slot | Session-local `workflow-state.mergeSlotHeld` | Intentionally workflow-owned because the footer tracks whether this Pi session believes it holds the merge slot. Acquire/release workflows must update it; raw `bd merge-slot` commands can desync it. |
+| `slot` / merge-slot | Session-local `workflow-state.mergeSlotHeld` plus bd `metadata.holder` | Footer `mergeSlotHeld` is a session hint only. Authoritative multi-window identity is session-scoped bd holder `pi:<SESSION_UNIQ>:<suffix|none>` (`SESSION_UNIQ` = full `id:` body with dashes stripped; never Maxpceo/git user.name; never 8-char UUID prefix). Policy: own `pi:` allow; footer-only allow iff bd holder empty/unreadable; foreign/Maxpceo deny even if footer held. Skills must pass literal `--holder` on acquire/release. |
 | `in` / `out` / `cache` | Pi assistant usage entries | Custom footer keeps token/cache totals because the standard Pi footer does not show this breakdown. |
 | `ext` | Live extension statuses from `footerData.getExtensionStatuses()` | Excludes duplicate dashboard statuses (`pi-workflow-dashboard`, `workflow-state`). |
 
@@ -180,7 +180,8 @@ Standard Pi/theme footer owns path/branch, selected model, thinking level, conte
 |---|---|
 | `blockGitAddAll` | Block `git add .`, `git add -A`, `git add --all` |
 | `blockMainMutation` | Block edit/write and ordinary `git add`/`git stage`/`git commit` on `main`/`master`, including `.pi/*`; use a feature branch/worktree unless an approved merge/release workflow or explicit override applies |
-| `requireMergeSlotForPush` | Block `git push` unless session context says merge-slot is held or current bd merge-slot holder evidence exists |
+| `requireMergeSlotForPush` | Block `git push` unless own-session bd holder `pi:<SESSION_UNIQ>:…` evidence exists, or footer `mergeSlotHeld` with empty/unreadable bd holder, or same-command `bd merge-slot acquire --holder` with own-session holder before push. Maxpceo/foreign holders never satisfy the gate. |
+| `requireMergeSlotSessionHolder` | Block bare `bd merge-slot acquire`/`release` and non-own-session / non-`pi:` `--holder` values |
 | `protectPaths` | Block edit/write to `.env`, `.git/`, `node_modules/` |
 | `blockBdCloseWithoutReview` | Block standard close and direct terminal status updates unless review/acceptance or explicit fast path permits it |
 | `blockEpicCloseWithIncompleteChildren` | Block standard and direct epic completion while any child bead is not closed, unless explicitly overridden with reason |

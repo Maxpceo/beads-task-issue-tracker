@@ -45,6 +45,14 @@ Prepare the project for `./release.sh`. The script is interactive and performs i
    ```
 10. Capture release output, version, commit/tag, and artifact links. Push tags/commits only through merge-slot if the script did not already handle safe push.
 
+    **Merge-slot holder recipe (identical to `land` / `merge-to-main`):** session-scoped `pi:<SESSION_UNIQ>:<suffix|none>` only. `SESSION_UNIQ` = full `id:` body with dashes stripped (not 8-char). Source `sessionKey` from `workflow_status` `details.sessionKey` or `PI_SESSION_KEY` comments (`id:…` only). Golden vector: `id:01a0a712-68e8-7664-b26e-347042f09f14` + `beads-task-issue-tracker-ho0p` → `pi:01a0a71268e87664b26e347042f09f14:ho0p`. Always pass a quoted literal `--holder 'pi:…'` on acquire and release; never bare acquire; never Maxpceo/git `user.name`. Do not auto-release foreign/Maxpceo in_progress holders.
+
+    ```bash
+    bd merge-slot acquire --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
+    # … push/tag steps …
+    bd merge-slot release --holder 'pi:01a0a71268e87664b26e347042f09f14:ho0p'
+    ```
+
 ## Handoff for human-run release
 
 Final release-prep message should include:
@@ -66,7 +74,7 @@ Give brief decision guidance:
 - Evidence before claims.
 - Do not skip changelog review.
 - CHANGELOG / README / release notes are English.
-- `main` is read-only for ordinary agent edits/commits. Release-time main mutations are allowed only inside this approved release workflow, with a clean tree, quality gates, and merge-slot-protected push/tag handling.
+- `main` is read-only for ordinary agent edits/commits. Release-time main mutations are allowed only inside this approved release workflow, with a clean tree, quality gates, and merge-slot-protected push/tag handling using session-scoped `--holder pi:<SESSION_UNIQ>:<suffix|none>` (never bare/Maxpceo).
 - If release script asks for human input or fails, stop with exact output.
 - Do not invent versioning; use the script and report what it selected/did.
 
