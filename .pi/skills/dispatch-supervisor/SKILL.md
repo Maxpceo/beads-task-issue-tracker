@@ -87,7 +87,7 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
 Typed dispatch selects the default agent from labels/description/files:
 
 - `frontend` / `ui` / Vue/component/page/composable → `vue-supervisor`;
-- `backend` / `tracker` / Rust/Tauri/Cargo → `tauri-supervisor`;
+- `backend` / `tracker` labels, or `src-tauri` / `rust` / `cargo` in title+description → `tauri-supervisor` (bare `tauri` in prose or role names like `tauri-supervisor` does not route here);
 - `ci` / `dx` / tests/workflow/tooling → `test-supervisor`.
 
 If the domain is ambiguous, ask one concrete question with 2-4 options before dispatch.

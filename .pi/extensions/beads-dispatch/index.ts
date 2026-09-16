@@ -379,10 +379,12 @@ async function getGitValue(pi: ExtensionAPI, cwd: string, args: string[]): Promi
 	return stdout.trim();
 }
 
-function chooseSupervisor(bead: BeadInfo): string {
+/** Pick supervisor role from bead labels/text. Bare "tauri" in prose (role names) must not force tauri-supervisor. */
+export function chooseSupervisor(bead: BeadInfo): string {
 	const labels = new Set(bead.labels ?? []);
 	const text = `${bead.title ?? ""}\n${bead.description ?? ""}`.toLowerCase();
-	if (labels.has("backend") || labels.has("tracker") || /rust|tauri|cargo|src-tauri/.test(text)) return "tauri-supervisor";
+	// Keep rust|cargo|src-tauri; omit bare tauri so role-words like tauri-supervisor do not misroute.
+	if (labels.has("backend") || labels.has("tracker") || /rust|cargo|src-tauri/.test(text)) return "tauri-supervisor";
 	if (labels.has("ci") || labels.has("dx") || /test|vitest|ci|workflow/.test(text)) return "test-supervisor";
 	if (labels.has("frontend") || labels.has("ui") || labels.has("data") || /vue|component|composable|page|app\//.test(text)) {
 		return "vue-supervisor";
