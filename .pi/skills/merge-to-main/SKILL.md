@@ -185,28 +185,7 @@ Conditions for `session can close`:
 
 Final report format:
 
-Start with a short human-readable summary before the merge evidence table:
-
-```text
-Кратко:
-- Проблема: <why the session needed merge-to-main>
-- Что сделал: <PR/CI/merge/cleanup actions in 1-3 bullets>
-- Результат: <origin/main/session-artifact outcome>
-```
-
-Then include the required evidence table:
-
-| Шаг | Результат |
-|---|---|
-| Commit | `<sha>` or not required |
-| Push | OK / not required |
-| PR | `#N` URL |
-| Docs | CHANGELOG/README/docs updated or skipped with explicit reason |
-| Acceptance coverage | matrix summary / override with approver+reason / blocker |
-| CI | PASS / skipped with reason |
-| Merge | merge commit / evidence |
-| Branch | `main`, `<sha>` |
-| Session artifacts | cleaned / blockers listed |
+Chat for Maxim follows `AGENTS.md`. `##` + что смержили + (`id` если есть). `## Проверка` — PR/CI/merge that actually ran. Decrypt task terms; do not dump the nine-column step table into chat.
 
 The last line must be exactly one of these forms:
 
@@ -225,4 +204,4 @@ The last line must be exactly one of these forms:
 - Do not report merge completion until checkout/pull main and final verdict checks have run.
 - `land` remains optional/manual; never require it as a pre-step before merge-to-main.
 - CHANGELOG/README/docs coverage belongs to this merge-to-main documentation phase and the documentation expert, not to `land`.
-- Final report is a two-column table plus the mandatory final verdict line.
+- Final report follows `AGENTS.md` chat canon plus the mandatory final verdict line.

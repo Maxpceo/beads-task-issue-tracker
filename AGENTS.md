@@ -78,53 +78,28 @@ Completion reports и status claims должны подкрепляться fres
 - workflow state stale/foreign/ambiguous и takeover не explicit;
 - требуется unapproved destructive/hard-to-reverse action.
 
-Final workflow/task reports должны начинаться с короткого human-readable summary перед evidence tables:
+Выводы в чат (для Максима):
 
-```text
-Кратко:
-- Проблема: <что было не так / зачем нужна была работа>
-- Что сделал: <1-3 кратких пункта или одно предложение об изменении>
-- Результат: <наблюдаемый результат для Максима / workflow / пользователя>
+Пиши обычный markdown. Секции, которые надо заметить — `## …`. Не копируй бланк в ` ```text `.
 
-Проверка:
-| Проверка | Результат |
-|---|---|
-| `<command or manual check>` | exit code N / observed result + relevant output excerpt |
+Автоход по approved workflow — без отчёта и без дубля footer (`plan`, `bdStatus`, branch, worktree, merge-slot). Упоминай footer только если значение anomalous, stale/foreign/ambiguous или safety-relevant.
 
-Изменённые файлы:
-- `path/file` — <почему изменён>
+Стоп или финал:
+1. `##` что случилось + название задачи + (`id`).
+2. Текст. Словарик проекта не объяснять заново: сессия, bead, claim, смоук-тест, супервизор, code-reviewer, land, merge, cmux-sidebar, пилюля, inreview, PI WORKFLOW UPDATE.
+   Имя из кода и английский жаргон этой задачи оставить и сразу расшифровать (что это и что видно). Не заменять русским синонимом. Пример: `MODE_VISUAL` — список стадий, при которых сайдбар рисует пилюлю. То же для leftover, last-writer, no-op, `clear`.
+   Скобки с agent-id только если роль и имя разные: супервизор тестов (`test-supervisor`).
+3. `## Проверка` — только реально гонявшиеся тесты (тип + файлы + passed/exit). Не писать, чего не гоняли.
+4. `## Файлы` — если менялись.
+5. Если нужен Максим или create follow-up при живом родителе: отдельный заголовок ровно `## Дальше` (без названия задачи — оно уже в пункте 1) + `1/2/3`. Не писать `## Дальше — <title>`. Create не конец ответа.
 
-Текущее состояние:
-- <closed / in review / blocked / next step>
-```
+В чат не вываливать: `complete_visible_dispatch`, `surface:…`, spawn-ack, ACCEPTANCE MATRIX, `rg` / `git diff --check` как строки отчёта, «Действие Максима: не требуется».
 
-Для bug/fix и workflow reports поля `Проблема`, `Что сделал` и `Результат` обязательны, если это не tiny acknowledgement без completed work. Evidence table всё равно обязательна для claims о том, что checks passed, fix works, acceptance met или workflow state changed. `Изменённые файлы` можно опустить или указать как `N/A`, если repository files не менялись. Normal Q&A не требует этого формата.
+Если говоришь «тесты прошли» — в `## Проверка` есть файл и exit. Это не замена заголовка. Normal Q&A этот формат не требует.
 
-Используй selective workflow reporting. Полные блоки `Где мы в workflow` обязательны, когда агент останавливается для decision/blocker, reports a failed required check, передаёт unresolved workflow или finishes a user-visible workflow/task. Когда требуется полный workflow block, размещай его после `Кратко` и evidence sections; он дополняет human summary и не должен его заменять. Routine internal checkpoints, пока агент продолжает автоматически, нужно опускать или сжимать до одного короткого предложения.
+После side-quest (create, docs, вопрос посередине) сразу вернуться к active non-terminal bead.
 
-Не дублируй footer state. Не сообщай normal значения `plan`, `bdStatus`, branch/worktree или merge-slot только потому, что они изменились; они уже видны в Pi footer/session context. Упоминай их только когда они anomalous, stale/foreign/ambiguous, safety-relevant или нужны как final evidence.
-
-Когда требуется полный блок `Где мы в workflow`, явно ответь:
-
-- `Текущий этап`: claim / planning / implementation / review / acceptance / landing / merge / blocked / deferred / closed.
-- `Стоп или продолжаю`: останавливается ли агент для decision/blocker, делает паузу после completed stage или продолжает автоматически после exception.
-- `Причина`: почему он останавливается/продолжает, с привязкой к bd status, policy, approval, failing checks или completed evidence.
-- `Следующий шаг`: следующее действие агента и требуется ли какое-либо action от Максима.
-
-Используй `Действие Максима: не требуется` только в final/recovery reports, где это снимает ambiguity. Не выводи полный блок только ради сообщения, что action не требуется.
-
-Пример blocker checkpoint:
-
-```text
-Где мы в workflow:
-- Текущий этап: review guard.
-- Стоп или продолжаю: стоп.
-- Причина: `review_bead` недоступен, а bd status уже `inreview`; без review tool нельзя закрывать bead.
-- Следующий шаг: восстановить review tool или явно подтвердить human acceptance.
-- Действие Максима: выбрать один из вариантов выше.
-```
-
-Короткая recovery note при automatic continuation:
+Короткая recovery при автоходе — одна строка:
 
 ```text
 Recovery: `gh pr merge` returned exit 1 after a local worktree checkout conflict, but PR #176 is merged and `ecc2ad8` is ancestor of `origin/main`; continuing cleanup.

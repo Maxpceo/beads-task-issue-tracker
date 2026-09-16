@@ -141,34 +141,10 @@ bd comments add <ID> "PATTERN: <pattern>"
 
 ## Reporting
 
-Use a full `Где мы в workflow` block for `NOT APPROVED`, failed acceptance, unavailable review tooling, ambiguous ownership, human acceptance/override requests, and final review reports. Routine `inreview -> simplified -> reviewed -> accepted` progress while continuing automatically should be silent or summarized only in the final evidence table.
+Chat for Maxim follows `AGENTS.md`. Routine `inreview -> simplified -> reviewed -> accepted` while continuing automatically is silent. Stop for `NOT APPROVED`, failed acceptance, unavailable review tooling, ambiguous ownership, or human override: `##` + `## Дальше` with `1/2/3`.
 
-For recoverable errors where review can continue safely, prefer a short note:
-
-```text
-Recovery: acceptance command failed because dependencies were missing; `pnpm install --frozen-lockfile` restored the environment, continuing checks.
-```
+Recoverable continue: one `Recovery:` line, then keep going.
 
 ## Final report
 
-Start with a short human-readable summary before the review evidence table:
-
-```text
-Кратко:
-- Проблема: <what needed review / acceptance confirmation>
-- Что сделал: <review, acceptance, follow-up, close actions in 1-3 bullets>
-- Результат: <APPROVED/NOT APPROVED, closed/open, and user-visible outcome>
-```
-
-Then include the required evidence table:
-
-| Шаг | Результат |
-|---|---|
-| Guard | status evidence |
-| Simplify | done/skipped |
-| Code review | APPROVED / NOT APPROVED |
-| Frontend checklist | pass/not applicable/issues |
-| Acceptance | acceptance coverage table with criterion, evidence, exit code/observed result, PASS/FAIL/NOT RUN/N/A |
-| Knowledge | captured key / — |
-| Follow-up beads | IDs / — |
-| Close | closed / left open with reason |
+`##` что случилось + название задачи + (`id`). `## Проверка` — only tests/commands that actually ran (files + passed/exit). NOT APPROVED keeps `## Дальше`. Do not dump Guard/Simplify/ACCEPTANCE MATRIX rows into chat.

@@ -16,7 +16,7 @@ description: Pi-native planning workflow for a claimed bead. Use after claim-bea
 
 ## Reporting
 
-Use a full `Где мы в workflow` block when strict planning stops for user approval, requirements are ambiguous, or planning is blocked. Do not announce normal plan-mode or bd-status values that the footer already shows. After approval/auto gate, continue silently to the next approved workflow step unless there is a real decision point.
+Chat for Maxim follows `AGENTS.md`. Do not announce normal plan-mode or bd-status values the footer already shows. After approval/auto gate, continue silently unless there is a real decision. When strict planning stops for approval, ambiguity, or a block: `##` + `## Дальше` with `1/2/3`.
 
 ## Plan-review cycle cap (workflow_plan_review)
 

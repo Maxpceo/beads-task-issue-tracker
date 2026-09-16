@@ -106,13 +106,4 @@ An epic is an organizational group. Prefer one feature branch for the whole epic
 
 ## Final report
 
-Use the standard two-column workflow report and include:
-
-| Шаг | Результат |
-|---|---|
-| Epic | `<EPIC_ID>` status |
-| Design doc | path / skipped with reason |
-| Children | IDs with dependency order |
-| Dispatched | child ID / supervisor / status |
-| Blockers | unresolved blockers or — |
-| Next ready | output summary from `bd ready` |
+Chat for Maxim follows `AGENTS.md`. `##` + epic id/title. Name children and next ready in prose. `## Дальше` when Maxim must choose. Do not use the two-column workflow dump as the report.

@@ -13,7 +13,7 @@ Pi keeps an active project-local agent set in `.pi/agents/` and shared workflow/
 | `detective` | `.pi/agents/detective.md` | Active investigation agent for root-cause analysis, dead-zone discovery, evidence gathering, and fix recommendations |
 | `discovery`, `scout`, `scribe`, `merge-supervisor` | No active Pi workflow caller | Intentionally omitted until a Pi workflow invokes them |
 
-All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead first, “Do not guess”, Evidence before claims, strict `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT` status vocabulary, and concise factual completion reports. Agents treat bd status as bead lifecycle authority; Pi workflow-state/session fields are context for ownership, plan/session mode, scope, and merge-slot hints.
+All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead first, “Do not guess”, Evidence before claims, and strict `DONE` / `DONE_WITH_CONCERNS` / `BLOCKED` / `NEEDS_CONTEXT` status vocabulary for orchestrator/child handoff. Chat with Maxim follows `AGENTS.md` (markdown `##`, decrypt task terms, no plaintext Кратко dump). Agents treat bd status as bead lifecycle authority; Pi workflow-state/session fields are context for ownership, plan/session mode, scope, and merge-slot hints.
 
 ## Rule delivery model
 

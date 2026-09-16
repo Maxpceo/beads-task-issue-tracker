@@ -23,7 +23,7 @@ Slash commands (`/workflow-status`, `/workflow-claim`, `/workflow-reset`, `/plan
 
 ## Reporting
 
-Use a full `Где мы в workflow` block only when claim stops or needs Maxim's decision (closed bead, assigned to someone else, stale/foreign ownership, typed tool unavailable, worktree failure). Do not report routine claim/worktree/plan-mode state that is already visible in the footer when continuing automatically.
+Chat for Maxim follows `AGENTS.md`. Auto-continue after a normal claim is silent (no footer dump). Stop only when claim needs Maxim (closed bead, assigned to someone else, stale/foreign ownership, typed tool unavailable, worktree failure): `##` + `## Дальше` with `1/2/3`.
 
 ## Rules
 

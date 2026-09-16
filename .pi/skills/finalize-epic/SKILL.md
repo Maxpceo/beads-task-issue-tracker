@@ -74,3 +74,7 @@ PARENT_EPIC: <EPIC_ID>
 4. Write `EPIC ACCEPTANCE MATRIX` mapping every epic acceptance/verification bullet to evidence.
 5. Close the epic only when every matrix row is `PASS` or `N/A` and no required blocker remains.
 6. If the epic cannot close, write `EPIC HANDOFF` with reason, remaining work, and next action.
+
+## Reporting
+
+Chat for Maxim follows `AGENTS.md`. Markers above stay in bd comments. The chat stop/final uses `##` + `## Дальше`, not a plaintext Кратко dump.
