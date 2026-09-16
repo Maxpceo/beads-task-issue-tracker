@@ -280,6 +280,7 @@ function makeHarness(options: {
   const inputHandlers: Array<(event: any, ctx: any) => unknown> = []
   const toolCallHandlers: Array<(event: any, ctx: any) => unknown> = []
   const agentEndHandlers: Array<(event: any, ctx: any) => unknown> = []
+  const agentSettledHandlers: Array<(event: any, ctx: any) => unknown> = []
   const sessionStartHandlers: Array<(event: any, ctx: any) => unknown> = []
   const beforeAgentStartHandlers: Array<(event?: any, ctx?: any) => unknown> = []
   const sendMessages: Array<{ message: any, options?: any }> = []
@@ -301,6 +302,7 @@ function makeHarness(options: {
       if (event === 'input') inputHandlers.push(handler)
       if (event === 'tool_call') toolCallHandlers.push(handler)
       if (event === 'agent_end') agentEndHandlers.push(handler)
+      if (event === 'agent_settled') agentSettledHandlers.push(handler)
       if (event === 'session_start') sessionStartHandlers.push(handler)
       if (event === 'before_agent_start') beforeAgentStartHandlers.push(handler)
     },
@@ -446,6 +448,7 @@ function makeHarness(options: {
     inputHandlers,
     toolCallHandlers,
     agentEndHandlers,
+    agentSettledHandlers,
     sessionStartHandlers,
     beforeAgentStartHandlers,
     sendMessages,
@@ -1491,7 +1494,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute Fast Path skips spawn and uses triggerTurn true', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
     const plan = [
       'FAST_PATH_RATIONALE: UI execute should implement without supervisor',
       SAMPLE_READY_PLAN,
@@ -1502,12 +1505,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx, plan)
-    await agentEndHandlers[0]?.({
-      messages: [{
-        role: 'assistant',
-        content: [{ type: 'text', text: plan }],
-      }],
-    }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
@@ -1607,13 +1605,13 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute writes durable PLAN APPROVED comment and shows started/running progress before dispatch resolves', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
     let releaseDispatch!: () => void
     mockSupervisorDispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve })
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx)
-    const execution = agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx) as Promise<void>
+    const execution = agentSettledHandlers[0]?.({}, ctx) as Promise<void>
     for (let i = 0; i < 10 && mockSupervisorDispatchCalls.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 0))
 
     const commentCallIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
@@ -1650,12 +1648,12 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute records an immediate runtime-hook blocker when typed continuation API is unavailable', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
     mockSupervisorDispatchAvailable = false
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
@@ -1671,12 +1669,12 @@ describe('Pi plan-mode typed workflow tools', () => {
 
   it('does not treat cmux spawn-ack as continuation completed', async () => {
     mockSupervisorDispatchSpawned = true
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui' })
     mockSupervisorDispatchSpawned = true
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task', transport: 'cmux' })
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
@@ -1686,11 +1684,11 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('continues dispatch when best-effort pre-dispatch progress message cannot be displayed', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui', failPreDispatchProgressMessage: true })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui', failPreDispatchProgressMessage: true })
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task' })
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
@@ -1700,7 +1698,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute blocks missing explicit worktree before durable comment or planApproved state', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
     const blockedPlan = [
       'Plan:\n1. Implement durable approval.',
       'Files to change:\n- .pi/extensions/plan-mode/index.ts',
@@ -1712,7 +1710,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx, blockedPlan)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: blockedPlan }] }] }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-ui']) }),
@@ -1725,11 +1723,11 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute does not set planApproved=true when durable PLAN APPROVED comment fails', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, activeTools, ctx } = makeHarness({ activeBead: 'bead-ui', commentAddFails: true })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, workflowUpdates, execCalls, activeTools, ctx } = makeHarness({ activeBead: 'bead-ui', commentAddFails: true })
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(true)
     expect(workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
@@ -2271,16 +2269,19 @@ describe('Pi plan-mode typed workflow tools', () => {
 })
 
 describe('Pi plan-mode complete-when-ready overlay', () => {
-  it('strict agent_end without plan_mode_complete does not open ready UI', async () => {
-    const { commandHandlers, agentEndHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
+  it('strict agent_end does not open ready UI; agent_settled after plan_mode_complete does', async () => {
+    const { commandHandlers, agentEndHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
     await commandHandlers.get('plan')?.handler('', ctx)
     await agentEndHandlers[0]?.({
       messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Clarifying question only' }] }],
     }, ctx)
-
     expect(customCalls).toHaveLength(0)
     expect(selectCalls).toHaveLength(0)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments')).toBe(false)
+
+    // settled without pending must not open UI either
+    await agentSettledHandlers[0]?.({}, ctx)
+    expect(customCalls).toHaveLength(0)
   })
 
   it('plan_mode_complete rejects empty/whitespace plan', async () => {
@@ -2292,7 +2293,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
   })
 
   it('plan_mode_complete + ready execute writes PLAN APPROVED via ready UI', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, customCalls, execCalls, workflowUpdates, ctx } = makeHarness({
+    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, execCalls, workflowUpdates, ctx } = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['execute'],
     })
@@ -2300,15 +2301,42 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const complete = await markPlanReady(toolHandlers, ctx)
     expect(complete.details.pending).toBe(true)
 
-    await agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     expect(customCalls.length).toBeGreaterThanOrEqual(1)
     expect(customCalls.every((call) => call.options === undefined || !((call.options as any)?.overlay === true))).toBe(true)
     const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
     expect(workflowUpdates.at(-1)).toMatchObject({ planApproved: true, planMode: 'off' })
+  })
+
+  it('ready-UI exception degrades gracefully: notify + clear pending, no throw, plan mode stays on', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui' })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    const notifications: Array<{ text: string; level: string }> = []
+    harness.ctx.ui.notify = (text: string, level: string) => { notifications.push({ text, level }) }
+    harness.ctx.ui.custom = async () => {
+      throw new Error('TUI render exploded')
+    }
+
+    await expect(harness.agentSettledHandlers[0]?.({}, harness.ctx)).resolves.toBeUndefined()
+
+    expect(notifications.length).toBeGreaterThanOrEqual(1)
+    expect(notifications.some((n) => n.text.includes('plan-mode ready-UI failed') && n.level === 'error')).toBe(true)
+    const persisted = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
+    expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(persisted?.data?.enabled).toBe(true)
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(harness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+
+    // next settled after the failure does not retry the broken UI (pending cleared)
+    const customCallsBefore = harness.customCalls.length
+    await harness.agentSettledHandlers[0]?.({}, harness.ctx)
+    expect(harness.customCalls.length).toBe(customCallsBefore)
   })
 
   it('ready stay and Esc clear pending without writing PLAN APPROVED', async () => {
@@ -2323,9 +2351,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     })
     await stayHarness.commandHandlers.get('plan')?.handler('', stayHarness.ctx)
     await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
-    await stayHarness.agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, stayHarness.ctx)
+    await stayHarness.agentSettledHandlers[0]?.({}, stayHarness.ctx)
 
     const stayPersisted = stayHarness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -2336,9 +2362,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(stayHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
 
     const customAfterStay = stayHarness.customCalls.length
-    await stayHarness.agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, stayHarness.ctx)
+    await stayHarness.agentSettledHandlers[0]?.({}, stayHarness.ctx)
     expect(stayHarness.customCalls.length).toBe(customAfterStay)
 
     const escHarness = makeHarness({
@@ -2347,9 +2371,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     })
     await escHarness.commandHandlers.get('plan')?.handler('', escHarness.ctx)
     await markPlanReady(escHarness.toolHandlers, escHarness.ctx)
-    await escHarness.agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, escHarness.ctx)
+    await escHarness.agentSettledHandlers[0]?.({}, escHarness.ctx)
 
     const escPersisted = escHarness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -2373,9 +2395,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       .at(-1) as { data?: { planReviewCycleCount?: number } } | undefined
     const cycleBefore = beforeCycleEntry?.data?.planReviewCycleCount ?? 0
 
-    await harness.agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, harness.ctx)
+    await harness.agentSettledHandlers[0]?.({}, harness.ctx)
 
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(true)
@@ -2415,8 +2435,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(pilot.customCalls).toHaveLength(0)
   })
 
-  it('restores pendingReadyPlan on session_start and shows ready-UI on next agent_end', async () => {
-    const { sessionStartHandlers, agentEndHandlers, customCalls, execCalls, ctx } = makeHarness({
+  it('restores pendingReadyPlan on session_start and shows ready-UI on next agent_settled', async () => {
+    const { sessionStartHandlers, agentSettledHandlers, customCalls, execCalls, ctx } = makeHarness({
       activeBead: 'bead-ui',
       entries: [
         {
@@ -2441,15 +2461,13 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
 
     await sessionStartHandlers[0]?.({}, ctx)
     expect(customCalls).toHaveLength(0)
-    await agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
     expect(customCalls.length).toBeGreaterThanOrEqual(1)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[1] === 'add')).toBe(true)
   })
 
   it('RPC/no-custom path uses select fallback and never hangs on ui.custom', async () => {
-    const { commandHandlers, toolHandlers, agentEndHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({
+    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({
       activeBead: 'bead-ui',
       mode: 'rpc',
       noCustom: true,
@@ -2457,9 +2475,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     })
     await commandHandlers.get('plan')?.handler('', ctx)
     await markPlanReady(toolHandlers, ctx)
-    await agentEndHandlers[0]?.({
-      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
-    }, ctx)
+    await agentSettledHandlers[0]?.({}, ctx)
 
     expect(customCalls).toHaveLength(0)
     expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(true)

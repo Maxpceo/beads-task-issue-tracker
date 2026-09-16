@@ -1108,6 +1108,25 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		persistState();
 	}
 
+	async function runStrictReadyUiLoopSafe(ctx: ExtensionContext): Promise<void> {
+		try {
+			await runStrictReadyUiLoop(ctx);
+		} catch (error) {
+			// Graceful degradation: a TUI/render failure in the ready-UI must never
+			// kill the session. Clear pending, notify, and stay in strict plan mode.
+			const message = error instanceof Error ? error.message : String(error);
+			clearPendingReadyPlan();
+			persistState();
+			try {
+				if (ctx.hasUI) {
+					ctx.ui.notify(`plan-mode ready-UI failed: ${message}; pending ready plan cleared, plan mode stays ON`, "error");
+				}
+			} catch {
+				// notify itself failing must not propagate either
+			}
+		}
+	}
+
 	async function runStrictReadyUiLoop(ctx: ExtensionContext): Promise<void> {
 		while (planModeEnabled && !autoExecuteEnabled && pendingReadyPlan) {
 			const planText = pendingReadyPlan;
@@ -1893,10 +1912,18 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			return;
 		}
 
-		// Strict complete-when-ready: show ready-UI only after plan_mode_complete set pending.
+		// Strict complete-when-ready: ready-UI is driven by agent_settled, not agent_end.
+		// Opening a blocking ctx.ui.custom from agent_end crashed the TUI session
+		// (beads-task-issue-tracker-gauq); agent_settled fires only after Pi stops
+		// auto-retrying/compacting, which is the safe moment to replace the editor.
+	});
+
+	// Strict ready-UI moved here from agent_end: pi fully settled, no pending rerun.
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (!planModeEnabled || autoExecuteEnabled || executionMode) return;
 		if (!pendingReadyPlan) return;
 		if (!ctx.hasUI) return;
-		await runStrictReadyUiLoop(ctx);
+		await runStrictReadyUiLoopSafe(ctx);
 	});
 
 	// Restore state on session start/resume
