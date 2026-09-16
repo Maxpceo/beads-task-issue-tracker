@@ -1058,6 +1058,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	/** Technical ids only — footer never replaces the human body. Best-effort beadId. */
+	function formatAutopilotHopFooter(taskId?: string, beadId?: string): string {
+		const lines: string[] = [];
+		if (beadId) lines.push(`Bead: ${beadId}`);
+		if (taskId) lines.push(`taskId: ${taskId}`);
+		return lines.length > 0 ? `\n\n${lines.join("\n")}` : "";
+	}
+
 	function artifactReportsStop(text: string): boolean {
 		return /\bStatus:\s*(?:BLOCKED|NEEDS_CONTEXT)\b/i.test(text)
 			|| /\bBEAD\s+\S+\s+STATUS:\s*(?:BLOCKED|NEEDS_CONTEXT)\b/i.test(text)
@@ -1067,14 +1075,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	async function handleAutopilotRuntimeHop(ctx: ExtensionContext, ping: ParsedVisiblePing): Promise<void> {
 		if (ping.missingId || !ping.taskId) {
 			sendAutopilotHopMessage(
-				"STOP: autopilot runtime hop получил [PING] без taskId= / задача <id>. complete_visible_dispatch не вызывался. Укажите taskId или повторите ping.sh.",
+				"STOP: пришёл [PING] без taskId. Hop не забирал пинг и complete не вызывался. Укажите taskId в ping.sh или повторите с корректным id.\nДействие Максима: поправьте child/ping.",
 				"autopilot-hop-stop",
 			);
 			return;
 		}
+
+		const taskId = ping.taskId;
+		const bestEffortBeadId = (): string | undefined => {
+			try {
+				return findRegistryByTaskId(taskId)?.entry?.beadId;
+			} catch {
+				return undefined;
+			}
+		};
+
 		if (ping.kind === "error") {
 			sendAutopilotHopMessage(
-				`STOP: [PING-ERROR] taskId=${ping.taskId}. Autopilot hop остановлен; panes не закрывались. Действие Максима: разберите ошибку child или followup_visible_dispatch.`,
+				`STOP: child прислал [PING-ERROR]. Hop остановлен, панели не закрывались.\nПинг уже обработан; ждать [PING] не нужно.\nДействие Максима: разберите ошибку child или сделайте followup_visible_dispatch.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
 				"autopilot-hop-stop",
 			);
 			return;
@@ -1082,39 +1100,48 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		let completeResult: { status: string; text: string };
 		try {
-			completeResult = await completeVisibleDispatch(pi as any, { taskId: ping.taskId }, ctx as any);
+			completeResult = await completeVisibleDispatch(pi as any, { taskId }, ctx as any);
 		} catch (error) {
 			sendAutopilotHopMessage(
-				`STOP: complete_visible_dispatch failed for ${ping.taskId}: ${(error as Error).message}`,
+				`STOP: не удалось забрать результат child (complete failed): ${(error as Error).message}\nДействие Максима: проверьте hop/registry или повторите после фикса.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
 				"autopilot-hop-stop",
 			);
 			return;
 		}
 
-		sendAutopilotHopMessage(
-			`Autopilot hop: complete_visible_dispatch status=${completeResult.status} taskId=${ping.taskId}\n${completeResult.text.slice(0, 1200)}`,
-		);
-
 		if (completeResult.status === "noop") {
 			// submitted/verdict already recorded — no second reviewer/complete.
+			sendAutopilotHopMessage(
+				`Повторный пинг: шаг уже был зафиксирован раньше. Новых действий hop не делает; панели без изменений.\nЖдать [PING] не нужно.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
+			);
 			return;
 		}
 
 		if (completeResult.status === "incomplete" || completeResult.status === "result-only") {
 			if (artifactReportsStop(completeResult.text)) {
 				sendAutopilotHopMessage(
-					`STOP: supervisor/reviewer artifact reports BLOCKED/NEEDS_CONTEXT for ${ping.taskId}. Autopilot hop paused; panes live. Действие Максима: fix/followup или снять autopilot.`,
+					`STOP: child сообщил BLOCKED или NEEDS_CONTEXT. Autopilot hop на паузе; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: fix/followup или снять autopilot.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
 					"autopilot-hop-stop",
 				);
+				return;
 			}
-			// incomplete/result-only: later ping may complete again.
+			if (completeResult.status === "incomplete") {
+				sendAutopilotHopMessage(
+					`Пинг hop уже забрал. Результат child ещё не готов (incomplete) — это не финал.\nЖдать [PING] Максиму не нужно; следующий [PING] придёт от child, когда артефакт будет готов. Панели живы.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
+				);
+			} else {
+				// result-only: artifact present but not review-ready; reviewer not started.
+				sendAutopilotHopMessage(
+					`Пинг hop уже забрал. Артефакт есть, но он ещё не review-ready (result-only): reviewer не запускался, панели живы.\nЭто не «шаг закрыт» и не «работа закончена». Ждать [PING] Максиму не нужно; следующий [PING] — от child после доработки артефакта.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
+				);
+			}
 			return;
 		}
 
-		const found = findRegistryByTaskId(ping.taskId);
+		const found = findRegistryByTaskId(taskId);
 		if (!found?.entry) {
 			sendAutopilotHopMessage(
-				`STOP: registry entry missing after complete for ${ping.taskId}.`,
+				`STOP: после complete нет записи registry. Дальше hop не идёт.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: проверьте dispatch-registry.${formatAutopilotHopFooter(taskId)}`,
 				"autopilot-hop-stop",
 			);
 			return;
@@ -1124,7 +1151,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (completeResult.status === "submitted") {
 			if (artifactReportsStop(completeResult.text)) {
 				sendAutopilotHopMessage(
-					`STOP: submitted artifact still reports BLOCKED/NEEDS_CONTEXT for ${entry.beadId}. Reviewer not spawned.`,
+					`STOP: submitted-артефакт всё ещё BLOCKED/NEEDS_CONTEXT. Reviewer не запускался; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: fix/followup.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;
@@ -1132,43 +1159,56 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const live = findLiveRegistryEntriesForBead(entry.beadId);
 			const liveReviewer = live.some((item) => item.entry.role === "code-reviewer" && item.entry.status !== "tombstone");
 			if (liveReviewer) {
-				sendAutopilotHopMessage(`Autopilot hop: live reviewer already on ${entry.beadId}; skip second requestReviewerDispatch.`);
+				sendAutopilotHopMessage(
+					`Пинг hop уже забрал (submitted). Live reviewer на bead уже есть — второй requestReviewerDispatch не запускался.\nЖдать [PING] Максиму не нужно; дождитесь вердикта reviewer.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+				);
 				return;
 			}
 			if (!entry.worktree) {
 				sendAutopilotHopMessage(
-					`STOP: no worktree on registry entry for ${entry.beadId}; cannot dispatch_reviewer.`,
+					`STOP: у registry entry нет worktree — dispatch_reviewer невозможен.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: восстановите worktree scope.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;
 			}
-			const reviewer = await requestReviewerDispatch(
-				pi as any,
-				{ beadId: entry.beadId, cwd: entry.worktree, transport: "cmux" },
-				ctx as any,
-			);
+			let reviewer: { ok: boolean; text: string; error?: string };
+			try {
+				reviewer = await requestReviewerDispatch(
+					pi as any,
+					{ beadId: entry.beadId, cwd: entry.worktree, transport: "cmux" },
+					ctx as any,
+				);
+			} catch (error) {
+				sendAutopilotHopMessage(
+					`STOP: не удалось запустить code-reviewer: ${(error as Error).message}\nПинг супервизора уже забран; панели живы.\nЖдать [PING] не нужно.\nДействие Максима: повторите dispatch_reviewer или followup.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
 			if (!reviewer.ok) {
 				sendAutopilotHopMessage(
-					`STOP: requestReviewerDispatch failed for ${entry.beadId}: ${reviewer.error ?? reviewer.text}`,
+					`STOP: не удалось запустить code-reviewer: ${reviewer.error ?? "ошибка dispatch"}.\nПинг супервизора уже забран; панели живы.\nЖдать [PING] не нужно.\nДействие Максима: повторите dispatch_reviewer или followup.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;
 			}
-			sendAutopilotHopMessage(`Autopilot hop: reviewer dispatched for ${entry.beadId}\n${reviewer.text.slice(0, 800)}`);
+			sendAutopilotHopMessage(
+				`Супервизор сдал работу (submitted). Пинг hop уже забрал; ждать [PING] Максиму не нужно.\nЗапущен code-reviewer. Дальше — вердикт reviewer; панели живы.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+			);
 			return;
 		}
 
 		if (completeResult.status === "verdict") {
 			if (/NOT APPROVED/i.test(completeResult.text)) {
 				sendAutopilotHopMessage(
-					`STOP: CODE REVIEW NOT APPROVED for ${entry.beadId}. Bead remains inreview; panes live for followup_visible_dispatch. Действие Максима: fix list / followup.`,
+					`STOP: code review вернул NOT APPROVED. Bead остаётся inreview; панели живы для followup.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: правки по fix-list / followup_visible_dispatch.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;
 			}
 			if (!entry.worktree || !entry.beadId) {
 				sendAutopilotHopMessage(
-					`STOP: missing bead/worktree after APPROVED verdict for ${ping.taskId}.`,
+					`STOP: после APPROVED нет bead/worktree — close path не запущен.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: проверьте registry.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;
@@ -1179,8 +1219,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				startCommit: entry.startCommit,
 			});
 			if (!finalize.ok) {
+				// Do not dump finalize.text / ACCEPTANCE MATRIX body into the hop message.
 				sendAutopilotHopMessage(
-					`STOP: autopilot close path blocked for ${entry.beadId}: ${finalize.text}`,
+					`STOP: close path заблокирован (acceptance/matrix или preflight). Bead не закрыт; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: разберите блокировку close / matrix, затем fix или снимите autopilot.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;
@@ -1193,19 +1234,26 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				planApproved: false,
 				bdStatus: "closed",
 			});
+			let closeFailedMessage: string | undefined;
 			try {
-				const closeResult = await closeVisibleDispatch(pi as any, { beadId: entry.beadId }, ctx as any);
-				sendAutopilotHopMessage(`Autopilot hop: bead closed; close_visible_dispatch status=${closeResult.status}\n${closeResult.text}`);
+				await closeVisibleDispatch(pi as any, { beadId: entry.beadId }, ctx as any);
+				// status closed and noop are both success (panes closed or already not live).
 			} catch (error) {
-				sendAutopilotHopMessage(
-					`STOP: bd closed but close_visible_dispatch failed for ${entry.beadId}: ${(error as Error).message}`,
-					"autopilot-hop-stop",
-				);
+				closeFailedMessage = (error as Error).message;
 			}
 			autopilotEnabled = false;
 			persistState();
 			updateStatus(ctx);
-			sendAutopilotHopMessage(`Autopilot hop complete: ${entry.beadId} closed without «закрывай?»; autopilot cleared.`);
+			if (closeFailedMessage) {
+				sendAutopilotHopMessage(
+					`STOP: bead уже closed в bd, но закрытие панелей упало: ${closeFailedMessage}\nAutopilot сброшен. Панели могли остаться.\nЖдать [PING] не нужно.\nДействие Максима: закройте панели вручную при необходимости.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+					"autopilot-hop-stop",
+				);
+				return;
+			}
+			sendAutopilotHopMessage(
+				`Ревью APPROVED, bead закрыт без «закрывай?». Панели закрыты или уже не live. Autopilot сброшен.\nЖдать [PING] не нужно. Действие Максима: не требуется.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+			);
 		}
 	}
 
