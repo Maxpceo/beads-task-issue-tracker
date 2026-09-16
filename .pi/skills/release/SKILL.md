@@ -72,13 +72,4 @@ Give brief decision guidance:
 
 ## Final report
 
-| Шаг | Результат |
-|---|---|
-| Pre-flight | branch/clean/ahead |
-| Quality gates | command + exit code |
-| Highlights | bullets selected + rationale |
-| Release preview | OK/issues |
-| Footer | OK/updated/issues |
-| Handoff/script | human-run / command output |
-| Version/tag | value / not created |
-| Links | release/artifacts / — |
+Chat for Maxim follows `AGENTS.md`. `##` + что зарелизили. `## Проверка` — quality gates / version / tag that actually ran. Do not replace the human text with the step table.

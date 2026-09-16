@@ -221,13 +221,6 @@ bd todo add "Короткое локальное напоминание"
 
 ## Reporting
 
-Concise response after creation:
-
-```text
-Создал bead `<id>`: <title>.
-- Type/priority/labels: task/P2/pi,workflow
-- Dependencies: discovered-from:<id> / нет
-- Sync: `bd dolt push` exit 0 / not run (reason)
-```
+Chat for Maxim follows `AGENTS.md` (markdown `##`, decrypt task terms, no footer dump). After create do not end on id/labels/sync. If the session has a live non-terminal parent/active bead, that create is not the end of the reply: `## Дальше` with that bead and `1/2/3`.
 
 If creation is blocked, report the exact guard, command pattern used, and the minimal correction. Do not silently bypass policy.

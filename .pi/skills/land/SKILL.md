@@ -67,33 +67,8 @@ description: Pi-native landing workflow. Use when user says “пора зака
 
 ## Reporting
 
-Use a full `Где мы в workflow` block for failed landing commands, policy/merge-slot blockers, intentionally open session beads, required Maxim decisions, and the final landing report. Do not emit separate checkpoint blocks for normal clean status, branch, bd status, or merge-slot values that are already visible in the footer or final evidence.
+Chat for Maxim follows `AGENTS.md`. Do not emit footer checkpoints for clean status/branch/bd/merge-slot. Stop for failed land, policy/merge-slot blockers, intentionally open session beads, or a Maxim decision: `##` + `## Дальше` with `1/2/3`.
 
 ## Final report
 
-Start with a short human-readable summary before the evidence table:
-
-```text
-Кратко:
-- Проблема: <why landing was needed / what remained unsaved>
-- Что сделал: <commit/push/save actions in 1-3 bullets>
-- Результат: <saved branch/commit state and what Maxim can do next>
-```
-
-Then include the required evidence table:
-
-| Шаг | Результат |
-|---|---|
-| Commits | sha list / not required |
-| Quality gates | command + exit code / skipped reason |
-| Push | OK / not required |
-| Closed beads | IDs / — |
-| Open session beads | IDs and reason / — |
-| Follow-up beads | count / — |
-| Save evidence | pushed branch / not required |
-
-If follow-up beads exist, add:
-
-| Bead | Статус | Что |
-|---|---|---|
-| `<id>` | open/closed | one-line summary |
+`##` + название задачи + (`id`). `## Проверка` — commit/push that actually ran. If follow-ups exist, name them in prose. Then `## Дальше` when Maxim must choose land vs merge vs nothing.

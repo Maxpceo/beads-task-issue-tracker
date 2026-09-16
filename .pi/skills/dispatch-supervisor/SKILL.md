@@ -103,25 +103,8 @@ If the domain is ambiguous, ask one concrete question with 2-4 options before di
 
 ## Reporting
 
-Use a full `Где мы в workflow` block for `BLOCKED`, `NEEDS_CONTEXT`, failed guards, unavailable review path, required policy/context decisions, and final dispatch summaries. Do not print routine guard/pass or footer-state checkpoints while continuing automatically from dispatch to review.
+Chat for Maxim follows `AGENTS.md`. Do not print routine guard/pass or footer-state checkpoints while continuing from dispatch to review. Stop for `BLOCKED`, `NEEDS_CONTEXT`, failed guards, or a Maxim decision: `##` + `## Дальше` with `1/2/3`.
 
 ## Final report
 
-Start with a short human-readable summary before the dispatch evidence table:
-
-```text
-Кратко:
-- Проблема: <what implementation/review handoff was needed>
-- Что сделал: <selected supervisor and dispatch/recovery actions in 1-3 bullets>
-- Результат: <launched/inreview/blocked outcome and next workflow step>
-```
-
-Then include the required evidence table:
-
-| Шаг | Результат |
-|---|---|
-| Guard | status/assignee/blockers |
-| BRANCH | branch |
-| START_COMMIT | sha |
-| Supervisor | selected agent and reason |
-| Dispatch | launched / dry-run / blocked reason |
+`## Запустил агента` + название задачи + (`id`). Name the role; add (`agent-id`) only if it differs from the role (супервизор тестов (`test-supervisor`)). No spawn-ack, pane, or `surface:` lines in chat.

@@ -190,3 +190,7 @@ const result = await ui.custom<string | undefined>(
 - `pnpm exec vitest run tests/extensions/extension-entrypoints.test.ts` — default export
 - Фокусные tests расширения; mock дополнен, если нужны Input/SelectList/clear/Key/onSelect
 - Live TUI: custom path при `mode===tui`; overlay options when required; fallback без hang; cancel = no write
+
+## Reporting
+
+N/A as a stop-for-Maxim workflow skill: this is an authoring checklist. If the surrounding task stops for Maxim, follow `AGENTS.md` chat canon.
