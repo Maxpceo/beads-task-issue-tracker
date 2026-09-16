@@ -1210,7 +1210,10 @@ describe('Pi plan-mode typed workflow tools', () => {
     }, undefined, undefined, ctx)
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
-    expect(blocked.content[0].text).toContain('no worktreePath')
+    expect(blocked.content[0].text).toContain('no readable task worktree')
+    expect(blocked.content[0].text).toContain('bd worktree create')
+    expect(blocked.content[0].text).toContain('--branch task/plan-approved')
+    expect(blocked.content[0].text).not.toContain('refusing to approve against ambiguous main-start cwd')
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
     ]))
@@ -1256,8 +1259,11 @@ describe('Pi plan-mode typed workflow tools', () => {
     }, undefined, undefined, ctx)
 
     expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('no readable task worktree')
     expect(blocked.content[0].text).toContain('bd worktree create')
     expect(blocked.content[0].text).not.toContain('--branch main')
+    expect(blocked.content[0].text).not.toContain('<path>')
+    expect(blocked.content[0].text).not.toContain('<canonical-task-branch>')
     expect(blocked.content[0].text).not.toMatch(/PLAN APPROVED/)
     expect(blocked.content[0].text).not.toContain('runtime hook missing')
     expect(execCalls).not.toEqual(expect.arrayContaining([
@@ -1266,6 +1272,60 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates).toHaveLength(0)
     expect(mockSupervisorDispatchCalls).toHaveLength(0)
     expect(sendMessages).toHaveLength(0)
+  })
+
+  it('workflow_plan_approved uses plan-evidence canon in recovery when recorded scope is protected main', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      entries: [{ type: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'main', worktreePath: '/tmp/project', sessionKey: 'id:session-current' } }],
+    })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-recorded-main-with-evidence-canon', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: recover with executable canon from evidence.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: recovery names the future task worktree.',
+        'BRANCH: fix/llvr-plan-approve-main-worktree-deadlock',
+        'WORKTREE: /tmp/llvr-plan-approve-main-worktree-deadlock',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toMatch(/no readable task worktree|not a readable git worktree/)
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/llvr-plan-approve-main-worktree-deadlock --branch fix/llvr-plan-approve-main-worktree-deadlock')
+    expect(blocked.content[0].text).not.toContain('--branch main')
+    expect(blocked.content[0].text).not.toContain('<path>')
+    expect(blocked.content[0].text).not.toContain('<canonical-task-branch>')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
+  })
+
+  it('workflow_plan_approved recovers incomplete recorded scope with no readable task worktree + recovery', async () => {
+    const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({
+      taskScopeGit: true,
+      entries: [{ type: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', sessionKey: 'id:session-current' } }],
+    })
+
+    const blocked = await toolHandlers.get('workflow_plan_approved')?.execute('call-recorded-incomplete-recoverable', {
+      beadId: 'bead-plan',
+      planEvidence: [
+        'Plan: incomplete recorded scope is recoverable.',
+        'Files: .pi/extensions/plan-mode/index.ts.',
+        'Acceptance: recovery is executable.',
+        'BRANCH: task/plan-approved',
+        'WORKTREE: /tmp/missing-incomplete',
+      ].join('\n'),
+    }, undefined, undefined, ctx)
+
+    expect(blocked.content[0].text).toContain('workflow_plan_approved blocked')
+    expect(blocked.content[0].text).toContain('bd worktree create /tmp/missing-incomplete --branch task/plan-approved')
+    expect(blocked.content[0].text).not.toContain('no worktreePath; refusing')
+    expect(execCalls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+    ]))
+    expect(workflowUpdates).toHaveLength(0)
   })
 
   it('explicit evidence cwd on main does not bypass the guard when recorded scope is also main', async () => {
