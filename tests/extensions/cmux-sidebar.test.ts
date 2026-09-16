@@ -222,9 +222,38 @@ describe('cmux-sidebar extension', () => {
     const cmux = h.cmuxCalls()
     expect(cmux).toHaveLength(3)
     expectSetStatus(cmux[0], 'abcd · Claimed title', 'circle.fill', '#0a84ff')
-    expectSetProgress(cmux[1], '0.15', 'claimed')
+    expectSetProgress(cmux[1], '0.15', 'взята')
     expectSetDescription(cmux[2], 'Claimed title')
     expect(h.bdCalls()).toEqual([{ command: 'bd', args: ['show', 'beads-task-issue-tracker-abcd', '--json'] }])
+  })
+
+  it('a2) UNBOUND leftover sessionMode + state=claimed + bead → claimed visual (not 0 cmux)', async () => {
+    const h = createHarness({
+      bd: async () => ({ code: 0, stdout: JSON.stringify([{ title: 'Unbound claim title' }]), stderr: '' }),
+    })
+
+    await h.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-unbd',
+      state: 'claimed',
+      sessionMode: 'UNBOUND_WORKFLOW_STATE',
+    })
+
+    const cmux = h.cmuxCalls()
+    expect(cmux).toHaveLength(3)
+    expectSetStatus(cmux[0], 'unbd · Unbound claim title', 'circle.fill', '#0a84ff')
+    expectSetProgress(cmux[1], '0.15', 'взята')
+    expectSetDescription(cmux[2], 'Unbound claim title')
+  })
+
+  it('a3) both-unmapped leftover sessionMode+state + bead → no-op (0 cmux)', async () => {
+    const h = createHarness()
+    await h.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-both',
+      state: 'idle',
+      sessionMode: 'UNBOUND_WORKFLOW_STATE',
+    })
+    expect(h.cmuxCalls()).toEqual([])
+    expect(h.bdCalls()).toEqual([])
   })
 
   it('b) claimed→implementing on one harness, zero second bd show', async () => {
@@ -250,16 +279,16 @@ describe('cmux-sidebar extension', () => {
     const cmux = h.cmuxCalls()
     expect(cmux).toHaveLength(3)
     expectSetStatus(cmux[0], 'abcd · Stable title', 'hammer', '#ff9500')
-    expectSetProgress(cmux[1], '0.60', 'implementing')
+    expectSetProgress(cmux[1], '0.60', 'работа')
     expectSetDescription(cmux[2], 'Stable title')
   })
 
   it('c) sessionMode-only inreview + table-driven planning/plan_approved/reviewing', async () => {
     const cases = [
-      { mode: 'inreview', icon: 'eye', color: '#ffd60a', progress: '0.80' },
-      { mode: 'planning', icon: 'circle.fill', color: '#0a84ff', progress: '0.30' },
-      { mode: 'plan_approved', icon: 'checkmark.circle', color: '#0a84ff', progress: '0.45' },
-      { mode: 'reviewing', icon: 'eye', color: '#ffd60a', progress: '0.90' },
+      { mode: 'inreview', icon: 'eye', color: '#ffd60a', progress: '0.80', labelRu: 'на ревью' },
+      { mode: 'planning', icon: 'circle.fill', color: '#0a84ff', progress: '0.30', labelRu: 'план' },
+      { mode: 'plan_approved', icon: 'checkmark.circle', color: '#0a84ff', progress: '0.45', labelRu: 'план ок' },
+      { mode: 'reviewing', icon: 'eyeglasses', color: '#ffd60a', progress: '0.90', labelRu: 'ревью' },
     ] as const
 
     for (const row of cases) {
@@ -273,7 +302,7 @@ describe('cmux-sidebar extension', () => {
       const cmux = h.cmuxCalls()
       expect(cmux).toHaveLength(3)
       expectSetStatus(cmux[0], `mode · ${row.mode} title`, row.icon, row.color)
-      expectSetProgress(cmux[1], row.progress, row.mode)
+      expectSetProgress(cmux[1], row.progress, row.labelRu)
       expectSetDescription(cmux[2], `${row.mode} title`)
     }
   })
@@ -299,7 +328,7 @@ describe('cmux-sidebar extension', () => {
     const cmux = closed.cmuxCalls()
     expect(cmux).toHaveLength(3)
     expectSetStatus(cmux[0], 'term · Closed title', 'arrow.up.circle', '#0a84ff')
-    expectSetProgress(cmux[1], '0.98', 'landing')
+    expectSetProgress(cmux[1], '0.98', 'нужен merge')
     expectSetDescription(cmux[2], 'Closed title')
   })
 
@@ -388,8 +417,8 @@ describe('cmux-sidebar extension', () => {
 
   it('g) accepted/landing + activeBead → set; idle + activeBead → no-op', async () => {
     const mapped = [
-      { mode: 'accepted', icon: 'checkmark.circle', color: '#30d158', progress: '0.95' },
-      { mode: 'landing', icon: 'arrow.up.circle', color: '#0a84ff', progress: '0.98' },
+      { mode: 'accepted', icon: 'checkmark.circle', color: '#30d158', progress: '0.95', labelRu: 'принята' },
+      { mode: 'landing', icon: 'arrow.up.circle', color: '#0a84ff', progress: '0.98', labelRu: 'нужен merge' },
     ] as const
 
     for (const row of mapped) {
@@ -404,7 +433,7 @@ describe('cmux-sidebar extension', () => {
       const cmux = h.cmuxCalls()
       expect(cmux).toHaveLength(3)
       expectSetStatus(cmux[0], `left · ${row.mode} title`, row.icon, row.color)
-      expectSetProgress(cmux[1], row.progress, row.mode)
+      expectSetProgress(cmux[1], row.progress, row.labelRu)
       expectSetDescription(cmux[2], `${row.mode} title`)
     }
 
@@ -428,7 +457,7 @@ describe('cmux-sidebar extension', () => {
     })
     expect(h.cmuxCalls()).toHaveLength(3)
     expectSetStatus(h.cmuxCalls()[0], 'acc · Accepted title', 'eye', '#ffd60a')
-    expectSetProgress(h.cmuxCalls()[1], '0.80', 'inreview')
+    expectSetProgress(h.cmuxCalls()[1], '0.80', 'на ревью')
     h.resetCalls()
 
     await h.trigger('tool_result', {
@@ -438,7 +467,7 @@ describe('cmux-sidebar extension', () => {
     const cmux = h.cmuxCalls()
     expect(cmux).toHaveLength(3)
     expectSetStatus(cmux[0], 'acc · Accepted title', 'checkmark.circle', '#30d158')
-    expectSetProgress(cmux[1], '0.95', 'accepted')
+    expectSetProgress(cmux[1], '0.95', 'принята')
     expectSetDescription(cmux[2], 'Accepted title')
   })
 
@@ -460,7 +489,7 @@ describe('cmux-sidebar extension', () => {
       const landing = h.cmuxCalls()
       expect(landing).toHaveLength(3)
       expectSetStatus(landing[0], 'ownc · Owned set', 'arrow.up.circle', '#0a84ff')
-      expectSetProgress(landing[1], '0.98', 'landing')
+      expectSetProgress(landing[1], '0.98', 'нужен merge')
       expectSetDescription(landing[2], 'Owned set')
       expect(h.bdCalls()).toHaveLength(0)
       h.resetCalls()
@@ -485,7 +514,7 @@ describe('cmux-sidebar extension', () => {
 
       await h.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
       expect(h.cmuxCalls()).toHaveLength(3)
-      expectSetProgress(h.cmuxCalls()[1], '0.98', 'landing')
+      expectSetProgress(h.cmuxCalls()[1], '0.98', 'нужен merge')
       h.resetCalls()
 
       await h.trigger('tool_result', { state: 'merged', sessionMode: 'merged' })
@@ -532,7 +561,7 @@ describe('cmux-sidebar extension', () => {
     h.resetCalls()
 
     await h.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
-    expectSetProgress(h.cmuxCalls()[1], '0.98', 'landing')
+    expectSetProgress(h.cmuxCalls()[1], '0.98', 'нужен merge')
     expect(h.bdCalls()).toHaveLength(0)
     h.resetCalls()
 
@@ -544,7 +573,7 @@ describe('cmux-sidebar extension', () => {
     const cmux = h.cmuxCalls()
     expect(cmux).toHaveLength(3)
     expectSetStatus(cmux[0], 'next · Next bead title', 'circle.fill', '#0a84ff')
-    expectSetProgress(cmux[1], '0.15', 'claimed')
+    expectSetProgress(cmux[1], '0.15', 'взята')
     expectSetDescription(cmux[2], 'Next bead title')
   })
 
@@ -592,7 +621,7 @@ describe('cmux-sidebar extension', () => {
     const setCalls = h.cmuxCalls().filter(c => c.args[0] !== 'identify')
     expect(setCalls).toHaveLength(3)
     expectSetStatus(setCalls[0], 'noid · Outside cmux', 'circle.fill', '#0a84ff', 'workspace:7')
-    expectSetProgress(setCalls[1], '0.15', 'claimed', 'workspace:7')
+    expectSetProgress(setCalls[1], '0.15', 'взята', 'workspace:7')
     expectSetDescription(setCalls[2], 'Outside cmux', 'workspace:7')
 
     // Empty string env is also missing.
@@ -628,7 +657,7 @@ describe('cmux-sidebar extension', () => {
     let cmux = h.cmuxCalls()
     expect(cmux).toHaveLength(2)
     expectSetStatus(cmux[0], 'fail', 'circle.fill', '#0a84ff')
-    expectSetProgress(cmux[1], '0.15', 'claimed')
+    expectSetProgress(cmux[1], '0.15', 'взята')
     expect(cmux.some(c => c.args.includes('set-description'))).toBe(false)
     h.resetCalls()
 
