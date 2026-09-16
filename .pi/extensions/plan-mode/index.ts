@@ -1127,12 +1127,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			if (completeResult.status === "incomplete") {
 				sendAutopilotHopMessage(
-					`Пинг hop уже забрал. Результат child ещё не готов (incomplete) — это не финал.\nЖдать [PING] Максиму не нужно; следующий [PING] придёт от child, когда артефакт будет готов. Панели живы.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
+					`Пинг hop уже забрал. Результат child ещё не готов — это не финал.\nЖдать [PING] Максиму не нужно; следующий [PING] придёт от child, когда артефакт будет готов. Панели живы.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
 				);
 			} else {
 				// result-only: artifact present but not review-ready; reviewer not started.
 				sendAutopilotHopMessage(
-					`Пинг hop уже забрал. Артефакт есть, но он ещё не review-ready (result-only): reviewer не запускался, панели живы.\nЭто не «шаг закрыт» и не «работа закончена». Ждать [PING] Максиму не нужно; следующий [PING] — от child после доработки артефакта.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
+					`Пинг hop уже забрал. Артефакт есть, но к ревью он ещё не готов: reviewer не запускался, панели живы.\nЭто не «шаг закрыт» и не «работа закончена». Ждать [PING] Максиму не нужно; следующий [PING] — от child после доработки артефакта.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
 				);
 			}
 			return;
