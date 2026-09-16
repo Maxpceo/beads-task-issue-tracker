@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import ts from 'typescript'
+import * as piTuiMock from '../mocks/pi-tui'
 
 import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
@@ -17,7 +18,7 @@ import {
 } from '../../.pi/extensions/plan-review/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
-const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
+const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'plan_mode_complete', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
 const hopWorkflowTools = [
   'complete_visible_dispatch',
   'followup_visible_dispatch',
@@ -80,13 +81,30 @@ function defaultMockPlanReviewResults(): PlanReviewResult[] {
   }))
 }
 
+function transpileSibling(relativePath: string): Record<string, unknown> {
+  const filePath = resolve(__dirname, '../../.pi/extensions/plan-mode', relativePath.replace(/\.js$/, '.ts'))
+  const siblingSource = readFileSync(filePath, 'utf8')
+  const { outputText } = ts.transpileModule(siblingSource, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  })
+  const siblingModule = { exports: {} as Record<string, unknown> }
+  const siblingRequire = (id: string) => {
+    if (id === '@earendil-works/pi-tui') return piTuiMock
+    throw new Error(`Unexpected sibling require: ${id}`)
+  }
+  new Function('require', 'module', 'exports', outputText)(siblingRequire, siblingModule, siblingModule.exports)
+  return siblingModule.exports
+}
+
 function loadPlanModeExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   })
   const module = { exports: {} as { default?: (pi: unknown) => void } }
   const mockRequire = (id: string) => {
-    if (id === '@earendil-works/pi-tui') return { Key: { ctrlAlt: (key: string) => `ctrlAlt:${key}` } }
+    if (id === '@earendil-works/pi-tui') return piTuiMock
+    if (id === './question-ui.js') return transpileSibling('question-ui.ts')
+    if (id === './ready-ui.js') return transpileSibling('ready-ui.ts')
     if (id === './utils.js') {
       return {
         extractTodoItems: () => [],
@@ -201,7 +219,24 @@ function loadPlanModeExtension(): (pi: unknown) => void {
   return module.exports.default
 }
 
-function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', registerClaimApiOnDifferentPi?: boolean, taskScopeGit?: boolean, commentAddFails?: boolean, activeBead?: string, entries?: Array<{ type?: string; customType?: string; data?: unknown }>, failPreDispatchProgressMessage?: boolean, initialActiveTools?: string[], registeredTools?: string[] } = {}) {
+function makeHarness(options: {
+  activeStatus?: 'in_progress' | 'inreview'
+  registerClaimApiOnDifferentPi?: boolean
+  taskScopeGit?: boolean
+  commentAddFails?: boolean
+  activeBead?: string
+  entries?: Array<{ type?: string; customType?: string; data?: unknown }>
+  failPreDispatchProgressMessage?: boolean
+  initialActiveTools?: string[]
+  registeredTools?: string[]
+  mode?: 'tui' | 'rpc' | 'json' | 'print'
+  /** When set, ui.custom resolves to this value (default: { action: 'execute' } only if factory is ready-ui style). */
+  customResult?: unknown
+  /** Disable ui.custom entirely (simulate RPC). */
+  noCustom?: boolean
+  hasUI?: boolean
+  readyActionQueue?: Array<'execute' | 'stay' | 'refine' | 'plan-review' | null>
+} = {}) {
   const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
   mockPlanReviewReasons = []
@@ -333,19 +368,56 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
       },
     },
   }
+  const customCalls: Array<{ options?: unknown; ranFactory: boolean }> = []
+  const selectCalls: Array<{ title: string; options: string[] }> = []
+  const readyActionQueue = [...(options.readyActionQueue ?? [])]
   const ctx: any = {
     cwd: '/tmp/project',
+    mode: options.mode ?? 'tui',
     sessionManager: { getSessionId: () => 'session-current', getEntries: () => sessionEntries },
-    hasUI: true,
+    hasUI: options.hasUI ?? true,
     ui: {
       notify() {},
-      select: async () => 'Execute the plan',
+      select: async (title: string, optionLabels: string[]) => {
+        selectCalls.push({ title, options: optionLabels })
+        if (readyActionQueue.length > 0) {
+          const next = readyActionQueue.shift()
+          if (next == null) return undefined
+          const labels: Record<string, string> = {
+            execute: 'Исполнить',
+            stay: 'Остаться в plan mode',
+            refine: 'Уточнить',
+            'plan-review': 'Отправить на plan-review',
+          }
+          return labels[next] ?? next
+        }
+        // Legacy fallback only when tests still hit plain select without complete gate.
+        return optionLabels[0]
+      },
+      input: async () => 'typed-other',
+      editor: async () => 'please refine the plan',
       setStatus: (key: string, value: string | undefined) => { statuses[key] = value },
       setWidget: (key: string, value: string[] | undefined) => { widgets[key] = value },
       theme: {
         fg: (_style: string, value: string) => value,
+        bg: (_style: string, value: string) => value,
+        bold: (value: string) => value,
         strikethrough: (value: string) => value,
       },
+      ...(options.noCustom
+        ? {}
+        : {
+            custom: async (factory: (tui: any, theme: any, kb: any, done: (value: any) => void) => any, customOptions?: unknown) => {
+              customCalls.push({ options: customOptions, ranFactory: true })
+              if (options.customResult !== undefined) return options.customResult
+              if (readyActionQueue.length > 0) {
+                const next = readyActionQueue.shift()
+                return next == null ? null : { action: next }
+              }
+              // Default: execute only when ready-UI is pending (factory present). Questionnaire tests override customResult.
+              return { action: 'execute' }
+            },
+          }),
     },
   }
 
@@ -364,7 +436,43 @@ function makeHarness(options: { activeStatus?: 'in_progress' | 'inreview', regis
   })
 
   loadPlanModeExtension()(pi)
-  return { commandHandlers, toolHandlers, workflowUpdates, statuses, widgets, activeTools, inputHandlers, toolCallHandlers, agentEndHandlers, sessionStartHandlers, beforeAgentStartHandlers, sendMessages, sendUserMessages, execCalls, delayedClaimEvents, trace, sessionEntries, ctx }
+  return {
+    commandHandlers,
+    toolHandlers,
+    workflowUpdates,
+    statuses,
+    widgets,
+    activeTools,
+    inputHandlers,
+    toolCallHandlers,
+    agentEndHandlers,
+    sessionStartHandlers,
+    beforeAgentStartHandlers,
+    sendMessages,
+    sendUserMessages,
+    execCalls,
+    delayedClaimEvents,
+    trace,
+    sessionEntries,
+    customCalls,
+    selectCalls,
+    ctx,
+  }
+}
+
+const SAMPLE_READY_PLAN = [
+  'Plan:',
+  '1. Implement durable approval.',
+  'Files to change:',
+  '- .pi/extensions/plan-mode/index.ts',
+  'Acceptance:',
+  '- vitest passes',
+].join('\n')
+
+async function markPlanReady(toolHandlers: Map<string, any>, ctx: any, plan = SAMPLE_READY_PLAN) {
+  const tool = toolHandlers.get('plan_mode_complete')
+  if (!tool) throw new Error('plan_mode_complete tool not registered')
+  return tool.execute('tc-complete', { plan }, undefined, undefined, ctx)
 }
 
 describe('Pi plan-mode bash allowlist', () => {
@@ -1222,12 +1330,13 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute writes durable PLAN APPROVED comment and shows started/running progress before dispatch resolves', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, trace, statuses, widgets, ctx } = makeHarness({ activeBead: 'bead-ui' })
     let releaseDispatch!: () => void
     mockSupervisorDispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve })
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    const execution = agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx) as Promise<void>
+    await markPlanReady(toolHandlers, ctx)
+    const execution = agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx) as Promise<void>
     for (let i = 0; i < 10 && mockSupervisorDispatchCalls.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 0))
 
     const commentCallIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
@@ -1264,11 +1373,12 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute records an immediate runtime-hook blocker when typed continuation API is unavailable', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
     mockSupervisorDispatchAvailable = false
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+    await markPlanReady(toolHandlers, ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
 
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
@@ -1284,11 +1394,12 @@ describe('Pi plan-mode typed workflow tools', () => {
 
   it('does not treat cmux spawn-ack as continuation completed', async () => {
     mockSupervisorDispatchSpawned = true
-    const { commandHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui' })
     mockSupervisorDispatchSpawned = true
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+    await markPlanReady(toolHandlers, ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
 
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task', transport: 'cmux' })
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
@@ -1298,10 +1409,11 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('continues dispatch when best-effort pre-dispatch progress message cannot be displayed', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui', failPreDispatchProgressMessage: true })
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, ctx } = makeHarness({ activeBead: 'bead-ui', failPreDispatchProgressMessage: true })
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+    await markPlanReady(toolHandlers, ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
 
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task' })
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
@@ -1311,17 +1423,19 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute blocks missing explicit worktree before durable comment or planApproved state', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
-
-    await commandHandlers.get('plan')?.handler('', ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: [
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+    const blockedPlan = [
       'Plan:\n1. Implement durable approval.',
       'Files to change:\n- .pi/extensions/plan-mode/index.ts',
       'Acceptance:\n- vitest passes',
       'BRANCH: task/plan-approved',
       'Worktree / cwd:',
       '- `/tmp/missing`',
-    ].join('\n') }] }] }, ctx)
+    ].join('\n')
+
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await markPlanReady(toolHandlers, ctx, blockedPlan)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: blockedPlan }] }] }, ctx)
 
     expect(execCalls).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-ui']) }),
@@ -1334,10 +1448,11 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute does not set planApproved=true when durable PLAN APPROVED comment fails', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, activeTools, ctx } = makeHarness({ activeBead: 'bead-ui', commentAddFails: true })
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, activeTools, ctx } = makeHarness({ activeBead: 'bead-ui', commentAddFails: true })
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Implement durable approval.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\nAcceptance:\n- vitest passes' }] }] }, ctx)
+    await markPlanReady(toolHandlers, ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }] }, ctx)
 
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(true)
     expect(workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
@@ -1804,5 +1919,304 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     expect(result).toBeUndefined()
     expect(mockCompleteVisibleCalls).toHaveLength(0)
+  })
+})
+
+describe('Pi plan-mode complete-when-ready overlay', () => {
+  it('strict agent_end without plan_mode_complete does not open ready UI', async () => {
+    const { commandHandlers, agentEndHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Clarifying question only' }] }],
+    }, ctx)
+
+    expect(customCalls).toHaveLength(0)
+    expect(selectCalls).toHaveLength(0)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments')).toBe(false)
+  })
+
+  it('plan_mode_complete rejects empty/whitespace plan', async () => {
+    const { commandHandlers, toolHandlers, ctx } = makeHarness()
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const empty = await toolHandlers.get('plan_mode_complete')?.execute('id', { plan: '   ' }, undefined, undefined, ctx)
+    expect(empty.content[0].text).toContain('plan must be non-empty')
+    expect(empty.details.ok).toBe(false)
+  })
+
+  it('plan_mode_complete + ready execute writes PLAN APPROVED via ready UI', async () => {
+    const { commandHandlers, toolHandlers, agentEndHandlers, customCalls, execCalls, workflowUpdates, ctx } = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['execute'],
+    })
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const complete = await markPlanReady(toolHandlers, ctx)
+    expect(complete.details.pending).toBe(true)
+
+    await agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, ctx)
+
+    expect(customCalls.length).toBeGreaterThanOrEqual(1)
+    expect(customCalls.every((call) => call.options === undefined || !((call.options as any)?.overlay === true))).toBe(true)
+    const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('PLAN APPROVED')
+    expect(workflowUpdates.at(-1)).toMatchObject({ planApproved: true, planMode: 'off' })
+  })
+
+  it('ready stay and Esc clear pending without writing PLAN APPROVED', async () => {
+    const readyUi = transpileSibling('ready-ui.ts') as { READY_ACTIONS: Array<{ value: string; description?: string }> }
+    const stayItem = readyUi.READY_ACTIONS.find((item) => item.value === 'stay')
+    expect(stayItem?.description ?? '').toMatch(/pending/i)
+    expect(stayItem?.description ?? '').not.toMatch(/оставить pending|keep pending|pending (plan )?kept|оставить pending plan/i)
+
+    const stayHarness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+    })
+    await stayHarness.commandHandlers.get('plan')?.handler('', stayHarness.ctx)
+    await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
+    await stayHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, stayHarness.ctx)
+
+    const stayPersisted = stayHarness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
+    expect(stayPersisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(stayPersisted?.data?.enabled).toBe(true)
+    expect(stayHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(stayHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+
+    const customAfterStay = stayHarness.customCalls.length
+    await stayHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, stayHarness.ctx)
+    expect(stayHarness.customCalls.length).toBe(customAfterStay)
+
+    const escHarness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: [null],
+    })
+    await escHarness.commandHandlers.get('plan')?.handler('', escHarness.ctx)
+    await markPlanReady(escHarness.toolHandlers, escHarness.ctx)
+    await escHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, escHarness.ctx)
+
+    const escPersisted = escHarness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
+    expect(escPersisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(escPersisted?.data?.enabled).toBe(true)
+    expect(escHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(escHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+  })
+
+  it('plan-review button shows findings, keeps plan on, does not increment cycle, then execute approves', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'execute'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    const beforeCycleEntry = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { planReviewCycleCount?: number } } | undefined
+    const cycleBefore = beforeCycleEntry?.data?.planReviewCycleCount ?? 0
+
+    await harness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, harness.ctx)
+
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(true)
+    expect(harness.sendMessages.some((message) => String(message.message.content).includes('Strict plan critique complete'))).toBe(true)
+
+    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number } }>
+    const cycleAfter = afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0
+    expect(cycleAfter).toBe(cycleBefore)
+
+    const comment = harness.execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('PLAN APPROVED')
+    expect(mockSupervisorDispatchCalls.length).toBeGreaterThanOrEqual(1)
+    // plan-review happened before approve; cycle tool path not used
+    expect(harness.customCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('auto/autopilot agent_end clears pending and never opens ready UI', async () => {
+    const autoHarness = makeHarness({ activeBead: 'bead-ui' })
+    await autoHarness.commandHandlers.get('plan')?.handler('', autoHarness.ctx)
+    await markPlanReady(autoHarness.toolHandlers, autoHarness.ctx)
+    // Switch to auto clears pending on enter
+    await autoHarness.commandHandlers.get('plan-auto')?.handler('', autoHarness.ctx)
+    const customBefore = autoHarness.customCalls.length
+    await autoHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft' }] }],
+    }, autoHarness.ctx)
+    expect(autoHarness.customCalls.length).toBe(customBefore)
+    expect(autoHarness.sendMessages.at(-1)?.message.customType).toBe('plan-review-findings')
+
+    const pilot = makeHarness({ activeBead: 'bead-ui' })
+    await pilot.commandHandlers.get('plan-autopilot')?.handler('', pilot.ctx)
+    const complete = await markPlanReady(pilot.toolHandlers, pilot.ctx)
+    expect(complete.details.pending).toBe(false)
+    await pilot.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft' }] }],
+    }, pilot.ctx)
+    expect(pilot.customCalls).toHaveLength(0)
+  })
+
+  it('restores pendingReadyPlan on session_start and shows ready-UI on next agent_end', async () => {
+    const { sessionStartHandlers, agentEndHandlers, customCalls, execCalls, ctx } = makeHarness({
+      activeBead: 'bead-ui',
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-ui', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' },
+        },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            pendingReadyPlan: SAMPLE_READY_PLAN,
+            todos: [],
+            executing: false,
+          },
+        },
+      ],
+      readyActionQueue: ['execute'],
+    })
+
+    await sessionStartHandlers[0]?.({}, ctx)
+    expect(customCalls).toHaveLength(0)
+    await agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, ctx)
+    expect(customCalls.length).toBeGreaterThanOrEqual(1)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[1] === 'add')).toBe(true)
+  })
+
+  it('RPC/no-custom path uses select fallback and never hangs on ui.custom', async () => {
+    const { commandHandlers, toolHandlers, agentEndHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({
+      activeBead: 'bead-ui',
+      mode: 'rpc',
+      noCustom: true,
+      readyActionQueue: ['execute'],
+    })
+    await commandHandlers.get('plan')?.handler('', ctx)
+    await markPlanReady(toolHandlers, ctx)
+    await agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, ctx)
+
+    expect(customCalls).toHaveLength(0)
+    expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(true)
+    expect(execCalls.some((call) => call.args[1] === 'add')).toBe(true)
+  })
+
+  it('questionnaire tool uses custom UI without overlay and supports digit preview path', async () => {
+    const questionUi = transpileSibling('question-ui.ts') as any
+
+    const questions = questionUi.normalizeQuestions([
+      {
+        id: 'scope',
+        prompt: 'Какой scope?',
+        options: [
+          { value: 'narrow', label: 'Узкий', description: 'Только plan-mode' },
+          { value: 'wide', label: 'Широкий', description: 'Весь workflow' },
+        ],
+      },
+    ])
+    let doneValue: any
+    const tui = { requestRender() {} }
+    const theme = {
+      fg: (_c: string, t: string) => t,
+      bg: (_c: string, t: string) => t,
+      bold: (t: string) => t,
+    }
+    const comp = questionUi.createQuestionUiFactory(questions)(tui, theme, {}, (value: any) => { doneValue = value })
+    const rendered = comp.render(80).join('\n')
+    expect(rendered).toContain('Какой scope?')
+    expect(rendered).toContain('Превью:')
+    expect(rendered).toContain('Узкий')
+    comp.handleInput('2')
+    expect(doneValue?.cancelled).toBe(false)
+    expect(doneValue?.answers?.[0]?.value).toBe('wide')
+
+    const readyUi = transpileSibling('ready-ui.ts') as any
+    let readyDone: any
+    const readyComp = readyUi.createReadyUiFactory('Plan preview line')(tui, theme, {}, (value: any) => { readyDone = value })
+    const readyRender = readyComp.render(80).join('\n')
+    expect(readyRender).toContain('Исполнить')
+    expect(readyRender).toContain('Отправить на plan-review')
+    expect(readyRender).toContain('Превью:')
+    readyComp.handleInput('4')
+    expect(readyDone).toEqual({ action: 'plan-review' })
+
+    const { commandHandlers, toolHandlers, customCalls, ctx } = makeHarness({
+      customResult: {
+        questions,
+        answers: [{ id: 'scope', value: 'narrow', label: 'Узкий', wasCustom: false, index: 1 }],
+        cancelled: false,
+      },
+    })
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const result = await toolHandlers.get('questionnaire')?.execute(
+      'q1',
+      {
+        questions: [
+          {
+            id: 'scope',
+            prompt: 'Какой scope?',
+            options: [
+              { value: 'narrow', label: 'Узкий' },
+              { value: 'wide', label: 'Широкий' },
+            ],
+          },
+        ],
+      },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(result.content[0].text).toContain('Узкий')
+    expect(customCalls[0]?.options === undefined || (customCalls[0]?.options as any)?.overlay !== true).toBe(true)
+  })
+
+  it('questionnaire without hasUI cancels without hang', async () => {
+    const { commandHandlers, toolHandlers, customCalls, ctx } = makeHarness({ hasUI: false, noCustom: true })
+    await commandHandlers.get('plan')?.handler('', ctx)
+    const result = await toolHandlers.get('questionnaire')?.execute(
+      'q1',
+      { questions: [{ id: 'a', prompt: 'Q?', options: [{ value: '1', label: 'One' }] }] },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(result.details.cancelled).toBe(true)
+    expect(customCalls).toHaveLength(0)
+  })
+
+  it('expected plan tools include plan_mode_complete and JSON schema tools (not Typebox)', async () => {
+    const { toolHandlers, commandHandlers, activeTools, ctx } = makeHarness()
+    await commandHandlers.get('plan')?.handler('', ctx)
+    expect(activeTools.at(-1)).toEqual(expectedPlanTools)
+    expect(toolHandlers.has('plan_mode_complete')).toBe(true)
+    expect(toolHandlers.has('questionnaire')).toBe(true)
+    expect(toolHandlers.get('plan_mode_complete')?.parameters?.type).toBe('object')
+    expect(toolHandlers.get('questionnaire')?.parameters?.type).toBe('object')
+    // Not Typebox runtime objects
+    expect(toolHandlers.get('plan_mode_complete')?.parameters?.[Symbol.for('TypeBox.Kind')]).toBeUndefined()
+  })
+
+  it('source no longer contains Plan mode - what next select copy', () => {
+    const indexSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
+    expect(indexSource).not.toContain('Plan mode - what next')
+    expect(indexSource).toContain('plan_mode_complete')
+    expect(indexSource).not.toMatch(/overlay:\s*true/)
   })
 })
