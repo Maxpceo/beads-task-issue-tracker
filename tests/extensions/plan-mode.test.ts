@@ -1491,7 +1491,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute Fast Path skips spawn and uses triggerTurn true', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui' })
+    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
 
     await commandHandlers.get('plan')?.handler('', ctx)
     await agentEndHandlers[0]?.({
@@ -1507,6 +1507,9 @@ describe('Pi plan-mode typed workflow tools', () => {
             '- .pi/extensions/plan-mode/index.ts',
             'Acceptance:',
             '- vitest passes',
+            'Branch: task/plan-approved',
+            'Worktree: /tmp/task',
+            'START_COMMIT: task123',
           ].join('\n'),
         }],
       }],
