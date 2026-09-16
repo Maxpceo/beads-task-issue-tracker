@@ -78,15 +78,17 @@ While `autopilotEnabled===true` and `plan=off`, plan-mode is the **единст�
 2. One `complete_visible_dispatch` per ping (concurrent lock only). `incomplete`/`result-only` allows a later ping; `submitted`/`verdict` → noop on repeat.
 3. Supervisor `submitted` → one `requestReviewerDispatch({ beadId, cwd: entry.worktree, transport: cmux })`; live reviewer on bead → noop.
 4. Reviewer `verdict` APPROVED + green matrix → simplified → reviewed → accepted → `bd close` → workflow closed → `close_visible_dispatch` → clear autopilot. No second `review_bead`.
-5. STOP branches (split panes policy):
-   - **NOT APPROVED** / missing-evidence / `[PING-ERROR]` / `BLOCKED`/`NEEDS_CONTEXT` artifact: panes **live**; do not call `close_visible_dispatch`.
+5. APPROVED close-gap split (`finalizeVisibleReviewClose` after verdict APPROVED):
+   - **missing-evidence** (no `CODE REVIEW: APPROVED` in comments yet, missing `START_COMMIT`, weak supervisor artifact): **wake orchestrator** — one `autopilot-hop-wake-orch` message with `triggerTurn: true`, reason from `finalize.text` (truncated, no matrix dump), no «Действие Максима». Panes stay **live**, `close_visible_dispatch` not called, autopilot is **not** cleared by the hop. The woken orchestrator fills the gap (START/END comments, honest ACCEPTANCE MATRIX, `inreview → simplified → reviewed → accepted → bd close` ladder), then clears autopilot itself; if the gap cannot be closed in that turn — no hop/`complete_visible_dispatch`/`dispatch_reviewer` retry, clear autopilot and one short STOP to Maxim.
+   - **not-approved** (latest comment NOT APPROVED) / unknown non-blocked `!ok`: human STOP (`autopilot-hop-stop`, no wake), panes live.
+   - **NOT APPROVED** by verdict text / `[PING-ERROR]` / `BLOCKED`/`NEEDS_CONTEXT` artifact: panes **live**; do not call `close_visible_dispatch`.
    - **Grey-matrix blocked** (`finalize.status==="blocked"` after APPROVED): panes **closed** via `close_visible_dispatch({ beadId, stopClose: true })`; bead stays open (not `bd close`); autopilot cleared; durable `STOP CLOSE:` comment (FAIL/NOT RUN rows only, no matrix body dump). Success ask a/b/c; close throw → separate STOP without «bead уже closed» / without a/b/c.
 
 `/plan-auto` does **not** set durable autopilot and does **not** consume ping. `land` / `merge-to-main` never run from this hop. `poll.sh` remains Maxim path B only (not auto-timer).
 
 ### Hop UX (messages to Maxim)
 
-Each hop return sends **exactly one** visible message (`customType` `autopilot-hop` or `autopilot-hop-stop`). No dump+human pairs.
+Each hop return sends **exactly one** visible message (`customType` `autopilot-hop`, `autopilot-hop-stop`, or `autopilot-hop-wake-orch` for the APPROVED + missing-evidence wake-orchestrator branch, which uses `triggerTurn: true` so the orchestrator LLM gets a turn). No dump+human pairs.
 
 - Body: 2–5 Russian sentences — what happened, that hop already consumed the ping (Maxim must **not** wait for another `[PING]`), named next action, Maxim action (`не требуется` / wait / choose).
 - Forbidden as the main body: `complete_visible_dispatch status=`, `close_visible_dispatch status=`, raw SUPERVISOR ARTIFACT / full `finalize.text` / ACCEPTANCE MATRIX dump, orchestrator phrase `Жду [PING]`.
@@ -96,7 +98,8 @@ Each hop return sends **exactly one** visible message (`customType` `autopilot-h
   - `result-only` — ping consumed, artifact not review-ready, reviewer not started, panes live, next ping from child after rewrite; **not** «шаг закрыт» / «работа закончена».
   - `noop` / live reviewer — short RU progress; no machine status dump.
   - `submitted` success — reviewer started; Maxim does not wait `[PING]`.
-  - `NOT APPROVED` / missing-evidence / `[PING-ERROR]` / BLOCKED artifact — human STOP without matrix body; **panes live**; close not called.
+  - `NOT APPROVED` (verdict text), finalize `not-approved`, unknown non-blocked `!ok`, `[PING-ERROR]`, BLOCKED artifact — human STOP without matrix body; **panes live**; close not called.
+  - APPROVED + finalize `missing-evidence` — `autopilot-hop-wake-orch` with `triggerTurn: true`: no «Действие Максима», reason from `finalize.text`, orchestrator closes the gap itself (matrix + ladder) or fail-stops with autopilot cleared; **panes live**.
   - Grey-matrix `finalize.status==="blocked"` — STOP close: `stopClose:true`, panes closed/not live, bead not closed, autopilot cleared, durable `STOP CLOSE:` (no `UNIQUE_MATRIX`/matrix body dump); Maxim a/b/c. Close throw on blocked → separate STOP (panes may remain; no «bead уже closed»; no a/b/c).
   - APPROVED close `closed` or `noop` — one RU success (panes closed or already not live); autopilot cleared.
   - `closeVisibleDispatch` throw after bd closed — still clear autopilot + persist + status, then **one** STOP (no success trailer).
