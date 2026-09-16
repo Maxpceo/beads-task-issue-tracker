@@ -7,6 +7,7 @@ import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import reviewWorkflowExtension, {
+  buildAcceptanceMatrix,
   finalizeVisibleReviewClose,
   isReviewApproved,
   setReviewRuntimeDelegateForTestOverride,
@@ -841,6 +842,159 @@ describe('review_workflow reviewer verdict handling', () => {
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.join(' ').includes('--status accepted'))).toBe(true)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
     expect(result.details.error).toBeUndefined()
+  })
+
+  it('0m3l: maps non-manual verification bullet to unique supervisor artifact matrix PASS', async () => {
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: /tmp/worktree',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Files changed: .pi/extensions/review-workflow/index.ts',
+      'Verification: live gate and diff checklist',
+      'Artifact status: complete',
+      '',
+      '| Item | Evidence | Result |',
+      '|---|---|---|',
+      '| git diff --stat main...HEAD shows only write-zone paths | observed 2 files; matches write zone | PASS |',
+    ].join('\n')
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Acceptance criteria',
+          '- Mapped artifact evidence unblocks acceptance.',
+          '### Verification / acceptance checks',
+          '- git diff --stat main...HEAD shows only write-zone paths',
+        ].join('\n'),
+      },
+      automatedChecks: ['pnpm --dir /tmp/worktree test -> exit 0\ntests passed'],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: supervisorComments },
+      comments: supervisorComments,
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('git diff --stat'))
+    expect(row?.result).toBe('PASS')
+    expect(row?.evidence).toContain('supervisor artifact matrix:')
+    expect(row?.evidence).toContain('observed 2 files')
+    expect(matrix.rows.some((entry) => entry.result === 'NOT RUN')).toBe(false)
+    expect(matrix.blockingRows).toEqual([])
+  })
+
+  it('0m3l: leaves verification bullet NOT RUN when artifact matrix has no matching evidence', async () => {
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: /tmp/worktree',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Verification: unit tests only',
+      'Artifact status: complete',
+      '',
+      '| Item | Evidence | Result |',
+      '|---|---|---|',
+      '| pnpm test review-workflow | exit 0 | PASS |',
+    ].join('\n')
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- git diff --stat main...HEAD shows only write-zone paths',
+        ].join('\n'),
+      },
+      automatedChecks: ['pnpm --dir /tmp/worktree test -> exit 0\ntests passed'],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: supervisorComments },
+      comments: supervisorComments,
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('git diff --stat'))
+    expect(row?.result).toBe('NOT RUN')
+    expect(matrix.blockingRows.some((entry) => entry.item.includes('git diff --stat'))).toBe(true)
+  })
+
+  it('0m3l: never maps FAIL artifact matrix row as PASS', async () => {
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: /tmp/worktree',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Verification: diff checklist failed',
+      'Artifact status: complete',
+      '',
+      '| Item | Evidence | Result |',
+      '|---|---|---|',
+      '| git diff --stat main...HEAD shows only write-zone paths | unexpected paths outside write zone | FAIL |',
+    ].join('\n')
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- git diff --stat main...HEAD shows only write-zone paths',
+        ].join('\n'),
+      },
+      automatedChecks: ['pnpm --dir /tmp/worktree test -> exit 0\ntests passed'],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: supervisorComments },
+      comments: supervisorComments,
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('git diff --stat'))
+    expect(row?.result).toBe('NOT RUN')
+    expect(row?.evidence).not.toContain('supervisor artifact matrix:')
+    expect(matrix.blockingRows.some((entry) => entry.item.includes('git diff --stat') && entry.result === 'NOT RUN')).toBe(true)
+  })
+
+  it('0m3l: tie of two similar PASS artifact rows yields no mapping / NOT RUN', async () => {
+    const supervisorComments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: /tmp/worktree',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Verification: ambiguous diff evidence',
+      'Artifact status: complete',
+      '',
+      '| Item | Evidence | Result |',
+      '|---|---|---|',
+      '| git diff --stat main...HEAD write-zone paths checklist A | observed files A | PASS |',
+      '| git diff --stat main...HEAD write-zone paths checklist B | observed files B | PASS |',
+    ].join('\n')
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- git diff --stat main...HEAD write-zone paths checklist',
+        ].join('\n'),
+      },
+      automatedChecks: ['pnpm --dir /tmp/worktree test -> exit 0\ntests passed'],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: supervisorComments },
+      comments: supervisorComments,
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('git diff --stat'))
+    expect(row?.result).toBe('NOT RUN')
+    expect(row?.evidence).not.toContain('supervisor artifact matrix:')
+    expect(matrix.blockingRows.some((entry) => entry.result === 'NOT RUN')).toBe(true)
   })
 
   it('ofcb: executes safe rg allowlist without supervisor exit and maps manual prose to N/A', async () => {
