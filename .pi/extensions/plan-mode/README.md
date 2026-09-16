@@ -63,6 +63,22 @@ While `autopilotEnabled===true` and `plan=off`, plan-mode is the **единст�
 
 `/plan-auto` does **not** set durable autopilot and does **not** consume ping. `land` / `merge-to-main` never run from this hop. `poll.sh` remains Maxim path B only (not auto-timer).
 
+### Hop UX (messages to Maxim)
+
+Each hop return sends **exactly one** visible message (`customType` `autopilot-hop` or `autopilot-hop-stop`). No dump+human pairs.
+
+- Body: 2–5 Russian sentences — what happened, that hop already consumed the ping (Maxim must **not** wait for another `[PING]`), named next action, Maxim action (`не требуется` / wait / choose).
+- Forbidden as the main body: `complete_visible_dispatch status=`, `close_visible_dispatch status=`, raw SUPERVISOR ARTIFACT / full `finalize.text` / ACCEPTANCE MATRIX dump, orchestrator phrase `Жду [PING]`.
+- Footer (optional, technical only): `Bead:` / `taskId:` lines. Registry lookup for footer is best-effort and never changes control flow; without an entry, footer may carry `taskId` only.
+- Branch copy:
+  - `incomplete` — ping consumed, result not ready yet, next ping from child; not a final step.
+  - `result-only` — ping consumed, artifact not review-ready, reviewer not started, panes live, next ping from child after rewrite; **not** «шаг закрыт» / «работа закончена».
+  - `noop` / live reviewer — short RU progress; no machine status dump.
+  - `submitted` success — reviewer started; Maxim does not wait `[PING]`.
+  - `NOT APPROVED` / close-blocked / `[PING-ERROR]` / BLOCKED — human STOP without matrix body.
+  - APPROVED close `closed` or `noop` — one RU success (panes closed or already not live); autopilot cleared.
+  - `closeVisibleDispatch` throw after bd closed — still clear autopilot + persist + status, then **one** STOP (no success trailer).
+
 ## Multi-agent auto-execute gate
 
 `/plan-auto` and `/plan-autopilot` share the multi-agent gate. They are only for cases where the user explicitly requested automatic plan execution. They do not execute the first draft plan. Instead:
