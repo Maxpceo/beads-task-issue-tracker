@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Pi headless agent dashboard auto-show** (`beads-task-issue-tracker-ya7e`): running/queued headless agents (typed `dispatch_* transport=headless`, plan reviewers, and subagent tools) auto-publish lifecycle cards into the orchestrator TUI without `/agents-dashboard`. A shared dashboard widget host installs the grid on first active card (`origin=auto`); terminal cards stay visible until `turn_end`, then auto-hide only for `origin=auto`. Explicit `/agents-dashboard` remains `origin=user` and is never auto-cleared. Visible cmux spawn stays panel-only (no dashboard card path).
+
 ### Changed
 
 - **Pi session-scoped merge-slot holder** (`beads-task-issue-tracker-ho0p`): replace shared git `user.name` / `Maxpceo` merge-slot identity with `pi:<SESSION_UNIQ>:<suffix|none>` (`SESSION_UNIQ` = full `id:` body, dashes stripped). `beads-policy` requires `--holder` on acquire/release, allows push only for own-session `pi:` holders (footer-only when bd holder empty/unreadable; foreign/Maxpceo denied even if footer held), and teaches `land` / `merge-to-main` / `release` the literal `--holder` recipe. Git commit author is unchanged.

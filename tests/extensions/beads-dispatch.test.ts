@@ -5,8 +5,8 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, parseVisiblePing, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
-import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
 Approved-by: Test
@@ -68,17 +68,21 @@ let unregisterRenderer: (() => void) | undefined
 
 beforeEach(() => {
   setSpawnForDispatchTestOverride(null)
+  setCmuxAdapterForTests(null)
   unregisterRenderer?.()
   unregisterRenderer = undefined
   clearObservedDashboardCards()
   setSharedDashboardState(null)
+  resetDashboardWidgetHost()
 })
 
 afterEach(() => {
   setSpawnForDispatchTestOverride(null)
+  setCmuxAdapterForTests(null)
   unregisterRenderer?.()
   clearObservedDashboardCards()
   setSharedDashboardState(null)
+  resetDashboardWidgetHost()
 })
 
 function validBead(descriptionText = description(['.pi/extensions/beads-dispatch/index.ts'])) {
@@ -416,11 +420,104 @@ describe('beads-dispatch supervisor execution contract', () => {
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-dashboard', branch, 'abc1234'))
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor', transport: 'headless' }, undefined, undefined, workflowCtx(cwd, 'bead-dashboard', branch, 'abc1234'))
 
     expect(result.details.exitCode).toBe(0)
     expect(getSharedDashboardState()?.cards.get('test-supervisor')?.status).toBe('completed')
     expect(repaintCount).toBeGreaterThan(0)
+  })
+
+  it('auto-shows headless dispatch cards from a null dashboard store', async () => {
+    let registeredTool: any
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    expect(getSharedDashboardState()).toBeNull()
+    setSpawnForDispatchTestOverride(createSuccessfulSpawn())
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-auto-show', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-auto-show', dryRun: false, agent: 'test-supervisor', transport: 'headless' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, 'bead-auto-show', branch, 'abc1234'),
+    )
+
+    expect(result.details.exitCode).toBe(0)
+    const shared = getSharedDashboardState()
+    expect(shared?.visible).toBe(true)
+    expect(shared?.origin).toBe('auto')
+    expect(shared?.mode).toBe('active')
+    expect(shared?.cards.get('test-supervisor')?.status).toBe('completed')
+  })
+
+  it('does not publish a TUI dashboard card for transport=cmux visible spawn', async () => {
+    let registeredTool: any
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    const head = 'abc1234'
+    const workspaceId = `ws-cmux-card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const registryDir = nsDir(workspaceId)
+    const registryFile = path.join(registryDir, 'dispatch-registry.json')
+    const clearRegistry = async () => {
+      await fs.mkdir(registryDir, { recursive: true })
+      await fs.writeFile(registryFile, JSON.stringify({ entries: [] }, null, 2), 'utf8')
+    }
+    await clearRegistry()
+    try {
+      setCmuxAdapterForTests({
+        identify: async () => ({ workspaceId, surface: 'surface:orch' }),
+        newSplit: async () => ({ surface: 'surface:child' }),
+        send: async () => undefined,
+        readScreen: async () => 'ready',
+        closeSurface: async () => undefined,
+        renameSurface: async () => undefined,
+      })
+      const pi = {
+        events: { emit() {} },
+        registerTool(tool: any) {
+          if (tool.name === 'dispatch_supervisor') registeredTool = tool
+        },
+        exec: async (command: string, args: string[]) => {
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-cmux-card', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+          if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : `${head}\n`, stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+
+      beadsDispatchExtension(pi as any)
+      const result = await registeredTool.execute(
+        'call-1',
+        { beadId: 'bead-cmux-card', transport: 'cmux', agent: 'test-supervisor' },
+        undefined,
+        undefined,
+        workflowCtx(cwd, 'bead-cmux-card', branch, head),
+      )
+
+      expect(result.details.transport).toBe('cmux')
+      expect(result.details.error).toBeUndefined()
+      expect(getSharedDashboardState()).toBeNull()
+    } finally {
+      await clearRegistry()
+      await fs.rm(registryDir, { recursive: true, force: true }).catch(() => undefined)
+    }
   })
 
   it('renders execution contract sections with explicit N/A compatibility defaults', async () => {

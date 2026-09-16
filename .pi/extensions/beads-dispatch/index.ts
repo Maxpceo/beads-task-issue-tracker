@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent, registerDashboardRenderer } from "../subagent/dashboard";
+import {
+	publishDashboardCard,
+	registerDashboardWidgetHost,
+} from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import { resolveAgentModelFromCwd } from "../agent-models/index";
@@ -740,16 +743,16 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: process.execPath, args };
 }
 
-function refreshDashboardWidget(ctx?: { ui?: any }): void {
-	const state = getSharedDashboardState();
-	if (!state?.visible || !ctx?.ui) return;
-	ctx.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: any) => {
-		registerDashboardRenderer(tui);
-		return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+function bindDashboardHost(ctx?: { ui?: any; hasUI?: boolean }): void {
+	if (!ctx) return;
+	registerDashboardWidgetHost({
+		hasUI: Boolean(ctx.hasUI ?? ctx.ui),
+		ui: ctx.ui,
 	});
 }
 
-function publishWorkflowDashboardCard(ctx: { ui?: any } | undefined, agent: AgentConfig, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
+function publishWorkflowDashboardCard(ctx: { ui?: any; hasUI?: boolean } | undefined, agent: AgentConfig, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
+	bindDashboardHost(ctx);
 	publishDashboardCard({
 		agent: agent.name,
 		description: `workflow dispatch: ${agent.name}`,
@@ -759,7 +762,6 @@ function publishWorkflowDashboardCard(ctx: { ui?: any } | undefined, agent: Agen
 		toolCount: 0,
 		...card,
 	});
-	refreshDashboardWidget(ctx);
 }
 
 async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signal?: AbortSignal, ctx?: { ui?: any }): Promise<{ exitCode: number; output: string; stderr: string }> {
