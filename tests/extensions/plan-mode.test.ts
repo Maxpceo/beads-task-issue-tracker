@@ -1985,7 +1985,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(stayPersisted?.data?.pendingReadyPlan).toBeUndefined()
     expect(stayPersisted?.data?.enabled).toBe(true)
     expect(stayHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
-    expect(stayHarness.workflowUpdates.some((update) => update.planApproved === true)).toBe(false)
+    expect(stayHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
 
     const customAfterStay = stayHarness.customCalls.length
     await stayHarness.agentEndHandlers[0]?.({
@@ -2009,7 +2009,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(escPersisted?.data?.pendingReadyPlan).toBeUndefined()
     expect(escPersisted?.data?.enabled).toBe(true)
     expect(escHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
-    expect(escHarness.workflowUpdates.some((update) => update.planApproved === true)).toBe(false)
+    expect(escHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
   })
 
   it('plan-review button shows findings, keeps plan on, does not increment cycle, then execute approves', async () => {
