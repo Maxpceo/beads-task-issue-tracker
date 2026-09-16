@@ -1491,27 +1491,21 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('UI Execute Fast Path skips spawn and uses triggerTurn true', async () => {
-    const { commandHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+    const { commandHandlers, toolHandlers, agentEndHandlers, sendMessages, workflowUpdates, execCalls, ctx } = makeHarness({ activeBead: 'bead-ui', taskScopeGit: true })
+    const plan = [
+      'FAST_PATH_RATIONALE: UI execute should implement without supervisor',
+      SAMPLE_READY_PLAN,
+      'Branch: task/plan-approved',
+      'Worktree: /tmp/task',
+      'START_COMMIT: task123',
+    ].join('\n')
 
     await commandHandlers.get('plan')?.handler('', ctx)
+    await markPlanReady(toolHandlers, ctx, plan)
     await agentEndHandlers[0]?.({
       messages: [{
         role: 'assistant',
-        content: [{
-          type: 'text',
-          text: [
-            'FAST_PATH_RATIONALE: UI execute should implement without supervisor',
-            'Plan:',
-            '1. Implement durable approval skip.',
-            'Files to change:',
-            '- .pi/extensions/plan-mode/index.ts',
-            'Acceptance:',
-            '- vitest passes',
-            'Branch: task/plan-approved',
-            'Worktree: /tmp/task',
-            'START_COMMIT: task123',
-          ].join('\n'),
-        }],
+        content: [{ type: 'text', text: plan }],
       }],
     }, ctx)
 
