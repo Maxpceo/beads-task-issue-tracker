@@ -5,7 +5,7 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, supervisorArtifactReadyForReview, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
 import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
@@ -47,6 +47,27 @@ Verification / acceptance checks:
 Risks / rollback:
 - Revert readiness matrix changes.
 AUTO_EXECUTE_ALLOWED: true`
+
+describe('supervisorArtifactReadyForReview', () => {
+  const start = 'c38915a51df6d6baa533d5e6504ecb1c4a9fd21b'
+  const end = 'c0e73d258a52dd2e5696459fb7a51c917a656da5'
+  const base = `SUPERVISOR ARTIFACT\n- Status: DONE\n- Artifact status: complete\n- Commit: ${end}`
+
+  it('accepts Verification with exit 0 (ednj live wording)', () => {
+    const output = `${base}\n- Verification: git diff --check exit 0; rg marker exit 0`
+    expect(supervisorArtifactReadyForReview({ exitCode: 0, output }, start, end)).toBe(true)
+  })
+
+  it('still accepts Verification with exit code 0', () => {
+    const output = `${base}\n- Verification: pnpm test exit code 0, output excerpt: passed`
+    expect(supervisorArtifactReadyForReview({ exitCode: 0, output }, start, end)).toBe(true)
+  })
+
+  it('rejects Verification N/A', () => {
+    const output = `${base}\n- Verification: N/A`
+    expect(supervisorArtifactReadyForReview({ exitCode: 0, output }, start, end)).toBe(false)
+  })
+})
 
 function createSuccessfulSpawn(stdoutLine = JSON.stringify({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'SUPERVISOR ARTIFACT\n- Status: DONE' }], usage: { input: 1, output: 1, totalTokens: 2 }, model: 'test-model' } }) + '\n') {
   return (() => {
