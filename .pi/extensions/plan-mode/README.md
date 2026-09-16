@@ -5,13 +5,18 @@ Project-local Pi plan mode adapted for the beads workflow.
 ## Features
 
 - Read-only exploration mode via `/plan` or clear natural-language activation phrases.
-- Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation.
-- Autopilot mode via `/plan-autopilot` (separate from `/plan-auto`): same plan-review gate, durable `Approved-by: оркестратор`, and a session `autopilot` flag that survives `plan=off` after approval.
+- **Complete-when-ready (strict only):** ready-UI opens only after explicit `plan_mode_complete({ plan })`. Clarifying turns without complete do **not** show Execute.
+- Document-flow ready/question UI (no floating `overlay: true`): RU buttons Исполнить / Остаться / Уточнить / Отправить на plan-review; digits 1–9 + option preview on questionnaire.
+- Ready button «Отправить на plan-review» runs the same uncapped critique path as `/plan-review` (findings via `sendMessage`), keeps plan mode ON, does **not** write `PLAN APPROVED`, does **not** increment `workflow_plan_review` cycle, then re-shows the four buttons.
+- Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation (no ready-UI; pending ready cleared).
+- Autopilot mode via `/plan-autopilot` (separate from `/plan-auto`): same plan-review gate, durable `Approved-by: оркестратор`, and a session `autopilot` flag that survives `plan=off` after approval (no ready-UI).
 - Agent-operable `workflow_plan_review` typed tool for autonomous strict plan mode.
+- Single `questionnaire` tool (example-compatible JSON schema) with project-local renderer; RPC/`!hasUI` falls back to capped `select`/`input` without hanging on `ui.custom`.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands, including `git status`/`git log`/`git diff`/`git show` history inspection and pipelines where every segment is allowlisted read-only (for example `git log ... -- path | head -80`); shell control operators such as `&&`, `||`, and `;` remain blocked.
+- **One plan=strict recovery exception:** a single `bd worktree create <absolute-path> --branch <type>/<basename>` with a canonical task branch (`feat|fix|docs|test|ci|refactor|task|chore/...`, not `main`/`master`). Used when `workflow_plan_approved` blocks on missing/protected task scope so the agent can create the worktree and retry approve with WORKTREE+BRANCH (no second human approval, no `workflow_plan_mode off`). Still blocked: `git worktree add`, `bd worktree remove|prune`, shell composition/`$()`, and extra flags. Prefer claim → create/bind → plan mode when possible; `workflow_update` / `setup-worktree` stay outside plan-mode tools.
 - bd-aware allowlist/blocklist:
-  - allowed: `bd show`, `bd comments`, `bd list`, `bd ready`, selected read-only `bd dep`/`bd dolt` commands;
+  - allowed: `bd show`, `bd comments`, `bd list`, `bd ready`, selected read-only `bd dep`/`bd dolt` commands, plus the recovery `bd worktree create` shape above;
   - blocked: `bd create`, `bd update`, `bd close`, mutating comments, merge-slot acquire/release, Dolt commit/push/pull.
 - Plan extraction from numbered `Plan:` / `Revised plan:` sections.
 - Execution progress via `[DONE:n]` markers.
@@ -26,6 +31,18 @@ Project-local Pi plan mode adapted for the beads workflow.
 - `/plan-review` — run required plan-review agents against the latest draft plan without approving or executing it.
 - `/todos` — show current plan progress.
 - `Ctrl+Alt+P` — toggle strict plan mode.
+
+### Strict ready tools
+
+- `questionnaire` — ask clarifying questions (does not mark the plan ready).
+- `plan_mode_complete({ plan })` — mark the draft plan ready; whitespace-only plan errors. On the following `agent_end` in strict mode, show the four-button ready-UI. Auto/autopilot notes the call but skips ready-UI and clears pending.
+
+### Strict complete-when-ready contract
+
+1. Ask questions only via `questionnaire`.
+2. When the draft is complete, call `plan_mode_complete({ plan })` last in the turn.
+3. Human chooses: execute (durable PLAN APPROVED) / stay / refine / plan-review critique.
+4. Plan-review from the button is critique, not approval and not supervisor start.
 
 ## Natural-language activation
 
@@ -59,7 +76,9 @@ While `autopilotEnabled===true` and `plan=off`, plan-mode is the **единст�
 2. One `complete_visible_dispatch` per ping (concurrent lock only). `incomplete`/`result-only` allows a later ping; `submitted`/`verdict` → noop on repeat.
 3. Supervisor `submitted` → one `requestReviewerDispatch({ beadId, cwd: entry.worktree, transport: cmux })`; live reviewer on bead → noop.
 4. Reviewer `verdict` APPROVED + green matrix → simplified → reviewed → accepted → `bd close` → workflow closed → `close_visible_dispatch` → clear autopilot. No second `review_bead`.
-5. STOP ask (panes live): `[PING-ERROR]`, `BLOCKED`/`NEEDS_CONTEXT`, `NOT APPROVED`, missing bead/worktree, blocking matrix (matrix not written for show).
+5. STOP branches (split panes policy):
+   - **NOT APPROVED** / missing-evidence / `[PING-ERROR]` / `BLOCKED`/`NEEDS_CONTEXT` artifact: panes **live**; do not call `close_visible_dispatch`.
+   - **Grey-matrix blocked** (`finalize.status==="blocked"` after APPROVED): panes **closed** via `close_visible_dispatch({ beadId, stopClose: true })`; bead stays open (not `bd close`); autopilot cleared; durable `STOP CLOSE:` comment (FAIL/NOT RUN rows only, no matrix body dump). Success ask a/b/c; close throw → separate STOP without «bead уже closed» / without a/b/c.
 
 `/plan-auto` does **not** set durable autopilot and does **not** consume ping. `land` / `merge-to-main` never run from this hop. `poll.sh` remains Maxim path B only (not auto-timer).
 
@@ -75,7 +94,8 @@ Each hop return sends **exactly one** visible message (`customType` `autopilot-h
   - `result-only` — ping consumed, artifact not review-ready, reviewer not started, panes live, next ping from child after rewrite; **not** «шаг закрыт» / «работа закончена».
   - `noop` / live reviewer — short RU progress; no machine status dump.
   - `submitted` success — reviewer started; Maxim does not wait `[PING]`.
-  - `NOT APPROVED` / close-blocked / `[PING-ERROR]` / BLOCKED — human STOP without matrix body.
+  - `NOT APPROVED` / missing-evidence / `[PING-ERROR]` / BLOCKED artifact — human STOP without matrix body; **panes live**; close not called.
+  - Grey-matrix `finalize.status==="blocked"` — STOP close: `stopClose:true`, panes closed/not live, bead not closed, autopilot cleared, durable `STOP CLOSE:` (no `UNIQUE_MATRIX`/matrix body dump); Maxim a/b/c. Close throw on blocked → separate STOP (panes may remain; no «bead уже closed»; no a/b/c).
   - APPROVED close `closed` or `noop` — one RU success (panes closed or already not live); autopilot cleared.
   - `closeVisibleDispatch` throw after bd closed — still clear autopilot + persist + status, then **one** STOP (no success trailer).
 
@@ -183,5 +203,7 @@ This extension owns real plan-mode behavior: tool access, read-only command gate
 - `/plan-autopilot` or NL «работаю/работать автономно» -> `plan=auto`, `sessionMode=planning`, plus durable plan-mode `autopilot` flag
 - `/plan-cancel` -> `plan=off`, clears autopilot, and `sessionMode=idle` when the current session is still planning
 - executing an approved plan -> `plan=off`, `planApproved=true`, and `sessionMode=implementing` when the current session is still planning; `/plan-autopilot` keeps the session `autopilot` flag after `plan=off`
+- `workflow_plan_approved` preflights task worktree scope; when blocked on missing/protected main scope it returns recovery with executable `bd worktree create … --branch …` taken from plan evidence WORKTREE/BRANCH when available, then retry approve (no second human approval)
+- **Fast Path skip after approve:** when approved `planEvidence` has a nonempty `FAST_PATH_RATIONALE:` field-line and session autopilot is **off**, post-approval continuation does **not** call `dispatch_supervisor` / pre-dispatch spawn. Durable `PLAN APPROVED`, plan mode off, and `sessionMode=implementing` still apply; tool details include `fastPathSkip: true`. UI Execute and `/plan-auto` set `triggerTurn: true` so the orchestrator keeps implementing in-session; in-turn `workflow_plan_approved` uses display-only skip (`triggerTurn: false`). Missing rationale, or autopilot on, keeps the normal supervisor continuation path. This does not change hop ping consume or `/plan-autopilot` close semantics.
 
-The `workflow-state` extension stores session context such as active bead, branch, worktree, merge-slot hint, plan approval, review/acceptance session mode, landing, and idle reset. It displays live `bdStatus`, but bd remains the source of truth for bead lifecycle.
+The `workflow-state` extension stores session context such as active bead, branch, worktree, merge-slot hint, plan approval, review/acceptance session mode, landing, and idle reset. Claim/reconcile never records protected `main`/`master` cwd as task BRANCH/WORKTREE/START_COMMIT (empty until canonical bind). It displays live `bdStatus`, but bd remains the source of truth for bead lifecycle.

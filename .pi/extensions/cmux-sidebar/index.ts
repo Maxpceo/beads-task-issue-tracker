@@ -35,22 +35,50 @@ interface ModeVisual {
 	icon: string;
 	color: string;
 	progress: string;
+	/** Short Russian label for cmux set-progress --label. */
+	labelRu: string;
 }
 
 const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
 const TITLE_MAX_CODE_POINTS = 40;
-const TERMINAL_MODES = new Set(["closed", "merged", "deferred"]);
+/** Modes that always clear the pill when a bead is still bound. */
+const CLEAR_WITH_BEAD_MODES = new Set(["merged", "deferred"]);
+/** After close / land wait: keep landing visual even when activeBead was cleared. */
+const LANDING_WAIT_MODES = new Set(["closed", "landing"]);
 
 const MODE_VISUAL: Record<string, ModeVisual> = {
-	claimed: { icon: "circle.fill", color: "#0a84ff", progress: "0.15" },
-	planning: { icon: "circle.fill", color: "#0a84ff", progress: "0.30" },
-	plan_approved: { icon: "checkmark.circle", color: "#0a84ff", progress: "0.45" },
-	implementing: { icon: "hammer", color: "#ff9500", progress: "0.60" },
-	inreview: { icon: "eye", color: "#ffd60a", progress: "0.80" },
-	reviewing: { icon: "eye", color: "#ffd60a", progress: "0.90" },
-	accepted: { icon: "checkmark.circle", color: "#30d158", progress: "0.95" },
-	landing: { icon: "arrow.up.circle", color: "#0a84ff", progress: "0.98" },
+	claimed: { icon: "circle.fill", color: "#0a84ff", progress: "0.15", labelRu: "взята" },
+	planning: { icon: "circle.fill", color: "#0a84ff", progress: "0.30", labelRu: "план" },
+	plan_approved: { icon: "checkmark.circle", color: "#0a84ff", progress: "0.45", labelRu: "план ок" },
+	implementing: { icon: "hammer", color: "#ff9500", progress: "0.60", labelRu: "работа" },
+	inreview: { icon: "eye", color: "#ffd60a", progress: "0.80", labelRu: "на ревью" },
+	reviewing: { icon: "eyeglasses", color: "#ffd60a", progress: "0.90", labelRu: "ревью" },
+	accepted: { icon: "checkmark.circle", color: "#30d158", progress: "0.95", labelRu: "принята" },
+	landing: { icon: "arrow.up.circle", color: "#0a84ff", progress: "0.98", labelRu: "нужен merge" },
 };
+
+/**
+ * Prefer sessionMode when it maps to a visual; if leftover unmapped sessionMode
+ * (e.g. UNBOUND_WORKFLOW_STATE) hides a mapped state, fall back to state.
+ */
+function resolveModeForVisual(snapshot: WorkflowStateSnapshot): string {
+	const sessionMode = typeof snapshot.sessionMode === "string" ? snapshot.sessionMode : "";
+	const state = typeof snapshot.state === "string" ? snapshot.state : "";
+	const effectiveMode = sessionMode || state || "idle";
+	if (MODE_VISUAL[effectiveMode]) return effectiveMode;
+	if (state && MODE_VISUAL[state]) return state;
+	return effectiveMode;
+}
+
+function titleFromLastApplied(last: AppliedSignature | undefined, beadId: string): string | undefined {
+	if (!beadId) return undefined;
+	if (!last?.descriptionPresent || !last.pill) return undefined;
+	const marker = " · ";
+	const idx = last.pill.indexOf(marker);
+	if (idx < 0) return undefined;
+	const title = last.pill.slice(idx + marker.length).trim();
+	return title || undefined;
+}
 
 function currentRuntimeOwnerKey(): string {
 	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
@@ -221,7 +249,7 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 			return false;
 		}
 		if (generation !== refreshGeneration) return false;
-		if (!(await runCmux(["set-progress", visual.progress, "--label", mode, "--workspace", workspaceId]))) return false;
+		if (!(await runCmux(["set-progress", visual.progress, "--label", visual.labelRu, "--workspace", workspaceId]))) return false;
 		if (title) {
 			if (generation !== refreshGeneration) return false;
 			if (!(await runCmux(["workspace-action", "--action", "set-description", "--description", title, "--workspace", workspaceId]))) {
@@ -265,29 +293,89 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 			if (!workspaceId) return;
 
 			const effectiveMode = snapshot.sessionMode ?? snapshot.state ?? "idle";
+			const modeForVisual = resolveModeForVisual(snapshot);
 			const activeBead = typeof snapshot.activeBead === "string" ? snapshot.activeBead.trim() : "";
+			const ownsWrittenStatus =
+				lastApplied?.action === "set" || lastApplied?.action === "set-suffix-only";
 
-			if (!activeBead || TERMINAL_MODES.has(effectiveMode)) {
-				// No bead: clear only if this session previously wrote set/set-suffix-only
-				// (ownership-gated). Agent sessions that never set must not wipe the shared sidebar.
-				// Terminal mode with a bead still clears unconditionally.
-				const ownsWrittenStatus =
-					lastApplied?.action === "set" || lastApplied?.action === "set-suffix-only";
-				const shouldClear = activeBead
-					? TERMINAL_MODES.has(effectiveMode)
-					: ownsWrittenStatus;
-				if (!shouldClear) return;
-
+			const applyOwnedClear = async (mode: string, beadId: string): Promise<void> => {
 				const signature: AppliedSignature = {
 					workspaceId,
 					action: "clear",
-					beadId: activeBead || "",
-					effectiveMode,
+					beadId,
+					effectiveMode: mode,
 					pill: "",
 					descriptionPresent: false,
 				};
 				if (signaturesEqual(lastApplied, signature)) return;
 				const ok = await applyClear(workspaceId, generation);
+				if (ok) lastApplied = signature;
+			};
+
+			// No bead: never-set early-return only here (first mapped set with empty lastApplied stays live).
+			if (!activeBead) {
+				if (LANDING_WAIT_MODES.has(effectiveMode)) {
+					// closed/landing without bead = waiting for land/merge. Keep landing pill.
+					if (!ownsWrittenStatus || !lastApplied) return;
+
+					const landingVisual = MODE_VISUAL.landing;
+					const beadId = lastApplied.beadId;
+					const pill = lastApplied.pill || (beadId ? beadSuffixFromId(beadId) : "");
+					const title = (beadId ? titleCache.get(beadId) : undefined) ?? titleFromLastApplied(lastApplied, beadId);
+					const action: ApplyAction = lastApplied.action === "set" || lastApplied.action === "set-suffix-only"
+						? lastApplied.action
+						: title
+							? "set"
+							: "set-suffix-only";
+					const signature: AppliedSignature = {
+						workspaceId,
+						action,
+						beadId,
+						effectiveMode: "landing",
+						pill,
+						descriptionPresent: Boolean(title),
+					};
+					if (signaturesEqual(lastApplied, signature)) return;
+					const ok = await applyMapped(workspaceId, "landing", landingVisual, pill, title, generation);
+					if (ok) lastApplied = signature;
+					return;
+				}
+
+				// Any other owned no-bead mode (idle/reset/merged/blocked/deferred/…) → clear×3.
+				if (!ownsWrittenStatus) return;
+				await applyOwnedClear(effectiveMode, "");
+				return;
+			}
+
+			// Bead bound: merged/deferred clear unconditionally.
+			if (CLEAR_WITH_BEAD_MODES.has(effectiveMode)) {
+				await applyOwnedClear(effectiveMode, activeBead);
+				return;
+			}
+
+			// closed/landing with bead → landing visual (label landing, stable signature mode).
+			if (LANDING_WAIT_MODES.has(effectiveMode)) {
+				const landingVisual = MODE_VISUAL.landing;
+				const title = await resolveTitle(activeBead);
+				if (generation !== refreshGeneration) return;
+				const fresh = latestWorkflowState(ctx);
+				if (!fresh) return;
+				const freshMode = fresh.sessionMode ?? fresh.state ?? "idle";
+				const freshBead = typeof fresh.activeBead === "string" ? fresh.activeBead.trim() : "";
+				if (freshBead !== activeBead || freshMode !== effectiveMode) return;
+
+				const pill = buildPill(activeBead, title);
+				const action: ApplyAction = title ? "set" : "set-suffix-only";
+				const signature: AppliedSignature = {
+					workspaceId,
+					action,
+					beadId: activeBead,
+					effectiveMode: "landing",
+					pill,
+					descriptionPresent: Boolean(title),
+				};
+				if (signaturesEqual(lastApplied, signature)) return;
+				const ok = await applyMapped(workspaceId, "landing", landingVisual, pill, title, generation);
 				if (ok) lastApplied = signature;
 				return;
 			}
@@ -311,9 +399,9 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			const visual = MODE_VISUAL[effectiveMode];
+			const visual = MODE_VISUAL[modeForVisual];
 			if (!visual) {
-				// Unmapped mode with active bead (e.g. idle): leftover status kept, no-op.
+				// Unmapped mode with active bead (e.g. idle / both-unmapped leftover): no-op.
 				return;
 			}
 
@@ -323,9 +411,9 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 			if (generation !== refreshGeneration) return;
 			const fresh = latestWorkflowState(ctx);
 			if (!fresh) return;
-			const freshMode = fresh.sessionMode ?? fresh.state ?? "idle";
+			const freshModeForVisual = resolveModeForVisual(fresh);
 			const freshBead = typeof fresh.activeBead === "string" ? fresh.activeBead.trim() : "";
-			if (freshBead !== activeBead || freshMode !== effectiveMode) return;
+			if (freshBead !== activeBead || freshModeForVisual !== modeForVisual) return;
 
 			const pill = buildPill(activeBead, title);
 			const action: ApplyAction = title ? "set" : "set-suffix-only";
@@ -333,12 +421,12 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 				workspaceId,
 				action,
 				beadId: activeBead,
-				effectiveMode,
+				effectiveMode: modeForVisual,
 				pill,
 				descriptionPresent: Boolean(title),
 			};
 			if (signaturesEqual(lastApplied, signature)) return;
-			const ok = await applyMapped(workspaceId, effectiveMode, visual, pill, title, generation);
+			const ok = await applyMapped(workspaceId, modeForVisual, visual, pill, title, generation);
 			if (ok) lastApplied = signature;
 		} catch {
 			// Snapshot/title path errors must not kill the queue.

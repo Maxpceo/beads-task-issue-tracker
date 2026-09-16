@@ -1,5 +1,8 @@
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
-import { validateTaskScopePath } from "../worktree-scope/index";
+import { isPathInsideOrEqual, validateTaskScopePath } from "../worktree-scope/index";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -45,6 +48,8 @@ type WorkflowStateName = (typeof WORKFLOW_STATES)[number];
 type PlanMode = "off" | "strict" | "auto";
 
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
+const CANONICAL_PI_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
+const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 
 interface WorkflowState {
 	activeBead?: string;
@@ -206,12 +211,140 @@ async function detectWorktreePath(pi: ExtensionAPI, cwd?: string): Promise<strin
 	return stdout.trim() || undefined;
 }
 
+function beadIdSuffix(beadId: string): string {
+	const parts = beadId.split("-").filter(Boolean);
+	return parts.at(-1) ?? "";
+}
+
+interface PorcelainWorktreeEntry {
+	path: string;
+	branch?: string;
+	bare?: boolean;
+	detached?: boolean;
+}
+
+interface ExistingTaskWorktreeCandidate {
+	path: string;
+	branch: string;
+}
+
+function parseWorktreePorcelain(stdout: string): PorcelainWorktreeEntry[] {
+	const entries: PorcelainWorktreeEntry[] = [];
+	let current: PorcelainWorktreeEntry | undefined;
+	for (const rawLine of stdout.split("\n")) {
+		const line = rawLine.trimEnd();
+		if (!line) {
+			if (current) {
+				entries.push(current);
+				current = undefined;
+			}
+			continue;
+		}
+		if (line.startsWith("worktree ")) {
+			if (current) entries.push(current);
+			current = { path: path.resolve(line.slice("worktree ".length).trim()) };
+			continue;
+		}
+		if (!current) continue;
+		if (line === "bare") current.bare = true;
+		else if (line === "detached") current.detached = true;
+		else if (line.startsWith("branch ")) {
+			const ref = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+			current.branch = ref || undefined;
+		}
+	}
+	if (current) entries.push(current);
+	return entries;
+}
+
+function isCanonicalExistingTaskWorktree(entry: PorcelainWorktreeEntry, beadId: string): boolean {
+	if (!entry.path || entry.bare || entry.detached || !entry.branch) return false;
+	const slash = entry.branch.indexOf("/");
+	if (slash <= 0) return false;
+	const prefix = entry.branch.slice(0, slash);
+	const suffix = entry.branch.slice(slash + 1);
+	if (!CANONICAL_PI_BRANCH_PREFIXES.has(prefix) || !suffix) return false;
+	const suffixKey = beadIdSuffix(beadId);
+	if (!suffixKey || !suffix.startsWith(`${suffixKey}-`)) return false;
+	if (path.basename(entry.path) !== suffix) return false;
+	return isPathInsideOrEqual(entry.path, WORKTREE_ROOT);
+}
+
+async function discoverExistingTaskWorktrees(
+	pi: ExtensionAPI,
+	repoRoot: string | undefined,
+	beadId: string,
+): Promise<{ candidates: ExistingTaskWorktreeCandidate[]; listFailed: boolean }> {
+	const list = await pi.exec("git", gitArgs(repoRoot, ["worktree", "list", "--porcelain"]));
+	if (list.code !== 0) return { candidates: [], listFailed: true };
+	const candidates: ExistingTaskWorktreeCandidate[] = [];
+	for (const entry of parseWorktreePorcelain(list.stdout)) {
+		if (!isCanonicalExistingTaskWorktree(entry, beadId) || !entry.branch) continue;
+		const [toplevel, liveBranch] = await Promise.all([
+			detectWorktreePath(pi, entry.path),
+			detectBranch(pi, entry.path),
+		]);
+		if (!toplevel || path.resolve(toplevel) !== path.resolve(entry.path)) continue;
+		if (liveBranch !== entry.branch) continue;
+		candidates.push({ path: path.resolve(entry.path), branch: entry.branch });
+	}
+	return { candidates, listFailed: false };
+}
+
+function hasIntentionalEmptyClaimedScope(
+	state: WorkflowState,
+	currentScope: { branch?: string },
+	bdStatus?: string,
+): boolean {
+	return state.state === "claimed"
+		&& Boolean(state.activeBead)
+		&& !state.branch
+		&& !state.worktreePath
+		&& !state.startCommit
+		&& Boolean(currentScope.branch && PROTECTED_BRANCHES.has(currentScope.branch))
+		&& bdStatus === "in_progress";
+}
+
 function isTerminalWorkflowState(state: WorkflowStateName): boolean {
 	return state === "closed" || state === "blocked" || state === "deferred" || state === "merged";
 }
 
 function isTerminalBdStatus(status?: string): boolean {
 	return status === "closed" || status === "blocked" || status === "deferred";
+}
+
+/**
+ * Unbind activeBead when live bd is terminal.
+ * closed keeps sessionMode/state=closed so cmux-sidebar can show landing-until-merge.
+ * blocked/deferred clear to idle (no land/merge wait).
+ */
+function unbindTerminalBdBinding(
+	state: WorkflowState,
+	bdStatus: string,
+	currentScope: { branch?: string; worktreePath?: string; startCommit?: string },
+): WorkflowState {
+	const base: WorkflowState = {
+		...state,
+		activeBead: undefined,
+		branch: currentScope.branch ?? state.branch,
+		worktreePath: currentScope.worktreePath,
+		startCommit: currentScope.startCommit,
+		endCommit: undefined,
+		sessionKey: undefined,
+		bdStatus: undefined,
+	};
+	if (bdStatus === "closed") {
+		return clearUnsafeApprovedImplementingState({
+			...base,
+			state: "closed",
+			sessionMode: "closed",
+		}).state;
+	}
+	return clearUnsafeApprovedImplementingState({
+		...base,
+		state: "idle",
+		sessionMode: "idle",
+	}).state;
 }
 
 async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | undefined> {
@@ -316,7 +449,25 @@ function hasForeignSessionKeyEvidence(commentsText: string, scope: RecoveryScope
 	return Boolean(latest && latest !== scope.sessionKey);
 }
 
+function isProtectedBranchName(branch?: string): boolean {
+	return Boolean(branch && PROTECTED_BRANCHES.has(branch));
+}
+
+/** Drop protected main/master cwd so it never becomes recorded task scope. */
+function nonProtectedGitScope<T extends { branch?: string; worktreePath?: string; startCommit?: string }>(scope: T): T {
+	if (!isProtectedBranchName(scope.branch)) return scope;
+	return {
+		...scope,
+		branch: undefined,
+		worktreePath: undefined,
+		startCommit: undefined,
+	};
+}
+
 function workflowStateHasCurrentScopeEvidence(state: WorkflowState, scope: RecoveryScope): boolean {
+	// Protected cwd is never "current task scope" — keeps claim-from-main from re-binding main.
+	if (isProtectedBranchName(scope.branch) || isProtectedBranchName(state.branch)) return false;
+
 	const hasForeignWorktree = Boolean(state.worktreePath && scope.worktreePath && state.worktreePath !== scope.worktreePath);
 	const hasForeignBranch = Boolean(state.branch && scope.branch && state.branch !== scope.branch);
 	if (hasForeignWorktree || hasForeignBranch) return false;
@@ -413,39 +564,46 @@ function clearUnsafeApprovedImplementingState(state: WorkflowState): { state: Wo
 
 async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, ctx?: ExtensionContext, staleRecoveryBlockedBeads = new Set<string>()): Promise<{ state: WorkflowState; warning?: string }> {
 	const gitCwd = ctx?.cwd;
-	const currentScope = {
+	const detectedScope = {
 		branch: await detectBranch(pi, gitCwd),
 		worktreePath: await detectWorktreePath(pi, gitCwd),
 		startCommit: await detectStartCommit(pi, gitCwd),
 	};
+	// Never treat protected main/master cwd as task scope fill source.
+	const currentScope = nonProtectedGitScope(detectedScope);
 	const scope = {
-		branch: currentScope.branch ?? state.branch,
-		worktreePath: currentScope.worktreePath ?? state.worktreePath,
-		startCommit: currentScope.startCommit ?? state.startCommit,
+		branch: currentScope.branch ?? (isProtectedBranchName(state.branch) ? undefined : state.branch),
+		worktreePath: currentScope.worktreePath ?? (isProtectedBranchName(state.branch) ? undefined : state.worktreePath),
+		startCommit: currentScope.startCommit ?? (isProtectedBranchName(state.branch) ? undefined : state.startCommit),
 		sessionKey: currentSessionKey(ctx),
+	};
+	// Recovery may still observe protected cwd to emit UNBOUND instead of silently matching main evidence.
+	const recoveryLookupScope = {
+		branch: detectedScope.branch ?? scope.branch,
+		worktreePath: detectedScope.worktreePath ?? scope.worktreePath,
+		startCommit: detectedScope.startCommit ?? scope.startCommit,
+		sessionKey: scope.sessionKey,
 	};
 
 	if (state.activeBead && state.state !== "idle") {
 		const bdStatus = await readBdStatus(pi, state.activeBead);
 		if (isTerminalBdStatus(bdStatus)) {
-			const cleared = clearUnsafeApprovedImplementingState({
-				...state,
-				activeBead: undefined,
-				state: "idle",
-				branch: currentScope.branch ?? state.branch,
-				worktreePath: currentScope.worktreePath,
-				startCommit: currentScope.startCommit,
-				endCommit: undefined,
-				sessionKey: undefined,
-				bdStatus: undefined,
-			});
-			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`) };
+			const unbound = unbindTerminalBdBinding(state, bdStatus!, currentScope);
+			return { state: unbound, warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`) };
 		}
 		if (isTerminalWorkflowState(state.state)) return { state: { ...state, bdStatus } };
 
 		const commentsText = await readBdComments(pi, state.activeBead);
-		const hasCurrentScope = workflowStateHasCurrentScopeEvidence(state, scope);
+		const hasCurrentScope = workflowStateHasCurrentScopeEvidence(state, {
+			...scope,
+			branch: currentScope.branch,
+			worktreePath: currentScope.worktreePath,
+			startCommit: currentScope.startCommit,
+		});
 		const hasRecordedTaskScope = await workflowStateHasValidRecordedTaskScope(pi, state);
+		const keepEmptyClaimedScope = hasIntentionalEmptyClaimedScope(state, currentScope, bdStatus) && hasCurrentSessionOwnership(state, ctx);
+		const hasEmptyTaskScope = !state.worktreePath && !state.branch && !state.startCommit;
+		const hasProtectedRecordedScope = isProtectedBranchName(state.branch);
 		const ownershipScope = hasRecordedTaskScope && !hasCurrentScope ? {
 			branch: state.branch,
 			worktreePath: state.worktreePath,
@@ -454,7 +612,11 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 		} : scope;
 		const ctxSessionKey = currentSessionKey(ctx);
 		const skipWipeForKeylessCtx = !ctxSessionKey && hasRecordedTaskScope && !isTerminalBdStatus(bdStatus);
-		const hasOwnership = skipWipeForKeylessCtx || (
+		// Claim-from-main leaves empty task scope until bind; keep same-session claimed/inreview bead (incl. planning sessionMode).
+		const skipWipeForAwaitingTaskWorktree = hasCurrentSessionOwnership(state, ctx)
+			&& (bdStatus === "in_progress" || bdStatus === "inreview")
+			&& (hasEmptyTaskScope || hasProtectedRecordedScope);
+		const hasOwnership = skipWipeForKeylessCtx || keepEmptyClaimedScope || skipWipeForAwaitingTaskWorktree || (
 			!hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)
 			&& hasCurrentSessionOwnership(state, ctx)
 			&& (hasCurrentScope || hasRecordedTaskScope)
@@ -465,7 +627,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 				...state,
 				activeBead: undefined,
 				state: "idle",
-				branch: currentScope.branch ?? state.branch,
+				branch: currentScope.branch,
 				worktreePath: currentScope.worktreePath,
 				startCommit: currentScope.startCommit,
 				endCommit: undefined,
@@ -479,7 +641,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 				...state,
 				activeBead: undefined,
 				state: "idle",
-				branch: currentScope.branch ?? state.branch,
+				branch: currentScope.branch,
 				worktreePath: currentScope.worktreePath,
 				startCommit: currentScope.startCommit,
 				endCommit: undefined,
@@ -488,12 +650,14 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 			});
 			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a readable bd status") };
 		}
+		const fillFromCurrentScope = hasCurrentScope && !keepEmptyClaimedScope && !skipWipeForAwaitingTaskWorktree;
 		const syncedState: WorkflowState = {
 			...state,
 			bdStatus,
-			branch: hasCurrentScope ? (currentScope.branch ?? state.branch) : state.branch,
-			worktreePath: hasCurrentScope ? currentScope.worktreePath : state.worktreePath,
-			startCommit: hasCurrentScope ? currentScope.startCommit : state.startCommit,
+			// Strip legacy protected main recorded as task scope; keep empty until canonical bind.
+			branch: fillFromCurrentScope ? (currentScope.branch ?? state.branch) : (hasProtectedRecordedScope ? undefined : state.branch),
+			worktreePath: fillFromCurrentScope ? currentScope.worktreePath : (hasProtectedRecordedScope ? undefined : state.worktreePath),
+			startCommit: fillFromCurrentScope ? currentScope.startCommit : (hasProtectedRecordedScope ? undefined : state.startCommit),
 		};
 		if (bdStatus === "inreview" && state.state === "implementing") {
 			syncedState.state = "inreview";
@@ -505,9 +669,14 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 		return { state: syncedState };
 	}
 
-	const baseState = { ...state, branch: currentScope.branch ?? state.branch, worktreePath: currentScope.worktreePath, startCommit: currentScope.startCommit };
+	const baseState = {
+		...state,
+		branch: currentScope.branch ?? (isProtectedBranchName(state.branch) ? undefined : state.branch),
+		worktreePath: currentScope.worktreePath ?? (isProtectedBranchName(state.branch) ? undefined : state.worktreePath),
+		startCommit: currentScope.startCommit ?? (isProtectedBranchName(state.branch) ? undefined : state.startCommit),
+	};
 	const canRecoverActiveBead = state.state === "idle" || hasUnsafeApprovedImplementingState(baseState);
-	const recovery = canRecoverActiveBead ? await findRecoverableActiveBead(pi, scope, staleRecoveryBlockedBeads) : {};
+	const recovery = canRecoverActiveBead ? await findRecoverableActiveBead(pi, recoveryLookupScope, staleRecoveryBlockedBeads) : {};
 	if (!recovery.beadId) {
 		const cleared = clearUnsafeApprovedImplementingState(baseState);
 		if (recovery.diagnostic && !cleared.warning) {
@@ -666,6 +835,7 @@ function validateWorkflowUpdateParams(params: Record<string, unknown>): string |
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
 	let lastClaimError: string | undefined;
+	let lastClaimWarning: string | undefined;
 	const staleRecoveryBlockedBeads = new Set<string>();
 
 	function persist(ctx?: ExtensionContext): void {
@@ -687,11 +857,17 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 	}
 
 	async function resetWorkflowState(ctx: ExtensionContext): Promise<WorkflowState> {
-		workflowState = {
-			...cloneState(DEFAULT_STATE),
+		const detected = nonProtectedGitScope({
 			branch: await detectBranch(pi, ctx.cwd),
 			worktreePath: await detectWorktreePath(pi, ctx.cwd),
 			startCommit: await detectStartCommit(pi, ctx.cwd),
+		});
+		workflowState = {
+			...cloneState(DEFAULT_STATE),
+			// Keep location awareness on non-protected checkouts only; main stays empty task scope.
+			branch: detected.branch,
+			worktreePath: detected.worktreePath,
+			startCommit: detected.startCommit,
 			runtimeOwnerKey: currentRuntimeOwnerKey(),
 			updatedAt: new Date().toISOString(),
 		};
@@ -789,13 +965,18 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				return;
 			}
 			const nextState = maybeState && isWorkflowStateName(maybeState) ? maybeState : workflowState.state;
+			const detected = nonProtectedGitScope({
+				branch: await detectBranch(pi, ctx.cwd),
+				worktreePath: await detectWorktreePath(pi, ctx.cwd),
+				startCommit: await detectStartCommit(pi, ctx.cwd),
+			});
 			setState(
 				{
 					activeBead: bead,
 					state: nextState,
-					branch: workflowState.branch ?? (await detectBranch(pi, ctx.cwd)),
-					worktreePath: workflowState.worktreePath ?? (await detectWorktreePath(pi, ctx.cwd)),
-					startCommit: workflowState.startCommit ?? (await detectStartCommit(pi, ctx.cwd)),
+					branch: (workflowState.branch && !isProtectedBranchName(workflowState.branch) ? workflowState.branch : undefined) ?? detected.branch,
+					worktreePath: (workflowState.worktreePath && !isProtectedBranchName(workflowState.branch) ? workflowState.worktreePath : undefined) ?? detected.worktreePath,
+					startCommit: (workflowState.startCommit && !isProtectedBranchName(workflowState.branch) ? workflowState.startCommit : undefined) ?? detected.startCommit,
 					sessionKey: currentSessionKey(ctx),
 				},
 				ctx,
@@ -812,6 +993,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
 		lastClaimError = undefined;
+		lastClaimWarning = undefined;
 		await ensureReconciled(ctx);
 		if (workflowState.activeBead && workflowState.activeBead !== bead) {
 			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
@@ -839,16 +1021,47 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			return recordClaimError(ctx, `Failed to claim bead ${bead}: bd status is ${claimedBdStatus ?? "unreadable"} after command \`bd update ${bead} --claim --json\`; expected in_progress.${fallbackDetails} Local workflow-state не изменён.`);
 		}
 
-		const branch = await detectBranch(pi, ctx.cwd);
-		const worktreePath = await detectWorktreePath(pi, ctx.cwd);
-		const startCommit = await detectStartCommit(pi, ctx.cwd);
+		const detectedBranch = await detectBranch(pi, ctx.cwd);
+		const detectedWorktreePath = await detectWorktreePath(pi, ctx.cwd);
+		const detectedStartCommit = await detectStartCommit(pi, ctx.cwd);
+		const taskScope = nonProtectedGitScope({
+			branch: detectedBranch,
+			worktreePath: detectedWorktreePath,
+			startCommit: detectedStartCommit,
+		});
+		// Explicit undefined on protected cwd — do not omit keys or record main as task scope.
+		let branch = taskScope.branch;
+		let worktreePath = taskScope.worktreePath;
+		let startCommit = taskScope.startCommit;
 		const sessionKey = currentSessionKey(ctx);
+
+		if (detectedBranch && PROTECTED_BRANCHES.has(detectedBranch)) {
+			const discovery = await discoverExistingTaskWorktrees(pi, detectedWorktreePath, bead);
+			if (discovery.listFailed || discovery.candidates.length > 1) {
+				const listed = discovery.listFailed
+					? "git worktree list --porcelain failed"
+					: discovery.candidates.map((candidate) => `${candidate.branch} @ ${candidate.path}`).join("; ");
+				lastClaimWarning = `Claim ${bead} успешен без lock на main: ${listed}. Выберите один worktree и вызовите workflow_update(worktree=<abs>, branch=<canonical>); не делайте re-claim.`;
+				branch = undefined;
+				worktreePath = undefined;
+				startCommit = undefined;
+				ctx.ui.notify(lastClaimWarning, "warning");
+			} else if (discovery.candidates.length === 1) {
+				const match = discovery.candidates[0]!;
+				branch = match.branch;
+				worktreePath = match.path;
+				startCommit = await detectStartCommit(pi, match.path);
+			}
+			// zero live matches: keep cwd (main) as today
+		}
+
 		const ownershipCommentResult = await pi.exec("bd", [
 			"comments",
 			"add",
 			bead,
 			[
 				"WORKFLOW CLAIM",
+				// Protected main/master BRANCH/WORKTREE/START_COMMIT are intentionally omitted.
 				branch ? `BRANCH: ${branch}` : undefined,
 				worktreePath ? `WORKTREE: ${worktreePath}` : undefined,
 				startCommit ? `START_COMMIT: ${startCommit}` : undefined,
@@ -865,6 +1078,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			{
 				activeBead: bead,
 				state: "claimed",
+				sessionMode: "claimed",
 				branch,
 				worktreePath,
 				startCommit,
@@ -974,9 +1188,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			if (kv.bead) {
 				next.activeBead = kv.bead;
 				next.sessionKey = currentSessionKey(ctx);
-				next.branch = workflowState.branch ?? (await detectBranch(pi));
-				next.worktreePath = workflowState.worktreePath ?? (await detectWorktreePath(pi));
-				next.startCommit = workflowState.startCommit ?? (await detectStartCommit(pi));
+				const detected = nonProtectedGitScope({
+					branch: await detectBranch(pi),
+					worktreePath: await detectWorktreePath(pi),
+					startCommit: await detectStartCommit(pi),
+				});
+				next.branch = (workflowState.branch && !isProtectedBranchName(workflowState.branch) ? workflowState.branch : undefined) ?? detected.branch;
+				next.worktreePath = (workflowState.worktreePath && !isProtectedBranchName(workflowState.branch) ? workflowState.worktreePath : undefined) ?? detected.worktreePath;
+				next.startCommit = (workflowState.startCommit && !isProtectedBranchName(workflowState.branch) ? workflowState.startCommit : undefined) ?? detected.startCommit;
 			}
 			if (kv.branch) next.branch = kv.branch;
 			if (kv.worktree) next.worktreePath = kv.worktree;
@@ -1033,9 +1252,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			async execute(_id: string, params: { beadId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const ok = await claimWorkflowBead(params.beadId, ctx);
 				const error = ok ? undefined : lastClaimError;
+				const warning = ok ? lastClaimWarning : undefined;
 				await ensureReconciled(ctx);
 				const failureDetails = error ? `; reason: ${error}` : "";
-				return toolText(ok ? `workflow_claim выполнен: ${formatState(workflowState)}` : `workflow_claim не выполнен для ${params.beadId}: ${formatState(workflowState)}${failureDetails}`, { ok, error, ...cloneState(workflowState) });
+				const warningDetails = warning ? `; warning: ${warning}` : "";
+				return toolText(
+					ok ? `workflow_claim выполнен: ${formatState(workflowState)}${warningDetails}` : `workflow_claim не выполнен для ${params.beadId}: ${formatState(workflowState)}${failureDetails}`,
+					{ ok, error, warning, ...cloneState(workflowState) },
+				);
 			},
 		});
 
@@ -1089,7 +1313,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					if (workflowState.activeBead) {
 						const bdStatus = await readBdStatus(pi, workflowState.activeBead);
 						if (isTerminalBdStatus(bdStatus)) {
-							assignState({ activeBead: undefined, state: "idle", endCommit: undefined, sessionKey: undefined, bdStatus: undefined });
+							assignState(unbindTerminalBdBinding(workflowState, bdStatus!, {
+								branch: workflowState.branch,
+								worktreePath: workflowState.worktreePath,
+								startCommit: workflowState.startCommit,
+							}));
 						} else if (bdStatus) {
 							assignState({ bdStatus });
 							const ownershipComment = [
@@ -1193,9 +1421,20 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			.pop() as { data?: WorkflowState } | undefined;
 
 		workflowState = lastStateEntry?.data ? { ...cloneState(DEFAULT_STATE), ...lastStateEntry.data } : { ...cloneState(DEFAULT_STATE), runtimeOwnerKey: currentRuntimeOwnerKey() };
-		workflowState.branch = workflowState.branch ?? (await detectBranch(pi, ctx.cwd));
-		workflowState.worktreePath = workflowState.worktreePath ?? (await detectWorktreePath(pi, ctx.cwd));
-		workflowState.startCommit = workflowState.startCommit ?? (await detectStartCommit(pi, ctx.cwd));
+		const detected = nonProtectedGitScope({
+			branch: await detectBranch(pi, ctx.cwd),
+			worktreePath: await detectWorktreePath(pi, ctx.cwd),
+			startCommit: await detectStartCommit(pi, ctx.cwd),
+		});
+		// Do not copy protected main cwd into task scope via ?? detect*.
+		if (isProtectedBranchName(workflowState.branch)) {
+			workflowState.branch = undefined;
+			workflowState.worktreePath = undefined;
+			workflowState.startCommit = undefined;
+		}
+		workflowState.branch = workflowState.branch ?? detected.branch;
+		workflowState.worktreePath = workflowState.worktreePath ?? detected.worktreePath;
+		workflowState.startCommit = workflowState.startCommit ?? detected.startCommit;
 		persist(ctx);
 		await ensureReconciled(ctx);
 	});

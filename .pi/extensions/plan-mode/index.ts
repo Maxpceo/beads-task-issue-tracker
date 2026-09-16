@@ -22,6 +22,17 @@ import {
 	markCompletedSteps,
 	type TodoItem,
 } from "./utils.js";
+import {
+	createQuestionUiFactory,
+	formatQuestionnaireAnswerLines,
+	normalizeQuestions,
+	type QuestionnaireUiResult,
+} from "./question-ui.js";
+import {
+	createReadyUiFactory,
+	READY_ACTIONS,
+	type ReadyAction,
+} from "./ready-ui.js";
 import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/index";
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 import {
@@ -50,7 +61,7 @@ import { finalizeVisibleReviewClose } from "../review-workflow/index";
 import { PROTECTED_BRANCHES, validateTaskScopePath } from "../worktree-scope/index";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "plan_mode_complete", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
 const PLAN_MODE_TOOL_SET = new Set(PLAN_MODE_TOOLS);
 const NORMAL_MODE_FALLBACK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "plan_subagent"];
 const MANDATORY_WORKFLOW_TOOLS = [
@@ -87,6 +98,51 @@ const WorkflowPlanApprovedParams = {
 		approvedBy: { type: "string", description: "Approver name", default: "Максим" },
 	},
 	required: ["beadId", "planEvidence"],
+	additionalProperties: false,
+} as const;
+
+const PlanModeCompleteParams = {
+	type: "object",
+	properties: {
+		plan: { type: "string", description: "Final plan text ready for human ready-UI (execute/stay/refine/plan-review). Call only when the plan is complete; do not call after a clarifying question." },
+	},
+	required: ["plan"],
+	additionalProperties: false,
+} as const;
+
+const QuestionnaireParams = {
+	type: "object",
+	properties: {
+		questions: {
+			type: "array",
+			description: "One or more clarifying questions (example-compatible schema)",
+			items: {
+				type: "object",
+				properties: {
+					id: { type: "string", description: "Unique question id" },
+					label: { type: "string", description: "Short tab label" },
+					prompt: { type: "string", description: "Full question text" },
+					options: {
+						type: "array",
+						items: {
+							type: "object",
+							properties: {
+								value: { type: "string" },
+								label: { type: "string" },
+								description: { type: "string" },
+							},
+							required: ["value", "label"],
+							additionalProperties: false,
+						},
+					},
+					allowOther: { type: "boolean", description: "Allow custom text answer (default true)" },
+				},
+				required: ["id", "prompt", "options"],
+				additionalProperties: false,
+			},
+		},
+	},
+	required: ["questions"],
 	additionalProperties: false,
 } as const;
 
@@ -216,6 +272,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let lastPlanReviewStopAdvice: PlanReviewStopAdvice | undefined;
 	let lastPlanReviewResults: PlanReviewResult[] = [];
 	let prePlanActiveToolNames: string[] | undefined;
+	/** Set only by plan_mode_complete; gates ready-UI in strict agent_end. */
+	let pendingReadyPlan: string | undefined;
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -385,14 +443,38 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return value;
 	}
 
-	function worktreeRecovery(worktreePath: string | undefined, branch?: string, phase: "approval" | "continuation" = "approval"): string {
+	function isCanonicalTaskBranch(branch?: string): branch is string {
+		if (!branch || PROTECTED_BRANCHES.has(branch)) return false;
+		return /^(?:feat|fix|docs|test|ci|refactor|task|chore)\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/.test(branch);
+	}
+
+	function isAbsoluteTaskWorktreePath(worktreePath?: string): worktreePath is string {
+		return Boolean(worktreePath && worktreePath.startsWith("/") && !/\s/.test(worktreePath));
+	}
+
+	function worktreeRecovery(
+		worktreePath: string | undefined,
+		branch?: string,
+		phase: "approval" | "continuation" = "approval",
+		evidence?: { worktreePath?: string; branch?: string },
+	): string {
 		const protectedBranch = Boolean(branch && PROTECTED_BRANCHES.has(branch));
-		const recoveryBranch = !branch || protectedBranch ? "<canonical-task-branch>" : branch;
-		const recoveryPath = !worktreePath || protectedBranch ? "<path>" : worktreePath;
+		const recoveryBranch =
+			(!protectedBranch && isCanonicalTaskBranch(branch) ? branch : undefined)
+			?? (isCanonicalTaskBranch(evidence?.branch) ? evidence?.branch : undefined);
+		const recoveryPath =
+			(!protectedBranch && isAbsoluteTaskWorktreePath(worktreePath) ? worktreePath : undefined)
+			?? (isAbsoluteTaskWorktreePath(evidence?.worktreePath) ? evidence?.worktreePath : undefined);
 		const nextStep = phase === "continuation"
 			? "then retry `dispatch_supervisor` from that task worktree"
-			: "before calling `workflow_plan_approved`";
-		return `Recovery: create the task worktree with \`bd worktree create ${recoveryPath} --branch ${recoveryBranch}\` from the project checkout, or update workflow-state to a readable task worktree ${nextStep}.`;
+			: "then retry `workflow_plan_approved` with WORKTREE and BRANCH (no second human approval)";
+		if (recoveryPath && recoveryBranch) {
+			return `Recovery: create the task worktree with \`bd worktree create ${recoveryPath} --branch ${recoveryBranch}\` from the project checkout (allowed in plan=strict), ${nextStep}.`;
+		}
+		if (recoveryBranch) {
+			return `Recovery: create the canonical task worktree with \`bd worktree create\` under the project worktrees root using \`--branch ${recoveryBranch}\` from the project checkout (allowed in plan=strict), ${nextStep}.`;
+		}
+		return `Recovery: create a canonical task worktree with \`bd worktree create <absolute-path> --branch <type>/<bead-suffix>-<domain-or-component>-<purpose>\` from the project checkout (allowed in plan=strict; not main/master), ${nextStep}.`;
 	}
 
 	function latestRecordedWorkflowScope(ctx: ExtensionContext, beadId: string): WorkflowStateSnapshot | undefined {
@@ -416,7 +498,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return (currentRuntimeCandidates.length > 0 ? currentRuntimeCandidates : candidates).at(-1);
 	}
 
-	async function validatedWorktreeScope(source: "approved plan evidence" | "recorded workflow-state" | "continuation", worktreePath: string, expectedBranch?: string, startCommit?: string, phase: "approval" | "continuation" = "approval"): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string; code?: string }> {
+	async function validatedWorktreeScope(
+		source: "approved plan evidence" | "recorded workflow-state" | "continuation",
+		worktreePath: string,
+		expectedBranch?: string,
+		startCommit?: string,
+		phase: "approval" | "continuation" = "approval",
+		evidence?: { worktreePath?: string; branch?: string },
+	): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string; code?: string }> {
 		const detectedWorktreePath = await detectGitValueAt(worktreePath, ["rev-parse", "--show-toplevel"]);
 		const detectedBranch = detectedWorktreePath ? await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]) : undefined;
 		const validated = validateTaskScopePath(worktreePath, {
@@ -426,7 +515,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			getBranch: () => detectedBranch,
 		});
 		if (!validated.ok) {
-			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase);
+			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase, evidence);
 			if (validated.error.code === "BRANCH_MISMATCH") {
 				return { error: `${source} branch ${expectedBranch} does not match worktree branch ${detectedBranch ?? "<unknown>"}. ${recovery}`, code: validated.error.code };
 			}
@@ -448,27 +537,45 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const evidenceWorktreePath = evidenceWorktreePathRaw ? normalizeWorktreePathEvidence(evidenceWorktreePathRaw) : undefined;
 		const evidenceBranch = latestPlanField(planEvidence, ["BRANCH", "Branch", "branch"]);
 		const evidenceStartCommit = latestPlanField(planEvidence, ["START_COMMIT", "Start-commit", "Start commit", "startCommit", "start"]);
+		const evidenceCanon = {
+			worktreePath: isAbsoluteTaskWorktreePath(evidenceWorktreePath) ? evidenceWorktreePath : undefined,
+			branch: isCanonicalTaskBranch(evidenceBranch) ? evidenceBranch : undefined,
+		};
 
 		if (evidenceWorktreePath) {
-			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit);
+			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit, "approval", evidenceCanon);
 			if (!scoped.error) return scoped;
 			const evidenceProtected = scoped.code === "PROTECTED_BRANCH" || Boolean(evidenceBranch && PROTECTED_BRANCHES.has(evidenceBranch));
 			if (!evidenceProtected) return scoped;
-		} else if (evidenceBranch) {
-			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found` };
+		} else if (evidenceBranch && !PROTECTED_BRANCHES.has(evidenceBranch)) {
+			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found. ${worktreeRecovery(undefined, evidenceBranch, "approval", evidenceCanon)}` };
 		}
 
 		const recordedScope = latestRecordedWorkflowScope(ctx, beadId);
-		if (recordedScope?.worktreePath) {
-			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit);
-			if (scoped.error) return scoped;
+		const recordedProtected = Boolean(recordedScope?.branch && PROTECTED_BRANCHES.has(recordedScope.branch));
+		const recoveryCanon = {
+			worktreePath: evidenceCanon.worktreePath ?? (isAbsoluteTaskWorktreePath(recordedScope?.worktreePath) && !recordedProtected ? recordedScope?.worktreePath : undefined),
+			branch: evidenceCanon.branch ?? (isCanonicalTaskBranch(recordedScope?.branch) ? recordedScope?.branch : undefined),
+		};
+		const noReadableWithCanon = () =>
+			`no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined, "approval", recoveryCanon)}`;
+		if (recordedScope?.worktreePath && !recordedProtected) {
+			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit, "approval", recoveryCanon);
+			if (scoped.error) {
+				if (scoped.code === "PROTECTED_BRANCH") return { error: noReadableWithCanon() };
+				return scoped;
+			}
 			return scoped;
 		}
+		if (recordedProtected) {
+			return { error: noReadableWithCanon() };
+		}
 		if (recordedScope?.branch || recordedScope?.startCommit) {
-			return { error: "recorded workflow-state has branch/start scope but no worktreePath; refusing to approve against ambiguous main-start cwd" };
+			// Incomplete recorded scope without a worktree: recoverable, not a dead-end incomplete-scope message.
+			return { error: noReadableWithCanon() };
 		}
 
-		return { error: `no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined)}` };
+		return { error: noReadableWithCanon() };
 	}
 
 	function currentSessionKey(ctx: ExtensionContext): string | undefined {
@@ -606,11 +713,37 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return { error: `no readable task worktree for continuation. ${worktreeRecovery(recoveryPath, recoveryBranch, "continuation")}` };
 	}
 
-	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, approvedWorktreePath?: string): Promise<void> {
-		const resolved = await resolveContinuationCwd(ctx, beadId, approvedWorktreePath);
+	function hasNonemptyFastPathRationale(planEvidence: string): boolean {
+		const value = latestPlanField(planEvidence, ["FAST_PATH_RATIONALE"]);
+		return Boolean(value?.trim());
+	}
+
+	async function triggerApprovedPlanContinuation(
+		ctx: ExtensionContext,
+		beadId: string,
+		options: { approvedWorktreePath?: string; planEvidence?: string; triggerTurn?: boolean } = {},
+	): Promise<{ skipped: boolean }> {
+		// Fast Path: orchestrator implements; skip supervisor spawn before any pre-dispatch work.
+		if (hasNonemptyFastPathRationale(options.planEvidence ?? "") && !autopilotEnabled) {
+			const triggerTurn = options.triggerTurn === true;
+			const content = [
+				"Fast Path: skip supervisor after PLAN APPROVED.",
+				`Bead: ${beadId}`,
+				triggerTurn
+					? "Next: implement now; do not dispatch_supervisor; do not wait for ping."
+					: "Next: orchestrator continues; do not dispatch_supervisor; do not wait for ping.",
+			].join("\n");
+			pi.sendMessage(
+				{ customType: "post-approval-fast-path-skip", content, display: true },
+				{ triggerTurn },
+			);
+			return { skipped: true };
+		}
+
+		const resolved = await resolveContinuationCwd(ctx, beadId, options.approvedWorktreePath);
 		if (resolved.error || !resolved.cwd) {
 			await recordContinuationScopeBlocked(ctx, beadId, resolved.error ?? "no readable task worktree for continuation");
-			return;
+			return { skipped: false };
 		}
 		const action = renderPlanExecutionAction(beadId, resolved.cwd);
 		sendPreDispatchProgress(beadId, action);
@@ -619,10 +752,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const error = result.error ?? "typed continuation returned without success";
 			if (isRuntimeHookUnavailable(error)) {
 				await recordRuntimeHookMissing(ctx, beadId, action, error);
-				return;
+				return { skipped: false };
 			}
 			await recordContinuationScopeBlocked(ctx, beadId, error);
-			return;
+			return { skipped: false };
 		}
 		const details = result.details as { status?: string; transport?: string } | undefined;
 		const spawned = details?.status === "spawned" || details?.transport === "cmux";
@@ -636,6 +769,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			},
 			{ triggerTurn: false },
 		);
+		return { skipped: false };
 	}
 
 	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<{ approved: boolean; beadId?: string; worktreePath?: string }> {
@@ -655,7 +789,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const approvedBy = autopilotEnabled ? "оркестратор" : "Максим";
-		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy }, ctx);
+		// UI Execute and /plan-auto need triggerTurn true on Fast Path skip so the orchestrator continues in-session.
+		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy, triggerTurn: true }, ctx);
 		if (!result.details?.ok) {
 			syncWorkflowPlanMode(ctx, planModeEnabled ? (autoExecuteEnabled ? "auto" : "strict") : "off", "blocked", { activeBead: beadId, planApproved: false });
 			pi.sendMessage(
@@ -803,7 +938,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
-	async function approvePlanTool(params: { beadId: string; planEvidence: string; approvedBy?: string }, ctx: ExtensionContext) {
+	async function approvePlanTool(params: { beadId: string; planEvidence: string; approvedBy?: string; triggerTurn?: boolean }, ctx: ExtensionContext) {
 		const evidenceError = validatePlanEvidence(params.planEvidence);
 		if (evidenceError) return toolText(`workflow_plan_approved blocked: ${evidenceError}`, { ok: false, error: evidenceError });
 
@@ -834,14 +969,22 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoExecuteEnabled = false;
 		// autopilotEnabled intentionally survives plan=off so post-approve hop can close without Maxim re-prompt.
 		executionMode = false;
+		clearPendingReadyPlan();
 		restoreNormalToolSurface();
 		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
-		await triggerApprovedPlanContinuation(ctx, params.beadId, worktreePath);
+		const continuation = await triggerApprovedPlanContinuation(ctx, params.beadId, {
+			approvedWorktreePath: worktreePath,
+			planEvidence: params.planEvidence,
+			triggerTurn: params.triggerTurn === true,
+		});
+		const continuationLabel = continuation.skipped
+			? "fastPathSkip"
+			: `continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`;
 		return toolText(
-			`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`,
-			{ ok: true, beadId: params.beadId, branch, worktreePath, startCommit, autopilot: autopilotEnabled },
+			`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; ${continuationLabel}`,
+			{ ok: true, beadId: params.beadId, branch, worktreePath, startCommit, autopilot: autopilotEnabled, fastPathSkip: continuation.skipped },
 		);
 	}
 
@@ -849,6 +992,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const result = await requestWorkflowClaim(pi, bead, ctx);
 		if (!result.ok && result.error && ctx.hasUI) ctx.ui.notify(result.error, "error");
 		return result.ok;
+	}
+
+	function clearPendingReadyPlan(): void {
+		pendingReadyPlan = undefined;
 	}
 
 	function enterPlanMode(ctx: ExtensionContext, autoExecute: boolean, autopilot = false): void {
@@ -861,6 +1008,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
 		todoItems = [];
+		// Auto/autopilot never uses ready-UI; clear any leftover strict pending.
+		if (autoExecute || autopilot) clearPendingReadyPlan();
 		// Reset cycle only on plan-mode off→on (new /plan or first enable). Repeated workflow_plan_mode while already on does not reset.
 		if (!wasEnabled) resetPlanReviewCycleState();
 		pi.setActiveTools(PLAN_MODE_TOOLS);
@@ -880,6 +1029,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
 		todoItems = [];
+		clearPendingReadyPlan();
 		resetPlanReviewCycleState();
 		const restoredTools = restoreNormalToolSurface();
 		if (ctx.hasUI) ctx.ui.notify(`Plan mode disabled. Full access restored: ${restoredTools.join(", ")}`);
@@ -908,7 +1058,165 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			planReviewCycleCount,
 			lastPlanReviewStopAdvice,
 			lastPlanReviewResults,
+			pendingReadyPlan,
 		});
+	}
+
+	function canUseCustomUi(ctx: ExtensionContext): boolean {
+		return ctx.mode === "tui" && typeof ctx.ui?.custom === "function";
+	}
+
+	async function promptReadyAction(ctx: ExtensionContext, planText: string): Promise<ReadyAction | null> {
+		if (!ctx.hasUI) return null;
+
+		if (canUseCustomUi(ctx)) {
+			const result = await ctx.ui.custom<{ action: ReadyAction } | null>(createReadyUiFactory(planText));
+			return result?.action ?? null;
+		}
+
+		// RPC / no-custom fallback: capped select + stable values via labels.
+		const labels = READY_ACTIONS.map((item) => item.label);
+		const choice = await ctx.ui.select("План готов — что дальше?", labels);
+		if (!choice) return null;
+		const matched = READY_ACTIONS.find((item) => item.label === choice);
+		return matched?.value ?? null;
+	}
+
+	async function runReadyPlanCritique(ctx: ExtensionContext, draftPlan: string): Promise<void> {
+		// Uncapped critique path (same as /plan-review): does NOT increment planReviewCycleCount.
+		try {
+			const results = await runReviewGateForPlan(ctx, draftPlan);
+			pi.sendMessage(
+				{
+					customType: "plan-review-findings",
+					content: `**Strict plan critique complete.** Implementation remains blocked until explicit approval.\n\n${renderPlanReviewResults(results)}`,
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			pi.sendMessage(
+				{
+					customType: "plan-review-blocked",
+					content: `**Plan review failed.** ${message}\n\nPlan mode remains ON; pending ready plan kept.`,
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+		}
+		persistState();
+	}
+
+	async function runStrictReadyUiLoop(ctx: ExtensionContext): Promise<void> {
+		while (planModeEnabled && !autoExecuteEnabled && pendingReadyPlan) {
+			const planText = pendingReadyPlan;
+			const action = await promptReadyAction(ctx, planText);
+
+			if (action === "execute") {
+				const approval = await approvePlanForExecution(ctx, planText);
+				if (!approval.approved) {
+					persistState();
+					return;
+				}
+				clearPendingReadyPlan();
+				executionMode = false;
+				todoItems = [];
+				updateStatus(ctx);
+				persistState();
+				return;
+			}
+
+			if (action === "refine") {
+				clearPendingReadyPlan();
+				persistState();
+				const refinement = await ctx.ui.editor("Уточните план:", "");
+				if (refinement?.trim()) {
+					pi.sendUserMessage(refinement.trim());
+				}
+				return;
+			}
+
+			if (action === "plan-review") {
+				await runReadyPlanCritique(ctx, planText);
+				// pending kept; re-show ready buttons
+				continue;
+			}
+
+			// stay / Esc / null → clear pending, remain in plan mode
+			clearPendingReadyPlan();
+			persistState();
+			return;
+		}
+	}
+
+	async function runQuestionnaireUi(
+		ctx: ExtensionContext,
+		rawQuestions: unknown,
+	): Promise<{ content: { type: "text"; text: string }[]; details: QuestionnaireUiResult }> {
+		const questions = normalizeQuestions(rawQuestions);
+		if (questions.length === 0) {
+			return {
+				content: [{ type: "text", text: "Error: No valid questions provided" }],
+				details: { questions: [], answers: [], cancelled: true },
+			};
+		}
+
+		if (!ctx.hasUI) {
+			return {
+				content: [{ type: "text", text: "Error: UI not available (running in non-interactive mode)" }],
+				details: { questions, answers: [], cancelled: true },
+			};
+		}
+
+		if (canUseCustomUi(ctx)) {
+			const result = await ctx.ui.custom<QuestionnaireUiResult>(createQuestionUiFactory(questions));
+			const resolved = result ?? { questions, answers: [], cancelled: true };
+			if (resolved.cancelled) {
+				return {
+					content: [{ type: "text", text: "User cancelled the questionnaire" }],
+					details: resolved,
+				};
+			}
+			return {
+				content: [{ type: "text", text: formatQuestionnaireAnswerLines(questions, resolved.answers).join("\n") }],
+				details: resolved,
+			};
+		}
+
+		// RPC / no-custom fallback: sequential capped select + optional input for Other.
+		const answers: QuestionnaireUiResult["answers"] = [];
+		for (const question of questions) {
+			const labels = [
+				...question.options.map((opt) => opt.label),
+				...(question.allowOther ? ["Другая…"] : []),
+			];
+			const choice = await ctx.ui.select(question.prompt, labels);
+			if (!choice) {
+				return {
+					content: [{ type: "text", text: "User cancelled the questionnaire" }],
+					details: { questions, answers, cancelled: true },
+				};
+			}
+			if (choice === "Другая…") {
+				const typed = (await ctx.ui.input("Свой ответ:"))?.trim() || "(no response)";
+				answers.push({ id: question.id, value: typed, label: typed, wasCustom: true });
+				continue;
+			}
+			const optIndex = question.options.findIndex((opt) => opt.label === choice);
+			const opt = question.options[optIndex];
+			if (!opt) {
+				return {
+					content: [{ type: "text", text: "User cancelled the questionnaire" }],
+					details: { questions, answers, cancelled: true },
+				};
+			}
+			answers.push({ id: question.id, value: opt.value, label: opt.label, wasCustom: false, index: optIndex + 1 });
+		}
+		return {
+			content: [{ type: "text", text: formatQuestionnaireAnswerLines(questions, answers).join("\n") }],
+			details: { questions, answers, cancelled: false },
+		};
 	}
 
 	if (workflowPi.registerTool) {
@@ -946,7 +1254,44 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			description: "Write PLAN APPROVED evidence to bd and atomically exit plan mode/update workflow-state only after the comment succeeds.",
 			parameters: WorkflowPlanApprovedParams,
 			async execute(_id: string, params: { beadId: string; planEvidence: string; approvedBy?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-				return approvePlanTool(params, ctx);
+				// In-turn tool call: Fast Path skip uses triggerTurn false (display only).
+				return approvePlanTool({ ...params, triggerTurn: false }, ctx);
+			},
+		});
+
+		workflowPi.registerTool({
+			name: "plan_mode_complete",
+			label: "Plan Mode Complete",
+			description: "Mark the draft plan as ready for the human ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review). Call only when the plan is complete — never after a clarifying question. Empty/whitespace plan is rejected.",
+			parameters: PlanModeCompleteParams,
+			async execute(_id: string, params: { plan: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				const plan = typeof params.plan === "string" ? params.plan.trim() : "";
+				if (!plan) {
+					return toolText("plan_mode_complete blocked: plan must be non-empty", { ok: false, error: "plan must be non-empty" });
+				}
+				if (!planModeEnabled) {
+					return toolText("plan_mode_complete blocked: plan mode is off", { ok: false, error: "plan mode is off" });
+				}
+				if (autoExecuteEnabled) {
+					// Auto/autopilot ignores ready-UI; still accept the text as the latest draft without pending.
+					clearPendingReadyPlan();
+					persistState();
+					return toolText("plan_mode_complete noted (auto/autopilot: ready-UI skipped)", { ok: true, pending: false, auto: true });
+				}
+				pendingReadyPlan = plan;
+				persistState();
+				if (ctx.hasUI) ctx.ui.notify("Plan marked ready — choose next action after this turn", "info");
+				return toolText("plan_mode_complete: pending ready plan stored; ready-UI will open on agent_end", { ok: true, pending: true });
+			},
+		});
+
+		workflowPi.registerTool({
+			name: "questionnaire",
+			label: "Questionnaire",
+			description: "Ask the user one or more clarifying questions with options. Single question tool for plan mode (document-flow UI in TUI; select/input fallback otherwise). Does not mark the plan ready.",
+			parameters: QuestionnaireParams,
+			async execute(_id: string, params: { questions: unknown }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				return runQuestionnaireUi(ctx, params.questions);
 			},
 		});
 	}
@@ -1219,7 +1564,50 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				startCommit: entry.startCommit,
 			});
 			if (!finalize.ok) {
-				// Do not dump finalize.text / ACCEPTANCE MATRIX body into the hop message.
+				// Grey-matrix blocked (reviewed, not terminal): STOP close panes; keep bead open.
+				// NOT APPROVED / missing-evidence: panes stay live; do not call close.
+				if (finalize.status === "blocked") {
+					let stopCloseError: string | undefined;
+					try {
+						await closeVisibleDispatch(pi as any, { beadId: entry.beadId, stopClose: true }, ctx as any);
+					} catch (error) {
+						stopCloseError = (error as Error).message;
+					}
+					autopilotEnabled = false;
+					persistState();
+					updateStatus(ctx);
+					if (stopCloseError) {
+						// Separate STOP: bead not closed, panes may remain; no a/b/c; no «bead уже closed».
+						sendAutopilotHopMessage(
+							`STOP: серая матрица (acceptance FAIL/NOT RUN). Bead не closed; close_visible_dispatch(stopClose) упал: ${stopCloseError}\nПанели могли остаться. Autopilot сброшен.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: закройте панели вручную при необходимости, затем разберите matrix.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+							"autopilot-hop-stop",
+						);
+						return;
+					}
+					const blockingRows = Array.isArray(finalize.blockingRows) ? finalize.blockingRows : [];
+					const blockingLines = blockingRows
+						.filter((row: { result?: string }) => row.result === "FAIL" || row.result === "NOT RUN")
+						.map((row: { item?: string; result?: string }) => `- ${row.result}: ${String(row.item ?? "").slice(0, 120)}`);
+					const stopCloseComment = [
+						"STOP CLOSE:",
+						"reason: grey-matrix blocked after CODE REVIEW APPROVED",
+						"panes: closed+tombstone (stopClose); isolation files retained until terminal close",
+						"bead: not closed; autopilot cleared",
+						...(blockingLines.length > 0 ? ["blocking:", ...blockingLines] : ["blocking: (none listed)"]),
+					].join("\n");
+					try {
+						await pi.exec("bd", ["comments", "add", entry.beadId, stopCloseComment]);
+					} catch {
+						/* durable comment best-effort; hop message still goes out */
+					}
+					// Do not dump finalize.text / ACCEPTANCE MATRIX body into the hop message.
+					sendAutopilotHopMessage(
+						`STOP close: серая матрица (FAIL/NOT RUN) после CODE REVIEW APPROVED. Bead не closed; панели этого bead закрыты/не live (stopClose+tombstone). Autopilot сброшен. followup_visible_dispatch не вызывался.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: (a) HUMAN ACCEPTANCE OVERRIDE comment → reviewed→accepted → bd close; (b) bd update --status in_progress + новый dispatch_supervisor; (c) ничего, autopilot сброшен.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+						"autopilot-hop-stop",
+					);
+					return;
+				}
+				// missing-evidence / not-approved / other: panes live, close not called.
 				sendAutopilotHopMessage(
 					`STOP: close path заблокирован (acceptance/matrix или preflight). Bead не закрыт; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: разберите блокировку close / matrix, затем fix или снимите autopilot.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
@@ -1348,15 +1736,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 You are in plan mode - a read-only exploration mode for safe code analysis.
 
 Restrictions:
-- You can only use: read, bash, grep, find, ls, questionnaire, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review, plan_subagent
+- You can only use: read, bash, grep, find, ls, questionnaire, plan_mode_complete, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review, plan_subagent
 - You MAY use plan_subagent only for read-only planning agents (detective/architect); generic subagent and implementation supervisors remain unavailable in plan mode.
 - You CANNOT use: edit, write, subagent, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete (file/workflow mutations are disabled until approval)
 - After approved/cancelled plan mode, Pi restores the pre-plan active tool surface plus registered mandatory workflow tools.
 - Bash is restricted to an allowlist of read-only commands
 - bd read-only commands are allowed: bd show, bd comments, bd list, bd ready, selected bd dep/dolt status commands
-- bd mutating commands are blocked: bd create, bd update, bd close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull
+- One recovery exception in plan=strict: a single bd worktree create <absolute-path> --branch <type>/<basename> (canonical task branch; not main/master; not remove/prune/git worktree add). After create, retry workflow_plan_approved with WORKTREE+BRANCH — no second human approval and no workflow_plan_mode off.
+- Other bd mutating commands remain blocked: bd create/update/close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull. workflow_update and setup-worktree stay outside PLAN_MODE_TOOLS.
 
-Ask clarifying questions using the questionnaire tool.
+Ask clarifying questions using the questionnaire tool (one question tool only — do not invent a second question tool).
+When the plan is fully ready for human decision, call plan_mode_complete({ plan }) as the last tool in the turn. Do NOT call plan_mode_complete after a clarifying question. Ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review) appears only after plan_mode_complete; the plan-review button runs critique without approving or starting a supervisor.
 Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header.
@@ -1467,6 +1857,8 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		}
 
 		if (autoExecuteEnabled) {
+			// Auto/autopilot never shows ready-UI; drop any stale pending.
+			clearPendingReadyPlan();
 			if (autoPlanReviewState === "idle") {
 				await requestRevisionAfterPlanReview(ctx, lastAssistantText);
 				return;
@@ -1501,31 +1893,10 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			return;
 		}
 
+		// Strict complete-when-ready: show ready-UI only after plan_mode_complete set pending.
+		if (!pendingReadyPlan) return;
 		if (!ctx.hasUI) return;
-
-		// Bead workflow progress is tracked via bd/workflow-state/typed tools, not plan todo-list UI.
-		const choice = await ctx.ui.select("Plan mode - what next?", [
-			todoItems.length > 0 ? "Execute the plan (track progress)" : "Execute the plan",
-			"Stay in plan mode",
-			"Refine the plan",
-		]);
-
-		if (choice?.startsWith("Execute")) {
-			const approval = await approvePlanForExecution(ctx, lastAssistantText);
-			if (!approval.approved) {
-				persistState();
-				return;
-			}
-			executionMode = false;
-			todoItems = [];
-			updateStatus(ctx);
-
-		} else if (choice === "Refine the plan") {
-			const refinement = await ctx.ui.editor("Refine the plan:", "");
-			if (refinement?.trim()) {
-				pi.sendUserMessage(refinement.trim());
-			}
-		}
+		await runStrictReadyUiLoop(ctx);
 	});
 
 	// Restore state on session start/resume
@@ -1551,6 +1922,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				planReviewCycleCount?: number;
 				lastPlanReviewStopAdvice?: PlanReviewStopAdvice;
 				lastPlanReviewResults?: PlanReviewResult[];
+				pendingReadyPlan?: string;
 			} }
 			| undefined;
 
@@ -1565,6 +1937,9 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			planReviewCycleCount = planModeEntry.data.planReviewCycleCount ?? planReviewCycleCount;
 			lastPlanReviewStopAdvice = planModeEntry.data.lastPlanReviewStopAdvice ?? lastPlanReviewStopAdvice;
 			lastPlanReviewResults = planModeEntry.data.lastPlanReviewResults ?? lastPlanReviewResults;
+			pendingReadyPlan = planModeEntry.data.pendingReadyPlan ?? pendingReadyPlan;
+			// Auto/autopilot never keeps ready pending across restore.
+			if (autoExecuteEnabled) clearPendingReadyPlan();
 		}
 
 		// On resume: re-scan messages to rebuild completion state

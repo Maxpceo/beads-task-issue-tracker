@@ -100,12 +100,47 @@ function isSafeCommandSegment(command: string): boolean {
 	return SAFE_PATTERNS.some((p) => p.test(command));
 }
 
+const CANONICAL_TASK_BRANCH_RE =
+	/^(?:feat|fix|docs|test|ci|refactor|task|chore)\/[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/;
+
+/**
+ * Plan-mode recovery exception: one `bd worktree create <abs> --branch <type>/<basename>`.
+ * Does not replace SAFE_PATTERNS; checked after shell-control forbids.
+ */
+export function isAllowedBdWorktreeCreateCommand(command: string): boolean {
+	const trimmed = command.trim();
+	if (!trimmed) return false;
+	// Fail closed on shell composition / substitution before any create exception.
+	if (/(?:&&|\|\||;|`|\$\()/.test(trimmed)) return false;
+	if (trimmed.includes("|")) return false;
+	if (/\bgit\s+worktree\b/i.test(trimmed)) return false;
+	if (/\bbd\s+worktree\s+(?:remove|prune|list|info)\b/i.test(trimmed)) return false;
+
+	const match = trimmed.match(
+		/^bd\s+worktree\s+create\s+(\/[^\s'"]+|\/'[^']+'|\/"[^"]+"|'\/[^']+'|"\/[^"]+")\s+--branch\s+([^\s'"]+|'[^']+'|"[^"]+")\s*$/i,
+	);
+	if (!match) return false;
+
+	const rawPath = match[1] ?? "";
+	const rawBranch = match[2] ?? "";
+	const worktreePath = rawPath.replace(/^['"]|['"]$/g, "");
+	const branch = rawBranch.replace(/^['"]|['"]$/g, "");
+	if (!worktreePath.startsWith("/") || /[\n\r]/.test(worktreePath)) return false;
+	if (!branch || /^(main|master)$/i.test(branch) || /^(main|master)\//i.test(branch)) return false;
+	if (!CANONICAL_TASK_BRANCH_RE.test(branch)) return false;
+	// Reject extra flags such as --orphan by requiring the exact two-token shape above.
+	return true;
+}
+
 export function isSafeCommand(command: string): boolean {
 	const isDestructive = DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
 	if (isDestructive) return false;
 
 	const hasShellControlOperator = /(?:&&|\|\||;)/.test(command);
 	if (hasShellControlOperator) return false;
+
+	// Single recovery exception after control-operator forbid: canonical bd worktree create.
+	if (isAllowedBdWorktreeCreateCommand(command)) return true;
 
 	return command
 		.split("|")

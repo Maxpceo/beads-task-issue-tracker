@@ -1,6 +1,11 @@
+import * as os from 'node:os'
+import * as path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import workflowStateExtension, { currentRuntimeOwnerKey, hasSessionOwnershipEvidence } from '../../.pi/extensions/workflow-state/index'
+
+const WORKTREE_ROOT = path.join(os.homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker')
 
 function makeHarness(options: {
   branch: string
@@ -19,6 +24,7 @@ function makeHarness(options: {
   processStartCommit?: string
   staleScopedGitError?: boolean
   gitScopes?: Record<string, { branch: string; worktreePath: string; startCommit: string }>
+  worktreePorcelain?: { stdout?: string; stderr?: string; code?: number }
 }) {
   const eventHandlers = new Map<string, (event: unknown, ctx: any) => unknown>()
   const commandHandlers = new Map<string, any>()
@@ -43,7 +49,15 @@ function makeHarness(options: {
           if (scopedArgs === 'branch --show-current') return { stdout: `${scope.branch}\n`, stderr: '', code: 0 }
           if (scopedArgs === 'rev-parse HEAD') return { stdout: `${scope.startCommit}\n`, stderr: '', code: 0 }
           if (scopedArgs === 'rev-parse --show-toplevel') return { stdout: `${scope.worktreePath}\n`, stderr: '', code: 0 }
+          if (scopedArgs === 'worktree list --porcelain') {
+            const porcelain = options.worktreePorcelain ?? { stdout: '', stderr: '', code: 0 }
+            return { stdout: porcelain.stdout ?? '', stderr: porcelain.stderr ?? '', code: porcelain.code ?? 0 }
+          }
         }
+      }
+      if (command === 'git' && (args.join(' ') === 'worktree list --porcelain' || (args[0] === '-C' && args.slice(2).join(' ') === 'worktree list --porcelain'))) {
+        const porcelain = options.worktreePorcelain ?? { stdout: '', stderr: '', code: 0 }
+        return { stdout: porcelain.stdout ?? '', stderr: porcelain.stderr ?? '', code: porcelain.code ?? 0 }
       }
       if (command === 'git' && args.join(' ') === 'branch --show-current') return { stdout: `${processBranch}\n`, stderr: '', code: 0 }
       if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return { stdout: `${processStartCommit}\n`, stderr: '', code: 0 }
@@ -279,9 +293,11 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('state=closed')
+    expect(context.message.content).toContain('sessionMode=closed')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).not.toContain('state=implementing')
+    expect(context.message.content).not.toContain('sessionMode=implementing')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
   })
@@ -318,10 +334,10 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('state=closed')
+    expect(context.message.content).toContain('sessionMode=closed')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('end=-')
-    expect(context.message.content).not.toContain('state=closed')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
   })
@@ -362,7 +378,8 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await commandHandlers.get('workflow-status')?.handler('', ctx)
 
     expect(notifications.at(-2)?.message).toContain('terminal bd status closed')
-    expect(notifications.at(-1)?.message).toContain('state=idle')
+    expect(notifications.at(-1)?.message).toContain('state=closed')
+    expect(notifications.at(-1)?.message).toContain('sessionMode=closed')
     expect(notifications.at(-1)?.message).toContain('bead=-')
     expect(notifications.at(-1)?.message).toContain('end=-')
     expect(notifications.at(-1)?.message).not.toContain('state=reviewing')
@@ -385,11 +402,12 @@ describe('Pi workflow-state session-scoped recovery', () => {
     )
 
     expect(appended).toHaveLength(1)
-    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'closed', sessionMode: 'closed' })
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
     expect((appended.at(-1)?.data as any).endCommit).toBeUndefined()
     expect(notifications.at(-2)?.message).toContain('terminal bd status closed')
-    expect(notifications.at(-1)?.message).toContain('state=idle')
+    expect(notifications.at(-1)?.message).toContain('state=closed')
+    expect(notifications.at(-1)?.message).toContain('sessionMode=closed')
     expect(notifications.at(-1)?.message).toContain('bead=-')
     expect(notifications.at(-1)?.message).toContain('end=-')
     expect(notifications.at(-1)?.message).not.toContain('state=reviewing')
@@ -418,7 +436,8 @@ describe('Pi workflow-state session-scoped recovery', () => {
     }, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('state=closed')
+    expect(context.message.content).toContain('sessionMode=closed')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('end=-')
     expect(context.message.content).not.toContain('state=reviewing')
@@ -769,7 +788,13 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    if (bdStatus === 'closed') {
+      expect(context.message.content).toContain('state=closed')
+      expect(context.message.content).toContain('sessionMode=closed')
+    } else {
+      expect(context.message.content).toContain('state=idle')
+      expect(context.message.content).toContain('sessionMode=idle')
+    }
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('bdStatus=-')
     expect(notifications.at(-1)?.message).toContain(`terminal bd status ${bdStatus}`)
@@ -1224,6 +1249,79 @@ describe('Pi workflow-state typed tools', () => {
     })
   })
 
+  it('workflow_claim from protected main does not record main as task scope and keeps PI_SESSION_KEY only', async () => {
+    const { toolHandlers, ctx, appended, issues } = (() => {
+      const issues = { 'bead-next': { status: 'open', comments: '' } }
+      const harness = makeHarness({
+        branch: 'main',
+        worktreePath: '/repo',
+        startCommit: 'main-head',
+        ctxCwd: '/repo',
+        issues,
+      })
+      return { ...harness, issues }
+    })()
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-main', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      state: 'claimed',
+      sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
+    })
+    expect(appended.at(-1)?.data).toEqual(expect.objectContaining({
+      branch: undefined,
+      worktreePath: undefined,
+      startCommit: undefined,
+    }))
+    expect(issues['bead-next'].comments).toContain('WORKFLOW CLAIM')
+    expect(issues['bead-next'].comments).toContain('PI_SESSION_KEY: id:session-current')
+    expect(issues['bead-next'].comments).not.toContain('BRANCH: main')
+    expect(issues['bead-next'].comments).not.toContain('WORKTREE: /repo')
+    expect(issues['bead-next'].comments).not.toContain('START_COMMIT: main-head')
+  })
+
+  it('reconcile keeps same-session claimed bead with empty task scope on main cwd instead of wiping', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo',
+      startCommit: 'main-head',
+      ctxCwd: '/repo',
+      issues: { 'bead-next': { status: 'in_progress', comments: 'WORKFLOW CLAIM\nPI_SESSION_KEY: id:session-current' } },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-next',
+          state: 'planning',
+          branch: undefined,
+          worktreePath: undefined,
+          startCommit: undefined,
+          sessionKey: 'id:session-current',
+          sessionMode: 'planning',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'strict',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const status = await toolHandlers.get('workflow_status')?.execute('call-status', {}, undefined, undefined, ctx)
+
+    expect(status.content[0].text).toContain('bead=bead-next')
+    expect(status.content[0].text).not.toContain('bead=-')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      sessionKey: 'id:session-current',
+    })
+    expect((appended.at(-1)?.data as any).branch).toBeUndefined()
+    expect((appended.at(-1)?.data as any).worktreePath).toBeUndefined()
+  })
+
   it('workflow_claim allows claiming the same current-session active bead', async () => {
     const { eventHandlers, toolHandlers, ctx, appended, notifications } = makeHarness({
       branch: 'task/current',
@@ -1442,7 +1540,60 @@ describe('Pi workflow-state typed tools', () => {
 
     expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(notifications.some((notification) => notification.message.includes('terminal bd status closed'))).toBe(true)
-    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed' })
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', sessionMode: 'claimed' })
+  })
+
+  it('workflow_complete(closed) then workflow_claim next writes sessionMode=claimed', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: {
+        'bead-done': { status: 'closed', comments: '' },
+        'bead-next': { status: 'open', comments: '' },
+      },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-done',
+          state: 'implementing',
+          sessionMode: 'implementing',
+          branch: 'task/current',
+          worktreePath: '/repo/current',
+          startCommit: 'start-head',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'off',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+    await eventHandlers.get('session_start')?.({}, ctx)
+
+    const complete = await toolHandlers.get('workflow_complete')?.execute(
+      'call-0',
+      { state: 'closed', reason: 'accepted and closed' },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(complete.content[0].text).toContain('workflow_complete записал closed')
+    expect(appended.at(-1)?.data).toMatchObject({
+      state: 'closed',
+      sessionMode: 'closed',
+    })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
+
+    const claim = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+    expect(claim.content[0].text).toContain('workflow_claim выполнен')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      state: 'claimed',
+      sessionMode: 'claimed',
+    })
   })
 
   it('workflow_claim recovers stale open active bead before claiming new work', async () => {
@@ -1479,6 +1630,192 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(notifications.some((notification) => notification.message.includes('stale or foreign'))).toBe(true)
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed' })
+  })
+
+  it('workflow_claim from main binds a unique live canonical task worktree and keeps it after reconcile', async () => {
+    const taskPath = path.join(WORKTREE_ROOT, 'xy73-claim-existing-worktree-deadlock')
+    const taskBranch = 'fix/xy73-claim-existing-worktree-deadlock'
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'beads-task-issue-tracker-xy73': { status: 'open', comments: '' } },
+      worktreePorcelain: {
+        code: 0,
+        stdout: [
+          'worktree /repo/primary',
+          'HEAD main-head',
+          'branch refs/heads/main',
+          '',
+          `worktree ${taskPath}`,
+          'HEAD task-head',
+          `branch refs/heads/${taskBranch}`,
+          '',
+        ].join('\n'),
+      },
+      gitScopes: {
+        '/repo/primary': { branch: 'main', worktreePath: '/repo/primary', startCommit: 'main-head' },
+        [taskPath]: { branch: taskBranch, worktreePath: taskPath, startCommit: 'task-head' },
+      },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'beads-task-issue-tracker-xy73' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(result.content[0].text).toContain(`worktree=${taskPath}`)
+    expect(result.content[0].text).not.toContain('worktree=/repo/primary')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'beads-task-issue-tracker-xy73',
+      state: 'claimed',
+      branch: taskBranch,
+      worktreePath: taskPath,
+      startCommit: 'task-head',
+      sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
+    })
+
+    const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
+    expect(status.content[0].text).toContain(`worktree=${taskPath}`)
+    expect(status.content[0].text).toContain(`branch=${taskBranch}`)
+    expect(status.content[0].text).not.toContain('branch=main')
+  })
+
+  it('workflow_claim from main with zero porcelain matches persists cwd as today', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'beads-task-issue-tracker-xy73': { status: 'open', comments: '' } },
+      worktreePorcelain: { code: 0, stdout: '' },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'beads-task-issue-tracker-xy73' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'beads-task-issue-tracker-xy73',
+      state: 'claimed',
+      branch: undefined,
+      worktreePath: undefined,
+      startCommit: undefined,
+      bdStatus: 'in_progress',
+    })
+  })
+
+  it('workflow_claim from main with ambiguous porcelain keeps claimed empty scope and does not lock main', async () => {
+    const first = path.join(WORKTREE_ROOT, 'xy73-claim-existing-worktree-deadlock')
+    const second = path.join(WORKTREE_ROOT, 'xy73-other-purpose')
+    const { toolHandlers, ctx, appended, notifications } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'beads-task-issue-tracker-xy73': { status: 'open', comments: '' } },
+      worktreePorcelain: {
+        code: 0,
+        stdout: [
+          `worktree ${first}`,
+          'HEAD one-head',
+          'branch refs/heads/fix/xy73-claim-existing-worktree-deadlock',
+          '',
+          `worktree ${second}`,
+          'HEAD two-head',
+          'branch refs/heads/fix/xy73-other-purpose',
+          '',
+        ].join('\n'),
+      },
+      gitScopes: {
+        '/repo/primary': { branch: 'main', worktreePath: '/repo/primary', startCommit: 'main-head' },
+        [first]: { branch: 'fix/xy73-claim-existing-worktree-deadlock', worktreePath: first, startCommit: 'one-head' },
+        [second]: { branch: 'fix/xy73-other-purpose', worktreePath: second, startCommit: 'two-head' },
+      },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'beads-task-issue-tracker-xy73' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(result.content[0].text).toContain('workflow_update')
+    expect(result.details.ok).toBe(true)
+    expect(result.details.worktreePath).toBeUndefined()
+    expect(result.details.branch).toBeUndefined()
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'beads-task-issue-tracker-xy73',
+      state: 'claimed',
+      sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
+    })
+    expect(appended.at(-1)?.data).not.toMatchObject({ worktreePath: '/repo/primary' })
+    expect(appended.at(-1)?.data).not.toMatchObject({ branch: 'main' })
+    expect(notifications.some((item) => item.level === 'warning' && item.message.includes('workflow_update'))).toBe(true)
+
+    const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
+    expect(status.content[0].text).toContain('bead=beads-task-issue-tracker-xy73')
+    expect(status.content[0].text).toContain('state=claimed')
+    expect(status.content[0].text).toContain('worktree=-')
+    expect(status.content[0].text).not.toContain('worktree=/repo/primary')
+  })
+
+  it('workflow_claim from main with porcelain list fail keeps claimed empty scope', async () => {
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'beads-task-issue-tracker-xy73': { status: 'open', comments: '' } },
+      worktreePorcelain: { code: 1, stdout: '', stderr: 'list failed' },
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'beads-task-issue-tracker-xy73' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(result.details.ok).toBe(true)
+    expect(result.details.worktreePath).toBeUndefined()
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'beads-task-issue-tracker-xy73',
+      state: 'claimed',
+      sessionKey: 'id:session-current',
+      bdStatus: 'in_progress',
+    })
+    expect((appended.at(-1)?.data as any).worktreePath).toBeUndefined()
+    expect((appended.at(-1)?.data as any).branch).toBeUndefined()
+
+    const status = await toolHandlers.get('workflow_status')?.execute('call-2', {}, undefined, undefined, ctx)
+    expect(status.content[0].text).toContain('state=claimed')
+    expect(status.content[0].text).toContain('worktree=-')
+  })
+
+  it('workflow_claim from main ignores dead porcelain path and falls back to cwd', async () => {
+    const deadPath = path.join(WORKTREE_ROOT, 'xy73-claim-existing-worktree-deadlock')
+    const { toolHandlers, ctx, appended } = makeHarness({
+      branch: 'main',
+      worktreePath: '/repo/primary',
+      startCommit: 'main-head',
+      ctxCwd: '/repo/primary',
+      issues: { 'beads-task-issue-tracker-xy73': { status: 'open', comments: '' } },
+      worktreePorcelain: {
+        code: 0,
+        stdout: [
+          `worktree ${deadPath}`,
+          'HEAD dead-head',
+          'branch refs/heads/fix/xy73-claim-existing-worktree-deadlock',
+          '',
+        ].join('\n'),
+      },
+      // no gitScopes entry for deadPath → live checks fail
+    })
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'beads-task-issue-tracker-xy73' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim выполнен')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'beads-task-issue-tracker-xy73',
+      state: 'claimed',
+      branch: undefined,
+      worktreePath: undefined,
+      startCommit: undefined,
+    })
   })
 
   it('workflow_update persists a complete explicit typed update without cwd reconciliation overwriting task fields', async () => {
