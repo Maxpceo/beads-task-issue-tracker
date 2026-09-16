@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { publishDashboardCard, getSharedDashboardState, AgentDashboardComponent, registerDashboardRenderer } from "../subagent/dashboard";
+import {
+	publishDashboardCard,
+	registerDashboardWidgetHost,
+} from "../subagent/dashboard";
 import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/index";
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import { resolveAgentModelFromCwd } from "../agent-models/index";
@@ -21,6 +24,7 @@ import {
 	liveEntriesForBead,
 	loadRegistry,
 	nsDir,
+	orchRoot,
 	ORCHESTRATOR_TAB_TITLE,
 	persistIsolationFiles,
 	readDigestPreview,
@@ -375,10 +379,12 @@ async function getGitValue(pi: ExtensionAPI, cwd: string, args: string[]): Promi
 	return stdout.trim();
 }
 
-function chooseSupervisor(bead: BeadInfo): string {
+/** Pick supervisor role from bead labels/text. Bare "tauri" in prose (role names) must not force tauri-supervisor. */
+export function chooseSupervisor(bead: BeadInfo): string {
 	const labels = new Set(bead.labels ?? []);
 	const text = `${bead.title ?? ""}\n${bead.description ?? ""}`.toLowerCase();
-	if (labels.has("backend") || labels.has("tracker") || /rust|tauri|cargo|src-tauri/.test(text)) return "tauri-supervisor";
+	// Keep rust|cargo|src-tauri; omit bare tauri so role-words like tauri-supervisor do not misroute.
+	if (labels.has("backend") || labels.has("tracker") || /rust|cargo|src-tauri/.test(text)) return "tauri-supervisor";
 	if (labels.has("ci") || labels.has("dx") || /test|vitest|ci|workflow/.test(text)) return "test-supervisor";
 	if (labels.has("frontend") || labels.has("ui") || labels.has("data") || /vue|component|composable|page|app\//.test(text)) {
 		return "vue-supervisor";
@@ -401,8 +407,10 @@ const REQUIRED_HANDOFF_SECTIONS = [
 ];
 
 const TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred"]);
-/** Terminal for happy-path pane close: includes blocked (no reuse planned). */
+/** Terminal for happy-path pane close: includes blocked (no reuse planned). reviewed is NOT terminal. */
 const CLOSE_VISIBLE_TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred", "blocked"]);
+/** Non-terminal STOP close allowlist (grey-matrix hop). pendingFix still wins. */
+const CLOSE_VISIBLE_STOP_CLOSE_STATUSES = new Set(["reviewed"]);
 const ALLOWED_SUPERVISOR_STATUSES = new Set(["in_progress"]);
 
 const VAGUE_ACCEPTANCE_PATTERN = /\b(done|works|fixed|complete|completed|ok|looks good|as expected|готово|работает|исправлено|завершено|нормально)\b/i;
@@ -740,16 +748,16 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: process.execPath, args };
 }
 
-function refreshDashboardWidget(ctx?: { ui?: any }): void {
-	const state = getSharedDashboardState();
-	if (!state?.visible || !ctx?.ui) return;
-	ctx.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: any) => {
-		registerDashboardRenderer(tui);
-		return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+function bindDashboardHost(ctx?: { ui?: any; hasUI?: boolean }): void {
+	if (!ctx) return;
+	registerDashboardWidgetHost({
+		hasUI: Boolean(ctx.hasUI ?? ctx.ui),
+		ui: ctx.ui,
 	});
 }
 
-function publishWorkflowDashboardCard(ctx: { ui?: any } | undefined, agent: AgentConfig, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
+function publishWorkflowDashboardCard(ctx: { ui?: any; hasUI?: boolean } | undefined, agent: AgentConfig, card: Partial<Parameters<typeof publishDashboardCard>[0]>): void {
+	bindDashboardHost(ctx);
 	publishDashboardCard({
 		agent: agent.name,
 		description: `workflow dispatch: ${agent.name}`,
@@ -759,7 +767,6 @@ function publishWorkflowDashboardCard(ctx: { ui?: any } | undefined, agent: Agen
 		toolCount: 0,
 		...card,
 	});
-	refreshDashboardWidget(ctx);
 }
 
 async function runPiAgent(agent: AgentConfig, prompt: string, cwd: string, signal?: AbortSignal, ctx?: { ui?: any }): Promise<{ exitCode: number; output: string; stderr: string }> {
@@ -878,14 +885,34 @@ export type CloseVisibleDispatchResult = {
 	tombstoned: string[];
 };
 
+/** Unlink isolation/followup files for leftover tombstoned rows of this bead (after earlier stopClose). */
+function unlinkLeftoverTombstonesForBead(beadId: string): string[] {
+	const cleaned: string[] = [];
+	const root = path.join(orchRoot(), "ns");
+	if (!fs.existsSync(root)) return cleaned;
+	for (const name of fs.readdirSync(root)) {
+		const file = path.join(root, name, "dispatch-registry.json");
+		if (!fs.existsSync(file)) continue;
+		const registry = loadRegistry(file);
+		for (const entry of registry.entries) {
+			if (entry.beadId !== beadId || entry.status !== "tombstone") continue;
+			unlinkIsolationFiles(entry);
+			unlinkFollowupArtifacts(entry);
+			cleaned.push(entry.taskId);
+		}
+	}
+	return cleaned;
+}
+
 /**
- * Orchestrator hop after bead is terminal and no pending-fix reuse is needed.
+ * Orchestrator hop after bead is terminal (or STOP close on reviewed) and no pending-fix reuse is needed.
  * Closes only this bead's live registry panes (close-surface) and tombstones them.
- * Does not touch foreign panes. pendingFix keeps the pane for followup_visible_dispatch.
+ * stopClose=true: allow status=reviewed only; tombstone without unlinking isolation/followup (later terminal close cleans leftovers).
+ * Does not touch foreign panes. pendingFix keeps the pane for followup_visible_dispatch (wins over stopClose).
  */
 export async function closeVisibleDispatch(
 	pi: ExtensionAPI,
-	params: { beadId: string; pendingFix?: boolean },
+	params: { beadId: string; pendingFix?: boolean; stopClose?: boolean },
 	_ctx?: ToolContext,
 ): Promise<CloseVisibleDispatchResult> {
 	if (params.pendingFix) {
@@ -898,16 +925,26 @@ export async function closeVisibleDispatch(
 	}
 	const bead = await getBead(pi, params.beadId);
 	const status = bead.status ?? "unknown";
-	if (!CLOSE_VISIBLE_TERMINAL_STATUSES.has(status)) {
+	const stopClose = params.stopClose === true;
+	if (stopClose) {
+		if (!CLOSE_VISIBLE_STOP_CLOSE_STATUSES.has(status)) {
+			throw new Error(
+				`close_visible_dispatch: stopClose requires status=reviewed (got ${status}); in_progress/inreview/open not allowed: BLOCKED`,
+			);
+		}
+	} else if (!CLOSE_VISIBLE_TERMINAL_STATUSES.has(status)) {
 		throw new Error(
 			`close_visible_dispatch: bead not terminal (status=${status}); keep pane for live work/review: BLOCKED`,
 		);
 	}
 	const live = findLiveRegistryEntriesForBead(params.beadId);
 	if (live.length === 0) {
+		const leftoverCleaned = stopClose ? [] : unlinkLeftoverTombstonesForBead(params.beadId);
 		return {
 			status: "noop",
-			text: `no live panes for ${params.beadId}`,
+			text: leftoverCleaned.length > 0
+				? `no live panes for ${params.beadId}; cleaned leftover tombstones=${leftoverCleaned.join(",")}`
+				: `no live panes for ${params.beadId}`,
 			closed: [],
 			tombstoned: [],
 		};
@@ -934,13 +971,19 @@ export async function closeVisibleDispatch(
 		if (index >= 0) {
 			const next = tombstoneRegistryEntry(item.file, registry, index);
 			tombstoned.push(next.taskId);
-			unlinkIsolationFiles(next);
-			unlinkFollowupArtifacts(next);
+			// stopClose keeps isolation/followup files until a later terminal close unlinks leftovers.
+			if (!stopClose) {
+				unlinkIsolationFiles(next);
+				unlinkFollowupArtifacts(next);
+			}
 		}
 	}
+	const leftoverCleaned = stopClose ? [] : unlinkLeftoverTombstonesForBead(params.beadId);
+	const leftoverNote = leftoverCleaned.length > 0 ? `; leftover-unlinked=${leftoverCleaned.join(",")}` : "";
+	const stopNote = stopClose ? "; stopClose (files retained)" : "";
 	return {
 		status: "closed",
-		text: `closed ${closed.length} pane(s) for ${params.beadId}: ${closed.join(", ") || "-"}; tombstoned=${tombstoned.join(",") || "-"}`,
+		text: `closed ${closed.length} pane(s) for ${params.beadId}: ${closed.join(", ") || "-"}; tombstoned=${tombstoned.join(",") || "-"}${stopNote}${leftoverNote}`,
 		closed,
 		tombstoned,
 	};
@@ -1925,7 +1968,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		name: "close_visible_dispatch",
 		label: "Close Visible Dispatch",
 		description:
-			"Orchestrator-only happy-path: after bead is terminal (closed/blocked/deferred) and no pending-fix reuse, cmux close-surface each live registry pane for this bead and tombstone them. pendingFix=true skips close (NOT APPROVED / followup reuse). Does not sweep foreign panes.",
+			"Orchestrator-only: after bead is terminal (closed/blocked/deferred) OR stopClose on reviewed (grey-matrix STOP) and no pending-fix reuse, cmux close-surface each live registry pane for this bead and tombstone them. stopClose keeps isolation/followup files until later terminal close. pendingFix=true skips close (NOT APPROVED / followup reuse) and wins over stopClose. Does not sweep foreign panes.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1935,13 +1978,18 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 					description: "When true (NOT APPROVED / pending-fix), do not close-surface; keep pane for followup_visible_dispatch",
 					default: false,
 				},
+				stopClose: {
+					type: "boolean",
+					description: "When true, allow close on status=reviewed only (grey-matrix STOP); tombstone without unlinking isolation/followup. BLOCKED for in_progress/inreview/open.",
+					default: false,
+				},
 			},
 			required: ["beadId"],
 			additionalProperties: false,
 		},
 		async execute(
 			_id: string,
-			params: { beadId: string; pendingFix?: boolean },
+			params: { beadId: string; pendingFix?: boolean; stopClose?: boolean },
 			_signal: AbortSignal | undefined,
 			_onUpdate: unknown,
 			ctx: ToolContext,

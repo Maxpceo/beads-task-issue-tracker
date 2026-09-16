@@ -28,15 +28,25 @@ export interface AgentDashboardCard {
 }
 
 export type AgentDashboardMode = "active" | "all";
+export type AgentDashboardOrigin = "user" | "auto";
 
 export interface AgentDashboardState {
 	visible: boolean;
 	mode: AgentDashboardMode;
+	/** user = /agents-dashboard; auto = first headless running card. Default user. */
+	origin: AgentDashboardOrigin;
 	teamName?: string;
 	selectedAgents: DashboardAgentConfig[];
 	cards: Map<string, AgentDashboardCard>;
 	warnings: string[];
 	updatedAt: number;
+}
+
+export interface DashboardWidgetHost {
+	hasUI?: boolean;
+	ui?: {
+		setWidget?: (id: string, value: unknown) => void;
+	};
 }
 
 export interface DashboardTeamSelection {
@@ -172,10 +182,15 @@ function rebuildCards(selection: DashboardTeamSelection, mode: AgentDashboardMod
 	return cards;
 }
 
-export function createDashboardState(selection: DashboardTeamSelection, mode: AgentDashboardMode = "all"): AgentDashboardState {
+export function createDashboardState(
+	selection: DashboardTeamSelection,
+	mode: AgentDashboardMode = "all",
+	origin: AgentDashboardOrigin = "user",
+): AgentDashboardState {
 	return {
 		visible: true,
 		mode,
+		origin,
 		teamName: selection.teamName,
 		selectedAgents: selection.agents,
 		cards: rebuildCards(selection, mode),
@@ -192,19 +207,116 @@ export function getSharedDashboardState(): AgentDashboardState | null {
 	return sharedDashboardState;
 }
 
+let dashboardWidgetHost: DashboardWidgetHost | null = null;
+
+export function registerDashboardWidgetHost(host: DashboardWidgetHost | null | undefined): void {
+	dashboardWidgetHost = host ?? null;
+}
+
+export function resetDashboardWidgetHost(): void {
+	dashboardWidgetHost = null;
+}
+
+export function getDashboardWidgetHost(): DashboardWidgetHost | null {
+	return dashboardWidgetHost;
+}
+
+/** Install/repaint the TUI widget when a host with UI is registered. Store-only otherwise. */
+export function ensureDashboardWidget(): void {
+	const state = sharedDashboardState;
+	if (!state?.visible) return;
+	const host = dashboardWidgetHost;
+	if (!host?.hasUI || !host.ui?.setWidget) return;
+	try {
+		host.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: DashboardTheme) => {
+			registerDashboardRenderer(tui);
+			return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+		});
+	} catch {
+		// Widget install is best-effort; store already holds the cards.
+	}
+}
+
+function hideDashboardWidget(): void {
+	const host = dashboardWidgetHost;
+	if (!host?.ui?.setWidget) return;
+	try {
+		host.ui.setWidget("subagent-dashboard", undefined);
+	} catch {
+		// Best-effort hide.
+	}
+}
+
+function hasActiveWork(state: AgentDashboardState): boolean {
+	for (const card of state.cards.values()) {
+		if (card.status === "running" || card.status === "queued") return true;
+	}
+	return false;
+}
+
+/**
+ * Auto-hide only for origin=auto dashboards with no running/queued work.
+ * Call from turn_end — never from publish (terminal cards must stay visible until turn ends).
+ */
+export function maybeAutoHideDashboard(): boolean {
+	const state = sharedDashboardState;
+	if (!state?.visible || state.origin !== "auto") return false;
+	if (hasActiveWork(state)) return false;
+	sharedDashboardState = null;
+	hideDashboardWidget();
+	return true;
+}
+
 export function upsertDashboardCard(state: AgentDashboardState, card: AgentDashboardCard): void {
 	const previous = state.cards.get(card.agent);
 	state.cards.set(card.agent, { ...previous, ...card });
 	state.updatedAt = Date.now();
 }
 
+function ensureAutoVisibleStore(card: AgentDashboardCard): AgentDashboardState {
+	const existing = sharedDashboardState;
+	if (existing?.visible) {
+		upsertDashboardCard(existing, card);
+		return existing;
+	}
+	const state = createDashboardState(
+		{ agents: [], warnings: [] },
+		"active",
+		"auto",
+	);
+	upsertDashboardCard(state, card);
+	sharedDashboardState = state;
+	return state;
+}
+
+/**
+ * Always writes the observed store. Running cards auto-show an active origin=auto
+ * dashboard when none is visible. Never hides from publish.
+ */
 export function publishDashboardCard(card: AgentDashboardCard): AgentDashboardState | null {
 	const previousObserved = observedCards.get(card.agent);
-	observedCards.set(card.agent, { ...previousObserved, ...card });
-	if (!sharedDashboardState?.visible) return sharedDashboardState;
-	upsertDashboardCard(sharedDashboardState, observedCards.get(card.agent)!);
+	const merged = { ...previousObserved, ...card } as AgentDashboardCard;
+	observedCards.set(card.agent, merged);
+
+	const isActiveStatus = merged.status === "running" || merged.status === "queued";
+	let state = sharedDashboardState;
+
+	if (isActiveStatus && (!state || !state.visible)) {
+		state = ensureAutoVisibleStore(merged);
+		ensureDashboardWidget();
+		requestDashboardRender();
+		return state;
+	}
+
+	if (!state?.visible) {
+		// Terminal/idle without a visible widget: keep observed only (no auto-show).
+		return state;
+	}
+
+	upsertDashboardCard(state, merged);
+	ensureDashboardWidget();
 	requestDashboardRender();
-	return sharedDashboardState;
+	return state;
 }
 
 export function clearObservedDashboardCards(): void {

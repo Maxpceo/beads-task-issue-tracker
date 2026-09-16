@@ -30,9 +30,12 @@ import {
 	type AgentDashboardMode,
 	clearObservedDashboardCards,
 	createDashboardState,
+	ensureDashboardWidget,
 	getSharedDashboardState,
+	maybeAutoHideDashboard,
 	publishDashboardCard,
 	registerDashboardRenderer,
+	registerDashboardWidgetHost,
 	selectDashboardAgents,
 	setSharedDashboardState,
 } from "./dashboard.js";
@@ -592,20 +595,31 @@ const PlanSubagentParams = Type.Object({
 });
 
 export default function (pi: ExtensionAPI) {
-	const renderDashboardWidget = (ctx: { ui: any }) => {
-		const dashboardState = getSharedDashboardState();
-		if (!dashboardState?.visible) return;
-		ctx.ui.setWidget("subagent-dashboard", (tui: { requestRender?: () => void } | undefined, theme: any) => {
-			registerDashboardRenderer(tui);
-			return new AgentDashboardComponent(() => getSharedDashboardState()!, theme);
+	const bindDashboardHost = (ctx: { ui?: any; hasUI?: boolean }) => {
+		registerDashboardWidgetHost({
+			hasUI: Boolean(ctx.hasUI ?? ctx.ui),
+			ui: ctx.ui,
 		});
 	};
 
-	const updateDashboardFromResults = (results: SingleResult[], ctx: { ui: any }) => {
-		if (!getSharedDashboardState()?.visible) return;
-		for (const result of results) publishDashboardCard(resultToDashboardCard(result));
-		renderDashboardWidget(ctx);
+	const renderDashboardWidget = (ctx: { ui: any; hasUI?: boolean }) => {
+		bindDashboardHost(ctx);
+		ensureDashboardWidget();
 	};
+
+	const updateDashboardFromResults = (results: SingleResult[], ctx: { ui: any; hasUI?: boolean }) => {
+		bindDashboardHost(ctx);
+		for (const result of results) publishDashboardCard(resultToDashboardCard(result));
+	};
+
+	pi.on("session_start", async (_event, ctx) => {
+		bindDashboardHost(ctx);
+	});
+
+	pi.on("turn_end", async (_event, ctx) => {
+		bindDashboardHost(ctx);
+		maybeAutoHideDashboard();
+	});
 
 	pi.registerCommand("agents-dashboard", {
 		description:
@@ -616,6 +630,7 @@ export default function (pi: ExtensionAPI) {
 			if (action) {
 				if (action === "clear") clearObservedDashboardCards();
 				setSharedDashboardState(null);
+				bindDashboardHost(ctx);
 				ctx.ui.setWidget("subagent-dashboard", undefined);
 				ctx.ui.notify("Agent dashboard hidden.", "info");
 				return;
@@ -628,7 +643,8 @@ export default function (pi: ExtensionAPI) {
 			const discovery = discoverAgents(ctx.cwd, "project");
 			const teams = loadProjectAgentTeams(ctx.cwd, discovery.agents);
 			const selection = selectDashboardAgents(discovery.agents, teams, teamName);
-			const state = createDashboardState(selection, mode);
+			// Explicit command always origin=user so auto-hide never clears it.
+			const state = createDashboardState(selection, mode, "user");
 			setSharedDashboardState(state);
 			renderDashboardWidget(ctx);
 			ctx.ui.notify(

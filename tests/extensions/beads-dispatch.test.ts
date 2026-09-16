@@ -5,8 +5,8 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, parseVisiblePing, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
-import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
 Approved-by: Test
@@ -68,17 +68,21 @@ let unregisterRenderer: (() => void) | undefined
 
 beforeEach(() => {
   setSpawnForDispatchTestOverride(null)
+  setCmuxAdapterForTests(null)
   unregisterRenderer?.()
   unregisterRenderer = undefined
   clearObservedDashboardCards()
   setSharedDashboardState(null)
+  resetDashboardWidgetHost()
 })
 
 afterEach(() => {
   setSpawnForDispatchTestOverride(null)
+  setCmuxAdapterForTests(null)
   unregisterRenderer?.()
   clearObservedDashboardCards()
   setSharedDashboardState(null)
+  resetDashboardWidgetHost()
 })
 
 function validBead(descriptionText = description(['.pi/extensions/beads-dispatch/index.ts'])) {
@@ -121,6 +125,32 @@ ${files.map((file) => `- ${file}`).join('\n')}
 - dispatch dryRun output contains inline rule content.
 ### Out of scope
 - Running a real subagent.`
+}
+
+/** Full handoff without rust/cargo/src-tauri tokens. Role-words must live in description (and title); do not reuse description() which embeds src-tauri. */
+function roleWordsHandoffDescription() {
+  return `### Origin
+- Prose mentions vue/tauri/test-supervisor role names only.
+### Files
+- .pi/extensions/beads-dispatch/index.ts
+### Current state
+- chooseSupervisor misroutes on bare tauri in role words.
+### Target state
+- Role words vue-supervisor / tauri-supervisor / test-supervisor do not select tauri-supervisor.
+### Investigation findings
+- Bare tauri substring in prose selected tauri-supervisor for pi+workflow beads.
+### Decisions
+- Drop bare tauri from first regex; keep backend/tracker labels and real backend path/tooling signals.
+### Rejected alternatives
+- Labels-only routing without text signals.
+### Dependencies / blockers
+- none.
+### Acceptance criteria
+- dryRun without agent= returns test-supervisor for this fixture.
+### Verification / acceptance checks
+- pnpm exec vitest run tests/extensions/beads-dispatch.test.ts
+### Out of scope
+- vue false-positive routing.`
 }
 
 describe('beads-dispatch path rules integration', () => {
@@ -416,11 +446,104 @@ describe('beads-dispatch supervisor execution contract', () => {
     }
 
     beadsDispatchExtension(pi as any)
-    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-dashboard', branch, 'abc1234'))
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-dashboard', dryRun: false, agent: 'test-supervisor', transport: 'headless' }, undefined, undefined, workflowCtx(cwd, 'bead-dashboard', branch, 'abc1234'))
 
     expect(result.details.exitCode).toBe(0)
     expect(getSharedDashboardState()?.cards.get('test-supervisor')?.status).toBe('completed')
     expect(repaintCount).toBeGreaterThan(0)
+  })
+
+  it('auto-shows headless dispatch cards from a null dashboard store', async () => {
+    let registeredTool: any
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    expect(getSharedDashboardState()).toBeNull()
+    setSpawnForDispatchTestOverride(createSuccessfulSpawn())
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-auto-show', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-auto-show', dryRun: false, agent: 'test-supervisor', transport: 'headless' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, 'bead-auto-show', branch, 'abc1234'),
+    )
+
+    expect(result.details.exitCode).toBe(0)
+    const shared = getSharedDashboardState()
+    expect(shared?.visible).toBe(true)
+    expect(shared?.origin).toBe('auto')
+    expect(shared?.mode).toBe('active')
+    expect(shared?.cards.get('test-supervisor')?.status).toBe('completed')
+  })
+
+  it('does not publish a TUI dashboard card for transport=cmux visible spawn', async () => {
+    let registeredTool: any
+    const cwd = process.cwd()
+    const branch = currentBranch(cwd)
+    const head = 'abc1234'
+    const workspaceId = `ws-cmux-card-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const registryDir = nsDir(workspaceId)
+    const registryFile = path.join(registryDir, 'dispatch-registry.json')
+    const clearRegistry = async () => {
+      await fs.mkdir(registryDir, { recursive: true })
+      await fs.writeFile(registryFile, JSON.stringify({ entries: [] }, null, 2), 'utf8')
+    }
+    await clearRegistry()
+    try {
+      setCmuxAdapterForTests({
+        identify: async () => ({ workspaceId, surface: 'surface:orch' }),
+        newSplit: async () => ({ surface: 'surface:child' }),
+        send: async () => undefined,
+        readScreen: async () => 'ready',
+        closeSurface: async () => undefined,
+        renameSurface: async () => undefined,
+      })
+      const pi = {
+        events: { emit() {} },
+        registerTool(tool: any) {
+          if (tool.name === 'dispatch_supervisor') registeredTool = tool
+        },
+        exec: async (command: string, args: string[]) => {
+          if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-cmux-card', status: 'in_progress', labels: ['pi', 'workflow'], description: description(['.pi/extensions/beads-dispatch/index.ts']) }), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+          if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+          if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+          if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : `${head}\n`, stderr: '', code: 0 }
+          return { stdout: '', stderr: '', code: 0 }
+        },
+      }
+
+      beadsDispatchExtension(pi as any)
+      const result = await registeredTool.execute(
+        'call-1',
+        { beadId: 'bead-cmux-card', transport: 'cmux', agent: 'test-supervisor' },
+        undefined,
+        undefined,
+        workflowCtx(cwd, 'bead-cmux-card', branch, head),
+      )
+
+      expect(result.details.transport).toBe('cmux')
+      expect(result.details.error).toBeUndefined()
+      expect(getSharedDashboardState()).toBeNull()
+    } finally {
+      await clearRegistry()
+      await fs.rm(registryDir, { recursive: true, force: true }).catch(() => undefined)
+    }
   })
 
   it('renders execution contract sections with explicit N/A compatibility defaults', async () => {
@@ -682,6 +805,79 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     } finally {
       await fs.writeFile(modelsPath, originalModels)
     }
+  })
+})
+
+describe('chooseSupervisor', () => {
+  it('does not pick tauri-supervisor from role-words in title+description with pi+workflow labels', () => {
+    // Negative: prose about vue/tauri/test-supervisor must not force tauri path without rust context.
+    expect(chooseSupervisor({
+      id: 've9e-role-words',
+      title: 'vue/tauri/test-supervisor role words in title',
+      description: roleWordsHandoffDescription(),
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+  })
+
+  it('picks tauri-supervisor for backend label without rust text', () => {
+    expect(chooseSupervisor({
+      id: 've9e-backend',
+      title: 'Backend command tweak',
+      description: 'No path hints here.',
+      labels: ['backend'],
+      status: 'in_progress',
+    })).toBe('tauri-supervisor')
+  })
+
+  it('picks tauri-supervisor when description mentions src-tauri without backend label', () => {
+    expect(chooseSupervisor({
+      id: 've9e-src-tauri',
+      title: 'Path touch',
+      description: 'Edit src-tauri/src/lib.rs only.',
+      labels: ['pi'],
+      status: 'in_progress',
+    })).toBe('tauri-supervisor')
+  })
+
+  it('dryRun without agent= uses chooseSupervisor on role-words handoff fixture → test-supervisor', async () => {
+    // Separate dryRun fixture: do not reuse description() (it embeds src-tauri and would force tauri-supervisor).
+    // Role-words must appear in description; title-only would still work via text concat, but empty/missing desc is a vacuum case.
+    let registeredTool: any
+    const branch = currentBranch()
+    const title = 'vue/tauri/test-supervisor role words dryRun'
+    const handoff = roleWordsHandoffDescription()
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-role-words',
+              title,
+              status: 'in_progress',
+              labels: ['pi', 'workflow'],
+              description: handoff,
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    beadsDispatchExtension(pi as any)
+    // No agent= — auto-pick via chooseSupervisor.
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-role-words', dryRun: true }, undefined, undefined, workflowCtx(process.cwd(), 'bead-role-words', branch, 'abc1234'))
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('test-supervisor')
   })
 })
 

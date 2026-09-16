@@ -10,7 +10,7 @@ Delegate tasks to specialized subagents with isolated context windows.
 - **Markdown rendering**: Final output rendered with proper formatting (expanded view)
 - **Usage tracking**: Shows turns, tokens, cost, and context usage per agent
 - **Abort support**: Ctrl+C propagates to kill subagent processes
-- **Agent dashboard**: `/agents-dashboard` shows a persistent grid of project-local agent cards
+- **Agent dashboard**: `/agents-dashboard` shows a persistent grid of project-local agent cards; running headless agents also auto-show an active `origin=auto` grid without the command
 
 ## Structure
 
@@ -93,12 +93,21 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 ### Persistent dashboard
 ```
 /agents-dashboard          # show the default team from .pi/agents/teams.yaml, or all project agents
+/agents-dashboard active   # show only agents observed in this session
+/agents-dashboard all      # full idle-agent grid
 /agents-dashboard reviewer # show a named team when configured
 /agents-dashboard refresh  # rebuild cards from current .pi/agents and teams.yaml
-/agents-dashboard clear    # hide the dashboard
+/agents-dashboard hide|clear  # hide the dashboard
 ```
 
 The dashboard is read-only: it displays idle/running/done/error cards and live subagent progress, but it does not dispatch workflow-critical supervisor/review actions.
+
+#### Auto-show (headless)
+
+- Running or queued headless agents auto-open an **active** dashboard (`origin=auto`) in the orchestrator TUI without `/agents-dashboard` — covers typed headless `dispatch_*`, plan reviewers, and subagent tool runs.
+- Lifecycle cards publish running → terminal; terminal cards stay visible until the host `turn_end`, then `origin=auto` dashboards auto-hide when no running/queued work remains.
+- Explicit `/agents-dashboard` is `origin=user` and is never auto-cleared by turn end.
+- Visible cmux spawn stays panel-only (no auto dashboard card path).
 
 ## Tool Modes
 

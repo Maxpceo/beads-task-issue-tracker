@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { publishDashboardCard } from "../subagent/dashboard.js";
 
 export default function planReviewExtension(_pi: unknown): void {
 	// Helper module loaded from .pi/extensions; no runtime hooks are required here.
@@ -216,21 +217,76 @@ export async function runPlanReviewers(
 	const task = `Task: ${buildPlanReviewTask(draftPlan)}`;
 	return Promise.all(reviewers.map(async (reviewer) => {
 		const agentPath = path.join(cwd, ".pi", "agents", `${reviewer}.md`);
-		const result = await pi.exec("pi", [
-			"--mode", "json",
-			"-p",
-			"--no-session",
-			"--no-extensions",
-			"--no-skills",
-			"--no-prompt-templates",
-			"--tools", "read,grep,find,ls",
-			"--append-system-prompt", agentPath,
-			task,
-		]);
-		if (result.code !== 0) {
-			return { reviewer, verdict: "BLOCKED", findings: [], unresolvedBlockers: [result.stderr || result.stdout || `reviewer ${reviewer} failed`], raw: result.stdout, error: result.stderr || result.stdout } satisfies PlanReviewResult;
+		const startedAt = Date.now();
+		publishDashboardCard({
+			agent: reviewer,
+			description: `plan review: ${reviewer}`,
+			source: "project",
+			status: "running",
+			task: "Review draft plan",
+			startedAt,
+			toolCount: 0,
+			lastPreview: "starting plan reviewer...",
+		});
+		let terminalStatus: "completed" | "failed" = "completed";
+		let reviewResult: PlanReviewResult | undefined;
+		try {
+			const result = await pi.exec("pi", [
+				"--mode", "json",
+				"-p",
+				"--no-session",
+				"--no-extensions",
+				"--no-skills",
+				"--no-prompt-templates",
+				"--tools", "read,grep,find,ls",
+				"--append-system-prompt", agentPath,
+				task,
+			]);
+			if (result.code !== 0) {
+				terminalStatus = "failed";
+				reviewResult = {
+					reviewer,
+					verdict: "BLOCKED",
+					findings: [],
+					unresolvedBlockers: [result.stderr || result.stdout || `reviewer ${reviewer} failed`],
+					raw: result.stdout,
+					error: result.stderr || result.stdout,
+				} satisfies PlanReviewResult;
+			} else {
+				reviewResult = parsePlanReviewOutput(reviewer, extractFinalAssistantText(result.stdout));
+				terminalStatus = reviewResult.verdict === "BLOCKED" || reviewResult.error ? "failed" : "completed";
+			}
+			return reviewResult;
+		} catch (error) {
+			terminalStatus = "failed";
+			const message = error instanceof Error ? error.message : String(error);
+			reviewResult = {
+				reviewer,
+				verdict: "BLOCKED",
+				findings: [],
+				unresolvedBlockers: [message],
+				raw: "",
+				error: message,
+			} satisfies PlanReviewResult;
+			return reviewResult;
+		} finally {
+			publishDashboardCard({
+				agent: reviewer,
+				description: `plan review: ${reviewer}`,
+				source: "project",
+				status: terminalStatus,
+				task: "Review draft plan",
+				startedAt,
+				completedAt: Date.now(),
+				toolCount: 0,
+				lastPreview: reviewResult?.verdict
+					? `PLAN REVIEW: ${reviewResult.verdict}`
+					: terminalStatus === "failed"
+						? "plan reviewer failed"
+						: "plan reviewer finished",
+				errorMessage: reviewResult?.error,
+			});
 		}
-		return parsePlanReviewOutput(reviewer, extractFinalAssistantText(result.stdout));
 	}));
 }
 

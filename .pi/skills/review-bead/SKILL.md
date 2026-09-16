@@ -76,6 +76,16 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
     ```
     After `bd close` (or terminal blocked/deferred without continuation) and no pending-fix: close **this bead's** live registry panes only (`cmux close-surface` + tombstone). NOT APPROVED / pending-fix → do not close; reuse `followup_visible_dispatch`. Never sweep foreign/historical panes.
 
+15. STOP close (grey matrix) is **not** step 14. When CODE REVIEW is `APPROVED` but acceptance matrix is grey (`FAIL`/`NOT RUN`), bead stays non-terminal (`reviewed`) and is **not** `bd close`d. Still close this bead's live panes without waiting for terminal:
+    ```text
+    close_visible_dispatch({ beadId: <ID>, stopClose: true })
+    ```
+    - `stopClose` allowlist: `reviewed` only; `in_progress`/`inreview`/`open` → BLOCKED.
+    - `pendingFix` wins (skip close). Isolation/followup files remain until later terminal close unlinks leftovers.
+    - Do **not** call `followup_visible_dispatch` on grey-matrix STOP close.
+    - NOT APPROVED / missing-evidence: panes stay live (no `stopClose`).
+    - Autopilot hop success STOP copy: panes closed/not live; Maxim chooses (a) HUMAN ACCEPTANCE OVERRIDE → reviewed→accepted → bd close; (b) `bd update --status in_progress` + new `dispatch_supervisor`; (c) nothing, autopilot cleared.
+
 ## Acceptance failure loop breaker
 
 Use durable attempt markers to prevent silent retry loops and token waste:

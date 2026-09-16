@@ -88,6 +88,7 @@ Completion reports и status claims должны подкрепляться fres
 1. `##` что случилось + название задачи + (`id`).
 2. Текст. Словарик проекта не объяснять заново: сессия, bead, claim, смоук-тест, супервизор, code-reviewer, land, merge, cmux-sidebar, пилюля, inreview, PI WORKFLOW UPDATE.
    Имя из кода и английский жаргон этой задачи оставить и сразу расшифровать (что это и что видно). Не заменять русским синонимом. Пример: `MODE_VISUAL` — список стадий, при которых сайдбар рисует пилюлю. То же для leftover, last-writer, no-op, `clear`.
+   Перед отправкой стопа/финала: если Максим без второго абзаца скажет «по-человечески» / «объясни» — текст ещё черновик. Сырые имена этой задачи без расшифровки (`clearPendingReadyPlan`, overlay, pending, капа, complete-when-ready) — не готово.
    Скобки с agent-id только если роль и имя разные: супервизор тестов (`test-supervisor`).
 3. `## Проверка` — только реально гонявшиеся тесты (тип + файлы + passed/exit). Не писать, чего не гоняли.
 4. `## Файлы` — если менялись.
@@ -159,6 +160,21 @@ close_visible_dispatch({ beadId: <ID> })
 - `NOT APPROVED` / pending-fix: **do not** close — keep the pane and use `followup_visible_dispatch` (`pendingFix: true` skips close).
 - Do not sweep foreign/historical panes, HTML boards, or Haasbot surfaces.
 - Prefer `--focus false` paths; do not speculative `select-workspace` / `focus-pane` just to find the surface.
+
+### STOP close (grey matrix, non-terminal)
+
+When CODE REVIEW is `APPROVED` but acceptance is grey (`FAIL`/`NOT RUN`) and no pending-fix/followup is planned, panes must still close — not only after `bd close`:
+
+```text
+close_visible_dispatch({ beadId: <ID>, stopClose: true })
+```
+
+- Allowlist: `status=reviewed` only. `reviewed` is **not** in `CLOSE_VISIBLE_TERMINAL_STATUSES`.
+- `in_progress` / `inreview` / `open` + `stopClose` → `BLOCKED`.
+- `pendingFix: true` wins over `stopClose` (skip close).
+- Path: `close-surface` + registry `tombstone` for this bead; isolation/followup files remain until a later terminal close unlinks leftovers.
+- Bead stays open (not `bd close`). Autopilot hop clears autopilot and asks Maxim: (a) `HUMAN ACCEPTANCE OVERRIDE` → reviewed→accepted → `bd close`; (b) `bd update --status in_progress` + new `dispatch_supervisor`; (c) nothing.
+- `NOT APPROVED` and missing-evidence keep panes live (no `stopClose`).
 
 ## Fast Path / Large Change Discipline
 
