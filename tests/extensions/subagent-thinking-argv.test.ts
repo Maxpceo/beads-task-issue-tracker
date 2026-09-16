@@ -65,6 +65,7 @@ function loadSubagentExtension(
         getSharedDashboardState: () => undefined,
         publishDashboardCard: () => undefined,
         registerDashboardRenderer: () => undefined,
+        registerDashboardWidgetHost: () => undefined,
         selectDashboardAgents: () => [],
         setSharedDashboardState: () => undefined,
       }
@@ -95,6 +96,7 @@ describe('subagent thinking argv', () => {
     const spawnCalls: Array<{ command: string, args: string[], cwd?: string }> = []
     const tools = new Map<string, any>()
     const pi: any = {
+      on() {},
       registerCommand() {},
       registerTool: (tool: any) => tools.set(tool.name, tool),
       exec: async () => ({ stdout: '', stderr: '', code: 0 }),

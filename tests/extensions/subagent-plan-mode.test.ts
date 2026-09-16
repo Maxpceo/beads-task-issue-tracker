@@ -56,6 +56,7 @@ function loadSubagentExtension(spawnCalls: Array<{ command: string, args: string
         getSharedDashboardState: () => undefined,
         publishDashboardCard: () => undefined,
         registerDashboardRenderer: () => undefined,
+        registerDashboardWidgetHost: () => undefined,
         selectDashboardAgents: () => [],
         setSharedDashboardState: () => undefined,
       }
@@ -79,6 +80,7 @@ function makeHarness() {
   const execCalls: Array<{ command: string, args: string[] }> = []
   const spawnCalls: Array<{ command: string, args: string[], cwd?: string }> = []
   const pi: any = {
+    on() {},
     registerCommand() {},
     registerTool: (tool: any) => tools.set(tool.name, tool),
     exec: async (command: string, args: string[]) => {
