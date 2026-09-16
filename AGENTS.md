@@ -233,7 +233,7 @@ Agent-created beads должны быть self-contained handoff packages. Бу�
 
 Первый `bd create` write = финальный cold-session пакет, а не черновик: всё, что creating session уже знает и что понадобится имплементеру, пишется в description сразу. Вопрос человека «хватит ли контекста?» не должен быть триггером полноты.
 
-Перед любым agent-created `bd create` (new issue, follow-up, discovered bug, split scope или documented work item) загрузи и примени `.pi/skills/create-bead/SKILL.md`. Hand-written `bd create` commands, пропускающие skill checklist, запрещены. Command должен сохранять description visible для Pi guards, обычно через inline heredoc внутри `--description`; не прячь его в shell variables, wrapper scripts или temp files.
+Перед любым agent-created `bd create` (new issue, follow-up, discovered bug, split scope или documented work item) загрузи и примени `.pi/skills/create-bead/SKILL.md`. Hand-written `bd create` commands, пропускающие skill checklist, запрещены. Preferred: file-based description — write полный текст в `/tmp/...md`, затем короткий `bd create ... --description "$(cat /absolute/path)"` (guard читает файл; `#` и backticks в теле безопасны). Legacy: inline heredoc внутри `--description` (хрупко с `#` и backticks). Не прячь description в `$VAR`, wrapper scripts, unsafe `$(cat ...)` с pipes/extra commands или repo-path files.
 
 Required description sections для non-epic, non-exempt agent-created beads:
 
@@ -305,57 +305,19 @@ bd ready --json
 **Создать новые issues:**
 
 ```bash
-bd create "Добавить проверку формата задач" -t bug|feature|task -p 0-4 --label dx --description "$(cat <<'EOF'
-### Origin
-- Запрос пользователя или исходный bead, из-за которого появилась задача.
-### Files
-- path/to/file.ts
-### Current state
-- Наблюдаемое текущее поведение.
-### Target state
-- Наблюдаемое целевое поведение.
-### Investigation findings
-- Уже собранные факты и ссылки на проверенные файлы/команды.
-### Decisions
-- Выбранный подход и причина выбора.
-### Rejected alternatives
-- Рассмотренная альтернатива и причина отказа.
-### Dependencies / blockers
-- parent-child:<epic-id> / discovered-from:<id> / blocks:<id> / нет.
-### Acceptance criteria
-- Конкретный наблюдаемый результат для приёмки.
-### Verification / acceptance checks
-- Команда или ручная проверка с ожидаемым результатом.
-### Out of scope
-- Явные не-цели задачи.
-EOF
-)" --json
+# Preferred: file-based (write tool → /tmp, then tight cat)
+bd create "Добавить проверку формата задач" -t bug|feature|task -p 0-4 --label dx \
+  --description "$(cat /tmp/bead-desc-format-check.md)" --json
 
-bd create "Уточнить обработку найденной проблемы" -p 1 --label dx --deps discovered-from:bd-123 --description "$(cat <<'EOF'
-### Origin
-- Обнаружено в ходе работы над bd-123.
-### Files
-- path/to/file.ts
-### Current state
-- Наблюдаемое текущее поведение.
-### Target state
-- Наблюдаемое целевое поведение.
-### Investigation findings
-- Уже собранные факты и ссылки на проверенные файлы/команды.
-### Decisions
-- Выбранный подход и причина выбора.
-### Rejected alternatives
-- Рассмотренная альтернатива и причина отказа.
-### Dependencies / blockers
-- discovered-from:bd-123.
-### Acceptance criteria
-- Конкретный наблюдаемый результат для приёмки.
-### Verification / acceptance checks
-- Команда или ручная проверка с ожидаемым результатом.
-### Out of scope
-- Явные не-цели задачи.
-EOF
-)" --json
+bd create "Уточнить обработку найденной проблемы" -p 1 --label dx --deps discovered-from:bd-123 \
+  --description "$(cat /tmp/bead-desc-followup.md)" --json
+
+# Legacy (fragile with # / backticks in body): inline heredoc
+# bd create "..." --description "$(cat <<'EOF'
+# ### Origin
+# - ...
+# EOF
+# )" --json
 ```
 
 **Claim and update:**

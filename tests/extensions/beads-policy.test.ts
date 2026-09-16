@@ -104,7 +104,7 @@ describe('Pi bead enrichment policy', () => {
     expect(decision?.reason).toContain('type/priority/label/deps')
   })
 
-  it('blocks hidden variable descriptions with a guard-visible inline heredoc correction', () => {
+  it('blocks hidden variable descriptions with preferred file-based correction', () => {
     const decision = evaluateBashPolicy('bd create "Зафиксировать баг" -t bug --label workflow --description "$BUG_DESC" --json', {
       state: 'idle',
     }, policyOnlyOptions)
@@ -113,12 +113,13 @@ describe('Pi bead enrichment policy', () => {
     expect(decision?.block).toBe(true)
     expect(decision?.reason).toContain('description скрыт от guard')
     expect(decision?.reason).toContain('$BUG_DESC')
+    expect(decision?.reason).toContain('Preferred: file-based')
     expect(decision?.reason).toContain('.pi/skills/create-bead/SKILL.md')
     expect(decision?.reason).toContain('inline heredoc')
   })
 
-  it('blocks tmp-file description command substitutions with the same visible-content correction', () => {
-    const decision = evaluateBashPolicy('bd create "Зафиксировать баг" -t bug --label workflow --description "$(cat /tmp/bug-desc.md)" --json', {
+  it('blocks missing tmp-file description cat with preferred file-based correction', () => {
+    const decision = evaluateBashPolicy('bd create "Зафиксировать баг" -t bug --label workflow --description "$(cat /tmp/bug-desc-missing-17qi.md)" --json', {
       state: 'idle',
     }, policyOnlyOptions)
 
@@ -126,7 +127,125 @@ describe('Pi bead enrichment policy', () => {
     expect(decision?.block).toBe(true)
     expect(decision?.reason).toContain('description скрыт от guard')
     expect(decision?.reason).toContain('$(cat /tmp/...)')
-    expect(decision?.reason).toContain('inline heredoc')
+    expect(decision?.reason).toContain('Preferred: file-based')
+  })
+
+  it('allows tight file-based description with # and backticks outside the git worktree', () => {
+    const repo = createMainRepo()
+    const descPath = join(tmpdir(), `beads-policy-desc-pass-${Date.now()}.md`)
+    const description = [
+      russianHandoffDescription,
+      '- Ссылка PR #278 и пример `git status` внутри file bytes.',
+    ].join('\n')
+    writeFileSync(descPath, description, 'utf8')
+
+    const command = `bd create "Зафиксировать баг с PR #278" -t bug --label workflow --description "$(cat ${descPath})" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+    expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
+    expect(decision?.block).not.toBe(true)
+  })
+
+  it('allows quoted tight file-based description path', () => {
+    const repo = createMainRepo()
+    const descPath = join(tmpdir(), `beads-policy-desc-quoted-${Date.now()}.md`)
+    writeFileSync(descPath, russianHandoffDescription, 'utf8')
+
+    const command = `bd create "Проверить file transport" -t task --label pi --description "$(cat '${descPath}')" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+  })
+
+  it('blocks cat with extra commands even when a valid description file exists', () => {
+    const repo = createMainRepo()
+    const descPath = join(tmpdir(), `beads-policy-desc-extra-${Date.now()}.md`)
+    writeFileSync(descPath, russianHandoffDescription, 'utf8')
+
+    // Non-git extra command so enrichment (not blockMainMutation) owns the decision.
+    const command = `bd create "Зафиксировать баг" -t bug --label workflow --description "$(cat ${descPath}; echo pwned)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('enforceBeadEnrichment')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('description скрыт от guard')
+  })
+
+  it('blocks description file whose realpath is inside the git worktree', () => {
+    const repo = createMainRepo()
+    const descPath = join(repo, 'repo-desc.md')
+    writeFileSync(descPath, russianHandoffDescription, 'utf8')
+
+    const command = `bd create "Зафиксировать баг" -t bug --label workflow --description "$(cat ${descPath})" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('enforceBeadEnrichment')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('description скрыт от guard')
+  })
+
+  it('blocks symlink into the git worktree for file-based description', () => {
+    const repo = createMainRepo()
+    const inside = join(repo, 'inside-desc.md')
+    writeFileSync(inside, russianHandoffDescription, 'utf8')
+    const linkPath = join(tmpdir(), `beads-policy-desc-symlink-${Date.now()}.md`)
+    symlinkSync(inside, linkPath)
+
+    const command = `bd create "Зафиксировать баг" -t bug --label workflow --description "$(cat ${linkPath})" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('enforceBeadEnrichment')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('description скрыт от guard')
+  })
+
+  it('blocks English prose in file-based description via locale guard', () => {
+    const repo = createMainRepo()
+    const descPath = join(tmpdir(), `beads-policy-desc-en-${Date.now()}.md`)
+    const englishDescription = [
+      '### Origin',
+      '- User reported the current behavior and expected result details.',
+      '### Files',
+      '- app/utils/example.ts',
+      '### Current state',
+      '- The example currently fails for several important cases.',
+      '### Target state',
+      '- The example should work correctly after the change.',
+      '### Investigation findings',
+      '- Manual checks confirmed the broken path and missing coverage.',
+      '### Decisions',
+      '- Keep the existing public API and fix the helper only.',
+      '### Rejected alternatives',
+      '- Full rewrite was rejected as too broad for this bug.',
+      '### Dependencies / blockers',
+      '- None.',
+      '### Acceptance criteria',
+      '- Example path returns the correct value for the reported case.',
+      '### Verification / acceptance checks',
+      '- pnpm test -- tests/utils/example.test.ts exits 0.',
+      '### Out of scope',
+      '- Unrelated refactors.',
+    ].join('\n')
+    writeFileSync(descPath, englishDescription, 'utf8')
+
+    const command = `bd create "Исправить пример" -t bug --label dx --description "$(cat ${descPath})" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+
+    expect(decision?.policy).toBe('enforceBeadRussianLocale')
+    expect(decision?.block).toBe(true)
+    expect(decision?.reason).toContain('bead description явно на английском')
+  })
+
+  it('still allows legacy inline heredoc description pattern', () => {
+    const command = `bd create "Добавить проверку workflow" -t task --label pi --description "$(cat <<'EOF'
+${russianHandoffDescription}
+EOF
+)" --json`
+    const decision = evaluateBashPolicy(command, { state: 'idle' }, policyOnlyOptions)
+
+    expect(decision?.policy).not.toBe('enforceBeadEnrichment')
+    expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
   })
 })
 
