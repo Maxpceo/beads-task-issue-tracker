@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 
 import planReviewExtension, {
   classifyPlanReviewRisk,
@@ -11,6 +11,18 @@ import planReviewExtension, {
   runPlanReviewers,
   type PlanReviewResult,
 } from '../../.pi/extensions/plan-review/index'
+import {
+  clearObservedDashboardCards,
+  getSharedDashboardState,
+  resetDashboardWidgetHost,
+  setSharedDashboardState,
+} from '../../.pi/extensions/subagent/dashboard'
+
+beforeEach(() => {
+  clearObservedDashboardCards()
+  setSharedDashboardState(null)
+  resetDashboardWidgetHost()
+})
 
 describe('plan-review gate helpers', () => {
   it('exports a no-op extension factory for the Pi extension loader', () => {
@@ -167,5 +179,61 @@ Risks / rollback:
     ]))
     expect(calls[0]?.args).not.toEqual(expect.arrayContaining(['edit', 'write', 'bash']))
     expect(results[0]).toMatchObject({ reviewer: 'plan-edge-reviewer', verdict: 'APPROVED' })
+  })
+
+  it('publishes running then terminal cards for the plan-review trio and auto-shows the widget store', async () => {
+    const midFlight: string[] = []
+    const pi = {
+      exec: async (_command: string, args: string[]) => {
+        const promptIdx = args.indexOf('--append-system-prompt')
+        const agentPath = promptIdx >= 0 ? String(args[promptIdx + 1] ?? '') : ''
+        const reviewer = agentPath.split('/').pop()?.replace(/\.md$/, '') ?? 'unknown'
+        midFlight.push(`${reviewer}:${getSharedDashboardState()?.cards.get(reviewer)?.status ?? 'missing'}`)
+        return {
+          code: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            type: 'message_end',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'PLAN REVIEW: APPROVED\nFindings:\n- severity: minor\n  issue: none\n  evidence: ok\n  suggested fix: none\nUnresolved blockers: none' }],
+            },
+          }) + '\n',
+        }
+      },
+    }
+
+    expect(getSharedDashboardState()).toBeNull()
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test')
+
+    expect(results).toHaveLength(3)
+    expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
+    expect(midFlight).toEqual(expect.arrayContaining([
+      'plan-edge-reviewer:running',
+      'plan-consistency-reviewer:running',
+      'plan-dead-zone-reviewer:running',
+    ]))
+
+    const shared = getSharedDashboardState()
+    expect(shared?.visible).toBe(true)
+    expect(shared?.origin).toBe('auto')
+    expect(shared?.mode).toBe('active')
+    expect(shared?.cards.get('plan-edge-reviewer')?.status).toBe('completed')
+    expect(shared?.cards.get('plan-consistency-reviewer')?.status).toBe('completed')
+    expect(shared?.cards.get('plan-dead-zone-reviewer')?.status).toBe('completed')
+  })
+
+  it('marks the dashboard card failed when pi.exec throws instead of completed', async () => {
+    const pi = {
+      exec: async () => {
+        throw new Error('spawn failed')
+      },
+    }
+
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer'])
+
+    expect(results[0]).toMatchObject({ reviewer: 'plan-edge-reviewer', verdict: 'BLOCKED', error: 'spawn failed' })
+    expect(getSharedDashboardState()?.cards.get('plan-edge-reviewer')?.status).toBe('failed')
+    expect(getSharedDashboardState()?.cards.get('plan-edge-reviewer')?.errorMessage).toBe('spawn failed')
   })
 })

@@ -3,9 +3,13 @@ import { describe, expect, it, beforeEach } from 'vitest'
 import {
   clearObservedDashboardCards,
   createDashboardState,
+  ensureDashboardWidget,
+  maybeAutoHideDashboard,
   publishDashboardCard,
   registerDashboardRenderer,
+  registerDashboardWidgetHost,
   renderDashboardLines,
+  resetDashboardWidgetHost,
   selectDashboardAgents,
   setSharedDashboardState,
   getSharedDashboardState,
@@ -79,6 +83,7 @@ describe('subagent dashboard helpers', () => {
     unregisterRenderer = undefined
     clearObservedDashboardCards()
     setSharedDashboardState(null)
+    resetDashboardWidgetHost()
   })
 
   it('falls back to all project-local agents when no team is configured', () => {
@@ -231,6 +236,118 @@ describe('subagent dashboard helpers', () => {
     expect(colors).toContain('error')
     expect(colors).toContain('borderMuted')
     expect(lines.every((line) => visibleWidth(line) <= 52)).toBe(true)
+  })
+
+  it('auto-shows an active origin=auto dashboard from a null store on running publish', () => {
+    let setWidgetCalls = 0
+    registerDashboardWidgetHost({
+      hasUI: true,
+      ui: {
+        setWidget: () => {
+          setWidgetCalls++
+        },
+      },
+    })
+
+    expect(getSharedDashboardState()).toBeNull()
+    publishDashboardCard({
+      agent: 'plan-edge-reviewer',
+      source: 'project',
+      status: 'running',
+      task: 'Review draft plan',
+      startedAt: 1_000,
+      toolCount: 0,
+    })
+
+    const shared = getSharedDashboardState()
+    expect(shared?.visible).toBe(true)
+    expect(shared?.mode).toBe('active')
+    expect(shared?.origin).toBe('auto')
+    expect(shared?.cards.get('plan-edge-reviewer')?.status).toBe('running')
+    expect(shared?.cards.has('reviewer')).toBe(false)
+    expect(setWidgetCalls).toBeGreaterThan(0)
+  })
+
+  it('keeps terminal cards visible after publish and only auto-hides origin=auto on turn_end', () => {
+    let setWidgetCalls: Array<unknown> = []
+    registerDashboardWidgetHost({
+      hasUI: true,
+      ui: {
+        setWidget: (_id: string, value: unknown) => {
+          setWidgetCalls.push(value)
+        },
+      },
+    })
+
+    publishDashboardCard({
+      agent: 'detective',
+      source: 'project',
+      status: 'running',
+      task: 'Investigate',
+      startedAt: 1_000,
+      toolCount: 0,
+    })
+    publishDashboardCard({
+      agent: 'detective',
+      source: 'project',
+      status: 'completed',
+      task: 'Investigate',
+      startedAt: 1_000,
+      completedAt: 2_000,
+      toolCount: 1,
+    })
+
+    expect(getSharedDashboardState()?.visible).toBe(true)
+    expect(getSharedDashboardState()?.cards.get('detective')?.status).toBe('completed')
+    expect(maybeAutoHideDashboard()).toBe(true)
+    expect(getSharedDashboardState()).toBeNull()
+    expect(setWidgetCalls.at(-1)).toBeUndefined()
+  })
+
+  it('does not auto-hide origin=user all dashboards and does not overwrite them on auto-show', () => {
+    const selection = selectDashboardAgents(agents, teams)
+    const userState = createDashboardState(selection, 'all', 'user')
+    setSharedDashboardState(userState)
+
+    publishDashboardCard({
+      agent: 'supervisor',
+      source: 'project',
+      status: 'running',
+      task: 'Implement bead',
+      startedAt: 1_000,
+      toolCount: 0,
+    })
+    publishDashboardCard({
+      agent: 'supervisor',
+      source: 'project',
+      status: 'completed',
+      completedAt: 2_000,
+      toolCount: 0,
+    })
+
+    const shared = getSharedDashboardState()
+    expect(shared?.origin).toBe('user')
+    expect(shared?.mode).toBe('all')
+    expect(shared?.cards.get('reviewer')?.status).toBe('idle')
+    expect(shared?.cards.get('supervisor')?.status).toBe('completed')
+    expect(maybeAutoHideDashboard()).toBe(false)
+    expect(getSharedDashboardState()?.visible).toBe(true)
+  })
+
+  it('store-only publishes without host or hasUI and never throws', () => {
+    expect(() =>
+      publishDashboardCard({
+        agent: 'architect',
+        source: 'project',
+        status: 'running',
+        task: 'Design',
+        startedAt: 1_000,
+        toolCount: 0,
+      }),
+    ).not.toThrow()
+    expect(getSharedDashboardState()?.origin).toBe('auto')
+    expect(getSharedDashboardState()?.cards.get('architect')?.status).toBe('running')
+    expect(() => ensureDashboardWidget()).not.toThrow()
   })
 
   it('keeps two-column running cards within the terminal width when status icons are double-width', () => {
