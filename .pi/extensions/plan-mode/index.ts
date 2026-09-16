@@ -29,7 +29,6 @@ import {
 	type QuestionnaireUiResult,
 } from "./question-ui.js";
 import {
-	createReadyUiFactory,
 	READY_ACTIONS,
 	type ReadyAction,
 } from "./ready-ui.js";
@@ -1066,15 +1065,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return ctx.mode === "tui" && typeof ctx.ui?.custom === "function";
 	}
 
-	async function promptReadyAction(ctx: ExtensionContext, planText: string): Promise<ReadyAction | null> {
+	async function promptReadyAction(ctx: ExtensionContext, _planText: string): Promise<ReadyAction | null> {
 		if (!ctx.hasUI) return null;
 
-		if (canUseCustomUi(ctx)) {
-			const result = await ctx.ui.custom<{ action: ReadyAction } | null>(createReadyUiFactory(planText));
-			return result?.action ?? null;
-		}
-
-		// RPC / no-custom fallback: capped select + stable values via labels.
+		// Never ctx.ui.custom here: live TUI abort on ready-UI (gauq/m6ho) even after
+		// agent_settled + truncateToWidth. Built-in select is the path that stays alive.
 		const labels = READY_ACTIONS.map((item) => item.label);
 		const choice = await ctx.ui.select("План готов — что дальше?", labels);
 		if (!choice) return null;
@@ -1299,8 +1294,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				}
 				pendingReadyPlan = plan;
 				persistState();
-				if (ctx.hasUI) ctx.ui.notify("Plan marked ready — choose next action after this turn", "info");
-				return toolText("plan_mode_complete: pending ready plan stored; ready-UI will open on agent_settled", { ok: true, pending: true });
+				if (ctx.hasUI) {
+					await runStrictReadyUiLoopSafe(ctx);
+					const stillPending = Boolean(pendingReadyPlan);
+					return toolText(
+						stillPending
+							? "plan_mode_complete: ready select opened; pending kept"
+							: "plan_mode_complete: ready select completed",
+						{ ok: true, pending: stillPending },
+					);
+				}
+				return toolText("plan_mode_complete: pending ready plan stored; ready select will open on agent_settled", { ok: true, pending: true });
 			},
 		});
 
@@ -1942,13 +1946,11 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			return;
 		}
 
-		// Strict complete-when-ready: ready-UI is driven by agent_settled, not agent_end.
-		// Opening a blocking ctx.ui.custom from agent_end crashed the TUI session
-		// (beads-task-issue-tracker-gauq); agent_settled fires only after Pi stops
-		// auto-retrying/compacting, which is the safe moment to replace the editor.
+		// Strict complete-when-ready: primary path is plan_mode_complete execute (select).
+		// Do not open ready-UI from agent_end (gauq crash).
 	});
 
-	// Strict ready-UI moved here from agent_end: pi fully settled, no pending rerun.
+	// Restore leftover pendingReadyPlan (restart) with the same select path — never custom.
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!planModeEnabled || autoExecuteEnabled || executionMode) return;
 		if (!pendingReadyPlan) return;

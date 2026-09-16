@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **Pi plan ready-UI no longer uses `ctx.ui.custom`** (`beads-task-issue-tracker-51l5`): live `plan_mode_complete` still killed the TUI after m6ho clamped render lines and gauq moved the prompt to `agent_settled`. Strict ready-UI is now built-in `ctx.ui.select` (Исполнить / Остаться / Уточнить / Отправить на plan-review) inside the tool execute, matching questionnaire timing; leftover pending restores via the same select on `agent_settled`. Questionnaire custom UI is unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.
+
 - **Pi plan ready-UI TUI width abort** (`beads-task-issue-tracker-m6ho`): `plan_mode_complete` still killed the session after gauq moved ready-UI to `agent_settled`, because an over-wide custom render line makes Pi TUI call `this.stop()` (not an exception the gauq `try/catch` can swallow). Ready and questionnaire document-flow UIs now clamp every rendered line with `truncateToWidth`, including long unspaced plan previews. Focused vitest under `tests/extensions/plan-mode.test.ts`.
 
 - **Pi `/plan-autopilot` hop wakes orchestrator on missing-evidence** (`beads-task-issue-tracker-f7f0`): when CODE REVIEW is `APPROVED` but `finalizeVisibleReviewClose` returns `missing-evidence`, autopilot hop no longer dumps a Maxim STOP. It sends `customType` `autopilot-hop-wake-orch` with `triggerTurn: true` so the orchestrator can write START/END comments, the acceptance matrix, and close the bead in-session (no `review_bead`, hop-retry, or fabricated matrix). `not-approved` and unknown `!ok` stay fail-closed `autopilot-hop-stop` without waking the LLM. Focused vitest under `tests/extensions/plan-mode.test.ts`.

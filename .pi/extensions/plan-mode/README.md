@@ -5,7 +5,7 @@ Project-local Pi plan mode adapted for the beads workflow.
 ## Features
 
 - Read-only exploration mode via `/plan` or clear natural-language activation phrases.
-- **Complete-when-ready (strict only):** ready-UI opens only after explicit `plan_mode_complete({ plan })`, and only on the following `agent_settled` (not `agent_end`). Clarifying turns without complete do **not** show Execute. Ready/question document-flow render clamps every line with `truncateToWidth` so Pi TUI cannot abort the process on overflow. A ready-UI TUI/render failure notifies, clears pending, and keeps plan mode ON.
+- **Complete-when-ready (strict only):** ready-UI opens only after explicit `plan_mode_complete({ plan })`, as a built-in `ctx.ui.select` (Исполнить / Остаться / Уточнить / Отправить на plan-review) inside the tool execute — **not** `ctx.ui.custom`, and **not** from `agent_end`. Custom ready-UI on `agent_settled` still killed the live TUI after gauq/m6ho. Leftover pending after restart uses the same select on `agent_settled`. Clarifying turns without complete do **not** show Execute. A ready-UI failure notifies, clears pending, and keeps plan mode ON.
 - Document-flow ready/question UI (no floating `overlay: true`): RU buttons Исполнить / Остаться / Уточнить / Отправить на plan-review; digits 1–9 + option preview on questionnaire.
 - Ready button «Отправить на plan-review» runs the same uncapped critique path as `/plan-review` (findings via `sendMessage`), keeps plan mode ON, does **not** write `PLAN APPROVED`, does **not** increment `workflow_plan_review` cycle, then re-shows the four buttons.
 - Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation (no ready-UI; pending ready cleared).
@@ -35,13 +35,13 @@ Project-local Pi plan mode adapted for the beads workflow.
 ### Strict ready tools
 
 - `questionnaire` — ask clarifying questions (does not mark the plan ready).
-- `plan_mode_complete({ plan })` — mark the draft plan ready; whitespace-only plan errors. On the following `agent_settled` in strict mode (after Pi stops auto-retry/compact; **not** `agent_end`), show the four-button ready-UI (lines clamped to terminal width). Auto/autopilot notes the call but skips ready-UI and clears pending. If the ready-UI loop throws, notify + clear `pendingReadyPlan` and keep plan mode ON; pending is session-persisted so a restore re-opens ready-UI on the next `agent_settled`.
+- `plan_mode_complete({ plan })` — mark the draft plan ready; whitespace-only plan errors. In strict+hasUI, opens `ctx.ui.select` immediately in the tool execute (not custom, not `agent_end`). Auto/autopilot notes the call but skips ready-UI and clears pending. If the ready-UI loop throws, notify + clear `pendingReadyPlan` and keep plan mode ON; leftover pending re-opens select on the next `agent_settled`.
 
 ### Strict complete-when-ready contract
 
 1. Ask questions only via `questionnaire`.
 2. When the draft is complete, call `plan_mode_complete({ plan })` last in the turn.
-3. Ready-UI opens on `agent_settled` only (safe editor replace; matches upstream plan-mode settled timing). Opening blocking `ctx.ui.custom` from `agent_end` is forbidden — it crashed the TUI session. Rendered lines are clamped to the given width (`truncateToWidth`); an over-wide custom line aborts Pi (`this.stop()`), and that abort is **not** an exception `try/catch` can swallow.
+3. Ready-UI is `ctx.ui.select` from `plan_mode_complete` execute (same timing as `questionnaire`). Do **not** open `ctx.ui.custom` for ready-UI (`agent_end` / `agent_settled` both killed live sessions: gauq, m6ho). `agent_settled` only restores leftover pending via select.
 4. Human chooses: execute (durable PLAN APPROVED) / stay / refine / plan-review critique.
 5. Plan-review from the button is critique, not approval and not supervisor start.
 6. Ready-UI failure path: notify error, clear pending ready plan, stay in strict plan mode (do not kill the session).
