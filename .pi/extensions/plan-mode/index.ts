@@ -1411,11 +1411,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		persistState();
 	}
 
-	function sendAutopilotHopMessage(content: string, customType = "autopilot-hop"): void {
+	function sendAutopilotHopMessage(
+		content: string,
+		customType = "autopilot-hop",
+		options?: { triggerTurn?: boolean },
+	): void {
 		try {
 			pi.sendMessage(
 				{ customType, content, display: true },
-				{ triggerTurn: false },
+				{ triggerTurn: options?.triggerTurn === true },
 			);
 		} catch {
 			// Best-effort visible hop progress only.
@@ -1626,7 +1630,33 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					);
 					return;
 				}
-				// missing-evidence / not-approved / other: panes live, close not called.
+				// missing-evidence: wake orchestrator LLM (triggerTurn) so it can write matrix/close.
+				// not-approved / unknown !ok: fail-closed STOP to Maxim; panes live, close not called.
+				if (finalize.status === "missing-evidence") {
+					const reason = String(finalize.text ?? "missing-evidence").slice(0, 300);
+					sendAutopilotHopMessage(
+						[
+							"Ревью APPROVED. Hop не закрыл bead: missing-evidence.",
+							`Причина: ${reason}`,
+							"пинг уже забран, ждать [PING] не нужно; панели живы; autopilot не сброшен.",
+							"Сделай в этом ходе: возьми START/END из workflow_status/registry, запиши START_COMMIT/END_COMMIT comments, ladder inreview → simplified → reviewed → честная ACCEPTANCE MATRIX → accepted → bd close → workflow_complete → close_visible_dispatch.",
+							"Запреты: НЕ фабриковать матрицу; НЕ bd close из inreview; НЕ review_bead; НЕ complete_visible_dispatch; НЕ dispatch_reviewer; НЕ hop-retry; НЕ fake ping.",
+							"Если gap не закрыть в этом ходе — без retry: сбросить autopilot (/plan-cancel) и короткий STOP Максиму. После успешного close — сбросить autopilot.",
+							formatAutopilotHopFooter(taskId, entry.beadId).trimStart(),
+						].filter(Boolean).join("\n"),
+						"autopilot-hop-wake-orch",
+						{ triggerTurn: true },
+					);
+					return;
+				}
+				if (finalize.status === "not-approved") {
+					sendAutopilotHopMessage(
+						`STOP: close path заблокирован (not-approved после finalize). Bead не закрыт; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: разберите блокировку close / matrix, затем fix или снимите autopilot.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+						"autopilot-hop-stop",
+					);
+					return;
+				}
+				// Unknown non-blocked !ok — fail-closed STOP to Maxim.
 				sendAutopilotHopMessage(
 					`STOP: close path заблокирован (acceptance/matrix или preflight). Bead не закрыт; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: разберите блокировку close / matrix, затем fix или снимите autopilot.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
