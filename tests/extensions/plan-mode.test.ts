@@ -1610,8 +1610,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     mockSupervisorDispatchGate = new Promise<void>((resolve) => { releaseDispatch = resolve })
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await markPlanReady(toolHandlers, ctx)
-    const execution = agentSettledHandlers[0]?.({}, ctx) as Promise<void>
+    const execution = markPlanReady(toolHandlers, ctx) as Promise<unknown>
     for (let i = 0; i < 10 && mockSupervisorDispatchCalls.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 0))
 
     const commentCallIndex = execCalls.findIndex((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
@@ -2327,35 +2326,33 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
   })
 
   it('plan_mode_complete + ready execute writes PLAN APPROVED via ready UI', async () => {
-    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, execCalls, workflowUpdates, ctx } = makeHarness({
+    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, workflowUpdates, ctx } = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['execute'],
     })
     await commandHandlers.get('plan')?.handler('', ctx)
     const complete = await markPlanReady(toolHandlers, ctx)
-    expect(complete.details.pending).toBe(true)
-
-    await agentSettledHandlers[0]?.({}, ctx)
-
-    expect(customCalls.length).toBeGreaterThanOrEqual(1)
-    expect(customCalls.every((call) => call.options === undefined || !((call.options as any)?.overlay === true))).toBe(true)
+    expect(complete.details.pending).toBe(false)
+    expect(customCalls).toHaveLength(0)
+    expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(true)
     const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
     expect(workflowUpdates.at(-1)).toMatchObject({ planApproved: true, planMode: 'off' })
+    await agentSettledHandlers[0]?.({}, ctx)
+    expect(customCalls).toHaveLength(0)
   })
 
   it('ready-UI exception degrades gracefully: notify + clear pending, no throw, plan mode stays on', async () => {
     const harness = makeHarness({ activeBead: 'bead-ui' })
     await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
-    await markPlanReady(harness.toolHandlers, harness.ctx)
 
     const notifications: Array<{ text: string; level: string }> = []
     harness.ctx.ui.notify = (text: string, level: string) => { notifications.push({ text, level }) }
-    harness.ctx.ui.custom = async () => {
-      throw new Error('TUI render exploded')
+    harness.ctx.ui.select = async () => {
+      throw new Error('TUI select exploded')
     }
 
-    await expect(harness.agentSettledHandlers[0]?.({}, harness.ctx)).resolves.toBeUndefined()
+    await expect(markPlanReady(harness.toolHandlers, harness.ctx)).resolves.toBeDefined()
 
     expect(notifications.length).toBeGreaterThanOrEqual(1)
     expect(notifications.some((n) => n.text.includes('plan-mode ready-UI failed') && n.level === 'error')).toBe(true)
@@ -2366,11 +2363,11 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(persisted?.data?.enabled).toBe(true)
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     expect(harness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+    expect(harness.customCalls).toHaveLength(0)
 
-    // next settled after the failure does not retry the broken UI (pending cleared)
-    const customCallsBefore = harness.customCalls.length
+    const selectBefore = harness.selectCalls.length
     await harness.agentSettledHandlers[0]?.({}, harness.ctx)
-    expect(harness.customCalls.length).toBe(customCallsBefore)
+    expect(harness.selectCalls.length).toBe(selectBefore)
   })
 
   it('ready stay and Esc clear pending without writing PLAN APPROVED', async () => {
@@ -2385,7 +2382,6 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     })
     await stayHarness.commandHandlers.get('plan')?.handler('', stayHarness.ctx)
     await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
-    await stayHarness.agentSettledHandlers[0]?.({}, stayHarness.ctx)
 
     const stayPersisted = stayHarness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -2395,9 +2391,10 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(stayHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     expect(stayHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
 
-    const customAfterStay = stayHarness.customCalls.length
+    expect(stayHarness.customCalls).toHaveLength(0)
+    const selectAfterStay = stayHarness.selectCalls.length
     await stayHarness.agentSettledHandlers[0]?.({}, stayHarness.ctx)
-    expect(stayHarness.customCalls.length).toBe(customAfterStay)
+    expect(stayHarness.selectCalls.length).toBe(selectAfterStay)
 
     const escHarness = makeHarness({
       activeBead: 'bead-ui',
@@ -2405,7 +2402,6 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     })
     await escHarness.commandHandlers.get('plan')?.handler('', escHarness.ctx)
     await markPlanReady(escHarness.toolHandlers, escHarness.ctx)
-    await escHarness.agentSettledHandlers[0]?.({}, escHarness.ctx)
 
     const escPersisted = escHarness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -2422,14 +2418,12 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       readyActionQueue: ['plan-review', 'execute'],
     })
     await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
-    await markPlanReady(harness.toolHandlers, harness.ctx)
-
     const beforeCycleEntry = harness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
       .at(-1) as { data?: { planReviewCycleCount?: number } } | undefined
     const cycleBefore = beforeCycleEntry?.data?.planReviewCycleCount ?? 0
 
-    await harness.agentSettledHandlers[0]?.({}, harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
 
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(true)
@@ -2442,8 +2436,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const comment = harness.execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
     expect(mockSupervisorDispatchCalls.length).toBeGreaterThanOrEqual(1)
-    // plan-review happened before approve; cycle tool path not used
-    expect(harness.customCalls.length).toBeGreaterThanOrEqual(2)
+    expect(harness.customCalls).toHaveLength(0)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBeGreaterThanOrEqual(2)
   })
 
   it('auto/autopilot agent_end clears pending and never opens ready UI', async () => {
@@ -2470,7 +2464,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
   })
 
   it('restores pendingReadyPlan on session_start and shows ready-UI on next agent_settled', async () => {
-    const { sessionStartHandlers, agentSettledHandlers, customCalls, execCalls, ctx } = makeHarness({
+    const { sessionStartHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({
       activeBead: 'bead-ui',
       entries: [
         {
@@ -2495,8 +2489,10 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
 
     await sessionStartHandlers[0]?.({}, ctx)
     expect(customCalls).toHaveLength(0)
+    expect(selectCalls).toHaveLength(0)
     await agentSettledHandlers[0]?.({}, ctx)
-    expect(customCalls.length).toBeGreaterThanOrEqual(1)
+    expect(customCalls).toHaveLength(0)
+    expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(true)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[1] === 'add')).toBe(true)
   })
 
