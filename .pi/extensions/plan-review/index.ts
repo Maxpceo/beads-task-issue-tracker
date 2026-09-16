@@ -228,7 +228,7 @@ export async function runPlanReviewers(
 			toolCount: 0,
 			lastPreview: "starting plan reviewer...",
 		});
-		let terminalStatus: "completed" | "failed" | "aborted" = "completed";
+		let terminalStatus: "completed" | "failed" = "completed";
 		let reviewResult: PlanReviewResult | undefined;
 		try {
 			const result = await pi.exec("pi", [
