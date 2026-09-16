@@ -14,8 +14,9 @@ Project-local Pi plan mode adapted for the beads workflow.
 - Single `questionnaire` tool (example-compatible JSON schema) with project-local renderer; RPC/`!hasUI` falls back to capped `select`/`input` without hanging on `ui.custom`.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands, including `git status`/`git log`/`git diff`/`git show` history inspection and pipelines where every segment is allowlisted read-only (for example `git log ... -- path | head -80`); shell control operators such as `&&`, `||`, and `;` remain blocked.
+- **One plan=strict recovery exception:** a single `bd worktree create <absolute-path> --branch <type>/<basename>` with a canonical task branch (`feat|fix|docs|test|ci|refactor|task|chore/...`, not `main`/`master`). Used when `workflow_plan_approved` blocks on missing/protected task scope so the agent can create the worktree and retry approve with WORKTREE+BRANCH (no second human approval, no `workflow_plan_mode off`). Still blocked: `git worktree add`, `bd worktree remove|prune`, shell composition/`$()`, and extra flags. Prefer claim → create/bind → plan mode when possible; `workflow_update` / `setup-worktree` stay outside plan-mode tools.
 - bd-aware allowlist/blocklist:
-  - allowed: `bd show`, `bd comments`, `bd list`, `bd ready`, selected read-only `bd dep`/`bd dolt` commands;
+  - allowed: `bd show`, `bd comments`, `bd list`, `bd ready`, selected read-only `bd dep`/`bd dolt` commands, plus the recovery `bd worktree create` shape above;
   - blocked: `bd create`, `bd update`, `bd close`, mutating comments, merge-slot acquire/release, Dolt commit/push/pull.
 - Plan extraction from numbered `Plan:` / `Revised plan:` sections.
 - Execution progress via `[DONE:n]` markers.
@@ -202,5 +203,6 @@ This extension owns real plan-mode behavior: tool access, read-only command gate
 - `/plan-autopilot` or NL «работаю/работать автономно» -> `plan=auto`, `sessionMode=planning`, plus durable plan-mode `autopilot` flag
 - `/plan-cancel` -> `plan=off`, clears autopilot, and `sessionMode=idle` when the current session is still planning
 - executing an approved plan -> `plan=off`, `planApproved=true`, and `sessionMode=implementing` when the current session is still planning; `/plan-autopilot` keeps the session `autopilot` flag after `plan=off`
+- `workflow_plan_approved` preflights task worktree scope; when blocked on missing/protected main scope it returns recovery with executable `bd worktree create … --branch …` taken from plan evidence WORKTREE/BRANCH when available, then retry approve (no second human approval)
 
-The `workflow-state` extension stores session context such as active bead, branch, worktree, merge-slot hint, plan approval, review/acceptance session mode, landing, and idle reset. It displays live `bdStatus`, but bd remains the source of truth for bead lifecycle.
+The `workflow-state` extension stores session context such as active bead, branch, worktree, merge-slot hint, plan approval, review/acceptance session mode, landing, and idle reset. Claim/reconcile never records protected `main`/`master` cwd as task BRANCH/WORKTREE/START_COMMIT (empty until canonical bind). It displays live `bdStatus`, but bd remains the source of truth for bead lifecycle.
