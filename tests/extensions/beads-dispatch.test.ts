@@ -5,7 +5,7 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
 import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
@@ -125,6 +125,32 @@ ${files.map((file) => `- ${file}`).join('\n')}
 - dispatch dryRun output contains inline rule content.
 ### Out of scope
 - Running a real subagent.`
+}
+
+/** Full handoff without rust/cargo/src-tauri tokens. Role-words must live in description (and title); do not reuse description() which embeds src-tauri. */
+function roleWordsHandoffDescription() {
+  return `### Origin
+- Prose mentions vue/tauri/test-supervisor role names only.
+### Files
+- .pi/extensions/beads-dispatch/index.ts
+### Current state
+- chooseSupervisor misroutes on bare tauri in role words.
+### Target state
+- Role words vue-supervisor / tauri-supervisor / test-supervisor do not select tauri-supervisor.
+### Investigation findings
+- Bare tauri substring in prose selected tauri-supervisor for pi+workflow beads.
+### Decisions
+- Drop bare tauri from first regex; keep backend/tracker labels and real backend path/tooling signals.
+### Rejected alternatives
+- Labels-only routing without text signals.
+### Dependencies / blockers
+- none.
+### Acceptance criteria
+- dryRun without agent= returns test-supervisor for this fixture.
+### Verification / acceptance checks
+- pnpm exec vitest run tests/extensions/beads-dispatch.test.ts
+### Out of scope
+- vue false-positive routing.`
 }
 
 describe('beads-dispatch path rules integration', () => {
@@ -779,6 +805,79 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     } finally {
       await fs.writeFile(modelsPath, originalModels)
     }
+  })
+})
+
+describe('chooseSupervisor', () => {
+  it('does not pick tauri-supervisor from role-words in title+description with pi+workflow labels', () => {
+    // Negative: prose about vue/tauri/test-supervisor must not force tauri path without rust context.
+    expect(chooseSupervisor({
+      id: 've9e-role-words',
+      title: 'vue/tauri/test-supervisor role words in title',
+      description: roleWordsHandoffDescription(),
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+  })
+
+  it('picks tauri-supervisor for backend label without rust text', () => {
+    expect(chooseSupervisor({
+      id: 've9e-backend',
+      title: 'Backend command tweak',
+      description: 'No path hints here.',
+      labels: ['backend'],
+      status: 'in_progress',
+    })).toBe('tauri-supervisor')
+  })
+
+  it('picks tauri-supervisor when description mentions src-tauri without backend label', () => {
+    expect(chooseSupervisor({
+      id: 've9e-src-tauri',
+      title: 'Path touch',
+      description: 'Edit src-tauri/src/lib.rs only.',
+      labels: ['pi'],
+      status: 'in_progress',
+    })).toBe('tauri-supervisor')
+  })
+
+  it('dryRun without agent= uses chooseSupervisor on role-words handoff fixture → test-supervisor', async () => {
+    // Separate dryRun fixture: do not reuse description() (it embeds src-tauri and would force tauri-supervisor).
+    // Role-words must appear in description; title-only would still work via text concat, but empty/missing desc is a vacuum case.
+    let registeredTool: any
+    const branch = currentBranch()
+    const title = 'vue/tauri/test-supervisor role words dryRun'
+    const handoff = roleWordsHandoffDescription()
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-role-words',
+              title,
+              status: 'in_progress',
+              labels: ['pi', 'workflow'],
+              description: handoff,
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    beadsDispatchExtension(pi as any)
+    // No agent= — auto-pick via chooseSupervisor.
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-role-words', dryRun: true }, undefined, undefined, workflowCtx(process.cwd(), 'bead-role-words', branch, 'abc1234'))
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('test-supervisor')
   })
 })
 
