@@ -161,6 +161,21 @@ close_visible_dispatch({ beadId: <ID> })
 - Do not sweep foreign/historical panes, HTML boards, or Haasbot surfaces.
 - Prefer `--focus false` paths; do not speculative `select-workspace` / `focus-pane` just to find the surface.
 
+### STOP close (grey matrix, non-terminal)
+
+When CODE REVIEW is `APPROVED` but acceptance is grey (`FAIL`/`NOT RUN`) and no pending-fix/followup is planned, panes must still close — not only after `bd close`:
+
+```text
+close_visible_dispatch({ beadId: <ID>, stopClose: true })
+```
+
+- Allowlist: `status=reviewed` only. `reviewed` is **not** in `CLOSE_VISIBLE_TERMINAL_STATUSES`.
+- `in_progress` / `inreview` / `open` + `stopClose` → `BLOCKED`.
+- `pendingFix: true` wins over `stopClose` (skip close).
+- Path: `close-surface` + registry `tombstone` for this bead; isolation/followup files remain until a later terminal close unlinks leftovers.
+- Bead stays open (not `bd close`). Autopilot hop clears autopilot and asks Maxim: (a) `HUMAN ACCEPTANCE OVERRIDE` → reviewed→accepted → `bd close`; (b) `bd update --status in_progress` + new `dispatch_supervisor`; (c) nothing.
+- `NOT APPROVED` and missing-evidence keep panes live (no `stopClose`).
+
 ## Fast Path / Large Change Discipline
 
 Fast Path разрешён только когда orchestrator явно считает изменение trivial, low-risk и более дешёвым, чем supervisor dispatch.

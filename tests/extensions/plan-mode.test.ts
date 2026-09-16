@@ -56,17 +56,17 @@ let mockCompleteVisibleResult: { status: string; text: string } = { status: 'sub
 let mockCompleteVisibleImpl: ((taskId: string) => Promise<{ status: string; text: string }>) | undefined
 let mockReviewerDispatchCalls: Array<{ beadId: string; cwd?: string; transport?: string }> = []
 let mockReviewerDispatchResult: { ok: boolean; text: string; error?: string } = { ok: true, text: 'status=spawned' }
-let mockCloseVisibleCalls: Array<{ beadId: string }> = []
+let mockCloseVisibleCalls: Array<{ beadId: string; stopClose?: boolean; pendingFix?: boolean }> = []
 let mockCloseVisibleResult: { status: string; text: string; closed?: string[]; tombstoned?: string[] } = {
   status: 'closed',
   text: 'closed panes',
   closed: ['surface:1'],
   tombstoned: ['task-1'],
 }
-let mockCloseVisibleImpl: ((beadId: string) => Promise<{ status: string; text: string }>) | undefined
+let mockCloseVisibleImpl: ((beadId: string, params?: { stopClose?: boolean; pendingFix?: boolean }) => Promise<{ status: string; text: string }>) | undefined
 let mockCloseVisibleThrow: Error | undefined
 let mockReviewerDispatchThrow: Error | undefined
-let mockFinalizeCloseResult: { ok: boolean; status: string; text: string } = { ok: true, status: 'closed', text: 'closed' }
+let mockFinalizeCloseResult: { ok: boolean; status: string; text: string; blockingRows?: Array<{ item: string; result: string; evidence?: string }> } = { ok: true, status: 'closed', text: 'closed' }
 let mockFinalizeCloseCalls: Array<{ beadId: string; worktreePath: string }> = []
 let mockRegistryByTaskId: Record<string, { entry: { beadId: string; worktree: string; role: string; startCommit?: string; status?: string } }> = {}
 let mockLiveRegistryByBead: Record<string, Array<{ entry: { role: string; status?: string } }>> = {}
@@ -193,10 +193,10 @@ function loadPlanModeExtension(): (pi: unknown) => void {
           if (mockCompleteVisibleImpl) return mockCompleteVisibleImpl(params.taskId)
           return mockCompleteVisibleResult
         },
-        closeVisibleDispatch: async (_pi: unknown, params: { beadId: string }) => {
+        closeVisibleDispatch: async (_pi: unknown, params: { beadId: string; stopClose?: boolean; pendingFix?: boolean }) => {
           mockCloseVisibleCalls.push(params)
           if (mockCloseVisibleThrow) throw mockCloseVisibleThrow
-          if (mockCloseVisibleImpl) return mockCloseVisibleImpl(params.beadId)
+          if (mockCloseVisibleImpl) return mockCloseVisibleImpl(params.beadId, params)
           return { ...mockCloseVisibleResult, text: mockCloseVisibleResult.text || `closed panes for ${params.beadId}` }
         },
         findRegistryByTaskId: (taskId: string) => mockRegistryByTaskId[taskId],
@@ -1791,12 +1791,85 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(String(hops[0]?.message.content)).not.toContain('close_visible_dispatch')
   })
 
-  it('close-blocked does not dump finalize.text / long matrix body', async () => {
+  it('close-blocked stopClose clears autopilot, durable STOP CLOSE, no matrix dump', async () => {
     const harness = makeHarness()
     await enterAutopilotPlanOff(harness)
     mockCompleteVisibleResult = { status: 'verdict', text: 'CODE REVIEW: APPROVED' }
     const longMatrix = 'ACCEPTANCE MATRIX:\n' + 'FAIL row long body marker UNIQUE_MATRIX_BODY_6wwm '.repeat(40)
-    mockFinalizeCloseResult = { ok: false, status: 'blocked', text: longMatrix }
+    mockFinalizeCloseResult = {
+      ok: false,
+      status: 'blocked',
+      text: longMatrix,
+      blockingRows: [
+        { item: 'criterion A', result: 'FAIL', evidence: 'UNIQUE_MATRIX_BODY_6wwm fail detail' },
+        { item: 'criterion B', result: 'NOT RUN', evidence: 'skipped' },
+        { item: 'criterion C', result: 'PASS', evidence: 'ok' },
+      ],
+    }
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] code-reviewer · задача task-rev завершена taskId=task-rev',
+    }, harness.ctx)
+
+    expect(mockCloseVisibleCalls).toEqual([{ beadId: 'bead-plan', stopClose: true }])
+    expect(harness.statuses['plan-mode']).toBeUndefined()
+    const stopComments = harness.execCalls.filter((c) => c.command === 'bd' && c.args[0] === 'comments' && c.args[1] === 'add' && String(c.args[3] ?? '').includes('STOP CLOSE:'))
+    expect(stopComments).toHaveLength(1)
+    const commentBody = String(stopComments[0]?.args[3] ?? '')
+    expect(commentBody).toContain('STOP CLOSE:')
+    expect(commentBody).toContain('FAIL: criterion A')
+    expect(commentBody).toContain('NOT RUN: criterion B')
+    expect(commentBody).not.toContain('PASS: criterion C')
+    expect(commentBody).not.toContain('UNIQUE_MATRIX_BODY_6wwm')
+    const hops = hopMessages(harness)
+    expect(hops).toHaveLength(1)
+    expect(hops[0]?.message.customType).toBe('autopilot-hop-stop')
+    const content = String(hops[0]?.message.content)
+    expect(content).toContain('STOP close')
+    expect(content).toContain('панели этого bead закрыты')
+    expect(content).toContain('HUMAN ACCEPTANCE OVERRIDE')
+    expect(content).toContain('dispatch_supervisor')
+    expect(content).not.toContain('UNIQUE_MATRIX_BODY_6wwm')
+    expect(content).not.toContain('ACCEPTANCE MATRIX')
+    expect(content).not.toContain(longMatrix.slice(0, 80))
+    expect(content).not.toContain('bead уже closed')
+    expect(content).toContain('followup_visible_dispatch не вызывался')
+  })
+
+  it('blocked+stopClose throw is separate STOP without bead already closed', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'verdict', text: 'CODE REVIEW: APPROVED' }
+    mockFinalizeCloseResult = { ok: false, status: 'blocked', text: 'matrix blocked', blockingRows: [{ item: 'x', result: 'FAIL' }] }
+    mockCloseVisibleThrow = new Error('stopClose surface failed')
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] code-reviewer · задача task-rev завершена taskId=task-rev',
+    }, harness.ctx)
+
+    expect(mockCloseVisibleCalls).toEqual([{ beadId: 'bead-plan', stopClose: true }])
+    expect(harness.statuses['plan-mode']).toBeUndefined()
+    const stopComments = harness.execCalls.filter((c) => c.command === 'bd' && c.args[0] === 'comments' && c.args[1] === 'add' && String(c.args[3] ?? '').includes('STOP CLOSE:'))
+    expect(stopComments).toHaveLength(0)
+    const hops = hopMessages(harness)
+    expect(hops).toHaveLength(1)
+    expect(hops[0]?.message.customType).toBe('autopilot-hop-stop')
+    const content = String(hops[0]?.message.content)
+    expect(content).toContain('STOP:')
+    expect(content).toContain('stopClose surface failed')
+    expect(content).toContain('Autopilot сброшен')
+    expect(content).not.toContain('bead уже closed')
+    expect(content).not.toContain('HUMAN ACCEPTANCE OVERRIDE')
+    expect(content).not.toContain('UNIQUE_MATRIX_BODY_6wwm')
+  })
+
+  it('missing-evidence keeps panes and does not stopClose', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'verdict', text: 'CODE REVIEW: APPROVED' }
+    mockFinalizeCloseResult = { ok: false, status: 'missing-evidence', text: 'finalizeVisibleReviewClose: missing START_COMMIT' }
 
     await harness.inputHandlers[0]?.({
       source: 'user',
@@ -1810,9 +1883,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(hops[0]?.message.customType).toBe('autopilot-hop-stop')
     const content = String(hops[0]?.message.content)
     expect(content).toContain('close path заблокирован')
-    expect(content).not.toContain('UNIQUE_MATRIX_BODY_6wwm')
-    expect(content).not.toContain('ACCEPTANCE MATRIX')
-    expect(content).not.toContain(longMatrix.slice(0, 80))
+    expect(content).toContain('панели живы')
   })
 
   it('closeVisibleDispatch throw clears autopilot and sends one STOP without success trailer', async () => {

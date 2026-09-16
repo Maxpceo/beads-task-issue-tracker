@@ -2115,10 +2115,110 @@ describe('close_visible_dispatch', () => {
     const agents = fs.readFileSync(path.join(process.cwd(), 'AGENTS.md'), 'utf8')
     expect(skill).toContain('close_visible_dispatch')
     expect(skill).toContain('close-surface')
+    expect(skill).toContain('STOP close')
     expect(review).toContain('close_visible_dispatch')
     expect(review).toContain('Do not `close_visible_dispatch` while pending-fix')
+    expect(review).toContain('STOP close')
     expect(agents).toContain('close-surface')
     expect(agents).toContain('close_visible_dispatch')
     expect(agents).toContain('pending-fix')
+    expect(agents).toContain('STOP close')
+    expect(agents).toContain('stopClose')
+  })
+
+  it('reviewed+stopClose closes panes and keeps isolation files', async () => {
+    const files = seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'reviewed' })
+    const result = await closeVisibleDispatch(pi as any, { beadId: 'bead-a', stopClose: true })
+    expect(result.status).toBe('closed')
+    expect(closed).toEqual(['surface:99'])
+    expect(result.tombstoned).toEqual(['task-ld67'])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('tombstone')
+    expect(fs.existsSync(files.promptFile)).toBe(true)
+    expect(fs.existsSync(files.taskFile)).toBe(true)
+    expect(fs.existsSync(files.resultFile)).toBe(true)
+    expect(fs.existsSync(files.digestFile)).toBe(true)
+  })
+
+  it('reviewed without stopClose throws not terminal', async () => {
+    seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'reviewed' })
+    await expect(closeVisibleDispatch(pi as any, { beadId: 'bead-a' })).rejects.toThrow(/not terminal/)
+    expect(closed).toEqual([])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('spawned')
+  })
+
+  it('in_progress+stopClose throws BLOCKED', async () => {
+    seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'in_progress' })
+    await expect(closeVisibleDispatch(pi as any, { beadId: 'bead-a', stopClose: true })).rejects.toThrow(/stopClose requires status=reviewed/)
+    expect(closed).toEqual([])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('spawned')
+  })
+
+  it('pendingFix wins over stopClose and skips close', async () => {
+    seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const { pi } = makePi({ beadId: 'bead-a', status: 'reviewed' })
+    const result = await closeVisibleDispatch(pi as any, { beadId: 'bead-a', pendingFix: true, stopClose: true })
+    expect(result.status).toBe('skipped')
+    expect(closed).toEqual([])
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('spawned')
+  })
+
+  it('closed after stopClose unlinks leftover isolation files', async () => {
+    const files = seed()
+    const closed: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-close' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface(surface) { closed.push(surface) },
+      async readScreen() { return '' },
+    })
+    const reviewedPi = makePi({ beadId: 'bead-a', status: 'reviewed' })
+    await closeVisibleDispatch(reviewedPi.pi as any, { beadId: 'bead-a', stopClose: true })
+    expect(fs.existsSync(files.promptFile)).toBe(true)
+    expect(findRegistryByTaskId('task-ld67')?.entry.status).toBe('tombstone')
+
+    const closedPi = makePi({ beadId: 'bead-a', status: 'closed' })
+    const result = await closeVisibleDispatch(closedPi.pi as any, { beadId: 'bead-a' })
+    expect(result.status).toBe('noop')
+    expect(result.text).toMatch(/leftover tombstones/)
+    expect(fs.existsSync(files.promptFile)).toBe(false)
+    expect(fs.existsSync(files.taskFile)).toBe(false)
+    expect(fs.existsSync(files.resultFile)).toBe(false)
+    expect(fs.existsSync(files.digestFile)).toBe(false)
   })
 })
