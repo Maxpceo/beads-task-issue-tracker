@@ -1963,6 +1963,55 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ planApproved: true, planMode: 'off' })
   })
 
+  it('ready stay and Esc clear pending without writing PLAN APPROVED', async () => {
+    const readyUi = transpileSibling('ready-ui.ts') as { READY_ACTIONS: Array<{ value: string; description?: string }> }
+    const stayItem = readyUi.READY_ACTIONS.find((item) => item.value === 'stay')
+    expect(stayItem?.description ?? '').toMatch(/pending/i)
+    expect(stayItem?.description ?? '').not.toMatch(/оставить pending|keep pending|pending (plan )?kept|оставить pending plan/i)
+
+    const stayHarness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+    })
+    await stayHarness.commandHandlers.get('plan')?.handler('', stayHarness.ctx)
+    await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
+    await stayHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, stayHarness.ctx)
+
+    const stayPersisted = stayHarness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
+    expect(stayPersisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(stayPersisted?.data?.enabled).toBe(true)
+    expect(stayHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(stayHarness.workflowUpdates.some((update) => update.planApproved === true)).toBe(false)
+
+    const customAfterStay = stayHarness.customCalls.length
+    await stayHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, stayHarness.ctx)
+    expect(stayHarness.customCalls.length).toBe(customAfterStay)
+
+    const escHarness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: [null],
+    })
+    await escHarness.commandHandlers.get('plan')?.handler('', escHarness.ctx)
+    await markPlanReady(escHarness.toolHandlers, escHarness.ctx)
+    await escHarness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: SAMPLE_READY_PLAN }] }],
+    }, escHarness.ctx)
+
+    const escPersisted = escHarness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
+    expect(escPersisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(escPersisted?.data?.enabled).toBe(true)
+    expect(escHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(escHarness.workflowUpdates.some((update) => update.planApproved === true)).toBe(false)
+  })
+
   it('plan-review button shows findings, keeps plan on, does not increment cycle, then execute approves', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
