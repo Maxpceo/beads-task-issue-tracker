@@ -5,9 +5,13 @@ Project-local Pi plan mode adapted for the beads workflow.
 ## Features
 
 - Read-only exploration mode via `/plan` or clear natural-language activation phrases.
-- Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation.
-- Autopilot mode via `/plan-autopilot` (separate from `/plan-auto`): same plan-review gate, durable `Approved-by: оркестратор`, and a session `autopilot` flag that survives `plan=off` after approval.
+- **Complete-when-ready (strict only):** ready-UI opens only after explicit `plan_mode_complete({ plan })`. Clarifying turns without complete do **not** show Execute.
+- Document-flow ready/question UI (no floating `overlay: true`): RU buttons Исполнить / Остаться / Уточнить / Отправить на plan-review; digits 1–9 + option preview on questionnaire.
+- Ready button «Отправить на plan-review» runs the same uncapped critique path as `/plan-review` (findings via `sendMessage`), keeps plan mode ON, does **not** write `PLAN APPROVED`, does **not** increment `workflow_plan_review` cycle, then re-shows the four buttons.
+- Auto-execute mode via `/plan-auto` with a required multi-agent plan-review gate before implementation (no ready-UI; pending ready cleared).
+- Autopilot mode via `/plan-autopilot` (separate from `/plan-auto`): same plan-review gate, durable `Approved-by: оркестратор`, and a session `autopilot` flag that survives `plan=off` after approval (no ready-UI).
 - Agent-operable `workflow_plan_review` typed tool for autonomous strict plan mode.
+- Single `questionnaire` tool (example-compatible JSON schema) with project-local renderer; RPC/`!hasUI` falls back to capped `select`/`input` without hanging on `ui.custom`.
 - Tool restriction to read-only tools while planning.
 - Bash allowlist for read-only commands, including `git status`/`git log`/`git diff`/`git show` history inspection and pipelines where every segment is allowlisted read-only (for example `git log ... -- path | head -80`); shell control operators such as `&&`, `||`, and `;` remain blocked.
 - bd-aware allowlist/blocklist:
@@ -26,6 +30,18 @@ Project-local Pi plan mode adapted for the beads workflow.
 - `/plan-review` — run required plan-review agents against the latest draft plan without approving or executing it.
 - `/todos` — show current plan progress.
 - `Ctrl+Alt+P` — toggle strict plan mode.
+
+### Strict ready tools
+
+- `questionnaire` — ask clarifying questions (does not mark the plan ready).
+- `plan_mode_complete({ plan })` — mark the draft plan ready; whitespace-only plan errors. On the following `agent_end` in strict mode, show the four-button ready-UI. Auto/autopilot notes the call but skips ready-UI and clears pending.
+
+### Strict complete-when-ready contract
+
+1. Ask questions only via `questionnaire`.
+2. When the draft is complete, call `plan_mode_complete({ plan })` last in the turn.
+3. Human chooses: execute (durable PLAN APPROVED) / stay / refine / plan-review critique.
+4. Plan-review from the button is critique, not approval and not supervisor start.
 
 ## Natural-language activation
 

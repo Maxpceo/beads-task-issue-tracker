@@ -12,11 +12,16 @@ export const Key = {
   enter: '\r',
   up: '\x1b[A',
   down: '\x1b[B',
+  left: '\x1b[D',
+  right: '\x1b[C',
+  tab: '\t',
   home: '\x1b[H',
   end: '\x1b[F',
   pageUp: '\x1b[5~',
   pageDown: '\x1b[6~',
   ctrl: (char: string) => String.fromCharCode(char.toLowerCase().charCodeAt(0) - 96),
+  ctrlAlt: (key: string) => `ctrlAlt:${key}`,
+  shift: (key: string) => `shift:${key}`,
 }
 
 export function matchesKey(data: string, key: string): boolean {
