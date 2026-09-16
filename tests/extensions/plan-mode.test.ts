@@ -1891,7 +1891,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   function hopMessages(harness: ReturnType<typeof makeHarness>) {
     return harness.sendMessages.filter((m) => {
       const type = m.message.customType
-      return type === 'autopilot-hop' || type === 'autopilot-hop-stop'
+      return type === 'autopilot-hop' || type === 'autopilot-hop-stop' || type === 'autopilot-hop-wake-orch'
     })
   }
 
@@ -2155,10 +2155,44 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(harness.statuses['plan-mode']).toBe('autopilot')
     const hops = hopMessages(harness)
     expect(hops).toHaveLength(1)
-    expect(hops[0]?.message.customType).toBe('autopilot-hop-stop')
+    expect(hops[0]?.message.customType).toBe('autopilot-hop-wake-orch')
+    expect(hops[0]?.options?.triggerTurn).toBe(true)
     const content = String(hops[0]?.message.content)
-    expect(content).toContain('close path заблокирован')
+    expect(content).toContain('missing START_COMMIT')
+    expect(content).toContain('пинг уже забран')
+    expect(content).toContain('НЕ review_bead')
+    expect(content).toContain('НЕ complete_visible_dispatch')
+    expect(content).toContain('НЕ dispatch_reviewer')
+    expect(content).toContain('НЕ hop-retry')
+    expect(content).toContain('НЕ fake ping')
+    expect(content).toContain('НЕ фабриковать матрицу')
+    expect(content).toContain('НЕ bd close из inreview')
     expect(content).toContain('панели живы')
+    expect(content).not.toContain('Действие Максима')
+    expect(content).not.toContain('close path заблокирован')
+  })
+
+  it('APPROVED + finalize not-approved is STOP without wake-orch', async () => {
+    const harness = makeHarness()
+    await enterAutopilotPlanOff(harness)
+    mockCompleteVisibleResult = { status: 'verdict', text: 'CODE REVIEW: APPROVED' }
+    mockFinalizeCloseResult = { ok: false, status: 'not-approved', text: 'finalizeVisibleReviewClose: not approved path' }
+
+    await harness.inputHandlers[0]?.({
+      source: 'user',
+      text: '[PING] code-reviewer · задача task-rev завершена taskId=task-rev',
+    }, harness.ctx)
+
+    expect(mockCloseVisibleCalls).toHaveLength(0)
+    expect(harness.statuses['plan-mode']).toBe('autopilot')
+    const hops = hopMessages(harness)
+    expect(hops).toHaveLength(1)
+    expect(hops[0]?.message.customType).toBe('autopilot-hop-stop')
+    expect(hops[0]?.options?.triggerTurn).not.toBe(true)
+    const content = String(hops[0]?.message.content)
+    expect(content).toContain('Действие Максима')
+    expect(content).toContain('панели живы')
+    expect(hops.some((h) => h.message.customType === 'autopilot-hop-wake-orch')).toBe(false)
   })
 
   it('closeVisibleDispatch throw clears autopilot and sends one STOP without success trailer', async () => {
