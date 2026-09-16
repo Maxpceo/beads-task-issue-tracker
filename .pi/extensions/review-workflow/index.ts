@@ -634,36 +634,6 @@ function conditionalNaEvidence(item: string, evidenceBlock: string | undefined, 
 	return `N/A: whitelisted conditional verification is not applicable to docs-only changed files (${changedFiles.join(", ")}); changed-files proof is present in supervisor evidence.`;
 }
 
-function normalizeDiffPath(file: string): string {
-	return file.trim().replace(/\\/g, "/").replace(/^\.\//, "");
-}
-
-function isGitDiffClaudeConstraintVerification(item: string): boolean {
-	const normalized = normalizeVerificationText(item);
-	return /\bgit\b/.test(normalized)
-		&& /\bdiff\b/.test(normalized)
-		&& /name-only/.test(normalized)
-		&& (/\.claude\b/.test(normalized) || /claude\.md/.test(normalized));
-}
-
-function isForbiddenClaudePath(file: string): boolean {
-	const normalized = normalizeDiffPath(file);
-	if (/(^|\/)\.claude\//.test(normalized)) return true;
-	return normalized === "CLAUDE.md";
-}
-
-function evaluateGitDiffClaudeConstraint(changedFiles: string[]): MatrixCheckEvidence {
-	const normalizedFiles = changedFiles.map(normalizeDiffPath).filter(Boolean);
-	const forbidden = normalizedFiles.filter(isForbiddenClaudePath);
-	const command = "git diff --name-only";
-	if (forbidden.length > 0) {
-		const output = `forbidden Claude paths in git diff --name-only: ${forbidden.join(", ")}`;
-		return { command, exitCode: 1, output, result: "FAIL" };
-	}
-	const output = normalizedFiles.length > 0 ? normalizedFiles.join("\n") : "changed files: (none)";
-	return { command, exitCode: 0, output, result: "PASS" };
-}
-
 const UNSAFE_SHELL_META = /[;|&`$()]/;
 const NON_EXECUTABLE_VERIFICATION_REASON = "N/A: not gate-executable verification; use Acceptance criteria or IMPLEMENTATION evidence";
 
@@ -824,16 +794,12 @@ export async function buildAcceptanceMatrix(params: {
 	const verificationItems = extractSectionBullets(description, ["Verification / acceptance checks", "Verification", "Acceptance checks"]);
 	const evidenceBlock = latestReviewEvidenceBlock(params.comments ?? "");
 	const checkResults = [...params.automatedChecks.map(parseCheckResult), ...parseEvidenceChecks(evidenceBlock)];
-	const gitDiffClaude = verificationItems.some(isGitDiffClaudeConstraintVerification)
-		? evaluateGitDiffClaudeConstraint(params.changedFiles)
-		: undefined;
-	const hasFailedCheck = checkResults.some((check) => check.result === "FAIL") || gitDiffClaude?.result === "FAIL";
+	const hasFailedCheck = checkResults.some((check) => check.result === "FAIL");
 	const hasNotRunCheck = checkResults.some((check) => check.result === "NOT RUN");
 	const rows: AcceptanceMatrixRow[] = [];
 	for (const item of acceptanceItems) {
 		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "PASS";
-		const failEvidence = checkResults.find((check) => check.result === "FAIL")?.output
-			?? (gitDiffClaude?.result === "FAIL" ? gitDiffClaude.output : "");
+		const failEvidence = checkResults.find((check) => check.result === "FAIL")?.output ?? "";
 		rows.push({
 			item,
 			evidence: result === "PASS"
@@ -845,14 +811,6 @@ export async function buildAcceptanceMatrix(params: {
 		});
 	}
 	for (const item of verificationItems) {
-		if (isGitDiffClaudeConstraintVerification(item) && gitDiffClaude) {
-			rows.push({
-				item,
-				evidence: `command: ${gitDiffClaude.command}; exit code: ${gitDiffClaude.exitCode}; output: ${evidenceExcerpt(gitDiffClaude.output)}`,
-				result: gitDiffClaude.result,
-			});
-			continue;
-		}
 		// Non-command observational bullets never inherit supervisor PASS and never block close.
 		if (isNonExecutableVerification(item)) {
 			rows.push({
