@@ -74,7 +74,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
     workflow_complete(state=closed, reason=<review accepted and bd closed>)
     close_visible_dispatch({ beadId: <ID> })
     ```
-    After `bd close` (or terminal blocked/deferred without continuation) and no pending-fix: close **this bead's** live registry panes only (`cmux close-surface` + tombstone). NOT APPROVED / pending-fix → do not close; reuse `followup_visible_dispatch`. Never sweep foreign/historical panes.
+    Keep this order: `bd close` → `workflow_complete(closed)` → optional later `land` / `merge-to-main` in the **same** Pi session. Do **not** delay `workflow_complete` until after merge. Terminal unbind wipes persisted `workflowState.sessionKey` on purpose; beads-policy still accepts own-session merge-slot evidence from the matching runtime `id:…` session key (`effectiveMergeSlotSessionKey` / `PI_SESSION_KEY` that equals current process). Foreign/stale keys remain deny. After `bd close` (or terminal blocked/deferred without continuation) and no pending-fix: close **this bead's** live registry panes only (`cmux close-surface` + tombstone). NOT APPROVED / pending-fix → do not close; reuse `followup_visible_dispatch`. Never sweep foreign/historical panes.
 
 15. STOP close (grey matrix) is **not** step 14. When CODE REVIEW is `APPROVED` but acceptance matrix is grey (`FAIL`/`NOT RUN`), bead stays non-terminal (`reviewed`) and is **not** `bd close`d. Still close this bead's live panes without waiting for terminal:
     ```text
