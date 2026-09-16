@@ -1219,7 +1219,50 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				startCommit: entry.startCommit,
 			});
 			if (!finalize.ok) {
-				// Do not dump finalize.text / ACCEPTANCE MATRIX body into the hop message.
+				// Grey-matrix blocked (reviewed, not terminal): STOP close panes; keep bead open.
+				// NOT APPROVED / missing-evidence: panes stay live; do not call close.
+				if (finalize.status === "blocked") {
+					let stopCloseError: string | undefined;
+					try {
+						await closeVisibleDispatch(pi as any, { beadId: entry.beadId, stopClose: true }, ctx as any);
+					} catch (error) {
+						stopCloseError = (error as Error).message;
+					}
+					autopilotEnabled = false;
+					persistState();
+					updateStatus(ctx);
+					if (stopCloseError) {
+						// Separate STOP: bead not closed, panes may remain; no a/b/c; no «bead уже closed».
+						sendAutopilotHopMessage(
+							`STOP: серая матрица (acceptance FAIL/NOT RUN). Bead не closed; close_visible_dispatch(stopClose) упал: ${stopCloseError}\nПанели могли остаться. Autopilot сброшен.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: закройте панели вручную при необходимости, затем разберите matrix.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+							"autopilot-hop-stop",
+						);
+						return;
+					}
+					const blockingRows = Array.isArray(finalize.blockingRows) ? finalize.blockingRows : [];
+					const blockingLines = blockingRows
+						.filter((row: { result?: string }) => row.result === "FAIL" || row.result === "NOT RUN")
+						.map((row: { item?: string; result?: string }) => `- ${row.result}: ${String(row.item ?? "").slice(0, 120)}`);
+					const stopCloseComment = [
+						"STOP CLOSE:",
+						"reason: grey-matrix blocked after CODE REVIEW APPROVED",
+						"panes: closed+tombstone (stopClose); isolation files retained until terminal close",
+						"bead: not closed; autopilot cleared",
+						...(blockingLines.length > 0 ? ["blocking:", ...blockingLines] : ["blocking: (none listed)"]),
+					].join("\n");
+					try {
+						await pi.exec("bd", ["comments", "add", entry.beadId, stopCloseComment]);
+					} catch {
+						/* durable comment best-effort; hop message still goes out */
+					}
+					// Do not dump finalize.text / ACCEPTANCE MATRIX body into the hop message.
+					sendAutopilotHopMessage(
+						`STOP close: серая матрица (FAIL/NOT RUN) после CODE REVIEW APPROVED. Bead не closed; панели этого bead закрыты/не live (stopClose+tombstone). Autopilot сброшен. followup_visible_dispatch не вызывался.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: (a) HUMAN ACCEPTANCE OVERRIDE comment → reviewed→accepted → bd close; (b) bd update --status in_progress + новый dispatch_supervisor; (c) ничего, autopilot сброшен.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+						"autopilot-hop-stop",
+					);
+					return;
+				}
+				// missing-evidence / not-approved / other: panes live, close not called.
 				sendAutopilotHopMessage(
 					`STOP: close path заблокирован (acceptance/matrix или preflight). Bead не закрыт; панели живы.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: разберите блокировку close / matrix, затем fix или снимите autopilot.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",

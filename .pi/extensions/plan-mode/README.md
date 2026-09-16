@@ -59,7 +59,9 @@ While `autopilotEnabled===true` and `plan=off`, plan-mode is the **единст�
 2. One `complete_visible_dispatch` per ping (concurrent lock only). `incomplete`/`result-only` allows a later ping; `submitted`/`verdict` → noop on repeat.
 3. Supervisor `submitted` → one `requestReviewerDispatch({ beadId, cwd: entry.worktree, transport: cmux })`; live reviewer on bead → noop.
 4. Reviewer `verdict` APPROVED + green matrix → simplified → reviewed → accepted → `bd close` → workflow closed → `close_visible_dispatch` → clear autopilot. No second `review_bead`.
-5. STOP ask (panes live): `[PING-ERROR]`, `BLOCKED`/`NEEDS_CONTEXT`, `NOT APPROVED`, missing bead/worktree, blocking matrix (matrix not written for show).
+5. STOP branches (split panes policy):
+   - **NOT APPROVED** / missing-evidence / `[PING-ERROR]` / `BLOCKED`/`NEEDS_CONTEXT` artifact: panes **live**; do not call `close_visible_dispatch`.
+   - **Grey-matrix blocked** (`finalize.status==="blocked"` after APPROVED): panes **closed** via `close_visible_dispatch({ beadId, stopClose: true })`; bead stays open (not `bd close`); autopilot cleared; durable `STOP CLOSE:` comment (FAIL/NOT RUN rows only, no matrix body dump). Success ask a/b/c; close throw → separate STOP without «bead уже closed» / without a/b/c.
 
 `/plan-auto` does **not** set durable autopilot and does **not** consume ping. `land` / `merge-to-main` never run from this hop. `poll.sh` remains Maxim path B only (not auto-timer).
 
@@ -75,7 +77,8 @@ Each hop return sends **exactly one** visible message (`customType` `autopilot-h
   - `result-only` — ping consumed, artifact not review-ready, reviewer not started, panes live, next ping from child after rewrite; **not** «шаг закрыт» / «работа закончена».
   - `noop` / live reviewer — short RU progress; no machine status dump.
   - `submitted` success — reviewer started; Maxim does not wait `[PING]`.
-  - `NOT APPROVED` / close-blocked / `[PING-ERROR]` / BLOCKED — human STOP without matrix body.
+  - `NOT APPROVED` / missing-evidence / `[PING-ERROR]` / BLOCKED artifact — human STOP without matrix body; **panes live**; close not called.
+  - Grey-matrix `finalize.status==="blocked"` — STOP close: `stopClose:true`, panes closed/not live, bead not closed, autopilot cleared, durable `STOP CLOSE:` (no `UNIQUE_MATRIX`/matrix body dump); Maxim a/b/c. Close throw on blocked → separate STOP (panes may remain; no «bead уже closed»; no a/b/c).
   - APPROVED close `closed` or `noop` — one RU success (panes closed or already not live); autopilot cleared.
   - `closeVisibleDispatch` throw after bd closed — still clear autopilot + persist + status, then **one** STOP (no success trailer).
 

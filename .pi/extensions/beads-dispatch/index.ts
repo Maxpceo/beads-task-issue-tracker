@@ -24,6 +24,7 @@ import {
 	liveEntriesForBead,
 	loadRegistry,
 	nsDir,
+	orchRoot,
 	ORCHESTRATOR_TAB_TITLE,
 	persistIsolationFiles,
 	readDigestPreview,
@@ -404,8 +405,10 @@ const REQUIRED_HANDOFF_SECTIONS = [
 ];
 
 const TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred"]);
-/** Terminal for happy-path pane close: includes blocked (no reuse planned). */
+/** Terminal for happy-path pane close: includes blocked (no reuse planned). reviewed is NOT terminal. */
 const CLOSE_VISIBLE_TERMINAL_STATUSES = new Set(["closed", "done", "cancelled", "deferred", "blocked"]);
+/** Non-terminal STOP close allowlist (grey-matrix hop). pendingFix still wins. */
+const CLOSE_VISIBLE_STOP_CLOSE_STATUSES = new Set(["reviewed"]);
 const ALLOWED_SUPERVISOR_STATUSES = new Set(["in_progress"]);
 
 const VAGUE_ACCEPTANCE_PATTERN = /\b(done|works|fixed|complete|completed|ok|looks good|as expected|готово|работает|исправлено|завершено|нормально)\b/i;
@@ -880,14 +883,34 @@ export type CloseVisibleDispatchResult = {
 	tombstoned: string[];
 };
 
+/** Unlink isolation/followup files for leftover tombstoned rows of this bead (after earlier stopClose). */
+function unlinkLeftoverTombstonesForBead(beadId: string): string[] {
+	const cleaned: string[] = [];
+	const root = path.join(orchRoot(), "ns");
+	if (!fs.existsSync(root)) return cleaned;
+	for (const name of fs.readdirSync(root)) {
+		const file = path.join(root, name, "dispatch-registry.json");
+		if (!fs.existsSync(file)) continue;
+		const registry = loadRegistry(file);
+		for (const entry of registry.entries) {
+			if (entry.beadId !== beadId || entry.status !== "tombstone") continue;
+			unlinkIsolationFiles(entry);
+			unlinkFollowupArtifacts(entry);
+			cleaned.push(entry.taskId);
+		}
+	}
+	return cleaned;
+}
+
 /**
- * Orchestrator hop after bead is terminal and no pending-fix reuse is needed.
+ * Orchestrator hop after bead is terminal (or STOP close on reviewed) and no pending-fix reuse is needed.
  * Closes only this bead's live registry panes (close-surface) and tombstones them.
- * Does not touch foreign panes. pendingFix keeps the pane for followup_visible_dispatch.
+ * stopClose=true: allow status=reviewed only; tombstone without unlinking isolation/followup (later terminal close cleans leftovers).
+ * Does not touch foreign panes. pendingFix keeps the pane for followup_visible_dispatch (wins over stopClose).
  */
 export async function closeVisibleDispatch(
 	pi: ExtensionAPI,
-	params: { beadId: string; pendingFix?: boolean },
+	params: { beadId: string; pendingFix?: boolean; stopClose?: boolean },
 	_ctx?: ToolContext,
 ): Promise<CloseVisibleDispatchResult> {
 	if (params.pendingFix) {
@@ -900,16 +923,26 @@ export async function closeVisibleDispatch(
 	}
 	const bead = await getBead(pi, params.beadId);
 	const status = bead.status ?? "unknown";
-	if (!CLOSE_VISIBLE_TERMINAL_STATUSES.has(status)) {
+	const stopClose = params.stopClose === true;
+	if (stopClose) {
+		if (!CLOSE_VISIBLE_STOP_CLOSE_STATUSES.has(status)) {
+			throw new Error(
+				`close_visible_dispatch: stopClose requires status=reviewed (got ${status}); in_progress/inreview/open not allowed: BLOCKED`,
+			);
+		}
+	} else if (!CLOSE_VISIBLE_TERMINAL_STATUSES.has(status)) {
 		throw new Error(
 			`close_visible_dispatch: bead not terminal (status=${status}); keep pane for live work/review: BLOCKED`,
 		);
 	}
 	const live = findLiveRegistryEntriesForBead(params.beadId);
 	if (live.length === 0) {
+		const leftoverCleaned = stopClose ? [] : unlinkLeftoverTombstonesForBead(params.beadId);
 		return {
 			status: "noop",
-			text: `no live panes for ${params.beadId}`,
+			text: leftoverCleaned.length > 0
+				? `no live panes for ${params.beadId}; cleaned leftover tombstones=${leftoverCleaned.join(",")}`
+				: `no live panes for ${params.beadId}`,
 			closed: [],
 			tombstoned: [],
 		};
@@ -936,13 +969,19 @@ export async function closeVisibleDispatch(
 		if (index >= 0) {
 			const next = tombstoneRegistryEntry(item.file, registry, index);
 			tombstoned.push(next.taskId);
-			unlinkIsolationFiles(next);
-			unlinkFollowupArtifacts(next);
+			// stopClose keeps isolation/followup files until a later terminal close unlinks leftovers.
+			if (!stopClose) {
+				unlinkIsolationFiles(next);
+				unlinkFollowupArtifacts(next);
+			}
 		}
 	}
+	const leftoverCleaned = stopClose ? [] : unlinkLeftoverTombstonesForBead(params.beadId);
+	const leftoverNote = leftoverCleaned.length > 0 ? `; leftover-unlinked=${leftoverCleaned.join(",")}` : "";
+	const stopNote = stopClose ? "; stopClose (files retained)" : "";
 	return {
 		status: "closed",
-		text: `closed ${closed.length} pane(s) for ${params.beadId}: ${closed.join(", ") || "-"}; tombstoned=${tombstoned.join(",") || "-"}`,
+		text: `closed ${closed.length} pane(s) for ${params.beadId}: ${closed.join(", ") || "-"}; tombstoned=${tombstoned.join(",") || "-"}${stopNote}${leftoverNote}`,
 		closed,
 		tombstoned,
 	};
@@ -1927,7 +1966,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 		name: "close_visible_dispatch",
 		label: "Close Visible Dispatch",
 		description:
-			"Orchestrator-only happy-path: after bead is terminal (closed/blocked/deferred) and no pending-fix reuse, cmux close-surface each live registry pane for this bead and tombstone them. pendingFix=true skips close (NOT APPROVED / followup reuse). Does not sweep foreign panes.",
+			"Orchestrator-only: after bead is terminal (closed/blocked/deferred) OR stopClose on reviewed (grey-matrix STOP) and no pending-fix reuse, cmux close-surface each live registry pane for this bead and tombstone them. stopClose keeps isolation/followup files until later terminal close. pendingFix=true skips close (NOT APPROVED / followup reuse) and wins over stopClose. Does not sweep foreign panes.",
 		parameters: {
 			type: "object",
 			properties: {
@@ -1937,13 +1976,18 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 					description: "When true (NOT APPROVED / pending-fix), do not close-surface; keep pane for followup_visible_dispatch",
 					default: false,
 				},
+				stopClose: {
+					type: "boolean",
+					description: "When true, allow close on status=reviewed only (grey-matrix STOP); tombstone without unlinking isolation/followup. BLOCKED for in_progress/inreview/open.",
+					default: false,
+				},
 			},
 			required: ["beadId"],
 			additionalProperties: false,
 		},
 		async execute(
 			_id: string,
-			params: { beadId: string; pendingFix?: boolean },
+			params: { beadId: string; pendingFix?: boolean; stopClose?: boolean },
 			_signal: AbortSignal | undefined,
 			_onUpdate: unknown,
 			ctx: ToolContext,
