@@ -1,5 +1,8 @@
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
-import { validateTaskScopePath } from "../worktree-scope/index";
+import { isPathInsideOrEqual, validateTaskScopePath } from "../worktree-scope/index";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -45,6 +48,8 @@ type WorkflowStateName = (typeof WORKFLOW_STATES)[number];
 type PlanMode = "off" | "strict" | "auto";
 
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
+const CANONICAL_PI_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
+const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 
 interface WorkflowState {
 	activeBead?: string;
@@ -204,6 +209,100 @@ async function detectWorktreePath(pi: ExtensionAPI, cwd?: string): Promise<strin
 	const { stdout, code } = await pi.exec("git", gitArgs(cwd, ["rev-parse", "--show-toplevel"]));
 	if (code !== 0) return undefined;
 	return stdout.trim() || undefined;
+}
+
+function beadIdSuffix(beadId: string): string {
+	const parts = beadId.split("-").filter(Boolean);
+	return parts.at(-1) ?? "";
+}
+
+interface PorcelainWorktreeEntry {
+	path: string;
+	branch?: string;
+	bare?: boolean;
+	detached?: boolean;
+}
+
+interface ExistingTaskWorktreeCandidate {
+	path: string;
+	branch: string;
+}
+
+function parseWorktreePorcelain(stdout: string): PorcelainWorktreeEntry[] {
+	const entries: PorcelainWorktreeEntry[] = [];
+	let current: PorcelainWorktreeEntry | undefined;
+	for (const rawLine of stdout.split("\n")) {
+		const line = rawLine.trimEnd();
+		if (!line) {
+			if (current) {
+				entries.push(current);
+				current = undefined;
+			}
+			continue;
+		}
+		if (line.startsWith("worktree ")) {
+			if (current) entries.push(current);
+			current = { path: path.resolve(line.slice("worktree ".length).trim()) };
+			continue;
+		}
+		if (!current) continue;
+		if (line === "bare") current.bare = true;
+		else if (line === "detached") current.detached = true;
+		else if (line.startsWith("branch ")) {
+			const ref = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+			current.branch = ref || undefined;
+		}
+	}
+	if (current) entries.push(current);
+	return entries;
+}
+
+function isCanonicalExistingTaskWorktree(entry: PorcelainWorktreeEntry, beadId: string): boolean {
+	if (!entry.path || entry.bare || entry.detached || !entry.branch) return false;
+	const slash = entry.branch.indexOf("/");
+	if (slash <= 0) return false;
+	const prefix = entry.branch.slice(0, slash);
+	const suffix = entry.branch.slice(slash + 1);
+	if (!CANONICAL_PI_BRANCH_PREFIXES.has(prefix) || !suffix) return false;
+	const suffixKey = beadIdSuffix(beadId);
+	if (!suffixKey || !suffix.startsWith(`${suffixKey}-`)) return false;
+	if (path.basename(entry.path) !== suffix) return false;
+	return isPathInsideOrEqual(entry.path, WORKTREE_ROOT);
+}
+
+async function discoverExistingTaskWorktrees(
+	pi: ExtensionAPI,
+	repoRoot: string | undefined,
+	beadId: string,
+): Promise<{ candidates: ExistingTaskWorktreeCandidate[]; listFailed: boolean }> {
+	const list = await pi.exec("git", gitArgs(repoRoot, ["worktree", "list", "--porcelain"]));
+	if (list.code !== 0) return { candidates: [], listFailed: true };
+	const candidates: ExistingTaskWorktreeCandidate[] = [];
+	for (const entry of parseWorktreePorcelain(list.stdout)) {
+		if (!isCanonicalExistingTaskWorktree(entry, beadId) || !entry.branch) continue;
+		const [toplevel, liveBranch] = await Promise.all([
+			detectWorktreePath(pi, entry.path),
+			detectBranch(pi, entry.path),
+		]);
+		if (!toplevel || path.resolve(toplevel) !== path.resolve(entry.path)) continue;
+		if (liveBranch !== entry.branch) continue;
+		candidates.push({ path: path.resolve(entry.path), branch: entry.branch });
+	}
+	return { candidates, listFailed: false };
+}
+
+function hasIntentionalEmptyClaimedScope(
+	state: WorkflowState,
+	currentScope: { branch?: string },
+	bdStatus?: string,
+): boolean {
+	return state.state === "claimed"
+		&& Boolean(state.activeBead)
+		&& !state.branch
+		&& !state.worktreePath
+		&& !state.startCommit
+		&& Boolean(currentScope.branch && PROTECTED_BRANCHES.has(currentScope.branch))
+		&& bdStatus === "in_progress";
 }
 
 function isTerminalWorkflowState(state: WorkflowStateName): boolean {
@@ -502,6 +601,7 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 			startCommit: currentScope.startCommit,
 		});
 		const hasRecordedTaskScope = await workflowStateHasValidRecordedTaskScope(pi, state);
+		const keepEmptyClaimedScope = hasIntentionalEmptyClaimedScope(state, currentScope, bdStatus) && hasCurrentSessionOwnership(state, ctx);
 		const hasEmptyTaskScope = !state.worktreePath && !state.branch && !state.startCommit;
 		const hasProtectedRecordedScope = isProtectedBranchName(state.branch);
 		const ownershipScope = hasRecordedTaskScope && !hasCurrentScope ? {
@@ -513,11 +613,10 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 		const ctxSessionKey = currentSessionKey(ctx);
 		const skipWipeForKeylessCtx = !ctxSessionKey && hasRecordedTaskScope && !isTerminalBdStatus(bdStatus);
 		// Claim-from-main leaves empty task scope until bind; keep same-session claimed/inreview bead (incl. planning sessionMode).
-		// Do not skip-wipe plain open leftovers — those stay stale and must clear for new claims.
 		const skipWipeForAwaitingTaskWorktree = hasCurrentSessionOwnership(state, ctx)
 			&& (bdStatus === "in_progress" || bdStatus === "inreview")
 			&& (hasEmptyTaskScope || hasProtectedRecordedScope);
-		const hasOwnership = skipWipeForKeylessCtx || skipWipeForAwaitingTaskWorktree || (
+		const hasOwnership = skipWipeForKeylessCtx || keepEmptyClaimedScope || skipWipeForAwaitingTaskWorktree || (
 			!hasForeignSessionOwnershipEvidence(commentsText, ownershipScope)
 			&& hasCurrentSessionOwnership(state, ctx)
 			&& (hasCurrentScope || hasRecordedTaskScope)
@@ -551,13 +650,14 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 			});
 			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, "not backed by a readable bd status") };
 		}
+		const fillFromCurrentScope = hasCurrentScope && !keepEmptyClaimedScope && !skipWipeForAwaitingTaskWorktree;
 		const syncedState: WorkflowState = {
 			...state,
 			bdStatus,
 			// Strip legacy protected main recorded as task scope; keep empty until canonical bind.
-			branch: hasCurrentScope ? currentScope.branch : (hasProtectedRecordedScope ? undefined : state.branch),
-			worktreePath: hasCurrentScope ? currentScope.worktreePath : (hasProtectedRecordedScope ? undefined : state.worktreePath),
-			startCommit: hasCurrentScope ? currentScope.startCommit : (hasProtectedRecordedScope ? undefined : state.startCommit),
+			branch: fillFromCurrentScope ? (currentScope.branch ?? state.branch) : (hasProtectedRecordedScope ? undefined : state.branch),
+			worktreePath: fillFromCurrentScope ? currentScope.worktreePath : (hasProtectedRecordedScope ? undefined : state.worktreePath),
+			startCommit: fillFromCurrentScope ? currentScope.startCommit : (hasProtectedRecordedScope ? undefined : state.startCommit),
 		};
 		if (bdStatus === "inreview" && state.state === "implementing") {
 			syncedState.state = "inreview";
@@ -735,6 +835,7 @@ function validateWorkflowUpdateParams(params: Record<string, unknown>): string |
 export default function workflowStateExtension(pi: ExtensionAPI): void {
 	let workflowState: WorkflowState = cloneState(DEFAULT_STATE);
 	let lastClaimError: string | undefined;
+	let lastClaimWarning: string | undefined;
 	const staleRecoveryBlockedBeads = new Set<string>();
 
 	function persist(ctx?: ExtensionContext): void {
@@ -892,6 +993,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	async function claimWorkflowBead(bead: string, ctx: ExtensionContext): Promise<boolean> {
 		lastClaimError = undefined;
+		lastClaimWarning = undefined;
 		await ensureReconciled(ctx);
 		if (workflowState.activeBead && workflowState.activeBead !== bead) {
 			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
@@ -928,10 +1030,31 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			startCommit: detectedStartCommit,
 		});
 		// Explicit undefined on protected cwd — do not omit keys or record main as task scope.
-		const branch = taskScope.branch;
-		const worktreePath = taskScope.worktreePath;
-		const startCommit = taskScope.startCommit;
+		let branch = taskScope.branch;
+		let worktreePath = taskScope.worktreePath;
+		let startCommit = taskScope.startCommit;
 		const sessionKey = currentSessionKey(ctx);
+
+		if (detectedBranch && PROTECTED_BRANCHES.has(detectedBranch)) {
+			const discovery = await discoverExistingTaskWorktrees(pi, detectedWorktreePath, bead);
+			if (discovery.listFailed || discovery.candidates.length > 1) {
+				const listed = discovery.listFailed
+					? "git worktree list --porcelain failed"
+					: discovery.candidates.map((candidate) => `${candidate.branch} @ ${candidate.path}`).join("; ");
+				lastClaimWarning = `Claim ${bead} успешен без lock на main: ${listed}. Выберите один worktree и вызовите workflow_update(worktree=<abs>, branch=<canonical>); не делайте re-claim.`;
+				branch = undefined;
+				worktreePath = undefined;
+				startCommit = undefined;
+				ctx.ui.notify(lastClaimWarning, "warning");
+			} else if (discovery.candidates.length === 1) {
+				const match = discovery.candidates[0]!;
+				branch = match.branch;
+				worktreePath = match.path;
+				startCommit = await detectStartCommit(pi, match.path);
+			}
+			// zero live matches: keep cwd (main) as today
+		}
+
 		const ownershipCommentResult = await pi.exec("bd", [
 			"comments",
 			"add",
@@ -1129,9 +1252,14 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			async execute(_id: string, params: { beadId: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const ok = await claimWorkflowBead(params.beadId, ctx);
 				const error = ok ? undefined : lastClaimError;
+				const warning = ok ? lastClaimWarning : undefined;
 				await ensureReconciled(ctx);
 				const failureDetails = error ? `; reason: ${error}` : "";
-				return toolText(ok ? `workflow_claim выполнен: ${formatState(workflowState)}` : `workflow_claim не выполнен для ${params.beadId}: ${formatState(workflowState)}${failureDetails}`, { ok, error, ...cloneState(workflowState) });
+				const warningDetails = warning ? `; warning: ${warning}` : "";
+				return toolText(
+					ok ? `workflow_claim выполнен: ${formatState(workflowState)}${warningDetails}` : `workflow_claim не выполнен для ${params.beadId}: ${formatState(workflowState)}${failureDetails}`,
+					{ ok, error, warning, ...cloneState(workflowState) },
+				);
 			},
 		});
 
