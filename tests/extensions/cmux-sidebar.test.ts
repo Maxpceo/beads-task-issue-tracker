@@ -373,17 +373,84 @@ describe('cmux-sidebar extension', () => {
     expectSetStatus(cmux[0], 'hydr · Hydrated', 'circle.fill', '#0a84ff')
   })
 
-  it('g) accepted/landing/idle + activeBead → no-op', async () => {
-    for (const mode of ['accepted', 'landing', 'idle'] as const) {
-      const h = createHarness()
+  it('g) accepted/landing + activeBead → set; idle + activeBead → no-op', async () => {
+    const mapped = [
+      { mode: 'accepted', icon: 'checkmark.circle', color: '#30d158', progress: '0.95' },
+      { mode: 'landing', icon: 'arrow.up.circle', color: '#0a84ff', progress: '0.98' },
+    ] as const
+
+    for (const row of mapped) {
+      const h = createHarness({
+        bd: async () => ({ code: 0, stdout: JSON.stringify({ title: `${row.mode} title` }), stderr: '' }),
+      })
       await h.trigger('tool_result', {
         activeBead: 'beads-task-issue-tracker-left',
-        state: mode,
-        sessionMode: mode,
+        state: row.mode,
+        sessionMode: row.mode,
       })
-      expect(h.cmuxCalls()).toEqual([])
-      expect(h.bdCalls()).toEqual([])
+      const cmux = h.cmuxCalls()
+      expect(cmux).toHaveLength(3)
+      expectSetStatus(cmux[0], `left · ${row.mode} title`, row.icon, row.color)
+      expectSetProgress(cmux[1], row.progress, row.mode)
+      expectSetDescription(cmux[2], `${row.mode} title`)
     }
+
+    const idle = createHarness()
+    await idle.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-left',
+      state: 'idle',
+      sessionMode: 'idle',
+    })
+    expect(idle.cmuxCalls()).toEqual([])
+    expect(idle.bdCalls()).toEqual([])
+  })
+
+  it('g2) inreview → accepted + bead updates pill (no short-circuit leftover)', async () => {
+    const h = createHarness({
+      bd: async () => ({ code: 0, stdout: JSON.stringify({ title: 'Accepted title' }), stderr: '' }),
+    })
+    await h.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-acc',
+      sessionMode: 'inreview',
+    })
+    expect(h.cmuxCalls()).toHaveLength(3)
+    expectSetStatus(h.cmuxCalls()[0], 'acc · Accepted title', 'eye', '#ffd60a')
+    expectSetProgress(h.cmuxCalls()[1], '0.80', 'inreview')
+    h.resetCalls()
+
+    await h.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-acc',
+      sessionMode: 'accepted',
+    })
+    const cmux = h.cmuxCalls()
+    expect(cmux).toHaveLength(3)
+    expectSetStatus(cmux[0], 'acc · Accepted title', 'checkmark.circle', '#30d158')
+    expectSetProgress(cmux[1], '0.95', 'accepted')
+    expectSetDescription(cmux[2], 'Accepted title')
+  })
+
+  it('g3) after-set closed/merged without bead → clear×3; never-set closed → 0 cmux', async () => {
+    for (const mode of ['closed', 'merged'] as const) {
+      const h = createHarness({
+        bd: async () => ({ code: 0, stdout: JSON.stringify({ title: 'Owned set' }), stderr: '' }),
+      })
+      await h.trigger('tool_result', {
+        activeBead: 'beads-task-issue-tracker-ownc',
+        sessionMode: 'inreview',
+      })
+      expect(h.cmuxCalls()).toHaveLength(3)
+      h.resetCalls()
+
+      // workflow_complete-equivalent: terminal mode, activeBead already cleared
+      await h.trigger('tool_result', { state: mode, sessionMode: mode })
+      expectClearTriple(h.cmuxCalls())
+    }
+
+    // never-set agent: terminal without prior set must not wipe shared sidebar
+    const neverSet = createHarness()
+    await neverSet.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
+    expect(neverSet.cmuxCalls()).toEqual([])
+    expect(neverSet.bdCalls()).toEqual([])
   })
 
   it('h) missing/empty CMUX_WORKSPACE_ID → identify once, failure cache, retry on session_start, success workspace:7', async () => {

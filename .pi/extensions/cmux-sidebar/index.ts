@@ -48,6 +48,8 @@ const MODE_VISUAL: Record<string, ModeVisual> = {
 	implementing: { icon: "hammer", color: "#ff9500", progress: "0.60" },
 	inreview: { icon: "eye", color: "#ffd60a", progress: "0.80" },
 	reviewing: { icon: "eye", color: "#ffd60a", progress: "0.90" },
+	accepted: { icon: "checkmark.circle", color: "#30d158", progress: "0.95" },
+	landing: { icon: "arrow.up.circle", color: "#0a84ff", progress: "0.98" },
 };
 
 function currentRuntimeOwnerKey(): string {
@@ -311,7 +313,7 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 
 			const visual = MODE_VISUAL[effectiveMode];
 			if (!visual) {
-				// Unmapped mode with active bead: leftover accepted, no-op.
+				// Unmapped mode with active bead (e.g. idle): leftover status kept, no-op.
 				return;
 			}
 
