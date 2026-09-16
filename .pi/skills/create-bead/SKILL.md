@@ -221,6 +221,6 @@ bd todo add "Короткое локальное напоминание"
 
 ## Reporting
 
-Chat for Maxim follows `AGENTS.md` (markdown `##`, decrypt task terms, no footer dump). After create do not end on id/labels/sync. If the session has a live non-terminal parent/active bead, that create is not the end of the reply: `## Дальше` with that bead and `1/2/3`.
+Chat for Maxim follows `AGENTS.md` (markdown `##`, decrypt task terms, no footer dump). After create do not end on id/labels/sync. Name the new bead in the first `##`. If the session has a live non-terminal parent, the reply continues with exactly `## Дальше` (no task title on that heading) and `1/2/3` for the parent.
 
 If creation is blocked, report the exact guard, command pattern used, and the minimal correction. Do not silently bypass policy.
