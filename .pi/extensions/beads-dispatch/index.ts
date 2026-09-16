@@ -643,12 +643,12 @@ function normalizeArtifactText(output: string): string {
 	return output.replace(/\\n/g, "\n");
 }
 
-function supervisorArtifactReadyForReview(result: { exitCode: number; output: string }, startCommit: string, endCommit: string): boolean {
+export function supervisorArtifactReadyForReview(result: { exitCode: number; output: string }, startCommit: string, endCommit: string): boolean {
 	if (result.exitCode !== 0 || endCommit === startCommit) return false;
 	const artifact = normalizeArtifactText(result.output);
 	const hasDoneStatus = /Status:\s*DONE(?:_WITH_CONCERNS)?\b/i.test(artifact);
 	const hasCompleteArtifact = /Artifact status:\s*complete\b/i.test(artifact);
-	const hasVerificationEvidence = /Verification:\s*(?!N\/A\b|not run\b|not\s+run\b).*(exit code\s*\d+|observed result|output excerpt|manual check|passed|pass\b)/is.test(artifact);
+	const hasVerificationEvidence = /Verification:\s*(?!N\/A\b|not run\b|not\s+run\b).*(exit(?:\s+code)?\s*=?\s*\d+|observed result|output excerpt|manual check|passed|pass\b)/is.test(artifact);
 	const hasCommitEvidence = /Commit:\s*(?!N\/A\b|not committed\b)[0-9a-f]{7,40}\b/i.test(artifact);
 	return hasDoneStatus && hasCompleteArtifact && hasVerificationEvidence && hasCommitEvidence;
 }
