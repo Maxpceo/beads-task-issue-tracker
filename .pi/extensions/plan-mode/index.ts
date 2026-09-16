@@ -1300,7 +1300,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				pendingReadyPlan = plan;
 				persistState();
 				if (ctx.hasUI) ctx.ui.notify("Plan marked ready — choose next action after this turn", "info");
-				return toolText("plan_mode_complete: pending ready plan stored; ready-UI will open on agent_end", { ok: true, pending: true });
+				return toolText("plan_mode_complete: pending ready plan stored; ready-UI will open on agent_settled", { ok: true, pending: true });
 			},
 		});
 

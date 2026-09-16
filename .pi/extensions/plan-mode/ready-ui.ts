@@ -3,7 +3,7 @@
  * Stable action values: execute | stay | refine | plan-review
  */
 
-import { Key, matchesKey, SelectList, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, matchesKey, SelectList, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Stable ready-action ids used by plan-mode agent_end loop. */
 export type ReadyAction = "execute" | "stay" | "refine" | "plan-review";
@@ -33,6 +33,11 @@ export interface ReadyUiTui {
 }
 
 type ReadyDone = (value: { action: ReadyAction } | null) => void;
+
+function clampRenderLines(lines: string[], width: number): string[] {
+	const w = Math.max(1, width);
+	return lines.map((line) => truncateToWidth(line, w, ""));
+}
 
 function addWrapped(lines: string[], text: string, width: number): void {
 	lines.push(...wrapTextWithAnsi(text, Math.max(1, width)));
@@ -114,7 +119,7 @@ export function createReadyUiFactory(planPreview?: string) {
 			const lines: string[] = [];
 			const w = Math.max(1, width);
 			const bold = theme.bold ?? ((t: string) => t);
-			const divider = theme.fg("accent", "─".repeat(w));
+			const divider = truncateToWidth(theme.fg("accent", "─".repeat(w)), w, "");
 
 			lines.push(divider);
 			addWrappedWithPrefix(lines, " ", theme.fg("accent", bold("План готов — что дальше?")), w);
@@ -157,8 +162,9 @@ export function createReadyUiFactory(planPreview?: string) {
 
 			// Keep SelectList in sync for tests that call list.handleInput via component
 			void list.render(w);
-			cachedLines = lines;
-			return lines;
+			// Pi TUI aborts the process if any line exceeds terminal width.
+			cachedLines = clampRenderLines(lines, w);
+			return cachedLines;
 		}
 
 		return {

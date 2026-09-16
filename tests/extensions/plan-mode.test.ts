@@ -2585,6 +2585,39 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(customCalls[0]?.options === undefined || (customCalls[0]?.options as any)?.overlay !== true).toBe(true)
   })
 
+  it('ready-ui and question-ui render never exceed given width', () => {
+    const tui = { requestRender() {} }
+    const theme = {
+      fg: (_c: string, t: string) => t,
+      bg: (_c: string, t: string) => t,
+      bold: (t: string) => t,
+    }
+    const longToken = 'x'.repeat(200)
+    const width = 40
+
+    const readyUi = transpileSibling('ready-ui.ts') as any
+    const readyComp = readyUi.createReadyUiFactory(longToken)(tui, theme, {}, () => {})
+    for (const line of readyComp.render(width)) {
+      expect(piTuiMock.visibleWidth(line)).toBeLessThanOrEqual(width)
+    }
+
+    const questionUi = transpileSibling('question-ui.ts') as any
+    const questions = questionUi.normalizeQuestions([
+      {
+        id: 'overflow',
+        prompt: longToken,
+        options: [
+          { value: 'a', label: longToken, description: longToken },
+          { value: 'b', label: 'short' },
+        ],
+      },
+    ])
+    const questionComp = questionUi.createQuestionUiFactory(questions)(tui, theme, {}, () => {})
+    for (const line of questionComp.render(width)) {
+      expect(piTuiMock.visibleWidth(line)).toBeLessThanOrEqual(width)
+    }
+  })
+
   it('questionnaire without hasUI cancels without hang', async () => {
     const { commandHandlers, toolHandlers, customCalls, ctx } = makeHarness({ hasUI: false, noCustom: true })
     await commandHandlers.get('plan')?.handler('', ctx)

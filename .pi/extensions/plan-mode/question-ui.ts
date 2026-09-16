@@ -4,7 +4,7 @@
  * Digits 1-9 select options; multi-question tabs; selected option preview.
  */
 
-import { Input, Key, matchesKey, Text, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Input, Key, matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 export interface QuestionOption {
 	value: string;
@@ -86,6 +86,11 @@ export function normalizeQuestions(raw: unknown): NormalizedQuestion[] {
 		});
 	}
 	return out;
+}
+
+function clampRenderLines(lines: string[], width: number): string[] {
+	const w = Math.max(1, width);
+	return lines.map((line) => truncateToWidth(line, w, ""));
 }
 
 function addWrapped(lines: string[], text: string, width: number): void {
@@ -270,7 +275,7 @@ export function createQuestionUiFactory(questions: NormalizedQuestion[]) {
 			const lines: string[] = [];
 			const w = Math.max(1, width);
 			const bold = theme.bold ?? ((t: string) => t);
-			const divider = theme.fg("accent", "─".repeat(w));
+			const divider = truncateToWidth(theme.fg("accent", "─".repeat(w)), w, "");
 			const q = currentQuestion();
 			const opts = currentOptions();
 
@@ -375,8 +380,9 @@ export function createQuestionUiFactory(questions: NormalizedQuestion[]) {
 			}
 			lines.push(divider);
 
-			cachedLines = lines;
-			return lines;
+			// Pi TUI aborts the process if any line exceeds terminal width.
+			cachedLines = clampRenderLines(lines, w);
+			return cachedLines;
 		}
 
 		return {
