@@ -39,7 +39,10 @@ interface ModeVisual {
 
 const RUNTIME_OWNER_GLOBAL_KEY = "__piWorkflowRuntimeOwnerKey";
 const TITLE_MAX_CODE_POINTS = 40;
-const TERMINAL_MODES = new Set(["closed", "merged", "deferred"]);
+/** Modes that always clear the pill when a bead is still bound. */
+const CLEAR_WITH_BEAD_MODES = new Set(["merged", "deferred"]);
+/** After close / land wait: keep landing visual even when activeBead was cleared. */
+const LANDING_WAIT_MODES = new Set(["closed", "landing"]);
 
 const MODE_VISUAL: Record<string, ModeVisual> = {
 	claimed: { icon: "circle.fill", color: "#0a84ff", progress: "0.15" },
@@ -51,6 +54,16 @@ const MODE_VISUAL: Record<string, ModeVisual> = {
 	accepted: { icon: "checkmark.circle", color: "#30d158", progress: "0.95" },
 	landing: { icon: "arrow.up.circle", color: "#0a84ff", progress: "0.98" },
 };
+
+function titleFromLastApplied(last: AppliedSignature | undefined, beadId: string): string | undefined {
+	if (!beadId) return undefined;
+	if (!last?.descriptionPresent || !last.pill) return undefined;
+	const marker = " · ";
+	const idx = last.pill.indexOf(marker);
+	if (idx < 0) return undefined;
+	const title = last.pill.slice(idx + marker.length).trim();
+	return title || undefined;
+}
 
 function currentRuntimeOwnerKey(): string {
 	const root = globalThis as typeof globalThis & { [RUNTIME_OWNER_GLOBAL_KEY]?: string };
@@ -266,28 +279,87 @@ export default function cmuxSidebarExtension(pi: ExtensionAPI): void {
 
 			const effectiveMode = snapshot.sessionMode ?? snapshot.state ?? "idle";
 			const activeBead = typeof snapshot.activeBead === "string" ? snapshot.activeBead.trim() : "";
+			const ownsWrittenStatus =
+				lastApplied?.action === "set" || lastApplied?.action === "set-suffix-only";
 
-			if (!activeBead || TERMINAL_MODES.has(effectiveMode)) {
-				// No bead: clear only if this session previously wrote set/set-suffix-only
-				// (ownership-gated). Agent sessions that never set must not wipe the shared sidebar.
-				// Terminal mode with a bead still clears unconditionally.
-				const ownsWrittenStatus =
-					lastApplied?.action === "set" || lastApplied?.action === "set-suffix-only";
-				const shouldClear = activeBead
-					? TERMINAL_MODES.has(effectiveMode)
-					: ownsWrittenStatus;
-				if (!shouldClear) return;
-
+			const applyOwnedClear = async (mode: string, beadId: string): Promise<void> => {
 				const signature: AppliedSignature = {
 					workspaceId,
 					action: "clear",
-					beadId: activeBead || "",
-					effectiveMode,
+					beadId,
+					effectiveMode: mode,
 					pill: "",
 					descriptionPresent: false,
 				};
 				if (signaturesEqual(lastApplied, signature)) return;
 				const ok = await applyClear(workspaceId, generation);
+				if (ok) lastApplied = signature;
+			};
+
+			// No bead: never-set early-return only here (first mapped set with empty lastApplied stays live).
+			if (!activeBead) {
+				if (LANDING_WAIT_MODES.has(effectiveMode)) {
+					// closed/landing without bead = waiting for land/merge. Keep landing pill.
+					if (!ownsWrittenStatus || !lastApplied) return;
+
+					const landingVisual = MODE_VISUAL.landing;
+					const beadId = lastApplied.beadId;
+					const pill = lastApplied.pill || (beadId ? beadSuffixFromId(beadId) : "");
+					const title = (beadId ? titleCache.get(beadId) : undefined) ?? titleFromLastApplied(lastApplied, beadId);
+					const action: ApplyAction = lastApplied.action === "set" || lastApplied.action === "set-suffix-only"
+						? lastApplied.action
+						: title
+							? "set"
+							: "set-suffix-only";
+					const signature: AppliedSignature = {
+						workspaceId,
+						action,
+						beadId,
+						effectiveMode: "landing",
+						pill,
+						descriptionPresent: Boolean(title),
+					};
+					if (signaturesEqual(lastApplied, signature)) return;
+					const ok = await applyMapped(workspaceId, "landing", landingVisual, pill, title, generation);
+					if (ok) lastApplied = signature;
+					return;
+				}
+
+				// Any other owned no-bead mode (idle/reset/merged/blocked/deferred/…) → clear×3.
+				if (!ownsWrittenStatus) return;
+				await applyOwnedClear(effectiveMode, "");
+				return;
+			}
+
+			// Bead bound: merged/deferred clear unconditionally.
+			if (CLEAR_WITH_BEAD_MODES.has(effectiveMode)) {
+				await applyOwnedClear(effectiveMode, activeBead);
+				return;
+			}
+
+			// closed/landing with bead → landing visual (label landing, stable signature mode).
+			if (LANDING_WAIT_MODES.has(effectiveMode)) {
+				const landingVisual = MODE_VISUAL.landing;
+				const title = await resolveTitle(activeBead);
+				if (generation !== refreshGeneration) return;
+				const fresh = latestWorkflowState(ctx);
+				if (!fresh) return;
+				const freshMode = fresh.sessionMode ?? fresh.state ?? "idle";
+				const freshBead = typeof fresh.activeBead === "string" ? fresh.activeBead.trim() : "";
+				if (freshBead !== activeBead || freshMode !== effectiveMode) return;
+
+				const pill = buildPill(activeBead, title);
+				const action: ApplyAction = title ? "set" : "set-suffix-only";
+				const signature: AppliedSignature = {
+					workspaceId,
+					action,
+					beadId: activeBead,
+					effectiveMode: "landing",
+					pill,
+					descriptionPresent: Boolean(title),
+				};
+				if (signaturesEqual(lastApplied, signature)) return;
+				const ok = await applyMapped(workspaceId, "landing", landingVisual, pill, title, generation);
 				if (ok) lastApplied = signature;
 				return;
 			}

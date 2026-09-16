@@ -214,6 +214,40 @@ function isTerminalBdStatus(status?: string): boolean {
 	return status === "closed" || status === "blocked" || status === "deferred";
 }
 
+/**
+ * Unbind activeBead when live bd is terminal.
+ * closed keeps sessionMode/state=closed so cmux-sidebar can show landing-until-merge.
+ * blocked/deferred clear to idle (no land/merge wait).
+ */
+function unbindTerminalBdBinding(
+	state: WorkflowState,
+	bdStatus: string,
+	currentScope: { branch?: string; worktreePath?: string; startCommit?: string },
+): WorkflowState {
+	const base: WorkflowState = {
+		...state,
+		activeBead: undefined,
+		branch: currentScope.branch ?? state.branch,
+		worktreePath: currentScope.worktreePath,
+		startCommit: currentScope.startCommit,
+		endCommit: undefined,
+		sessionKey: undefined,
+		bdStatus: undefined,
+	};
+	if (bdStatus === "closed") {
+		return clearUnsafeApprovedImplementingState({
+			...base,
+			state: "closed",
+			sessionMode: "closed",
+		}).state;
+	}
+	return clearUnsafeApprovedImplementingState({
+		...base,
+		state: "idle",
+		sessionMode: "idle",
+	}).state;
+}
+
 async function readBdStatus(pi: ExtensionAPI, beadId: string): Promise<string | undefined> {
 	const { stdout, code } = await pi.exec("bd", ["show", beadId, "--json"]);
 	if (code !== 0) return undefined;
@@ -455,18 +489,8 @@ async function reconcileActiveBeadState(pi: ExtensionAPI, state: WorkflowState, 
 	if (state.activeBead && state.state !== "idle") {
 		const bdStatus = await readBdStatus(pi, state.activeBead);
 		if (isTerminalBdStatus(bdStatus)) {
-			const cleared = clearUnsafeApprovedImplementingState({
-				...state,
-				activeBead: undefined,
-				state: "idle",
-				branch: currentScope.branch,
-				worktreePath: currentScope.worktreePath,
-				startCommit: currentScope.startCommit,
-				endCommit: undefined,
-				sessionKey: undefined,
-				bdStatus: undefined,
-			});
-			return { state: cleared.state, warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`) };
+			const unbound = unbindTerminalBdBinding(state, bdStatus!, currentScope);
+			return { state: unbound, warning: staleForeignRecoveryMessage(state.activeBead, `terminal bd status ${bdStatus}`) };
 		}
 		if (isTerminalWorkflowState(state.state)) return { state: { ...state, bdStatus } };
 
@@ -931,6 +955,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 			{
 				activeBead: bead,
 				state: "claimed",
+				sessionMode: "claimed",
 				branch,
 				worktreePath,
 				startCommit,
@@ -1160,7 +1185,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					if (workflowState.activeBead) {
 						const bdStatus = await readBdStatus(pi, workflowState.activeBead);
 						if (isTerminalBdStatus(bdStatus)) {
-							assignState({ activeBead: undefined, state: "idle", endCommit: undefined, sessionKey: undefined, bdStatus: undefined });
+							assignState(unbindTerminalBdBinding(workflowState, bdStatus!, {
+								branch: workflowState.branch,
+								worktreePath: workflowState.worktreePath,
+								startCommit: workflowState.startCommit,
+							}));
 						} else if (bdStatus) {
 							assignState({ bdStatus });
 							const ownershipComment = [

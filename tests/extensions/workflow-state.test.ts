@@ -279,9 +279,11 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('state=closed')
+    expect(context.message.content).toContain('sessionMode=closed')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).not.toContain('state=implementing')
+    expect(context.message.content).not.toContain('sessionMode=implementing')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
   })
@@ -318,10 +320,10 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('state=closed')
+    expect(context.message.content).toContain('sessionMode=closed')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('end=-')
-    expect(context.message.content).not.toContain('state=closed')
     expect(context.message.content).not.toContain('bead=bead-closed')
     expect(notifications.at(-1)?.message).toContain('terminal bd status closed')
   })
@@ -362,7 +364,8 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await commandHandlers.get('workflow-status')?.handler('', ctx)
 
     expect(notifications.at(-2)?.message).toContain('terminal bd status closed')
-    expect(notifications.at(-1)?.message).toContain('state=idle')
+    expect(notifications.at(-1)?.message).toContain('state=closed')
+    expect(notifications.at(-1)?.message).toContain('sessionMode=closed')
     expect(notifications.at(-1)?.message).toContain('bead=-')
     expect(notifications.at(-1)?.message).toContain('end=-')
     expect(notifications.at(-1)?.message).not.toContain('state=reviewing')
@@ -385,11 +388,12 @@ describe('Pi workflow-state session-scoped recovery', () => {
     )
 
     expect(appended).toHaveLength(1)
-    expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
+    expect(appended.at(-1)?.data).toMatchObject({ state: 'closed', sessionMode: 'closed' })
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
     expect((appended.at(-1)?.data as any).endCommit).toBeUndefined()
     expect(notifications.at(-2)?.message).toContain('terminal bd status closed')
-    expect(notifications.at(-1)?.message).toContain('state=idle')
+    expect(notifications.at(-1)?.message).toContain('state=closed')
+    expect(notifications.at(-1)?.message).toContain('sessionMode=closed')
     expect(notifications.at(-1)?.message).toContain('bead=-')
     expect(notifications.at(-1)?.message).toContain('end=-')
     expect(notifications.at(-1)?.message).not.toContain('state=reviewing')
@@ -418,7 +422,8 @@ describe('Pi workflow-state session-scoped recovery', () => {
     }, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    expect(context.message.content).toContain('state=closed')
+    expect(context.message.content).toContain('sessionMode=closed')
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('end=-')
     expect(context.message.content).not.toContain('state=reviewing')
@@ -769,7 +774,13 @@ describe('Pi workflow-state session-scoped recovery', () => {
     await eventHandlers.get('session_start')?.({}, ctx)
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
-    expect(context.message.content).toContain('state=idle')
+    if (bdStatus === 'closed') {
+      expect(context.message.content).toContain('state=closed')
+      expect(context.message.content).toContain('sessionMode=closed')
+    } else {
+      expect(context.message.content).toContain('state=idle')
+      expect(context.message.content).toContain('sessionMode=idle')
+    }
     expect(context.message.content).toContain('bead=-')
     expect(context.message.content).toContain('bdStatus=-')
     expect(notifications.at(-1)?.message).toContain(`terminal bd status ${bdStatus}`)
@@ -1515,7 +1526,60 @@ describe('Pi workflow-state typed tools', () => {
 
     expect(result.content[0].text).toContain('workflow_claim выполнен')
     expect(notifications.some((notification) => notification.message.includes('terminal bd status closed'))).toBe(true)
-    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed' })
+    expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-next', state: 'claimed', sessionMode: 'claimed' })
+  })
+
+  it('workflow_complete(closed) then workflow_claim next writes sessionMode=claimed', async () => {
+    const { eventHandlers, toolHandlers, ctx, appended } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      issues: {
+        'bead-done': { status: 'closed', comments: '' },
+        'bead-next': { status: 'open', comments: '' },
+      },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-done',
+          state: 'implementing',
+          sessionMode: 'implementing',
+          branch: 'task/current',
+          worktreePath: '/repo/current',
+          startCommit: 'start-head',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'off',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+    await eventHandlers.get('session_start')?.({}, ctx)
+
+    const complete = await toolHandlers.get('workflow_complete')?.execute(
+      'call-0',
+      { state: 'closed', reason: 'accepted and closed' },
+      undefined,
+      undefined,
+      ctx,
+    )
+    expect(complete.content[0].text).toContain('workflow_complete записал closed')
+    expect(appended.at(-1)?.data).toMatchObject({
+      state: 'closed',
+      sessionMode: 'closed',
+    })
+    expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
+
+    const claim = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+    expect(claim.content[0].text).toContain('workflow_claim выполнен')
+    expect(appended.at(-1)?.data).toMatchObject({
+      activeBead: 'bead-next',
+      state: 'claimed',
+      sessionMode: 'claimed',
+    })
   })
 
   it('workflow_claim recovers stale open active bead before claiming new work', async () => {

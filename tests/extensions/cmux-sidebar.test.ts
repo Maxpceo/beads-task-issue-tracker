@@ -278,8 +278,8 @@ describe('cmux-sidebar extension', () => {
     }
   })
 
-  it('d) sessionMode-only closed/merged/deferred → clear×3', async () => {
-    for (const mode of ['closed', 'merged', 'deferred'] as const) {
+  it('d) sessionMode-only merged/deferred → clear×3; closed with bead → landing', async () => {
+    for (const mode of ['merged', 'deferred'] as const) {
       const h = createHarness()
       await h.trigger('tool_result', {
         activeBead: 'beads-task-issue-tracker-term',
@@ -288,6 +288,19 @@ describe('cmux-sidebar extension', () => {
       expectClearTriple(h.cmuxCalls())
       expect(h.bdCalls()).toHaveLength(0)
     }
+
+    const closed = createHarness({
+      bd: async () => ({ code: 0, stdout: JSON.stringify({ title: 'Closed title' }), stderr: '' }),
+    })
+    await closed.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-term',
+      sessionMode: 'closed',
+    })
+    const cmux = closed.cmuxCalls()
+    expect(cmux).toHaveLength(3)
+    expectSetStatus(cmux[0], 'term · Closed title', 'arrow.up.circle', '#0a84ff')
+    expectSetProgress(cmux[1], '0.98', 'landing')
+    expectSetDescription(cmux[2], 'Closed title')
   })
 
   it('e) owned entry without activeBead and empty lastApplied → no-op (agent never-set)', async () => {
@@ -429,8 +442,9 @@ describe('cmux-sidebar extension', () => {
     expectSetDescription(cmux[2], 'Accepted title')
   })
 
-  it('g3) after-set closed/merged without bead → clear×3; never-set closed → 0 cmux', async () => {
-    for (const mode of ['closed', 'merged'] as const) {
+  it('g3) after-set closed without bead → landing; merged clear; never-set closed → 0 cmux', async () => {
+    // closed-waiting-merge without bead keeps landing pill from lastApplied (no bd show)
+    {
       const h = createHarness({
         bd: async () => ({ code: 0, stdout: JSON.stringify({ title: 'Owned set' }), stderr: '' }),
       })
@@ -439,10 +453,58 @@ describe('cmux-sidebar extension', () => {
         sessionMode: 'inreview',
       })
       expect(h.cmuxCalls()).toHaveLength(3)
+      expectSetStatus(h.cmuxCalls()[0], 'ownc · Owned set', 'eye', '#ffd60a')
       h.resetCalls()
 
-      // workflow_complete-equivalent: terminal mode, activeBead already cleared
-      await h.trigger('tool_result', { state: mode, sessionMode: mode })
+      await h.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
+      const landing = h.cmuxCalls()
+      expect(landing).toHaveLength(3)
+      expectSetStatus(landing[0], 'ownc · Owned set', 'arrow.up.circle', '#0a84ff')
+      expectSetProgress(landing[1], '0.98', 'landing')
+      expectSetDescription(landing[2], 'Owned set')
+      expect(h.bdCalls()).toHaveLength(0)
+      h.resetCalls()
+
+      // second refresh with same landing signature → 0 cmux
+      await h.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
+      expect(h.cmuxCalls()).toEqual([])
+      expect(h.bdCalls()).toEqual([])
+    }
+
+    // merged without bead clears after prior set (including after intermediate landing)
+    {
+      const h = createHarness({
+        bd: async () => ({ code: 0, stdout: JSON.stringify({ title: 'Owned set' }), stderr: '' }),
+      })
+      await h.trigger('tool_result', {
+        activeBead: 'beads-task-issue-tracker-ownm',
+        sessionMode: 'inreview',
+      })
+      expect(h.cmuxCalls()).toHaveLength(3)
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
+      expect(h.cmuxCalls()).toHaveLength(3)
+      expectSetProgress(h.cmuxCalls()[1], '0.98', 'landing')
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'merged', sessionMode: 'merged' })
+      expectClearTriple(h.cmuxCalls())
+    }
+
+    // blocked without bead after own set → clear×3
+    {
+      const h = createHarness({
+        bd: async () => ({ code: 0, stdout: JSON.stringify({ title: 'Owned set' }), stderr: '' }),
+      })
+      await h.trigger('tool_result', {
+        activeBead: 'beads-task-issue-tracker-ownb',
+        sessionMode: 'implementing',
+      })
+      expect(h.cmuxCalls()).toHaveLength(3)
+      h.resetCalls()
+
+      await h.trigger('tool_result', { state: 'blocked', sessionMode: 'blocked' })
       expectClearTriple(h.cmuxCalls())
     }
 
@@ -451,6 +513,39 @@ describe('cmux-sidebar extension', () => {
     await neverSet.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
     expect(neverSet.cmuxCalls()).toEqual([])
     expect(neverSet.bdCalls()).toEqual([])
+  })
+
+  it('g4) landing-without-bead then claim next → claimed visual', async () => {
+    const h = createHarness({
+      bd: async (beadId) => {
+        if (beadId.includes('next')) {
+          return { code: 0, stdout: JSON.stringify({ title: 'Next bead title' }), stderr: '' }
+        }
+        return { code: 0, stdout: JSON.stringify({ title: 'Prior title' }), stderr: '' }
+      },
+    })
+    await h.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-prior',
+      sessionMode: 'accepted',
+    })
+    expect(h.cmuxCalls()).toHaveLength(3)
+    h.resetCalls()
+
+    await h.trigger('tool_result', { state: 'closed', sessionMode: 'closed' })
+    expectSetProgress(h.cmuxCalls()[1], '0.98', 'landing')
+    expect(h.bdCalls()).toHaveLength(0)
+    h.resetCalls()
+
+    await h.trigger('tool_result', {
+      activeBead: 'beads-task-issue-tracker-next',
+      state: 'claimed',
+      sessionMode: 'claimed',
+    })
+    const cmux = h.cmuxCalls()
+    expect(cmux).toHaveLength(3)
+    expectSetStatus(cmux[0], 'next · Next bead title', 'circle.fill', '#0a84ff')
+    expectSetProgress(cmux[1], '0.15', 'claimed')
+    expectSetDescription(cmux[2], 'Next bead title')
   })
 
   it('h) missing/empty CMUX_WORKSPACE_ID → identify once, failure cache, retry on session_start, success workspace:7', async () => {
