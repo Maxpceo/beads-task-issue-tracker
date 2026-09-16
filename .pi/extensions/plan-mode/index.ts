@@ -713,11 +713,37 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return { error: `no readable task worktree for continuation. ${worktreeRecovery(recoveryPath, recoveryBranch, "continuation")}` };
 	}
 
-	async function triggerApprovedPlanContinuation(ctx: ExtensionContext, beadId: string, approvedWorktreePath?: string): Promise<void> {
-		const resolved = await resolveContinuationCwd(ctx, beadId, approvedWorktreePath);
+	function hasNonemptyFastPathRationale(planEvidence: string): boolean {
+		const value = latestPlanField(planEvidence, ["FAST_PATH_RATIONALE"]);
+		return Boolean(value?.trim());
+	}
+
+	async function triggerApprovedPlanContinuation(
+		ctx: ExtensionContext,
+		beadId: string,
+		options: { approvedWorktreePath?: string; planEvidence?: string; triggerTurn?: boolean } = {},
+	): Promise<{ skipped: boolean }> {
+		// Fast Path: orchestrator implements; skip supervisor spawn before any pre-dispatch work.
+		if (hasNonemptyFastPathRationale(options.planEvidence ?? "") && !autopilotEnabled) {
+			const triggerTurn = options.triggerTurn === true;
+			const content = [
+				"Fast Path: skip supervisor after PLAN APPROVED.",
+				`Bead: ${beadId}`,
+				triggerTurn
+					? "Next: implement now; do not dispatch_supervisor; do not wait for ping."
+					: "Next: orchestrator continues; do not dispatch_supervisor; do not wait for ping.",
+			].join("\n");
+			pi.sendMessage(
+				{ customType: "post-approval-fast-path-skip", content, display: true },
+				{ triggerTurn },
+			);
+			return { skipped: true };
+		}
+
+		const resolved = await resolveContinuationCwd(ctx, beadId, options.approvedWorktreePath);
 		if (resolved.error || !resolved.cwd) {
 			await recordContinuationScopeBlocked(ctx, beadId, resolved.error ?? "no readable task worktree for continuation");
-			return;
+			return { skipped: false };
 		}
 		const action = renderPlanExecutionAction(beadId, resolved.cwd);
 		sendPreDispatchProgress(beadId, action);
@@ -726,10 +752,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const error = result.error ?? "typed continuation returned without success";
 			if (isRuntimeHookUnavailable(error)) {
 				await recordRuntimeHookMissing(ctx, beadId, action, error);
-				return;
+				return { skipped: false };
 			}
 			await recordContinuationScopeBlocked(ctx, beadId, error);
-			return;
+			return { skipped: false };
 		}
 		const details = result.details as { status?: string; transport?: string } | undefined;
 		const spawned = details?.status === "spawned" || details?.transport === "cmux";
@@ -743,6 +769,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			},
 			{ triggerTurn: false },
 		);
+		return { skipped: false };
 	}
 
 	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<{ approved: boolean; beadId?: string; worktreePath?: string }> {
@@ -762,7 +789,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 
 		const approvedBy = autopilotEnabled ? "оркестратор" : "Максим";
-		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy }, ctx);
+		// UI Execute and /plan-auto need triggerTurn true on Fast Path skip so the orchestrator continues in-session.
+		const result = await approvePlanTool({ beadId, planEvidence: normalizedApprovalEvidence(planEvidence), approvedBy, triggerTurn: true }, ctx);
 		if (!result.details?.ok) {
 			syncWorkflowPlanMode(ctx, planModeEnabled ? (autoExecuteEnabled ? "auto" : "strict") : "off", "blocked", { activeBead: beadId, planApproved: false });
 			pi.sendMessage(
@@ -910,7 +938,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
-	async function approvePlanTool(params: { beadId: string; planEvidence: string; approvedBy?: string }, ctx: ExtensionContext) {
+	async function approvePlanTool(params: { beadId: string; planEvidence: string; approvedBy?: string; triggerTurn?: boolean }, ctx: ExtensionContext) {
 		const evidenceError = validatePlanEvidence(params.planEvidence);
 		if (evidenceError) return toolText(`workflow_plan_approved blocked: ${evidenceError}`, { ok: false, error: evidenceError });
 
@@ -946,10 +974,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		syncWorkflowPlanMode(ctx, "off", "implementing", { state: "implementing", activeBead: params.beadId, branch, worktreePath, startCommit, planApproved: true });
 		updateStatus(ctx);
 		persistState();
-		await triggerApprovedPlanContinuation(ctx, params.beadId, worktreePath);
+		const continuation = await triggerApprovedPlanContinuation(ctx, params.beadId, {
+			approvedWorktreePath: worktreePath,
+			planEvidence: params.planEvidence,
+			triggerTurn: params.triggerTurn === true,
+		});
+		const continuationLabel = continuation.skipped
+			? "fastPathSkip"
+			: `continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`;
 		return toolText(
-			`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`,
-			{ ok: true, beadId: params.beadId, branch, worktreePath, startCommit, autopilot: autopilotEnabled },
+			`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; ${continuationLabel}`,
+			{ ok: true, beadId: params.beadId, branch, worktreePath, startCommit, autopilot: autopilotEnabled, fastPathSkip: continuation.skipped },
 		);
 	}
 
@@ -1219,7 +1254,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			description: "Write PLAN APPROVED evidence to bd and atomically exit plan mode/update workflow-state only after the comment succeeds.",
 			parameters: WorkflowPlanApprovedParams,
 			async execute(_id: string, params: { beadId: string; planEvidence: string; approvedBy?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
-				return approvePlanTool(params, ctx);
+				// In-turn tool call: Fast Path skip uses triggerTurn false (display only).
+				return approvePlanTool({ ...params, triggerTurn: false }, ctx);
 			},
 		});
 
