@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi `/plan-autopilot` hop messages to Maxim in human Russian** (`beads-task-issue-tracker-6wwm`): runtime hop no longer dumps English machine status (`complete_visible_dispatch status=…`) or sliced SUPERVISOR ARTIFACT / matrix text. Each hop return sends one Russian status (what happened, ping already consumed, named next step, Maxim action) with an optional technical `Bead:` / `taskId:` footer only. `result-only` stays non-final (not «работа закончена»); close-blocked and post-close pane failures stay single STOP without matrix body. Contract in `.pi/extensions/plan-mode/README.md` (Hop UX).
+
 - **Pi `bd create` file-based description guard** (`beads-task-issue-tracker-17qi`): `beads-policy` `enforceBeadEnrichment` / locale checks now accept preferred `--description "$(cat /absolute/path)"` outside the git worktree (guard reads file bytes for required `###` sections), keep `$VAR`, multi-command/relative/repo-path cat, and missing files blocked, and document file-based as preferred with heredoc as legacy in `create-bead` / `AGENTS.md`. Supervisor commit recovery also accepts `DISPATCH` + ownership when bd comments insert a blank line after the DISPATCH header so approved supervisor commits are not blocked.
 
 - **Pi cmux-sidebar accepted/landing MODE_VISUAL** (`beads-task-issue-tracker-mgld`): map `sessionMode` `accepted` and `landing` in `MODE_VISUAL` so post-review HA/landing no longer leave the shared cmux sidebar stuck on the yellow `inreview` eye pill. `accepted` uses checkmark green at progress `0.95`; `landing` uses blue up-arrow at `0.98`. Ownership-gated clear (`hm0f`) unchanged. Focused vitest coverage under `tests/extensions/cmux-sidebar.test.ts`.
