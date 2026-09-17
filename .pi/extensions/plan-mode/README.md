@@ -179,14 +179,27 @@ Autonomous planning agents should use the typed `workflow_plan_review` tool inst
 
 Cap and cycle counter live **only** in the typed `workflow_plan_review` tool (`planReviewTool`). The `/plan-auto` / `/plan-autopilot` `runReviewGateForPlan` path is intentionally unchanged. Ready-UI / `/plan-review` stay uncapped and do **not** increment this counter.
 
+Two thresholds:
+
 - Auto max **2** reviewer spawns per plan-mode session (`MAX_PLAN_REVIEW_CYCLES`) — default against infinite nits (eb4k).
-- Explicit `extraCycle: true` allows spawns 3–4 on the current `draftPlan` when Maxim asks or residual important/critical remain on a high-risk plan (not Fast Path nits).
-- Absolute total ceiling **4** (`MAX_PLAN_REVIEW_TOTAL_SPAWNS`); beyond that even `extraCycle` skips spawn + returns cache. Reset only plan mode off→on.
+- Orchestrator extra ceiling **4** (`MAX_PLAN_REVIEW_TOTAL_SPAWNS`) — blocks agent self-loop of `extraCycle` without Maxim.
+
+Skip / spawn matrix:
+
+- Empty `draftPlan` → error, counter stays 0 (including with `extraCycle` / `requestedBy`).
+- `skipForAuto` = auto cap reached && !`extraCycle`.
+- `skipForTotal` = total cap reached && !(`extraCycle` && `requestedBy === "maxim"`).
+- Otherwise spawn and increment (including cycle 5+ for Maxim).
+
+`requestedBy` is optional enum `maxim` | `orchestrator`. Default fail-closed to `orchestrator` when omitted. `extraCycle` without label = orchestrator.
+
+- Cycles **3–4**: `extraCycle: true`, default `requestedBy=orchestrator`, when Maxim asks **or** residual important/critical remain on a high-risk plan (not Fast Path nits). Label `3/4 (extra)` / `4/4 (extra)`.
+- Cycle **5+**: only `{ draftPlan, extraCycle: true, requestedBy: "maxim" }` when Maxim explicitly asked **this turn**. Residual-OR does **not** justify cycle 5+. Label `5 (extra, maxim)` (no `/4` denominator).
+- Orchestrator extra skip only when `cycleCount >= 4`; cycles 3–4 still spawn for orch extra.
 - Extra path never returns `CONTINUE` (always `STOP_SHOW_USER` or `HARD_BLOCK`).
-- Cycle count, last `stopAdvice`, and last results are persisted/restored with plan-mode state.
+- Cycle count, last `stopAdvice`, and last results are persisted/restored with plan-mode state. `lastRequestedBy` is details-only, not a bypass.
 - Reset only when plan mode transitions off→on (new `/plan` / first enable). Repeated `workflow_plan_mode` while already enabled does **not** reset the counter.
-- Empty `draftPlan` does not increment the counter.
-- Slot is reserved (increment + persist) **before** `await` spawn; a failed spawn (including failed extra) still consumes the slot.
+- Slot is reserved (increment + persist) **before** `await` spawn; a failed spawn (including failed maxim extra) still consumes the slot.
 - Without `extraCycle`, call 3+ with `cycleCount >= 2` skips spawn and returns cached findings with `STOP_SHOW_USER`.
 - After auto cap, still call `plan_mode_complete` so ready-UI button exists.
 
@@ -197,11 +210,11 @@ Exclusive stop table (`planReviewStopAdvice`; risk is never an argument):
 | `!gateOk` | `HARD_BLOCK` |
 | `gateOk` && no important/critical | `STOP_SHOW_USER` |
 | `gateOk` && important/critical && `cycle < 2` | `CONTINUE` |
-| `gateOk` && `cycle >= 2` (includes extra cycles 3–4) | `STOP_SHOW_USER` |
+| `gateOk` && `cycle >= 2` (includes extra cycles 3–4 and Maxim 5+) | `STOP_SHOW_USER` |
 
-Tool `details` always include `{ cycle, risk, stopAdvice }` and may include `extraCycle` / `skippedSpawn`. `classifyPlanReviewRisk` is telemetry only (`low` iff `FAST_PATH_RATIONALE:` and no denylisted `.pi/extensions|skills|agents|rules` / `scripts/` and not both `app/` + `src-tauri`; else `high`). Risk does not change advice and does not auto-approve.
+Tool `details` always include `{ cycle, risk, stopAdvice }` and may include `extraCycle` / `requestedBy` / `skippedSpawn`. `classifyPlanReviewRisk` is telemetry only (`low` iff `FAST_PATH_RATIONALE:` and no denylisted `.pi/extensions|skills|agents|rules` / `scripts/` and not both `app/` + `src-tauri`; else `high`). Risk does not change advice and does not auto-approve.
 
-Cycle-aware plan-mode injection is exclusive: either `MUST call workflow_plan_review` (below auto stop) or the stop prompt (after auto cap / `STOP_SHOW_USER`), never both. After auto stop the prompt documents the `extraCycle` path — it does **not** claim a third cycle is physically impossible. After total ceiling 4, even `extraCycle` is denied until plan mode off→on.
+Cycle-aware plan-mode injection is exclusive: either `MUST call workflow_plan_review` (below auto stop) or the stop prompt (after auto cap / `STOP_SHOW_USER`), never both. After auto stop the prompt documents the `extraCycle` path — it does **not** claim a third cycle is physically impossible. After orchestrator ceiling 4 the prompt forbids orch extra and allows only `extraCycle: true, requestedBy: "maxim"` when Maxim asked this turn — it does **not** say a fifth cycle is impossible for the human.
 
 ## Responsibility split
 

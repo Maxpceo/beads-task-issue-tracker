@@ -50,7 +50,7 @@ export type PlanReviewStopAdvice = "HARD_BLOCK" | "CONTINUE" | "STOP_SHOW_USER";
 /** Auto CONTINUE cap for workflow_plan_review (eb4k nits loop). */
 export const MAX_PLAN_REVIEW_CYCLES = 2;
 
-/** Absolute spawn ceiling including explicit extraCycle (Maxim/orchestrator). Reset only plan mode off→on. */
+/** Orchestrator extra ceiling (cycles 3–4 via extraCycle). Maxim bypass past 4 lives in plan-mode (extraCycle+requestedBy="maxim"). Reset only plan mode off→on. */
 export const MAX_PLAN_REVIEW_TOTAL_SPAWNS = 4;
 
 const FAST_PATH_STICKER = /FAST_PATH_RATIONALE\s*:/i;
@@ -79,7 +79,7 @@ export function classifyPlanReviewRisk(draftPlan: string): PlanReviewRisk {
  * - gateOk && !hasImportantOrCritical → STOP_SHOW_USER (cycle >= 1 after spawn)
  * - gateOk && hasImportantOrCritical && cycle < MAX_PLAN_REVIEW_CYCLES → CONTINUE
  * - gateOk && cycle >= MAX_PLAN_REVIEW_CYCLES → STOP_SHOW_USER
- * Extra spawns (cycles 3–4 via extraCycle) never CONTINUE: cycle >= 2 already yields STOP_SHOW_USER.
+ * Extra spawns (orch cycles 3–4 via extraCycle; Maxim cycle 5+ via plan-mode requestedBy) never CONTINUE: cycle >= 2 already yields STOP_SHOW_USER.
  */
 export function planReviewStopAdvice(input: {
 	cycle: number;
