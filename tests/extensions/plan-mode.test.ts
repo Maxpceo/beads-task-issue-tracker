@@ -36,6 +36,7 @@ const mandatoryWorkflowTools = [
   'dispatch_docs_agent',
   'review_bead',
   ...hopWorkflowTools,
+  'spawn_task_workspace',
 ]
 const expectedNormalTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'subagent', 'plan_subagent', ...mandatoryWorkflowTools]
 let mockPlanReviewGateOk = true
@@ -657,7 +658,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(activeTools.at(-1)).toEqual(expectedPlanTools)
     expect(activeTools.at(-1)).toContain('plan_subagent')
     expect(activeTools.at(-1)).not.toContain('subagent')
-    for (const mutatingWorkflowTool of ['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead', 'workflow_submit_for_review', 'workflow_complete', ...hopWorkflowTools]) {
+    for (const mutatingWorkflowTool of ['dispatch_supervisor', 'dispatch_reviewer', 'dispatch_docs_agent', 'review_bead', 'workflow_submit_for_review', 'workflow_complete', 'spawn_task_workspace', ...hopWorkflowTools]) {
       expect(activeTools.at(-1)).not.toContain(mutatingWorkflowTool)
     }
 

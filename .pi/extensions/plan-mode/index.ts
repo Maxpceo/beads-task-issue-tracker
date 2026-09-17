@@ -79,6 +79,7 @@ const MANDATORY_WORKFLOW_TOOLS = [
 	"complete_visible_dispatch",
 	"followup_visible_dispatch",
 	"close_visible_dispatch",
+	"spawn_task_workspace",
 ];
 
 const WorkflowPlanModeParams = {
@@ -1987,7 +1988,7 @@ You are in plan mode - a read-only exploration mode for safe code analysis.
 Restrictions:
 - You can only use: read, bash, grep, find, ls, questionnaire, plan_mode_complete, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review, plan_subagent
 - You MAY use plan_subagent only for read-only planning agents (detective/architect); generic subagent and implementation supervisors remain unavailable in plan mode.
-- You CANNOT use: edit, write, subagent, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete (file/workflow mutations are disabled until approval)
+- You CANNOT use: edit, write, subagent, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete, spawn_task_workspace (file/workflow mutations are disabled until approval)
 - After approved/cancelled plan mode, Pi restores the pre-plan active tool surface plus registered mandatory workflow tools.
 - Bash is restricted to an allowlist of read-only commands
 - bd read-only commands are allowed: bd show, bd comments, bd list, bd ready, selected bd dep/dolt status commands

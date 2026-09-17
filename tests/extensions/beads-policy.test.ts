@@ -2483,6 +2483,40 @@ describe('Pi bd-first active bead policy', () => {
     expect(decision?.reason).toContain('unknown bd status custom_review_hold')
   })
 
+  it('allows spawn_task_workspace for another open bead while parent is non-terminal; claim/dispatch stay blocked', () => {
+    const parentState = {
+      activeBead: 'bead-a',
+      state: 'implementing' as const,
+      bdStatus: 'in_progress',
+      planMode: 'off' as const,
+    }
+    expect(evaluateToolPolicy('spawn_task_workspace', { beadId: 'bead-b', title: 'Два слова' }, parentState)).toBeUndefined()
+
+    const claim = evaluateToolPolicy('workflow_claim', { beadId: 'bead-b' }, parentState)
+    expect(claim?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(claim?.block).toBe(true)
+
+    const dispatch = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-b' }, parentState)
+    expect(dispatch?.policy).toBe('enforceActiveBeadLifecycle')
+    expect(dispatch?.block).toBe(true)
+
+    const bashClaim = evaluateBashPolicy('bd update bead-b --claim --json', parentState)
+    expect(bashClaim?.policy).toBe('enforceActiveBeadLifecycle')
+  })
+
+  it('blocks spawn_task_workspace in plan mode strict/auto', () => {
+    for (const planMode of ['strict', 'auto'] as const) {
+      const decision = evaluateToolPolicy(
+        'spawn_task_workspace',
+        { beadId: 'bead-b', title: 'Два слова' },
+        { activeBead: 'bead-a', state: 'planning', bdStatus: 'in_progress', planMode },
+      )
+      expect(decision?.policy).toBe('blockMutationsInPlanning')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toMatch(/spawn_task_workspace|plan mode/i)
+    }
+  })
+
   it('redirects active inreview bead to dual-token visible review next action', () => {
     const reason = activeBeadLifecycleReason('bead-b', 'start/claim another bead', {
       activeBead: 'bead-a',

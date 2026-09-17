@@ -127,7 +127,19 @@ Pi sessions must not use git `user.name` / `Maxpceo` / bare `BEADS_ACTOR` as mer
 - Always pass a quoted literal `--holder 'pi:…'` on `bd merge-slot acquire` and `release` (see `land` / `merge-to-main` / `release` skills). Policy blocks bare acquire/release and foreign/Maxpceo holders.
 - Truth table for push evidence: own `pi:<my SESSION_UNIQ>:` allow; footer-only `mergeSlotHeld` allow **iff** bd holder empty/unreadable; foreign or Maxpceo holder deny even if footer says held.
 - Do not auto-release an occupied Maxpceo/`in_progress` foreign holder — stop and report. Git commit author remains unchanged.
-Не start, claim, implement или dispatch unrelated work, пока current-session active bead имеет non-terminal bd status; terminal bd statuses — `closed`, `blocked` или explicit `deferred`/handoff с recorded reason. Если bd status — `inreview`, next action — `dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)` (видимый code-reviewer); `review_bead` — только headless-fallback, а не другая задача. Если active local workflow-state stale, foreign или ambiguous, вызови `workflow_reset` или попроси explicit takeover confirmation. Если reset выполнен, чтобы выполнить explicit user request переключиться с open/terminal/stale bead на named next bead, сразу продолжай claim/planning этого next bead в том же turn. `land` — explicit save/push checkpoint, а `merge-to-main` — explicit session-final PR/merge workflow; ни один из них не является automatic per-task stage.
+Не start, claim, implement или dispatch unrelated work в **этой** сессии, пока current-session active bead имеет non-terminal bd status (исключение: `spawn_task_workspace` открывает **другую** Pi-сессию в новом cmux workspace без claim target родителем); terminal bd statuses — `closed`, `blocked` или explicit `deferred`/handoff с recorded reason. Если bd status — `inreview`, next action — `dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)` (видимый code-reviewer); `review_bead` — только headless-fallback, а не другая задача. Если active local workflow-state stale, foreign или ambiguous, вызови `workflow_reset` или попроси explicit takeover confirmation. Если reset выполнен, чтобы выполнить explicit user request переключиться с open/terminal/stale bead на named next bead, сразу продолжай claim/planning этого next bead в том же turn. `land` — explicit save/push checkpoint, а `merge-to-main` — explicit session-final PR/merge workflow; ни один из них не является automatic per-task stage.
+
+### Параллельная задача в отдельном cmux workspace
+
+Инвариант: **один cmux workspace = одна Pi-сессия = один bead**. Параллелить независимые open-bead не панелями супервизора в том же табе, а typed tool `spawn_task_workspace`.
+
+- Вызов: `spawn_task_workspace({ beadId, title })`. `title` — ровно 2–3 слова сути **без** suffix и без полного id; tool сам делает имя workspace `{title} · {suffix}`.
+- **Родитель не claim'ит target** и не меняет свой `workflow-state.activeBead`. Child — новая интерактивная Pi с `--cwd` на **main checkout** (не worktree родителя); child сам идёт по `claim-bead` и создаёт канонический worktree.
+- Внутренняя вкладка терминала: `оркестратор` через `tab-action rename --surface` (не `pi --name` с кириллицей).
+- Цвет строки сайдбара: `workspace-action set-color`, палитра Indigo→Teal→Orange→Purple→Green→Amber, не цвет родителя; явный `color` опционален; fail цвета = warning, spawn жив.
+- Policy: spawn чужого **open** bead разрешён при живом parent и `planMode=off`; `workflow_claim` / `dispatch_supervisor` чужого по-прежнему BLOCKED. В plan mode spawn BLOCKED.
+- `land` / `merge-to-main` по-прежнему через session-scoped merge-slot **по одному** push. Параллельная реализация ≠ параллельный merge.
+- Перед spawn оркестратор должен убедиться, что write-zone target **disjoint** с текущим bead; при сомнении спросить Максима. Skill: `.pi/skills/spawn-task-workspace/SKILL.md`.
 
 ## Cmux layout and panel names
 

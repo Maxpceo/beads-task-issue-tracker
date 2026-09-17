@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Pi parallel task workspace spawn** (`beads-task-issue-tracker-hy3z`): typed tool `spawn_task_workspace({ beadId, title })` opens an independent open bead in a new cmux workspace (name `{title} · {suffix}`, inner tab `оркестратор`, sidebar color rotation Indigo→Teal→Orange→Purple→Green→Amber) with a fresh Pi on the main checkout. Parent does not claim the target; child runs `claim-bead` itself. Policy allows spawn of another open bead while the parent is non-terminal and `planMode=off`, while `workflow_claim` / `dispatch_*` of another bead stay blocked. Skill `.pi/skills/spawn-task-workspace/SKILL.md`; contract in `AGENTS.md`.
+
 - **Pi headless agent dashboard auto-show** (`beads-task-issue-tracker-ya7e`): running/queued headless agents (typed `dispatch_* transport=headless`, plan reviewers, and subagent tools) auto-publish lifecycle cards into the orchestrator TUI without `/agents-dashboard`. A shared dashboard widget host installs the grid on first active card (`origin=auto`); terminal cards stay visible until `turn_end`, then auto-hide only for `origin=auto`. Explicit `/agents-dashboard` remains `origin=user` and is never auto-cleared. Visible cmux spawn stays panel-only (no dashboard card path).
 
 ### Changed

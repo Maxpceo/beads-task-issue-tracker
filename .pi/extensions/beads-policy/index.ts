@@ -3324,8 +3324,24 @@ export function evaluateBashPolicy(
 export function evaluateToolPolicy(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot = {}): PolicyDecision | undefined {
 	const worktreeDecision = requiredToolCwdDecision(toolName, input, workflowState);
 	if (worktreeDecision) return worktreeDecision;
+	// Parallel task workspace: allow spawning another open bead while parent is non-terminal.
+	// Still blocked in plan mode. Own-bead / busy / lock checks live inside the tool.
+	// workflow_claim / dispatch_supervisor of another bead stay lifecycle-blocked.
+	if (matchesToolName(toolName, "spawn_task_workspace")) {
+		const isPlanning = workflowState.planMode === "strict" || workflowState.planMode === "auto";
+		if (isPlanning) {
+			return {
+				policy: "blockMutationsInPlanning",
+				block: true,
+				reason:
+					"Заблокировано: spawn_task_workspace недоступен в plan mode. Сначала workflow_plan_mode(mode=off) / approve, затем spawn параллельной задачи. Не claim'и target из родителя.",
+			};
+		}
+		return undefined;
+	}
 	if (matchesToolName(toolName, "dispatch_supervisor")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "dispatch supervisor", workflowState);
 	if (matchesToolName(toolName, "review_bead")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "review", workflowState);
+	if (matchesToolName(toolName, "workflow_claim")) return activeBeadLifecycleDecision(String(input.beadId ?? ""), "start/claim another bead", workflowState);
 	if (matchesToolName(toolName, "workflow_complete") && workflowState.activeBead) {
 		const targetState = String(input.state ?? "");
 		const allowEscapeHatch = targetState === "blocked" || targetState === "deferred";

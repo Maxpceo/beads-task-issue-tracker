@@ -430,3 +430,310 @@ export function appendPanesEnv(ns: string, taskId: string, pane: string, orchest
 	lines.push(`task-${taskId}=${pane}`);
 	fs.appendFileSync(file, `${lines.join("\n")}\n`);
 }
+
+/** Sidebar row colors for parallel task workspaces (rotate; never reuse parent). */
+export const TASK_WORKSPACE_COLOR_PALETTE = ["Indigo", "Teal", "Orange", "Purple", "Green", "Amber"] as const;
+
+export type TaskWorkspaceColor = (typeof TASK_WORKSPACE_COLOR_PALETTE)[number];
+
+/** Known named-color → hex map for parent exclusion when cmux returns custom_color hex. */
+export const TASK_WORKSPACE_COLOR_HEX: Record<TaskWorkspaceColor, string> = {
+	Indigo: "#283593",
+	Teal: "#00796B",
+	Orange: "#EF6C00",
+	Purple: "#7B1FA2",
+	Green: "#2E7D32",
+	Amber: "#FF8F00",
+};
+
+/** SPAWN_LOCK comment marker on the target bead. */
+export const SPAWN_LOCK_MARKER = "SPAWN_LOCK";
+
+/** Default stale window for pending SPAWN_LOCK before another spawn may clear it. */
+export const SPAWN_LOCK_STALE_MS = 10 * 60 * 1000;
+
+export interface SpawnLockInfo {
+	beadId: string;
+	createdAt?: string;
+	parentWorkspace?: string;
+	status?: string;
+	raw: string;
+}
+
+/** Count whitespace-separated words in a title (Unicode-aware). */
+export function countTitleWords(title: string): number {
+	return (title ?? "")
+		.trim()
+		.split(/\s+/u)
+		.filter(Boolean).length;
+}
+
+/** Title must be exactly 2–3 words of essence (no bead id / suffix). */
+export function validateTaskWorkspaceTitle(title: string): string | undefined {
+	const trimmed = (title ?? "").trim();
+	if (!trimmed) return "title обязателен: ровно 2–3 слова сути без suffix и без bead id";
+	if (/·/.test(trimmed)) {
+		return "title не должен содержать · suffix — tool добавит его сам";
+	}
+	const words = countTitleWords(trimmed);
+	if (words < 2 || words > 3) {
+		return `title должен быть ровно 2–3 слова (получено ${words}): «${trimmed}»`;
+	}
+	return undefined;
+}
+
+/** Workspace display name: `{title} · {suffix}`. */
+export function buildTaskWorkspaceName(title: string, beadId: string): string {
+	const suffix = beadSuffixFromId(beadId);
+	const base = (title ?? "").trim();
+	if (!suffix) return base;
+	if (base.endsWith(` · ${suffix}`) || base.endsWith(`· ${suffix}`)) return base;
+	return `${base} · ${suffix}`;
+}
+
+/** Child Pi start command: ASCII flags only; Russian text only as the message argument. Never `pi --name`. */
+export function buildTaskWorkspaceChildCommand(beadId: string, message?: string): string {
+	const id = (beadId ?? "").trim();
+	const prompt =
+		(message ?? "").trim() ||
+		`Возьми ${id}. Это параллельная Pi-сессия в отдельном cmux workspace: сделай claim-bead сам, создай канонический worktree, не трогай bead родителя.`;
+	return `pi --approve -- ${posixQuote(prompt)}`;
+}
+
+export interface NewWorkspaceArgvInput {
+	name: string;
+	cwd: string;
+	command: string;
+	description?: string;
+	focus?: boolean;
+	groupId?: string;
+	groupPlacement?: "afterCurrent" | "top" | "end";
+	groupReference?: string;
+}
+
+/** Exact argv for `cmux new-workspace` / `cmux workspace create`. */
+export function buildNewWorkspaceArgv(input: NewWorkspaceArgvInput): string[] {
+	const args = ["new-workspace", "--focus", input.focus === true ? "true" : "false"];
+	if (input.name) args.push("--name", input.name);
+	if (input.description) args.push("--description", input.description);
+	if (input.cwd) args.push("--cwd", input.cwd);
+	if (input.command) args.push("--command", input.command);
+	const groupId = (input.groupId ?? "").trim();
+	if (groupId) {
+		args.push("--group", groupId);
+		args.push("--group-placement", input.groupPlacement ?? "afterCurrent");
+		const ref = (input.groupReference ?? "").trim();
+		if (ref) args.push("--group-reference", ref);
+	}
+	return args;
+}
+
+export function buildReorderWorkspaceArgv(workspace: string, afterWorkspace: string): string[] {
+	return ["reorder-workspace", "--workspace", workspace, "--after", afterWorkspace];
+}
+
+export function buildSetWorkspaceColorArgv(workspace: string, color: string): string[] {
+	return ["workspace-action", "--workspace", workspace, "--action", "set-color", "--color", color];
+}
+
+export function buildCloseWorkspaceArgv(workspace: string): string[] {
+	return ["close-workspace", "--workspace", workspace];
+}
+
+export function buildListPaneSurfacesArgv(workspace: string): string[] {
+	return ["list-pane-surfaces", "--workspace", workspace, "--json"];
+}
+
+export function buildListWorkspacesArgv(): string[] {
+	return ["workspace", "list", "--json"];
+}
+
+/** Normalize color token (name or #hex) for comparison. */
+export function normalizeColorToken(color: string | null | undefined): string {
+	const raw = (color ?? "").trim();
+	if (!raw) return "";
+	if (raw.startsWith("#")) return raw.toUpperCase();
+	const named = TASK_WORKSPACE_COLOR_PALETTE.find((c) => c.toLowerCase() === raw.toLowerCase());
+	if (named) return named;
+	return raw;
+}
+
+function colorTokenEquals(a: string, b: string): boolean {
+	const left = normalizeColorToken(a);
+	const right = normalizeColorToken(b);
+	if (!left || !right) return false;
+	if (left === right) return true;
+	const leftHex = left.startsWith("#")
+		? left
+		: TASK_WORKSPACE_COLOR_HEX[left as TaskWorkspaceColor]?.toUpperCase();
+	const rightHex = right.startsWith("#")
+		? right
+		: TASK_WORKSPACE_COLOR_HEX[right as TaskWorkspaceColor]?.toUpperCase();
+	return Boolean(leftHex && rightHex && leftHex === rightHex);
+}
+
+/**
+ * Pick sidebar row color: explicit wins; otherwise rotate palette skipping parent color.
+ * Sibling colors are preferred-avoided but not hard-required when palette exhausted.
+ */
+export function pickTaskWorkspaceColor(input: {
+	explicit?: string;
+	parentColor?: string | null;
+	siblingColors?: Array<string | null | undefined>;
+}): string {
+	const explicit = (input.explicit ?? "").trim();
+	if (explicit) return explicit;
+	const parent = input.parentColor ?? null;
+	const siblings = (input.siblingColors ?? []).map((c) => normalizeColorToken(c ?? "")).filter(Boolean);
+	const freeOfParent = TASK_WORKSPACE_COLOR_PALETTE.filter((c) => !colorTokenEquals(c, parent ?? ""));
+	const pool = freeOfParent.length > 0 ? freeOfParent : [...TASK_WORKSPACE_COLOR_PALETTE];
+	const freeOfSiblings = pool.filter((c) => !siblings.some((s) => colorTokenEquals(c, s)));
+	if (freeOfSiblings.length > 0) return freeOfSiblings[0]!;
+	return pool[0]!;
+}
+
+/** Main checkout path from absolute git-common-dir (not a linked worktree path). */
+export function mainCheckoutFromGitCommonDir(commonDir: string): string {
+	const normalized = path.resolve((commonDir ?? "").replace(/\/$/, ""));
+	if (!normalized) return "";
+	if (path.basename(normalized) === ".git") return path.dirname(normalized);
+	// Bare or nonstandard common dir: treat as the checkout itself.
+	return normalized;
+}
+
+/** Parse `OK workspace:N` / JSON ref from new-workspace stdout. */
+export function parseNewWorkspaceRef(stdout: string): string | undefined {
+	const text = stdout ?? "";
+	const okMatch = text.match(/\bworkspace:\d+\b/);
+	if (okMatch?.[0]) return okMatch[0];
+	try {
+		const parsed = JSON.parse(text) as { ref?: string; workspace_ref?: string; workspace?: string };
+		const ref = parsed.ref || parsed.workspace_ref || parsed.workspace;
+		if (typeof ref === "string" && ref.trim()) return ref.trim();
+	} catch {
+		/* plain text */
+	}
+	return undefined;
+}
+
+/** First terminal surface ref inside a list-pane-surfaces JSON payload. */
+export function parseFirstTerminalSurfaceRef(stdout: string): string | undefined {
+	try {
+		const parsed = JSON.parse(stdout || "{}") as {
+			surfaces?: Array<{ ref?: string; type?: string; selected?: boolean }>;
+		};
+		const surfaces = Array.isArray(parsed.surfaces) ? parsed.surfaces : [];
+		const selected = surfaces.find((s) => s.selected && s.ref);
+		if (selected?.ref) return String(selected.ref).trim();
+		const terminal = surfaces.find((s) => s.ref && (!s.type || s.type === "terminal"));
+		if (terminal?.ref) return String(terminal.ref).trim();
+		const any = surfaces.find((s) => s.ref);
+		return any?.ref ? String(any.ref).trim() : undefined;
+	} catch {
+		const match = `${stdout || ""}`.match(/surface:\S+/);
+		return match?.[0];
+	}
+}
+
+/**
+ * Extract optional group id from a workspace list JSON row.
+ * Only returns a value when a group-related field is present — never invents groups.
+ */
+export function extractWorkspaceGroupId(workspace: Record<string, unknown> | null | undefined): string | undefined {
+	if (!workspace || typeof workspace !== "object") return undefined;
+	const keys = ["group_id", "groupId", "group_ref", "groupRef", "group"];
+	for (const key of keys) {
+		const value = workspace[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+		if (value && typeof value === "object") {
+			const obj = value as Record<string, unknown>;
+			for (const nested of ["ref", "id", "group_ref", "group_id"]) {
+				const nestedValue = obj[nested];
+				if (typeof nestedValue === "string" && nestedValue.trim()) return nestedValue.trim();
+			}
+		}
+	}
+	return undefined;
+}
+
+export function findWorkspaceRow(
+	listStdout: string,
+	workspaceRef: string,
+): Record<string, unknown> | undefined {
+	try {
+		const parsed = JSON.parse(listStdout || "{}") as { workspaces?: Array<Record<string, unknown>> };
+		const rows = Array.isArray(parsed.workspaces) ? parsed.workspaces : [];
+		return rows.find((row) => String(row.ref || row.workspace_ref || "") === workspaceRef);
+	} catch {
+		return undefined;
+	}
+}
+
+export function buildSpawnLockComment(input: {
+	beadId: string;
+	parentWorkspace: string;
+	parentBead?: string;
+	createdAt?: string;
+	status?: string;
+}): string {
+	const createdAt = input.createdAt ?? new Date().toISOString();
+	const status = input.status ?? "pending";
+	const lines = [
+		`${SPAWN_LOCK_MARKER} ${input.beadId}`,
+		`createdAt: ${createdAt}`,
+		`parentWorkspace: ${input.parentWorkspace}`,
+		`status: ${status}`,
+	];
+	if (input.parentBead) lines.push(`parentBead: ${input.parentBead}`);
+	return lines.join("\n");
+}
+
+export function parseSpawnLockComment(text: string): SpawnLockInfo | undefined {
+	const raw = text ?? "";
+	if (!raw.includes(SPAWN_LOCK_MARKER)) return undefined;
+	const beadMatch = raw.match(new RegExp(`${SPAWN_LOCK_MARKER}\\s+(\\S+)`));
+	const beadId = beadMatch?.[1]?.trim() ?? "";
+	if (!beadId) return undefined;
+	const createdAt = raw.match(/createdAt:\s*(\S+)/u)?.[1];
+	const parentWorkspace = raw.match(/parentWorkspace:\s*(\S+)/u)?.[1];
+	const status = raw.match(/status:\s*(\S+)/u)?.[1];
+	return { beadId, createdAt, parentWorkspace, status, raw };
+}
+
+/** True when a non-stale SPAWN_LOCK still occupies the target. */
+export function isSpawnLockBlocking(
+	comments: Array<{ text?: string; created_at?: string }>,
+	beadId: string,
+	nowMs: number = Date.now(),
+	staleMs: number = SPAWN_LOCK_STALE_MS,
+): { blocked: boolean; lock?: SpawnLockInfo; stale?: boolean } {
+	const locks = comments
+		.map((c) => parseSpawnLockComment(c.text ?? ""))
+		.filter((lock): lock is SpawnLockInfo => Boolean(lock && lock.beadId === beadId));
+	if (locks.length === 0) return { blocked: false };
+	const latest = locks[locks.length - 1]!;
+	if (latest.status === "released" || latest.status === "failed") return { blocked: false, lock: latest };
+	if (latest.status === "spawned") {
+		// Live spawn lock: block until child claim moves bead off open (tool preflight also checks status).
+		return { blocked: true, lock: latest };
+	}
+	const createdMs = latest.createdAt ? Date.parse(latest.createdAt) : Number.NaN;
+	const age = Number.isFinite(createdMs) ? nowMs - createdMs : 0;
+	if (age > staleMs) return { blocked: false, lock: latest, stale: true };
+	return { blocked: true, lock: latest };
+}
+
+export function buildSpawnLockReleaseComment(beadId: string, reason: string): string {
+	return `${SPAWN_LOCK_MARKER} ${beadId}\nstatus: released\nreason: ${reason}\nreleasedAt: ${new Date().toISOString()}`;
+}
+
+export function buildSpawnLockSpawnedComment(beadId: string, workspaceRef: string, surface?: string): string {
+	const lines = [
+		`${SPAWN_LOCK_MARKER} ${beadId}`,
+		`status: spawned`,
+		`workspace: ${workspaceRef}`,
+		`spawnedAt: ${new Date().toISOString()}`,
+	];
+	if (surface) lines.push(`surface: ${surface}`);
+	return lines.join("\n");
+}
