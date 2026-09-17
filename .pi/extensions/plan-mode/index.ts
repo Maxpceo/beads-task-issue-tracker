@@ -1066,8 +1066,47 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return ctx.mode === "tui" && typeof ctx.ui?.custom === "function";
 	}
 
-	async function promptReadyAction(ctx: ExtensionContext, _planText: string): Promise<ReadyAction | null> {
+	/** Put a document in the human transcript without waking a model turn (51l5). */
+	function showVisibleTranscript(customType: string, content: string): void {
+		try {
+			pi.sendMessage(
+				{
+					customType,
+					content,
+					display: true,
+				},
+				{ triggerTurn: false },
+			);
+		} catch {
+			// sendMessage failure must not block select / questionnaire
+		}
+	}
+
+	function formatQuestionnaireTranscript(
+		questions: Array<{ label: string; prompt: string; options: Array<{ label: string }>; allowOther: boolean }>,
+	): string {
+		return questions
+			.map((question, index) => {
+				const header = `### ${question.label || `Q${index + 1}`}`;
+				const options = question.options
+					.map((option, optionIndex) => `  ${optionIndex + 1}. ${option.label}`)
+					.join("\n");
+				const other = question.allowOther
+					? `\n  ${question.options.length + 1}. Другая…`
+					: "";
+				return `${header}\n${question.prompt}\n${options}${other}`;
+			})
+			.join("\n\n");
+	}
+
+	async function promptReadyAction(ctx: ExtensionContext, planText: string): Promise<ReadyAction | null> {
 		if (!ctx.hasUI) return null;
+
+		// Full plan in the human transcript before the bare select title (f3zr).
+		// Re-sends on clean re-show and leftover agent_settled — intentional.
+		if (planText.trim()) {
+			showVisibleTranscript("plan-ready-document", planText);
+		}
 
 		// Never ctx.ui.custom here: live TUI abort on ready-UI (gauq/m6ho) even after
 		// agent_settled + truncateToWidth. Built-in select is the path that stays alive.
@@ -1217,6 +1256,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					} catch {
 						// swallow
 					}
+					// Toast alone is not enough for Maxim — put a short clean note in the transcript.
+					showVisibleTranscript("plan-review-clean", cleanText);
 					persistState();
 					lastOutcome = { kind: "clean-reshow" };
 					// pending kept; re-show ready buttons so Maxim can execute immediately
@@ -1264,6 +1305,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				details: { questions, answers: [], cancelled: true },
 			};
 		}
+
+		// Prompt + options in the human transcript before the blocking widget (f3zr).
+		showVisibleTranscript("plan-questionnaire", formatQuestionnaireTranscript(questions));
 
 		if (canUseCustomUi(ctx)) {
 			const result = await ctx.ui.custom<QuestionnaireUiResult>(createQuestionUiFactory(questions));
@@ -1379,9 +1423,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (ctx.hasUI) {
 					const outcome = await runStrictReadyUiLoopSafe(ctx);
 					if (outcome.kind === "findings") {
-						// Deliver critique into this turn's tool result so the model can adjudicate now.
-						// Do NOT sendMessage(triggerTurn) here — tool execute has not returned yet (51l5).
-						return toolText(formatReadyCritiqueFindingsText(outcome.results), {
+						const findingsText = formatReadyCritiqueFindingsText(outcome.results);
+						// Human transcript + model tool result. triggerTurn false during execute (51l5).
+						showVisibleTranscript("plan-review-findings", findingsText);
+						return toolText(findingsText, {
 							ok: false,
 							pending: false,
 							findings: true,
