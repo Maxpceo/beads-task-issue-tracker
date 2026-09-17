@@ -7,25 +7,35 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import beadsDispatchExtension, {
   beadSuffixFromId,
   buildCmuxRenameArgv,
+  buildNewWorkspaceArgv,
+  buildSetWorkspaceColorArgv,
+  buildTaskWorkspaceChildCommand,
+  buildTaskWorkspaceName,
   buildVisibleChildArgv,
   buildVisibleChildSpawnPayload,
   closeVisibleDispatch,
   completeVisibleDispatch,
   ensureStickyTabTitles,
+  extractWorkspaceGroupId,
   findRegistryByTaskId,
   followupVisibleDispatch,
   followupPayloadLooksLikeSpawnArgv,
   findLiveSupervisorSpawnsForWorktree,
+  isSpawnLockBlocking,
   loadRegistry,
+  mainCheckoutFromGitCommonDir,
   nsDir,
   orchRoot,
   ORCHESTRATOR_TAB_TITLE,
   persistIsolationFiles,
+  pickTaskWorkspaceColor,
   posixQuote,
   pruneRegistry,
   renameOnce,
   resolveVisibleSplitAnchor,
+  spawnTaskWorkspace,
   STICKY_TAB_TITLE_DELAYS_MS,
+  validateTaskWorkspaceTitle,
   visibleChildTabTitle,
   visibleCmuxSpawnFailReason,
   requestSupervisorDispatch,
@@ -304,9 +314,9 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(result.details.transport).toBe('cmux')
     expect(result.details.pane).toBe('')
     expect(result.details.endCommit).toBeUndefined()
-    // Project agent-models.json maps test-supervisor → standard → xai/grok-4.5
-    expect(result.details.model).toBe('xai/grok-4.5')
-    expect(result.content[0].text).toContain('model=xai/grok-4.5')
+    // Project agent-models.json maps test-supervisor → standard → xai/grok-4.6
+    expect(result.details.model).toBe('xai/grok-4.6')
+    expect(result.content[0].text).toContain('model=xai/grok-4.6')
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments).toEqual([])
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
@@ -2312,5 +2322,296 @@ describe('findLiveSupervisorSpawnsForWorktree', () => {
     expect(findLiveSupervisorSpawnsForWorktree(worktree)).toEqual([])
     seed('ws-1', [supervisorEntry()])
     expect(findLiveSupervisorSpawnsForWorktree('')).toEqual([])
+  })
+})
+
+describe('spawn_task_workspace helpers', () => {
+  it('validates title as exactly 2–3 words without · suffix', () => {
+    expect(validateTaskWorkspaceTitle('Видимый reviewer')).toBeUndefined()
+    expect(validateTaskWorkspaceTitle('a b c')).toBeUndefined()
+    expect(validateTaskWorkspaceTitle('one')).toMatch(/2–3/)
+    expect(validateTaskWorkspaceTitle('one two three four')).toMatch(/2–3/)
+    expect(validateTaskWorkspaceTitle('Видимый reviewer · 0lp7')).toMatch(/suffix/)
+  })
+
+  it('builds workspace name with · suffix and child command without pi --name', () => {
+    expect(buildTaskWorkspaceName('Видимый reviewer', 'beads-task-issue-tracker-0lp7')).toBe('Видимый reviewer · 0lp7')
+    const cmd = buildTaskWorkspaceChildCommand('beads-task-issue-tracker-0lp7')
+    expect(cmd.startsWith('pi --approve -- ')).toBe(true)
+    expect(cmd).not.toMatch(/pi --name/)
+    expect(cmd).toContain('0lp7')
+  })
+
+  it('builds new-workspace argv with focus false and optional group', () => {
+    const withGroup = buildNewWorkspaceArgv({
+      name: 'T · x',
+      cwd: '/repo',
+      command: "pi --approve -- 'hi'",
+      focus: false,
+      groupId: 'group:1',
+      groupPlacement: 'afterCurrent',
+      groupReference: 'workspace:34',
+    })
+    expect(withGroup).toEqual(expect.arrayContaining(['new-workspace', '--focus', 'false', '--cwd', '/repo', '--group', 'group:1', '--group-placement', 'afterCurrent', '--group-reference', 'workspace:34']))
+    const bare = buildNewWorkspaceArgv({ name: 'T · x', cwd: '/repo', command: 'pi --approve -- x', focus: false })
+    expect(bare).not.toContain('--group')
+    expect(bare).toContain('--focus')
+    expect(bare).toContain('false')
+  })
+
+  it('picks color skipping parent and extracts group only when present', () => {
+    expect(pickTaskWorkspaceColor({ parentColor: 'Indigo' })).toBe('Teal')
+    expect(pickTaskWorkspaceColor({ explicit: 'Purple', parentColor: 'Indigo' })).toBe('Purple')
+    expect(pickTaskWorkspaceColor({ parentColor: '#283593' })).toBe('Teal')
+    expect(extractWorkspaceGroupId({ ref: 'workspace:1' })).toBeUndefined()
+    expect(extractWorkspaceGroupId({ group_id: 'group:9' })).toBe('group:9')
+    expect(extractWorkspaceGroupId({ group: { ref: 'group:2' } })).toBe('group:2')
+  })
+
+  it('resolves main checkout from git-common-dir and SPAWN_LOCK stale rules', () => {
+    expect(mainCheckoutFromGitCommonDir('/Users/x/Projects/repo/.git')).toBe('/Users/x/Projects/repo')
+    const fresh = isSpawnLockBlocking(
+      [{ text: 'SPAWN_LOCK bead-a\ncreatedAt: 2099-01-01T00:00:00.000Z\nstatus: pending\nparentWorkspace: workspace:1' }],
+      'bead-a',
+      Date.parse('2099-01-01T00:01:00.000Z'),
+    )
+    expect(fresh.blocked).toBe(true)
+    const stale = isSpawnLockBlocking(
+      [{ text: 'SPAWN_LOCK bead-a\ncreatedAt: 2000-01-01T00:00:00.000Z\nstatus: pending' }],
+      'bead-a',
+      Date.parse('2000-01-01T01:00:00.000Z'),
+    )
+    expect(stale.blocked).toBe(false)
+    expect(stale.stale).toBe(true)
+  })
+})
+
+describe('spawn_task_workspace tool', () => {
+  const beadId = 'beads-task-issue-tracker-abc1'
+  const parentBead = 'beads-task-issue-tracker-hy3z'
+  const mainCwd = '/Users/test/Projects/beads-task-issue-tracker'
+  const hy3zCwd = '/Users/test/Projects/worktrees/beads-task-issue-tracker/hy3z-workflow-spawn-task-workspace'
+
+  function makeSpawnPi(opts: {
+    status?: string
+    comments?: Array<{ text?: string }>
+    groupId?: string
+    parentColor?: string | null
+    cmuxFail?: string
+    createStdout?: string
+  } = {}) {
+    const cmuxCalls: string[][] = []
+    const bdCalls: string[][] = []
+    const pi = {
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd') {
+          bdCalls.push(args)
+          if (args[0] === 'show') {
+            return { code: 0, stdout: JSON.stringify([{ id: beadId, title: 'Target title', status: opts.status ?? 'open' }]), stderr: '' }
+          }
+          if (args[0] === 'comments' && args[1] === beadId && !args.includes('add')) {
+            return { code: 0, stdout: JSON.stringify(opts.comments ?? []), stderr: '' }
+          }
+          if (args[0] === 'comments' && args.includes('add')) {
+            return { code: 0, stdout: 'ok', stderr: '' }
+          }
+          return { code: 0, stdout: '[]', stderr: '' }
+        }
+        if (command === 'git') {
+          if (args.includes('--git-common-dir')) {
+            return { code: 0, stdout: `${mainCwd}/.git\n`, stderr: '' }
+          }
+          return { code: 0, stdout: `${hy3zCwd}\n`, stderr: '' }
+        }
+        if (command === 'cmux') {
+          cmuxCalls.push(args)
+          if (opts.cmuxFail === args[0] || (opts.cmuxFail === 'identify' && args[0] === 'identify')) {
+            return { code: 1, stdout: '', stderr: 'cmux down' }
+          }
+          if (args[0] === 'identify') {
+            return {
+              code: 0,
+              stdout: JSON.stringify({ caller: { workspace_ref: 'workspace:34', surface_ref: 'surface:orch' } }),
+              stderr: '',
+            }
+          }
+          if (args[0] === 'workspace' && args[1] === 'list') {
+            const row: Record<string, unknown> = {
+              ref: 'workspace:34',
+              custom_color: opts.parentColor ?? null,
+              title: 'Parent',
+            }
+            if (opts.groupId) row.group_id = opts.groupId
+            return { code: 0, stdout: JSON.stringify({ workspaces: [row] }), stderr: '' }
+          }
+          if (args[0] === 'new-workspace') {
+            if (opts.cmuxFail === 'new-workspace-group' && args.includes('--group')) {
+              return { code: 1, stdout: '', stderr: 'group missing' }
+            }
+            return { code: 0, stdout: opts.createStdout ?? 'OK workspace:99', stderr: '' }
+          }
+          if (args[0] === 'workspace-action') return { code: 0, stdout: '#283593', stderr: '' }
+          if (args[0] === 'reorder-workspace') return { code: 0, stdout: 'index=4', stderr: '' }
+          if (args[0] === 'list-pane-surfaces') {
+            return {
+              code: 0,
+              stdout: JSON.stringify({
+                workspace_ref: 'workspace:99',
+                surfaces: [{ ref: 'surface:500', type: 'terminal', selected: true, title: 'π - x' }],
+              }),
+              stderr: '',
+            }
+          }
+          if (args[0] === 'tab-action') return { code: 0, stdout: 'OK', stderr: '' }
+          if (args[0] === 'close-workspace') return { code: 0, stdout: 'OK', stderr: '' }
+          return { code: 0, stdout: '', stderr: '' }
+        }
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      registerTool() {},
+      events: { emit() {} },
+    }
+    return { pi, cmuxCalls, bdCalls }
+  }
+
+  function ctx(activeBead = parentBead, hasUI = true) {
+    return {
+      cwd: hy3zCwd,
+      hasUI,
+      sessionManager: {
+        getEntries: () => [
+          { type: 'custom', customType: 'workflow-state', data: { activeBead, branch: 'feat/hy3z', worktreePath: hy3zCwd } },
+        ],
+      },
+    }
+  }
+
+  it('dryRun plans focus false, main cwd, · suffix name, pi --approve, set-color, surface rename', async () => {
+    const { pi, cmuxCalls } = makeSpawnPi()
+    const result = await spawnTaskWorkspace(
+      pi as any,
+      { beadId, title: 'Параллельный reviewer', dryRun: true },
+      ctx(),
+    )
+    expect(result.status).toBe('dry-run')
+    expect(result.mainCwd).toBe(mainCwd)
+    expect(result.mainCwd).not.toContain('hy3z')
+    expect(result.workspaceName).toBe('Параллельный reviewer · abc1')
+    const flat = (result.argvPlan ?? []).flat().join(' ')
+    expect(flat).toContain('--focus false')
+    expect(flat).toContain(`--cwd ${mainCwd}`)
+    expect(flat).toContain('Параллельный reviewer · abc1')
+    expect(flat).toContain('pi --approve --')
+    expect(flat).not.toContain('pi --name')
+    expect(flat).toContain('set-color')
+    expect(flat).toContain('--surface')
+    expect(flat).toContain(ORCHESTRATOR_TAB_TITLE)
+    expect(result.text).toMatch(/set-color|argv/)
+    // dryRun may identify for group/color context but must not create
+    expect(cmuxCalls.some((c) => c[0] === 'new-workspace')).toBe(false)
+  })
+
+  it('mock group id uses --group afterCurrent; without group uses reorder --after', async () => {
+    const withGroup = makeSpawnPi({ groupId: 'group:7' })
+    const grouped = await spawnTaskWorkspace(
+      withGroup.pi as any,
+      { beadId, title: 'Два слова', dryRun: true },
+      ctx(),
+    )
+    const gCreate = grouped.argvPlan?.[0] ?? []
+    expect(gCreate).toContain('--group')
+    expect(gCreate).toContain('group:7')
+    expect(gCreate).toContain('afterCurrent')
+    expect(grouped.argvPlan?.some((row) => row[0] === 'reorder-workspace')).toBe(false)
+
+    const noGroup = makeSpawnPi()
+    const bare = await spawnTaskWorkspace(
+      noGroup.pi as any,
+      { beadId, title: 'Два слова', dryRun: true },
+      ctx(),
+    )
+    expect(bare.argvPlan?.[0] ?? []).not.toContain('--group')
+    expect(bare.argvPlan?.some((row) => row.includes('--after'))).toBe(true)
+  })
+
+  it('live spawn creates workspace, sets color, renames surface, writes SPAWN_LOCK', async () => {
+    const { pi, cmuxCalls, bdCalls } = makeSpawnPi()
+    const result = await spawnTaskWorkspace(
+      pi as any,
+      { beadId, title: 'Два слова' },
+      ctx(),
+    )
+    expect(result.status).toBe('spawned')
+    expect(result.workspaceRef).toBe('workspace:99')
+    expect(result.surface).toBe('surface:500')
+    expect(cmuxCalls.some((c) => c[0] === 'new-workspace' && c.includes('--focus') && c.includes('false'))).toBe(true)
+    expect(cmuxCalls.some((c) => c[0] === 'workspace-action' && c.includes('set-color'))).toBe(true)
+    expect(cmuxCalls.some((c) => c[0] === 'tab-action' && c.includes('--surface') && c.includes(ORCHESTRATOR_TAB_TITLE))).toBe(true)
+    expect(cmuxCalls.some((c) => c[0] === 'tab-action' && c.includes('--workspace') && !c.includes('--surface'))).toBe(false)
+    const lockAdds = bdCalls.filter((c) => c[0] === 'comments' && c.includes('add'))
+    expect(lockAdds.some((c) => String(c[c.length - 1]).includes('SPAWN_LOCK'))).toBe(true)
+  })
+
+  it('BLOCKS own bead, busy status, SPAWN_LOCK, missing cmux, bad title', async () => {
+    const own = makeSpawnPi()
+    await expect(spawnTaskWorkspace(own.pi as any, { beadId: parentBead, title: 'Два слова' }, ctx(parentBead))).rejects.toThrow(/свой active bead|BLOCKED/)
+
+    const busy = makeSpawnPi({ status: 'in_progress' })
+    await expect(spawnTaskWorkspace(busy.pi as any, { beadId, title: 'Два слова' }, ctx())).rejects.toThrow(/in_progress|BLOCKED/)
+
+    const locked = makeSpawnPi({
+      comments: [{ text: `SPAWN_LOCK ${beadId}\ncreatedAt: ${new Date().toISOString()}\nstatus: pending\nparentWorkspace: workspace:1` }],
+    })
+    await expect(spawnTaskWorkspace(locked.pi as any, { beadId, title: 'Два слова' }, ctx())).rejects.toThrow(/SPAWN_LOCK|BLOCKED/)
+
+    const noCmux = makeSpawnPi({ cmuxFail: 'identify' })
+    await expect(spawnTaskWorkspace(noCmux.pi as any, { beadId, title: 'Два слова' }, ctx())).rejects.toThrow(/cmux|BLOCKED/)
+
+    const badTitle = makeSpawnPi()
+    await expect(spawnTaskWorkspace(badTitle.pi as any, { beadId, title: 'одно' }, ctx())).rejects.toThrow(/2–3|BLOCKED/)
+  })
+
+  it('group create fail retries once without group', async () => {
+    const { pi, cmuxCalls } = makeSpawnPi({ groupId: 'group:9', cmuxFail: 'new-workspace-group' })
+    const result = await spawnTaskWorkspace(pi as any, { beadId, title: 'Два слова' }, ctx())
+    expect(result.status).toBe('spawned')
+    expect(result.groupUsed).toBe(false)
+    const creates = cmuxCalls.filter((c) => c[0] === 'new-workspace')
+    expect(creates.length).toBeGreaterThanOrEqual(2)
+    expect(creates[0]).toContain('--group')
+    expect(creates[creates.length - 1]).not.toContain('--group')
+  })
+
+  it('registers spawn_task_workspace tool on extension load', () => {
+    const tools: Array<{ name: string }> = []
+    beadsDispatchExtension({
+      exec: async () => ({ code: 0, stdout: '', stderr: '' }),
+      registerTool: (tool: any) => tools.push(tool),
+      events: { emit() {} },
+    } as any)
+    expect(tools.some((t) => t.name === 'spawn_task_workspace')).toBe(true)
+  })
+
+  it('set-color argv builder pins workspace-action shape', () => {
+    expect(buildSetWorkspaceColorArgv('workspace:99', 'Indigo')).toEqual([
+      'workspace-action',
+      '--workspace',
+      'workspace:99',
+      '--action',
+      'set-color',
+      '--color',
+      'Indigo',
+    ])
+    expect(buildCmuxRenameArgv('surface:500', ORCHESTRATOR_TAB_TITLE)).toEqual([
+      'tab-action',
+      '--action',
+      'rename',
+      '--surface',
+      'surface:500',
+      '--title',
+      ORCHESTRATOR_TAB_TITLE,
+      '--focus',
+      'false',
+    ])
   })
 })

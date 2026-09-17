@@ -12,28 +12,48 @@ import { resolveAgentModelFromCwd } from "../agent-models/index";
 import {
 	appendPanesEnv,
 	beadSuffixFromId,
+	buildCloseWorkspaceArgv,
 	buildCmuxRenameArgv,
+	buildListPaneSurfacesArgv,
+	buildListWorkspacesArgv,
+	buildNewWorkspaceArgv,
+	buildReorderWorkspaceArgv,
+	buildSetWorkspaceColorArgv,
+	buildSpawnLockComment,
+	buildSpawnLockReleaseComment,
+	buildSpawnLockSpawnedComment,
+	buildTaskWorkspaceChildCommand,
+	buildTaskWorkspaceName,
 	buildVisibleChildArgv,
 	buildVisibleFollowupPayload,
 	buildVisibleChildSpawnPayload,
 	classifyVisiblePane,
+	extractWorkspaceGroupId,
 	findLiveFollowupEntry,
 	findLiveRegistryEntriesForBead,
 	findLiveSupervisorSpawnsForWorktree,
 	findRegistryByTaskId,
+	findWorkspaceRow,
 	getCmuxAdapterForTests,
+	isSpawnLockBlocking,
 	liveEntriesForBead,
 	loadRegistry,
+	mainCheckoutFromGitCommonDir,
 	nsDir,
 	orchRoot,
 	ORCHESTRATOR_TAB_TITLE,
+	parseFirstTerminalSurfaceRef,
+	parseNewWorkspaceRef,
 	persistIsolationFiles,
+	pickTaskWorkspaceColor,
+	posixQuote,
 	readDigestPreview,
 	resolveVisibleSplitAnchor,
 	saveRegistry,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
 	unlinkIsolationFiles,
+	validateTaskWorkspaceTitle,
 	validateVisibleChildArgv,
 	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
@@ -43,20 +63,43 @@ import {
 } from "./cmux-transport";
 export {
 	beadSuffixFromId,
+	buildCloseWorkspaceArgv,
 	buildCmuxRenameArgv,
+	buildListPaneSurfacesArgv,
+	buildListWorkspacesArgv,
+	buildNewWorkspaceArgv,
+	buildReorderWorkspaceArgv,
+	buildSetWorkspaceColorArgv,
+	buildSpawnLockComment,
+	buildSpawnLockReleaseComment,
+	buildSpawnLockSpawnedComment,
+	buildTaskWorkspaceChildCommand,
+	buildTaskWorkspaceName,
 	buildVisibleChildArgv,
 	buildVisibleChildSpawnPayload,
 	buildVisibleFollowupPayload,
 	classifyVisiblePane,
+	countTitleWords,
+	extractWorkspaceGroupId,
 	followupPayloadLooksLikeSpawnArgv,
 	findLiveFollowupEntry,
 	findLiveRegistryEntriesForBead,
 	findLiveSupervisorSpawnsForWorktree,
+	findWorkspaceRow,
+	isSpawnLockBlocking,
+	mainCheckoutFromGitCommonDir,
 	ORCHESTRATOR_TAB_TITLE,
+	parseFirstTerminalSurfaceRef,
+	parseNewWorkspaceRef,
+	parseSpawnLockComment,
+	pickTaskWorkspaceColor,
 	resolveVisibleSplitAnchor,
+	SPAWN_LOCK_MARKER,
+	TASK_WORKSPACE_COLOR_PALETTE,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
 	posixQuote,
+	validateTaskWorkspaceTitle,
 	validateVisibleChildArgv,
 	visibleChildTabTitle,
 	visibleCmuxSpawnFailReason,
@@ -322,6 +365,58 @@ const FollowupVisibleDispatchParams = {
 } as const;
 
 type FollowupVisibleParams = { beadId: string; task: string; role?: string };
+
+const SpawnTaskWorkspaceParams = {
+	type: "object",
+	properties: {
+		beadId: {
+			type: "string",
+			description: "Open target bead to run in a parallel cmux workspace. Parent must NOT workflow_claim this id.",
+		},
+		title: {
+			type: "string",
+			description: "Exactly 2–3 words of essence without · suffix or bead id. Tool appends · {suffix}.",
+		},
+		description: {
+			type: "string",
+			description: "Optional workspace description (defaults to bead title).",
+		},
+		color: {
+			type: "string",
+			description: "Optional sidebar row color (name or #hex). Default rotates Indigo→Teal→Orange→Purple→Green→Amber, skipping parent color.",
+		},
+		dryRun: {
+			type: "boolean",
+			description: "Plan argv only: no cmux create, no SPAWN_LOCK write.",
+			default: false,
+		},
+	},
+	required: ["beadId", "title"],
+	additionalProperties: false,
+} as const;
+
+type SpawnTaskWorkspaceToolParams = {
+	beadId: string;
+	title: string;
+	description?: string;
+	color?: string;
+	dryRun?: boolean;
+};
+
+export type SpawnTaskWorkspaceResult = {
+	status: "spawned" | "dry-run" | "blocked";
+	beadId: string;
+	workspaceName: string;
+	workspaceRef?: string;
+	surface?: string;
+	mainCwd: string;
+	color?: string;
+	colorWarning?: string;
+	renameWarning?: string;
+	groupUsed?: boolean;
+	argvPlan?: string[][];
+	text: string;
+};
 
 const FOLLOWUP_ALLOWED_STATUSES = new Set(["in_progress", "inreview"]);
 
@@ -1884,6 +1979,300 @@ function renderDispatchResult(result: DispatchResult): string {
 		.join("\n");
 }
 
+function readActiveBeadFromContext(ctx?: ToolContext): string | undefined {
+	const entries = ctx?.sessionManager?.getEntries?.() ?? [];
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		const isWorkflow =
+			entry?.type === "workflow-state" || (entry?.type === "custom" && entry?.customType === "workflow-state");
+		if (!isWorkflow) continue;
+		const data = entry?.data as { activeBead?: string } | undefined;
+		const active = data?.activeBead?.trim();
+		if (active) return active;
+	}
+	return undefined;
+}
+
+function isOpenBeadStatus(status: string | undefined): boolean {
+	const normalized = (status ?? "").trim().toLowerCase();
+	return normalized === "open" || normalized === "todo";
+}
+
+async function resolveMainCheckout(pi: ExtensionAPI, cwd: string): Promise<string> {
+	const commonDir = await getGitValue(pi, cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+	const main = mainCheckoutFromGitCommonDir(commonDir);
+	if (!main) throw new Error("не удалось определить main checkout (git-common-dir): BLOCKED");
+	return main;
+}
+
+async function identifyCallerWorkspace(
+	pi: ExtensionAPI,
+): Promise<{ workspaceId: string; workspaceRef: string; surface?: string }> {
+	const result = await pi.exec("cmux", ["identify", "--json"]);
+	if (result.code !== 0) throw new Error("нет cmux (identify failed): BLOCKED");
+	let data: {
+		caller?: { workspace_ref?: string; surface_ref?: string; surface?: string };
+		workspace?: string;
+	};
+	try {
+		data = JSON.parse(result.stdout || "{}") as typeof data;
+	} catch {
+		throw new Error("нет cmux (identify json): BLOCKED");
+	}
+	const caller = data.caller ?? {};
+	const workspaceRef = String(caller.workspace_ref || data.workspace || "").trim();
+	if (!workspaceRef) throw new Error("нет cmux workspace: BLOCKED");
+	const workspaceId = workspaceRef.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+	const surface = String(caller.surface_ref || caller.surface || "").trim() || undefined;
+	return { workspaceId, workspaceRef, surface };
+}
+
+/**
+ * Open a parallel task as a new cmux workspace + interactive Pi session.
+ * Parent does not claim the target; child runs claim-bead from main checkout.
+ */
+export async function spawnTaskWorkspace(
+	pi: ExtensionAPI,
+	params: SpawnTaskWorkspaceToolParams,
+	ctx?: ToolContext,
+): Promise<SpawnTaskWorkspaceResult> {
+	const beadId = (params.beadId ?? "").trim();
+	const title = (params.title ?? "").trim();
+	if (!beadId) throw new Error("beadId обязателен: BLOCKED");
+
+	const titleError = validateTaskWorkspaceTitle(title);
+	if (titleError) throw new Error(`${titleError}: BLOCKED`);
+
+	const hasUI = Boolean(ctx && typeof ctx === "object" && ("hasUI" in ctx ? (ctx as { hasUI?: boolean }).hasUI : ctx.ui));
+	if (!hasUI && !params.dryRun) {
+		throw new Error("spawn_task_workspace требует интерактивный cmux UI (hasUI); headless/CI не поддерживается: BLOCKED");
+	}
+
+	const activeBead = readActiveBeadFromContext(ctx);
+	if (activeBead && activeBead === beadId) {
+		throw new Error(
+			`spawn_task_workspace на свой active bead ${beadId} запрещён — это не замена claim/dispatch: BLOCKED`,
+		);
+	}
+
+	const bead = await getBead(pi, beadId);
+	if (!isOpenBeadStatus(bead.status)) {
+		throw new Error(
+			`target bead ${beadId} status=${bead.status ?? "unknown"} (нужен open); busy/inreview/terminal → BLOCKED`,
+		);
+	}
+
+	const comments = await getComments(pi, beadId);
+	const lockState = isSpawnLockBlocking(comments, beadId);
+	if (lockState.blocked) {
+		throw new Error(
+			`SPAWN_LOCK уже держит ${beadId} (status=${lockState.lock?.status ?? "pending"}, parent=${lockState.lock?.parentWorkspace ?? "?"}): BLOCKED`,
+		);
+	}
+
+	const cwd = ctx?.cwd || process.cwd();
+	const mainCwd = await resolveMainCheckout(pi, cwd);
+	const workspaceName = buildTaskWorkspaceName(title, beadId);
+	const description = (params.description ?? bead.title ?? workspaceName).trim();
+	const childCommand = buildTaskWorkspaceChildCommand(beadId);
+
+	let callerWorkspaceRef = "workspace:caller";
+	let parentColor: string | null = null;
+	let groupId: string | undefined;
+	let siblingColors: string[] = [];
+
+	if (!params.dryRun || hasUI) {
+		try {
+			const identified = await identifyCallerWorkspace(pi);
+			callerWorkspaceRef = identified.workspaceRef;
+			const listResult = await pi.exec("cmux", buildListWorkspacesArgv());
+			if (listResult.code === 0) {
+				const row = findWorkspaceRow(listResult.stdout || "", callerWorkspaceRef);
+				if (row) {
+					parentColor = typeof row.custom_color === "string" ? row.custom_color : null;
+					groupId = extractWorkspaceGroupId(row);
+				}
+				try {
+					const parsed = JSON.parse(listResult.stdout || "{}") as {
+						workspaces?: Array<Record<string, unknown>>;
+					};
+					siblingColors = (parsed.workspaces ?? [])
+						.map((w) => (typeof w.custom_color === "string" ? w.custom_color : null))
+						.filter((c): c is string => Boolean(c));
+				} catch {
+					/* ignore */
+				}
+			}
+		} catch (error) {
+			if (!params.dryRun) throw error;
+			// dryRun without live cmux still returns argv plan with placeholders
+		}
+	}
+
+	const color = pickTaskWorkspaceColor({
+		explicit: params.color,
+		parentColor,
+		siblingColors,
+	});
+
+	const baseCreateArgv = buildNewWorkspaceArgv({
+		name: workspaceName,
+		cwd: mainCwd,
+		command: childCommand,
+		description,
+		focus: false,
+		groupId,
+		groupPlacement: groupId ? "afterCurrent" : undefined,
+		groupReference: groupId ? callerWorkspaceRef : undefined,
+	});
+	const createWithoutGroupArgv = buildNewWorkspaceArgv({
+		name: workspaceName,
+		cwd: mainCwd,
+		command: childCommand,
+		description,
+		focus: false,
+	});
+	const colorArgv = buildSetWorkspaceColorArgv("workspace:NEW", color);
+	const renameArgv = buildCmuxRenameArgv("surface:NEW", ORCHESTRATOR_TAB_TITLE);
+	const reorderArgv = buildReorderWorkspaceArgv("workspace:NEW", callerWorkspaceRef);
+
+	const argvPlan: string[][] = [baseCreateArgv, colorArgv];
+	if (!groupId) argvPlan.push(reorderArgv);
+	argvPlan.push(renameArgv);
+
+	if (params.dryRun) {
+		const text = [
+			`spawn_task_workspace dry-run beadId=${beadId}`,
+			`name=${workspaceName}`,
+			`mainCwd=${mainCwd}`,
+			`color=${color}`,
+			`group=${groupId ?? "(none → reorder --after)"}`,
+			"argv:",
+			...argvPlan.map((row) => `  cmux ${row.map((part) => ( /\s/.test(part) ? posixQuote(part) : part)).join(" ")}`),
+		].join("\n");
+		return {
+			status: "dry-run",
+			beadId,
+			workspaceName,
+			mainCwd,
+			color,
+			groupUsed: Boolean(groupId),
+			argvPlan,
+			text,
+		};
+	}
+
+	// Live path requires cmux identify (already done above or throws).
+	await identifyCallerWorkspace(pi).then((id) => {
+		callerWorkspaceRef = id.workspaceRef;
+	});
+
+	const lockComment = buildSpawnLockComment({
+		beadId,
+		parentWorkspace: callerWorkspaceRef,
+		parentBead: activeBead,
+		status: "pending",
+	});
+	const lockWrite = await pi.exec("bd", ["comments", "add", beadId, lockComment]);
+	if (lockWrite.code !== 0) {
+		throw new Error(`не удалось записать SPAWN_LOCK: ${lockWrite.stderr || lockWrite.stdout}: BLOCKED`);
+	}
+
+	const releaseLock = async (reason: string) => {
+		await pi.exec("bd", ["comments", "add", beadId, buildSpawnLockReleaseComment(beadId, reason)]);
+	};
+
+	let workspaceRef: string | undefined;
+	let usedGroup = Boolean(groupId);
+	let createArgv = baseCreateArgv;
+
+	const tryCreate = async (argv: string[]): Promise<{ ok: boolean; ref?: string; error?: string }> => {
+		const result = await pi.exec("cmux", argv);
+		if (result.code !== 0) {
+			return { ok: false, error: (result.stderr || result.stdout || "cmux new-workspace failed").trim() };
+		}
+		const ref = parseNewWorkspaceRef(result.stdout || "");
+		if (!ref) return { ok: false, error: `new-workspace не вернул workspace ref: ${result.stdout}` };
+		return { ok: true, ref };
+	};
+
+	let created = await tryCreate(createArgv);
+	if (!created.ok && groupId) {
+		// Group-create fail → one retry without group. Close only if a partial ref appeared.
+		if (created.error && /workspace:\d+/.test(created.error)) {
+			const partial = parseNewWorkspaceRef(created.error);
+			if (partial) await pi.exec("cmux", buildCloseWorkspaceArgv(partial));
+		}
+		usedGroup = false;
+		createArgv = createWithoutGroupArgv;
+		created = await tryCreate(createArgv);
+	}
+
+	if (!created.ok || !created.ref) {
+		await releaseLock(`create-failed: ${created.error ?? "unknown"}`);
+		throw new Error(`cmux new-workspace failed: ${created.error ?? "unknown"}: BLOCKED`);
+	}
+	workspaceRef = created.ref;
+
+	let colorWarning: string | undefined;
+	const colorResult = await pi.exec("cmux", buildSetWorkspaceColorArgv(workspaceRef, color));
+	if (colorResult.code !== 0) {
+		colorWarning = `set-color failed: ${(colorResult.stderr || colorResult.stdout || "").trim()}`;
+	}
+
+	if (!usedGroup) {
+		const reorder = await pi.exec("cmux", buildReorderWorkspaceArgv(workspaceRef, callerWorkspaceRef));
+		if (reorder.code !== 0) {
+			// Placement is best-effort after create succeeded.
+			colorWarning = [colorWarning, `reorder failed: ${(reorder.stderr || reorder.stdout || "").trim()}`]
+				.filter(Boolean)
+				.join("; ");
+		}
+	}
+
+	let surface: string | undefined;
+	let renameWarning: string | undefined;
+	const surfacesResult = await pi.exec("cmux", buildListPaneSurfacesArgv(workspaceRef));
+	if (surfacesResult.code === 0) {
+		surface = parseFirstTerminalSurfaceRef(surfacesResult.stdout || "");
+	}
+	if (surface) {
+		const renameResult = await pi.exec("cmux", buildCmuxRenameArgv(surface, ORCHESTRATOR_TAB_TITLE));
+		if (renameResult.code !== 0) {
+			renameWarning = `rename failed: ${(renameResult.stderr || renameResult.stdout || "").trim()}`;
+		}
+	} else {
+		renameWarning = "list-pane-surfaces не вернул surface; inner tab rename skipped";
+	}
+
+	await pi.exec("bd", ["comments", "add", beadId, buildSpawnLockSpawnedComment(beadId, workspaceRef, surface)]);
+
+	const text = [
+		`spawn_task_workspace status=spawned beadId=${beadId}`,
+		`workspace=${workspaceRef} name=${workspaceName}`,
+		`mainCwd=${mainCwd}`,
+		`color=${color}${colorWarning ? ` warning=${colorWarning}` : ""}`,
+		`surface=${surface ?? "-"}${renameWarning ? ` renameWarning=${renameWarning}` : ""}`,
+		`groupUsed=${usedGroup}`,
+		"Parent did not claim target. Child Pi starts claim-bead from main checkout.",
+	].join("\n");
+
+	return {
+		status: "spawned",
+		beadId,
+		workspaceName,
+		workspaceRef,
+		surface,
+		mainCwd,
+		color,
+		colorWarning,
+		renameWarning,
+		groupUsed: usedGroup,
+		argvPlan: [createArgv, buildSetWorkspaceColorArgv(workspaceRef, color), ...(usedGroup ? [] : [buildReorderWorkspaceArgv(workspaceRef, callerWorkspaceRef)]), ...(surface ? [buildCmuxRenameArgv(surface, ORCHESTRATOR_TAB_TITLE)] : [])],
+		text,
+	};
+}
+
 export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	const dispatchSupervisorTool = async (_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) => {
 		try {
@@ -2022,6 +2411,31 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 				return { content: [{ type: "text", text: renderDispatchResult(result) }], details: result };
 			} catch (error) {
 				return { content: [{ type: "text", text: `dispatch_docs_agent не выполнен: ${(error as Error).message}` }], details: { error: (error as Error).message } };
+			}
+		},
+	});
+
+	pi.registerTool({
+		name: "spawn_task_workspace",
+		label: "Spawn Task Workspace",
+		description:
+			"Open a parallel open bead in a new cmux workspace with a fresh Pi session. Parent does not claim the target. Child starts on main checkout and runs claim-bead itself. Name = `{title} · {suffix}`; inner tab = оркестратор; sidebar color rotates Indigo→Teal→Orange→Purple→Green→Amber. Not available in plan mode. Not a substitute for dispatch_supervisor.",
+		parameters: SpawnTaskWorkspaceParams,
+		async execute(
+			_id: string,
+			params: SpawnTaskWorkspaceToolParams,
+			_signal: AbortSignal | undefined,
+			_onUpdate: unknown,
+			ctx: ToolContext,
+		) {
+			try {
+				const result = await spawnTaskWorkspace(pi, params, ctx);
+				return { content: [{ type: "text", text: result.text }], details: result };
+			} catch (error) {
+				return {
+					content: [{ type: "text", text: `spawn_task_workspace не выполнен: ${(error as Error).message}` }],
+					details: { error: (error as Error).message },
+				};
 			}
 		},
 	});
