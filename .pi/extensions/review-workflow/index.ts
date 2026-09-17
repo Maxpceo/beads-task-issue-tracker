@@ -1676,7 +1676,7 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "review_bead",
 		label: "Review Bead",
-		description: "Executable Pi review workflow: guard inreview, run relevant checks, then run code-reviewer agent.",
+		description: "Headless-fallback Pi review workflow. Interactive default is dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>) (visible code-reviewer pane). Use review_bead only as headless-fallback for CI/dark window: guard inreview, run relevant checks, then run code-reviewer agent.",
 		parameters: ReviewParams,
 		async execute(_id: string, params: any, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
@@ -1882,8 +1882,8 @@ Artifact evidence may be cited in acceptance matrix, but it is not acceptance by
 			const beadId = args.trim();
 			ctx.ui.notify(
 				beadId
-					? `Попросите агента вызвать review_bead с beadId=${beadId}. Tool проверит status, запустит checks и вызовет code-reviewer.`
-					: "Usage: /review-bead <bead-id>, затем попросите агента вызвать review_bead.",
+					? `Интерактивный дефолт: dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>) (видимый code-reviewer). review_bead — только headless-fallback. Попросите агента вызвать видимый dispatch_reviewer или headless review_bead с beadId=${beadId}.`
+					: "Usage: /review-bead <bead-id>. Interactive default: dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>); review_bead is headless-fallback only.",
 				"info",
 			);
 		},

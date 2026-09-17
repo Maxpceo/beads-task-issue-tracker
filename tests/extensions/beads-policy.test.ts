@@ -2483,13 +2483,17 @@ describe('Pi bd-first active bead policy', () => {
     expect(decision?.reason).toContain('unknown bd status custom_review_hold')
   })
 
-  it('redirects active inreview bead to review-bead next action', () => {
+  it('redirects active inreview bead to dual-token visible review next action', () => {
     const reason = activeBeadLifecycleReason('bead-b', 'start/claim another bead', {
       activeBead: 'bead-a',
       state: 'inreview',
     })
 
-    expect(reason).toContain('review-bead / review_bead')
+    expect(reason).toContain('dispatch_reviewer')
+    expect(reason).toContain('transport=cmux')
+    expect(reason).toContain('headless-fallback')
+    expect(reason).toContain('review_bead')
+    expect(reason!.indexOf('dispatch_reviewer')).toBeLessThan(reason!.indexOf('review_bead'))
     expect(reason).toContain('после подтверждения current-session branch/worktree ownership')
     expect(reason).toContain('/workflow-reset')
     expect(reason).not.toContain('next valid action')
@@ -2510,7 +2514,10 @@ describe('Pi bd-first active bead policy', () => {
     expect(reconciled.sessionMode).toBe('inreview')
     expect(reconciled.bdStatus).toBe('inreview')
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
-    expect(decision?.reason).toContain('review-bead / review_bead')
+    expect(decision?.reason).toContain('dispatch_reviewer')
+    expect(decision?.reason).toContain('transport=cmux')
+    expect(decision?.reason).toContain('headless-fallback')
+    expect(decision?.reason).toContain('review_bead')
     expect(decision?.reason).not.toContain('implementing')
   })
 
@@ -2523,7 +2530,11 @@ describe('Pi bd-first active bead policy', () => {
 
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.block).toBe(true)
-    expect(decision?.reason).toContain('review-bead / review_bead')
+    expect(decision?.reason).toContain('dispatch_reviewer')
+    expect(decision?.reason).toContain('transport=cmux')
+    expect(decision?.reason).toContain('headless-fallback')
+    expect(decision?.reason).toContain('review_bead')
+    expect(decision!.reason!.indexOf('dispatch_reviewer')).toBeLessThan(decision!.reason!.indexOf('review_bead'))
     expect(decision?.reason).toContain('остановит workflow до review')
     expect(decision?.reason).not.toContain('would stop before review')
 
@@ -2581,7 +2592,8 @@ describe('Pi bd-first active bead policy', () => {
     expect(decision?.policy).toBe('enforceActiveBeadLifecycle')
     expect(decision?.reason).toMatch(/unreadable|refresh failed/i)
     expect(decision?.reason).not.toMatch(/bd:inreview/i)
-    expect(decision?.reason).not.toContain('review-bead / review_bead')
+    expect(decision?.reason).not.toContain('dispatch_reviewer')
+    expect(decision?.reason).not.toContain('review_bead')
   })
 
   it('soco: live closed after snapshot inreview allows workflow_complete(closed)', () => {
@@ -2615,7 +2627,10 @@ describe('Pi bd-first active bead policy', () => {
     expect(reconciled.bdStatus).toBe('inreview')
     expect(decision?.block).toBe(true)
     expect(decision?.reason).toContain('bd:inreview')
-    expect(decision?.reason).toContain('review-bead / review_bead')
+    expect(decision?.reason).toContain('dispatch_reviewer')
+    expect(decision?.reason).toContain('transport=cmux')
+    expect(decision?.reason).toContain('headless-fallback')
+    expect(decision?.reason).toContain('review_bead')
   })
 
   it('soco: resolveBdReadCwd prefers existing worktreePath over process cwd', () => {

@@ -7,6 +7,8 @@ import workflowStateExtension, { currentRuntimeOwnerKey, hasSessionOwnershipEvid
 
 const WORKTREE_ROOT = path.join(os.homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker')
 
+const VISIBLE_REVIEW_DISPATCH = 'dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)'
+
 function makeHarness(options: {
   branch: string
   worktreePath: string
@@ -19,6 +21,8 @@ function makeHarness(options: {
   sessionKey?: string
   omitSessionKey?: boolean
   ctxCwd?: string
+  /** Optional Pi interactive flag; omit by default (non-UI). Do not default true. */
+  hasUI?: boolean
   processBranch?: string
   processWorktreePath?: string
   processStartCommit?: string
@@ -121,6 +125,7 @@ function makeHarness(options: {
     },
     ui: { notify: (message: string, level?: string) => notifications.push({ message, level }), setStatus: (key: string, value: string | undefined) => { statuses[key] = value }, theme: { fg: (_style: string, value: string) => value } },
   }
+  if (options.hasUI !== undefined) ctx.hasUI = options.hasUI
 
   workflowStateExtension(pi)
 
@@ -547,10 +552,53 @@ describe('Pi workflow-state session-scoped recovery', () => {
     expect(context.message.content).toContain('bdStatus=inreview')
     expect(context.message.content).toContain('[PI INREVIEW GUARD]')
     expect(context.message.content).toContain('review-bead / review_bead')
+    expect(context.message.content).not.toContain(VISIBLE_REVIEW_DISPATCH)
     expect(context.message.content).toContain('Не заявляй, что review_bead или dispatch_reviewer недоступны')
     expect(context.message.content).toContain('tool реально отсутствует в текущем tool surface')
     expect(context.message.content).toContain('typed call вернул ошибку до запуска review')
     expect(context.message.content).toContain('BLOCKED на русском с точным evidence')
+  })
+
+  it('interactive hasUI GUARD pins visible dispatch_reviewer first with review_bead as headless-fallback', async () => {
+    const { eventHandlers, ctx } = makeHarness({
+      branch: 'fix/current',
+      worktreePath: '/repo/current',
+      startCommit: 'current-head',
+      hasUI: true,
+      issues: {
+        'bead-current': { status: 'inreview', comments: '' },
+      },
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: {
+            state: 'implementing',
+            activeBead: 'bead-current',
+            branch: 'fix/current',
+            worktreePath: '/repo/current',
+            startCommit: 'current-head',
+            sessionKey: 'id:session-current',
+            runtimeOwnerKey: currentRuntimeOwnerKey(),
+            planMode: 'off',
+            mergeSlotHeld: false,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      ],
+    })
+
+    await eventHandlers.get('session_start')?.({}, ctx)
+    const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
+
+    expect(context.message.content).toContain('[PI INREVIEW GUARD]')
+    expect(context.message.content).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(context.message.content).toContain('headless-fallback')
+    expect(context.message.content).toContain('review_bead')
+    const dispatchIdx = context.message.content.indexOf(VISIBLE_REVIEW_DISPATCH)
+    const reviewBeadIdx = context.message.content.indexOf('review_bead — только headless-fallback')
+    expect(dispatchIdx).toBeGreaterThan(-1)
+    expect(reviewBeadIdx).toBeGreaterThan(dispatchIdx)
   })
 
   it('keeps restored current-scope active bead when old foreign comments are followed by current ownership evidence', async () => {
@@ -1504,6 +1552,45 @@ describe('Pi workflow-state typed tools', () => {
 
     expect(result.content[0].text).toContain('workflow_claim не выполнен для bead-next')
     expect(notifications.at(-1)?.message).toContain('запустите review-bead / review_bead')
+    expect(notifications.at(-1)?.message).not.toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'bead-next' && call.args.includes('--claim'))).toBe(false)
+  })
+
+  it('workflow_claim interactive hasUI routes inreview active bead to visible dispatch_reviewer', async () => {
+    const { eventHandlers, toolHandlers, ctx, notifications, execCalls } = makeHarness({
+      branch: 'task/current',
+      worktreePath: '/repo/current',
+      startCommit: 'start-head',
+      ctxCwd: '/repo/current',
+      hasUI: true,
+      issues: {
+        'bead-current': { status: 'inreview', comments: '' },
+        'bead-next': { status: 'open', comments: '' },
+      },
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-current',
+          state: 'inreview',
+          branch: 'task/current',
+          worktreePath: '/repo/current',
+          startCommit: 'start-head',
+          sessionKey: 'id:session-current',
+          runtimeOwnerKey: currentRuntimeOwnerKey(),
+          planMode: 'off',
+          mergeSlotHeld: false,
+          updatedAt: new Date().toISOString(),
+        },
+      }],
+    })
+    await eventHandlers.get('session_start')?.({}, ctx)
+
+    const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'bead-next' }, undefined, undefined, ctx)
+
+    expect(result.content[0].text).toContain('workflow_claim не выполнен для bead-next')
+    expect(notifications.at(-1)?.message).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(notifications.at(-1)?.message).toContain('headless-fallback')
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args[1] === 'bead-next' && call.args.includes('--claim'))).toBe(false)
   })
 
@@ -1962,6 +2049,7 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('bdStatus=inreview')
     expect(context.message.content).toContain('[PI INREVIEW GUARD]')
     expect(context.message.content).toContain('review-bead / review_bead')
+    expect(context.message.content).not.toContain(VISIBLE_REVIEW_DISPATCH)
     expect(context.message.content).toContain('Не заявляй, что review_bead или dispatch_reviewer недоступны')
     expect(appended.at(-1)?.data).toMatchObject({ activeBead: 'bead-task', state: 'reviewing', sessionMode: 'reviewing', branch: 'task/bead-task', worktreePath: '/repo/worktrees/bead-task', bdStatus: 'inreview' })
   })
@@ -2063,7 +2151,11 @@ describe('Pi workflow-state typed tools', () => {
     const context = await eventHandlers.get('before_agent_start')?.({}, ctx) as any
 
     expect(result.content[0].text).toContain('workflow_submit_for_review выполнен')
-    expect(result.content[0].text).toContain('Следующее действие: review_bead/review-bead')
+    expect(result.content[0].text).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(result.content[0].text).toContain('transport=cmux')
+    expect(result.content[0].text).toContain('headless-fallback')
+    expect(result.content[0].text).toContain('review_bead')
+    expect(result.content[0].text.indexOf('dispatch_reviewer')).toBeLessThan(result.content[0].text.indexOf('review_bead — только headless-fallback'))
     expect(execCalls.some((call) => call.command === 'bd' && call.args.join(' ') === 'update bead-current --status inreview --json')).toBe(true)
     expect(appended.at(-1)?.data).toMatchObject({
       activeBead: 'bead-current',
@@ -2074,6 +2166,7 @@ describe('Pi workflow-state typed tools', () => {
     })
     expect(context.message.content).toContain('[PI INREVIEW GUARD]')
     expect(context.message.content).toContain('review-bead / review_bead')
+    expect(context.message.content).not.toContain(VISIBLE_REVIEW_DISPATCH)
     expect(context.message.content).toContain('typed call вернул ошибку до запуска review')
   })
 
@@ -2108,7 +2201,11 @@ describe('Pi workflow-state typed tools', () => {
     const explicitBlocker = await toolHandlers.get('workflow_complete')?.execute('call-2', { state: 'blocked', reason: 'review_bead tool unavailable' }, undefined, undefined, ctx)
 
     expect(blocked.content[0].text).toContain('workflow_complete заблокирован')
-    expect(blocked.content[0].text).toContain('review_bead/review-bead')
+    expect(blocked.content[0].text).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(blocked.content[0].text).toContain('transport=cmux')
+    expect(blocked.content[0].text).toContain('headless-fallback')
+    expect(blocked.content[0].text).toContain('review_bead')
+    expect(blocked.content[0].text.indexOf('dispatch_reviewer')).toBeLessThan(blocked.content[0].text.indexOf('review_bead — только headless-fallback'))
     expect(blocked.details).toMatchObject({ ok: false, activeBead: 'bead-current', state: 'inreview', sessionMode: 'inreview', bdStatus: 'inreview' })
     expect(explicitBlocker.content[0].text).toContain('workflow_complete записал blocked')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'blocked', sessionMode: 'blocked' })
