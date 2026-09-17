@@ -13,6 +13,7 @@
 ### Fixed
 
 - **Pi ready-UI plan-review button delivers findings in-turn** (`beads-task-issue-tracker-9eth`): «Отправить на plan-review» no longer runs silent multi-minute critique behind a re-opened select. Notify fires before spawn; dirty findings return in the `plan_mode_complete` tool result (pending cleared, no second select / double run); clean gate notifies and re-shows select. Leftover `agent_settled` dirty path uses `sendMessage` with `triggerTurn: true`. Cycle counter still uncapped for the button. Contract in `.pi/extensions/plan-mode/README.md`; focused vitest under `tests/extensions/plan-mode.test.ts`.
+- **BLOCKED badge from malformed dependency ids** (`beads-task-issue-tracker-704v`): transformers and detectors now drop empty and relationship-prefixed `blockedBy` ids (for example `discovered-from:…`), so `in_progress` issues no longer render a false BLOCKED badge from stale/malformed bd dependency data.
 
 - **Pi epic close missing-matrix policy message** (`beads-task-issue-tracker-96x4`): when `bd close` is blocked for an epic without a post-terminal `EPIC ACCEPTANCE MATRIX`, `beads-policy` now explains that the matrix must be written in a separate completed `bd comments add` before close, that chained comment+close in one bash call does not count (and none of the preparatory steps ran), and shows the two-step sequence. Invalid existing matrices get a distinct reason (need `result: PASS`/`N/A` and matching `PARENT_EPIC`) without the chained-call wording. Focused vitest under `tests/extensions/beads-policy.test.ts`.
 
