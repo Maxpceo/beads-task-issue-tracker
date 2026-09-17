@@ -118,7 +118,7 @@ Typed `dispatch_supervisor` prompts define a structured implementation contract 
 - `Sibling streams`: parallel stream context when available; `N/A` until matrix fields are defined.
 - `Stop rules`: stop with `NEEDS_CONTEXT` for unclear requirements/acceptance/dependencies/write zone/verification, and `BLOCKED` for unsafe branch/worktree/start commit, unresolved dependencies, failing required checks without scoped fix, or policy/tooling blockers.
 - `Verification`: required commands/manual checks with exit codes or observed results.
-- `SUPERVISOR ARTIFACT`: completion evidence with `Status`, `Files changed`, `Verification`, `Commit`, `Concerns`, and `Artifact status`; it supports later review/acceptance but does not itself accept or close the bead. Wrapper auto-submit requires fresh verification evidence and commit SHA evidence, not only `Status: DONE` plus `Artifact status: complete`.
+- `SUPERVISOR ARTIFACT`: completion evidence with `Status`, `Files changed`, `Verification`, `Commit`, `Concerns`, and `Artifact status`; it supports later review/acceptance but does not itself accept or close the bead. Prefer a markdown `| Item | Evidence | Result |` table so `buildAcceptanceMatrix` can map unique `PASS`/`N/A` rows with nonempty evidence onto Verification bullets (after allowlist, before suite fallback). Wrapper auto-submit requires fresh verification evidence and commit SHA evidence, not only `Status: DONE` plus `Artifact status: complete`.
 
 ## Role boundaries
 

@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **Pi `review_bead` supervisor artifact matrix mapping** (`beads-task-issue-tracker-0m3l`): `buildAcceptanceMatrix` now parses `SUPERVISOR ARTIFACT` markdown tables (`| Item/Criterion | Evidence | Result |`) and conservatively maps unique `PASS`/`N/A` rows with nonempty evidence onto Verification bullets after the allowlist and before suite fallback. `FAIL` rows and multi-candidate ties never map as `PASS`; empty-evidence `PASS` stays `NOT RUN`. Focused vitest under `tests/extensions/review-workflow.test.ts`.
+
 - **Pi plan ready-UI no longer uses `ctx.ui.custom`** (`beads-task-issue-tracker-51l5`): live `plan_mode_complete` still killed the TUI after m6ho clamped render lines and gauq moved the prompt to `agent_settled`. Strict ready-UI is now built-in `ctx.ui.select` (Исполнить / Остаться / Уточнить / Отправить на plan-review) inside the tool execute, matching questionnaire timing; leftover pending restores via the same select on `agent_settled`. Questionnaire custom UI is unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.
 
 - **Pi plan ready-UI TUI width abort** (`beads-task-issue-tracker-m6ho`): `plan_mode_complete` still killed the session after gauq moved ready-UI to `agent_settled`, because an over-wide custom render line makes Pi TUI call `this.stop()` (not an exception the gauq `try/catch` can swallow). Ready and questionnaire document-flow UIs now clamp every rendered line with `truncateToWidth`, including long unspaced plan previews. Focused vitest under `tests/extensions/plan-mode.test.ts`.
