@@ -20,7 +20,7 @@ Chat for Maxim follows `AGENTS.md`. Do not announce normal plan-mode or bd-statu
 
 ## Plan-review cycle cap (workflow_plan_review)
 
-Typed `workflow_plan_review` has a hard max of **2 spawns** per plan-mode session (cycle counter persists across turns; reset only when plan mode goes off→on / new `/plan`). `/plan-auto` execution path is separate and not capped by this counter.
+Typed `workflow_plan_review` auto-caps at **2 spawns** per plan-mode session (`MAX_PLAN_REVIEW_CYCLES`; counter persists across turns; reset only when plan mode goes off→on / new `/plan`). After auto cap, explicit `extraCycle: true` allows spawns **3–4** (`MAX_PLAN_REVIEW_TOTAL_SPAWNS=4`) when Maxim asks for another review or residual important/critical remain on a high-risk plan (not Fast Path nits). Extra never returns `CONTINUE`. Beyond total 4 even `extraCycle` skips spawn. `/plan-auto` and ready-UI `/plan-review` are separate and not capped/incremented by this counter.
 
 Exclusive stop advice from `planReviewStopAdvice` (risk is telemetry only and never changes advice):
 
@@ -29,17 +29,18 @@ Exclusive stop advice from `planReviewStopAdvice` (risk is telemetry only and ne
 | `!gateOk` (missing/blocked reviewer or unresolved blockers) | `HARD_BLOCK` |
 | `gateOk` and no important/critical findings | `STOP_SHOW_USER` (from cycle ≥ 1; clean APPROVED / minor-only does **not** force a second spawn) |
 | `gateOk` and important/critical remain and `cycle < 2` | `CONTINUE` |
-| `gateOk` and `cycle >= 2` | `STOP_SHOW_USER` (show Maxim; no third cycle) |
+| `gateOk` and `cycle >= 2` (includes extra 3–4) | `STOP_SHOW_USER` (show Maxim; extra path never CONTINUE) |
 
 Orchestrator behavior:
 
 - On `CONTINUE`: revise the draft, then call `workflow_plan_review` again.
-- On `STOP_SHOW_USER`: present the plan to Maxim; **MUST NOT call workflow_plan_review** again this planning session. Remaining important/critical findings stay visible for Maxim.
-- On `HARD_BLOCK`: do not approve/execute; fix blockers; one retry is allowed while `cycle < 2`.
-- Empty `draftPlan` does not increment the cycle counter.
+- On `STOP_SHOW_USER` (auto path): present the plan to Maxim. Default auto path stops; do **not** auto-loop. Remaining important/critical findings stay visible. Documented extra path: `workflow_plan_review({ draftPlan, extraCycle: true })` only if Maxim explicitly asks or residual important/critical remain on a high-risk plan (not Fast Path nits). Still call `plan_mode_complete` so ready-UI exists.
+- On total ceiling (cycle ≥ 4): skip even with `extraCycle`; show Maxim; reset only plan mode off→on.
+- On `HARD_BLOCK`: do not approve/execute; fix blockers; retry while under auto cap, or with `extraCycle` under total ceiling when justified.
+- Empty `draftPlan` does not increment the cycle counter (including with `extraCycle`).
 - Failed spawn still consumes a cycle slot (reserved before `await`).
 
-`classifyPlanReviewRisk` is telemetry only (`low` requires `FAST_PATH_RATIONALE:` plus no `.pi/extensions|skills|agents|rules` / `scripts/` and not both `app/` + `src-tauri`; else `high`). Risk never changes stop advice and never auto-approves.
+`classifyPlanReviewRisk` is telemetry only (`low` requires `FAST_PATH_RATIONALE:` plus no `.pi/extensions|skills|agents|rules` / `scripts/` and not both `app/` + `src-tauri`; else `high`). Risk never changes stop advice and never auto-approves. Fast Path extra only if Maxim asked.
 
 ## Rules
 

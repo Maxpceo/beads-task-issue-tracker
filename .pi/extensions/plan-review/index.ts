@@ -44,10 +44,14 @@ export interface PlanReviewGateResult {
 /** Telemetry-only risk class; never an argument to planReviewStopAdvice. */
 export type PlanReviewRisk = "low" | "high";
 
-/** Exclusive stop advice for workflow_plan_review cycle cap (max 2 spawns). */
+/** Exclusive stop advice for workflow_plan_review cycle cap (auto max 2; extra up to total ceiling). */
 export type PlanReviewStopAdvice = "HARD_BLOCK" | "CONTINUE" | "STOP_SHOW_USER";
 
+/** Auto CONTINUE cap for workflow_plan_review (eb4k nits loop). */
 export const MAX_PLAN_REVIEW_CYCLES = 2;
+
+/** Absolute spawn ceiling including explicit extraCycle (Maxim/orchestrator). Reset only plan mode off→on. */
+export const MAX_PLAN_REVIEW_TOTAL_SPAWNS = 4;
 
 const FAST_PATH_STICKER = /FAST_PATH_RATIONALE\s*:/i;
 const PLAN_REVIEW_RISK_DENYLIST = /\.pi\/(extensions|skills|agents|rules)|(?:^|[\s`"'(])scripts\//i;
@@ -73,8 +77,9 @@ export function classifyPlanReviewRisk(draftPlan: string): PlanReviewRisk {
  *
  * - !gateOk → HARD_BLOCK
  * - gateOk && !hasImportantOrCritical → STOP_SHOW_USER (cycle >= 1 after spawn)
- * - gateOk && hasImportantOrCritical && cycle < 2 → CONTINUE
- * - gateOk && cycle >= 2 → STOP_SHOW_USER
+ * - gateOk && hasImportantOrCritical && cycle < MAX_PLAN_REVIEW_CYCLES → CONTINUE
+ * - gateOk && cycle >= MAX_PLAN_REVIEW_CYCLES → STOP_SHOW_USER
+ * Extra spawns (cycles 3–4 via extraCycle) never CONTINUE: cycle >= 2 already yields STOP_SHOW_USER.
  */
 export function planReviewStopAdvice(input: {
 	cycle: number;
