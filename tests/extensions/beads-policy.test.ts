@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import beadsPolicyExtension, {
   BD_STATUS_UNREADABLE,
   activeBeadLifecycleReason,
+  effectiveMergeSlotSessionKey,
   evaluateBashPolicy,
   evaluatePathPolicy,
   evaluateToolPolicy,
@@ -733,6 +734,93 @@ describe('Pi merge-slot push policy', () => {
     expect(withHolder?.policy).not.toBe('requireMergeSlotForPush')
     expect(withHolder?.policy).not.toBe('requireMergeSlotSessionHolder')
     expect(foreignAcquire?.policy).toBe('requireMergeSlotSessionHolder')
+  })
+
+  it('effectiveMergeSlotSessionKey prefers persisted id, falls back to runtime id, ignores file:/leaf:', () => {
+    expect(effectiveMergeSlotSessionKey({ sessionKey }, undefined)).toBe(sessionKey)
+    expect(effectiveMergeSlotSessionKey({ sessionKey: undefined }, sessionKey)).toBe(sessionKey)
+    expect(effectiveMergeSlotSessionKey({}, sessionKey)).toBe(sessionKey)
+    expect(effectiveMergeSlotSessionKey({ sessionKey: 'file:/tmp/x.jsonl' }, sessionKey)).toBe(sessionKey)
+    expect(effectiveMergeSlotSessionKey({ sessionKey: 'leaf:abc' }, undefined)).toBeUndefined()
+    expect(effectiveMergeSlotSessionKey({ sessionKey: undefined }, 'file:/tmp/x.jsonl')).toBeUndefined()
+    expect(effectiveMergeSlotSessionKey({ sessionKey }, 'id:ffffffffffff-ffff-ffff-ffff-ffffffffffff')).toBe(sessionKey)
+  })
+
+  it('after wiped sessionKey (workflow_complete), matching runtimeSessionKey allows own holder push and acquire', () => {
+    const wiped = {
+      state: 'idle',
+      bdStatus: 'closed',
+      mergeSlotHeld: false,
+      sessionKey: undefined as string | undefined,
+      branch: 'fix/9rha-merge-slot-session-evidence',
+    }
+    const ownNone = 'pi:01a0a71268e87664b26e347042f09f14:none'
+    const push = evaluateBashPolicy('git push', wiped, {
+      cwd: tmpdir(),
+      runtimeSessionKey: sessionKey,
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'in_progress',
+        metadata: { holder: ownNone },
+      },
+    })
+    const acquireThenPush = evaluateBashPolicy(
+      `bd merge-slot acquire --holder '${ownNone}' && git push`,
+      wiped,
+      { cwd: tmpdir(), runtimeSessionKey: sessionKey, bdMergeSlotIssue: null },
+    )
+    const acquireAlone = evaluateBashPolicy(`bd merge-slot acquire --holder '${ownNone}'`, wiped, {
+      cwd: tmpdir(),
+      runtimeSessionKey: sessionKey,
+      bdMergeSlotIssue: null,
+    })
+
+    expect(push?.policy).not.toBe('requireMergeSlotForPush')
+    expect(acquireThenPush?.policy).not.toBe('requireMergeSlotForPush')
+    expect(acquireThenPush?.policy).not.toBe('requireMergeSlotSessionHolder')
+    expect(acquireAlone?.policy).not.toBe('requireMergeSlotSessionHolder')
+  })
+
+  it('after wiped sessionKey, foreign/stale runtimeSessionKey denies own-looking holder push and acquire', () => {
+    const wiped = { state: 'idle', bdStatus: 'closed', sessionKey: undefined as string | undefined }
+    const staleRuntime = 'id:01a0a983-7d4f-7706-9910-27f4a911ecc1'
+    const ownLooking = 'pi:01a0a71268e87664b26e347042f09f14:none'
+    const push = evaluateBashPolicy('git push', wiped, {
+      cwd: tmpdir(),
+      runtimeSessionKey: staleRuntime,
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'in_progress',
+        metadata: { holder: ownLooking },
+      },
+    })
+    const acquire = evaluateBashPolicy(`bd merge-slot acquire --holder '${ownLooking}'`, wiped, {
+      cwd: tmpdir(),
+      runtimeSessionKey: staleRuntime,
+      bdMergeSlotIssue: null,
+    })
+    const foreignRuntimePush = evaluateBashPolicy('git push', wiped, {
+      cwd: tmpdir(),
+      runtimeSessionKey: 'id:ffffffffffff-ffff-ffff-ffff-ffffffffffff',
+      bdMergeSlotIssue: {
+        id: 'beads-task-issue-tracker-merge-slot',
+        status: 'in_progress',
+        metadata: { holder: ownHolder },
+      },
+    })
+
+    expect(push?.policy).toBe('requireMergeSlotForPush')
+    expect(acquire?.policy).toBe('requireMergeSlotSessionHolder')
+    expect(foreignRuntimePush?.policy).toBe('requireMergeSlotForPush')
+  })
+
+  it('without any session key, acquire stays format-check only (tests/CI without sessionManager)', () => {
+    const wiped = { state: 'idle', sessionKey: undefined as string | undefined }
+    const decision = evaluateBashPolicy(`bd merge-slot acquire --holder '${ownHolder}'`, wiped, {
+      cwd: tmpdir(),
+      bdMergeSlotIssue: null,
+    })
+    expect(decision?.policy).not.toBe('requireMergeSlotSessionHolder')
   })
 })
 

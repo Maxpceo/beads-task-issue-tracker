@@ -62,12 +62,13 @@ EOF
 7. Push branch via merge-slot. Сначала один раз сохраните имя ветки, затем синхронизируйтесь с `origin/main` явно; не используйте неявный pull+rebase, потому что у новой ветки может не быть upstream.
 
    **Holder recipe (identical to `land`; compute once immediately before acquire):**
-   1. `sessionKey` = `workflow_status` → `details.sessionKey`, or latest bead comment `PI_SESSION_KEY:` (`id:…` only; reject `file:`/`leaf:`).
+   1. `sessionKey` = runtime Pi session id of **this** process (`id:…` only). Sources in priority: live `sessionManager` / current process identity; `workflow_status` → `details.sessionKey` when still bound; latest bead comment `PI_SESSION_KEY:` **only if it matches the current runtime id**. Reject `file:`/`leaf:`. After `workflow_complete`/terminal unbind, persisted `workflowState.sessionKey` is intentionally wiped — policy still treats the matching runtime id as own-session evidence (`effectiveMergeSlotSessionKey`); do not claim a foreign bead just to restore persist, and do not require merge-to-main to run before `workflow_complete`.
    2. `SESSION_UNIQ` = body after `id:` with **all dashes stripped** (full string, **not** 8-char truncate).
-   3. `SUFFIX` = last `-` segment of active bead id, or `none` if no active bead.
+   3. `SUFFIX` = last `-` segment of active bead id, or `none` if no active bead (typical after close/`workflow_complete`).
    4. Holder = `pi:<SESSION_UNIQ>:<SUFFIX>`.
    5. Golden vector: `id:01a0a712-68e8-7664-b26e-347042f09f14` + `beads-task-issue-tracker-ho0p` → `pi:01a0a71268e87664b26e347042f09f14:ho0p`.
    6. Pass a **quoted literal** `--holder 'pi:…'` on every acquire/release (do **not** rely on `$HOLDER` env expansion in the final command). Never bare acquire; never Maxpceo/git `user.name`.
+   7. `merge-to-main` in the **same** Pi session after `bd close` + `workflow_complete` is valid. Foreign/stale runtime id and Maxpceo remain deny even if footer `mergeSlotHeld` is true.
 
    ```bash
    BRANCH=$(git branch --show-current)
