@@ -1,8 +1,8 @@
 {
   "classes": {
-    "strong": "xai/grok-4.5",
-    "standard": "xai/grok-4.5",
-    "cheap": "xai/grok-4.5"
+    "strong": "xai/grok-4.6",
+    "standard": "xai/grok-4.6",
+    "cheap": "xai/grok-4.3"
   },
   "roles": {},
   "agentClasses": {
@@ -16,5 +16,10 @@
     "plan-edge-reviewer": "cheap",
     "plan-consistency-reviewer": "cheap",
     "plan-dead-zone-reviewer": "cheap"
+  },
+  "classThinking": {
+    "cheap": "medium",
+    "strong": "high",
+    "standard": "medium"
   }
 }
