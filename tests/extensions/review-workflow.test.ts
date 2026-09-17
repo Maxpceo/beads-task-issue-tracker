@@ -2318,7 +2318,17 @@ describe('finalizeVisibleReviewClose', () => {
 
 describe('review-bead visible code-reviewer hop', () => {
   const skill = readFileSync(join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
+  const dispatchSkill = readFileSync(join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
+  const agents = readFileSync(join(process.cwd(), 'AGENTS.md'), 'utf8')
   const VISIBLE_REVIEW_DISPATCH = 'dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)'
+  const pendingFixSection = skill.slice(
+    skill.indexOf('NOT APPROVED` → keep `inreview`'),
+    skill.indexOf('Headless fallback only'),
+  )
+  const dispatchPendingFix = dispatchSkill.slice(
+    dispatchSkill.indexOf('After terminal bead'),
+    dispatchSkill.indexOf('## Supervisor selection'),
+  )
 
   it('pins interactive dispatch_reviewer transport=cmux and does not auto-call review_bead after verdict', () => {
     expect(skill).toContain(VISIBLE_REVIEW_DISPATCH)
@@ -2328,6 +2338,34 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('While a live code-reviewer pane exists, do not call `review_bead`')
     expect(skill).toContain('runtime hop')
     expect(skill).toContain('единственный consumer')
+  })
+
+  it('5o03: NOT APPROVED keeps inreview and reuses supervisor pane via followup_visible_dispatch / pendingFix', () => {
+    expect(skill).toContain('5o03 owns supervisor-pane reuse')
+    expect(skill).toContain('Do **not** call `close_visible_dispatch` on NOT APPROVED / pending-fix')
+    expect(skill).toContain('keep the pane for `followup_visible_dispatch`')
+    expect(skill).toContain('Do not `close_visible_dispatch` while pending-fix reuse is needed')
+    expect(dispatchSkill).toContain('NOT APPROVED / pending-fix → do **not** close; keep pane for `followup_visible_dispatch`')
+    expect(agents).toContain('`NOT APPROVED` / pending-fix: **do not** close')
+    expect(agents).toContain('`followup_visible_dispatch` (`pendingFix: true` skips close)')
+    expect(agents).toContain('`pendingFix: true` wins over `stopClose` (skip close)')
+  })
+
+  it('5o03: pendingFix wins stopClose and NOT APPROVED does not use grey-matrix STOP close', () => {
+    expect(skill).toContain('`pendingFix` wins (skip close)')
+    expect(skill).toContain('Do **not** call `followup_visible_dispatch` on grey-matrix STOP close')
+    expect(skill).toContain('NOT APPROVED / missing-evidence: panes stay live (no `stopClose`)')
+    expect(dispatchSkill).toContain('`pendingFix` wins')
+    expect(dispatchSkill).toContain('NOT APPROVED / missing-evidence keep panes')
+  })
+
+  it('5o03: follow-up sections reject argv pi spawn instructions', () => {
+    expect(pendingFixSection.length).toBeGreaterThan(80)
+    expect(dispatchPendingFix.length).toBeGreaterThan(80)
+    expect(pendingFixSection).not.toMatch(/cd\s+&&\s+pi\b/)
+    expect(pendingFixSection).not.toMatch(/\bpi\s+--/)
+    expect(dispatchPendingFix).not.toMatch(/cd\s+&&\s+pi\b/)
+    expect(dispatchPendingFix).not.toMatch(/\bpi\s+--/)
   })
 
   it('documents internal runtime hash auto-delegate without changing cmux hop pins', () => {
