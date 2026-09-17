@@ -379,7 +379,9 @@ function makeHarness(options: {
     sessionManager: { getSessionId: () => 'session-current', getEntries: () => sessionEntries },
     hasUI: options.hasUI ?? true,
     ui: {
-      notify() {},
+      notify(text: string, level?: string) {
+        trace.push(`notify:${level ?? 'info'}:${text}`)
+      },
       select: async (title: string, optionLabels: string[]) => {
         selectCalls.push({ title, options: optionLabels })
         if (readyActionQueue.length > 0) {
@@ -2412,7 +2414,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(escHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
   })
 
-  it('plan-review button shows findings, keeps plan on, does not increment cycle, then execute approves', async () => {
+  it('plan-review clean: notify + re-show select + execute approves; no sendMessage findings; cycle unchanged', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['plan-review', 'execute'],
@@ -2423,21 +2425,151 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       .at(-1) as { data?: { planReviewCycleCount?: number } } | undefined
     const cycleBefore = beforeCycleEntry?.data?.planReviewCycleCount ?? 0
 
-    await markPlanReady(harness.toolHandlers, harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
 
     expect(mockPlanReviewSpawnCount).toBe(1)
-    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(true)
-    expect(harness.sendMessages.some((message) => String(message.message.content).includes('Strict plan critique complete'))).toBe(true)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(false)
+    expect(String(complete.content[0].text)).not.toContain('Strict plan critique complete')
+    expect(complete.details.pending).toBe(false)
+    expect(complete.details.ok).toBe(true)
 
-    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number } }>
+    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: запускаю 3 ревьюеров'))).toBe(true)
+    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: чисто'))).toBe(true)
+
+    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
     const cycleAfter = afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0
     expect(cycleAfter).toBe(cycleBefore)
+    expect(afterEntries.at(-1)?.data?.enabled).toBe(false)
 
     const comment = harness.execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
     expect(mockSupervisorDispatchCalls.length).toBeGreaterThanOrEqual(1)
     expect(harness.customCalls).toHaveLength(0)
-    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBeGreaterThanOrEqual(2)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(2)
+  })
+
+  it('plan-review dirty: tool result carries findings, pending cleared, exactly one select, cycle unchanged', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'execute'],
+    })
+    mockPlanReviewImportantFindings = [{
+      severity: 'important',
+      issue: 'missing delivery path for findings',
+      evidence: 'ready-ui loop re-showed select',
+      suggestedFix: 'return findings in plan_mode_complete tool result',
+    }]
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? { ...result, verdict: 'NEEDS_CHANGES' as const, findings: mockPlanReviewImportantFindings }
+      : result)
+    mockRenderedPlanReviewResults = 'PLAN REVIEW: NEEDS_CHANGES\n- important: missing delivery path'
+
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const beforeCycleEntry = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { planReviewCycleCount?: number } } | undefined
+    const cycleBefore = beforeCycleEntry?.data?.planReviewCycleCount ?? 0
+
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(String(complete.content[0].text)).toContain('Strict plan critique complete')
+    expect(String(complete.content[0].text)).toContain('call plan_mode_complete')
+    expect(String(complete.content[0].text)).toMatch(/NEEDS_CHANGES|missing delivery path/)
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.pending).toBe(false)
+    expect(complete.details.findings).toBe(true)
+
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(false)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(mockSupervisorDispatchCalls).toHaveLength(0)
+
+    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
+    expect(afterEntries.at(-1)?.data?.pendingReadyPlan).toBeUndefined()
+    expect(afterEntries.at(-1)?.data?.enabled).toBe(true)
+    expect(afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0).toBe(cycleBefore)
+
+    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: запускаю 3 ревьюеров'))).toBe(true)
+    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: findings'))).toBe(true)
+  })
+
+  it('plan-review notifies start before spawn; notify failure does not cancel spawn', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'execute'],
+    })
+    let spawnObserved = 0
+    const originalNotify = harness.ctx.ui.notify.bind(harness.ctx.ui)
+    harness.ctx.ui.notify = (text: string, level?: string) => {
+      harness.trace.push(`notify-order:${mockPlanReviewSpawnCount}:${text}`)
+      if (text.includes('запускаю 3 ревьюеров')) {
+        throw new Error('notify exploded')
+      }
+      return originalNotify(text, level)
+    }
+
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    const startNotify = harness.trace.find((entry) => entry.includes('запускаю 3 ревьюеров'))
+    expect(startNotify).toBeTruthy()
+    expect(startNotify).toMatch(/^notify-order:0:/)
+    spawnObserved = mockPlanReviewSpawnCount
+    expect(spawnObserved).toBe(1)
+  })
+
+  it('agent_settled leftover plan-review dirty delivers findings via sendMessage triggerTurn:true', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-ui', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' },
+        },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            pendingReadyPlan: SAMPLE_READY_PLAN,
+            todos: [],
+            executing: false,
+          },
+        },
+      ],
+      readyActionQueue: ['plan-review'],
+    })
+    mockPlanReviewImportantFindings = [{
+      severity: 'important',
+      issue: 'leftover must wake model',
+      evidence: 'agent_settled has no tool result channel',
+      suggestedFix: 'sendMessage triggerTurn true',
+    }]
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? { ...result, verdict: 'NEEDS_CHANGES' as const, findings: mockPlanReviewImportantFindings }
+      : result)
+    mockRenderedPlanReviewResults = 'PLAN REVIEW: NEEDS_CHANGES\n- important: leftover must wake model'
+
+    await harness.sessionStartHandlers[0]?.({}, harness.ctx)
+    await harness.agentSettledHandlers[0]?.({}, harness.ctx)
+
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
+    const findingsMsg = harness.sendMessages.find((message) => message.message.customType === 'plan-review-findings')
+    expect(findingsMsg).toBeTruthy()
+    expect(findingsMsg?.options?.triggerTurn).toBe(true)
+    expect(String(findingsMsg?.message.content)).toContain('Strict plan critique complete')
+    expect(String(findingsMsg?.message.content)).toContain('call plan_mode_complete')
+
+    const persisted = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
+    expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(persisted?.data?.enabled).toBe(true)
   })
 
   it('auto/autopilot agent_end clears pending and never opens ready UI', async () => {

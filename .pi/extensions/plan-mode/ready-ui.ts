@@ -19,7 +19,7 @@ export const READY_ACTIONS: readonly ReadyActionItem[] = [
 	{ value: "execute", label: "Исполнить", description: "Записать PLAN APPROVED и выйти из plan mode" },
 	{ value: "stay", label: "Остаться в plan mode", description: "Очистить pending ready, остаться в plan mode без approve" },
 	{ value: "refine", label: "Уточнить", description: "Очистить pending и открыть редактор уточнения" },
-	{ value: "plan-review", label: "Отправить на plan-review", description: "Критика без approve; cycle не увеличивается" },
+	{ value: "plan-review", label: "Отправить на plan-review", description: "Критика без approve; findings → tool result; cycle не увеличивается; dirty очищает pending" },
 ] as const;
 
 export interface ReadyUiTheme {
