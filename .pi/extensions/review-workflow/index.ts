@@ -619,6 +619,93 @@ function parseEvidenceChecks(block: string | undefined): MatrixCheckEvidence[] {
 	return checks;
 }
 
+type SupervisorArtifactMatrixRow = {
+	item: string;
+	evidence: string;
+	result: AcceptanceMatrixResult;
+};
+
+function splitMarkdownTableCells(line: string): string[] {
+	const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+	return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function parseAcceptanceMatrixResult(value: string): AcceptanceMatrixResult | undefined {
+	const normalized = value.trim().toUpperCase().replace(/_/g, " ");
+	if (normalized === "PASS" || normalized === "FAIL" || normalized === "NOT RUN" || normalized === "N/A") {
+		return normalized as AcceptanceMatrixResult;
+	}
+	return undefined;
+}
+
+/** Parse markdown `| Item | Evidence | Result |` (or Criterion/Result/Evidence) rows from a supervisor evidence block. */
+export function parseSupervisorArtifactMatrix(block: string | undefined): SupervisorArtifactMatrixRow[] {
+	if (!block) return [];
+	const rows: SupervisorArtifactMatrixRow[] = [];
+	const lines = block.split(/\r?\n/);
+	for (let index = 0; index < lines.length; index += 1) {
+		const headerLine = lines[index]?.trim() ?? "";
+		if (!headerLine.startsWith("|") || !headerLine.endsWith("|")) continue;
+		const headers = splitMarkdownTableCells(headerLine).map((cell) => cell.toLowerCase());
+		if (headers.length < 3) continue;
+		const itemIdx = headers.findIndex((cell) => /^(item|criterion|check|verification)$/.test(cell));
+		const evidenceIdx = headers.findIndex((cell) => /^evidence$/.test(cell));
+		const resultIdx = headers.findIndex((cell) => /^(result|status)$/.test(cell));
+		if (itemIdx < 0 || evidenceIdx < 0 || resultIdx < 0) continue;
+		const separator = lines[index + 1]?.trim() ?? "";
+		if (!/^\|?[\s:|-]+\|?[\s:|-]*$/.test(separator) || !separator.includes("-")) continue;
+		for (let rowIndex = index + 2; rowIndex < lines.length; rowIndex += 1) {
+			const rowLine = lines[rowIndex]?.trim() ?? "";
+			if (!rowLine.startsWith("|") || !rowLine.endsWith("|")) break;
+			const cells = splitMarkdownTableCells(rowLine);
+			if (cells.length <= Math.max(itemIdx, evidenceIdx, resultIdx)) continue;
+			const item = (cells[itemIdx] ?? "").replace(/\\\|/g, "|").trim();
+			const evidence = (cells[evidenceIdx] ?? "").replace(/\\\|/g, "|").trim();
+			const result = parseAcceptanceMatrixResult(cells[resultIdx] ?? "");
+			if (!item || !result) continue;
+			rows.push({ item, evidence, result });
+		}
+		// Skip past this table body on outer loop via index bump below is unnecessary; overlapping headers are rare.
+	}
+	return rows;
+}
+
+function tokenOverlapRatio(left: string, right: string): number {
+	const leftTokens = new Set(left.split(/\s+/).filter((token) => token.length > 1));
+	const rightTokens = new Set(right.split(/\s+/).filter((token) => token.length > 1));
+	if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+	let intersection = 0;
+	for (const token of leftTokens) {
+		if (rightTokens.has(token)) intersection += 1;
+	}
+	return intersection / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function artifactRowTextMatches(item: string, rowItem: string): boolean {
+	const normalizedItem = normalizeVerificationText(item);
+	const normalizedRow = normalizeVerificationText(rowItem);
+	if (!normalizedItem || !normalizedRow) return false;
+	if (normalizedItem.includes(normalizedRow) || normalizedRow.includes(normalizedItem)) return true;
+	return tokenOverlapRatio(normalizedItem, normalizedRow) >= 0.6;
+}
+
+/**
+ * Conservatively map a verification bullet to a unique PASS/N-A artifact matrix row with nonempty evidence.
+ * FAIL rows never map; ties (≥2 candidates) yield no match.
+ */
+export function matchingSupervisorArtifactRow(
+	item: string,
+	artifactRows: SupervisorArtifactMatrixRow[],
+): SupervisorArtifactMatrixRow | undefined {
+	const candidates = artifactRows.filter((row) =>
+		(row.result === "PASS" || row.result === "N/A")
+		&& row.evidence.trim().length > 0
+		&& artifactRowTextMatches(item, row.item)
+	);
+	if (candidates.length !== 1) return undefined;
+	return candidates[0];
+}
+
 function isDocsOnlyChange(files: string[]): boolean {
 	return files.length > 0 && files.every((file) => /(^|\/)(?:README|CHANGELOG|AGENTS|CLAUDE)\.md$|\.md$|^\.pi\/skills\/.*\/SKILL\.md$/i.test(file));
 }
@@ -794,6 +881,7 @@ export async function buildAcceptanceMatrix(params: {
 	const verificationItems = extractSectionBullets(description, ["Verification / acceptance checks", "Verification", "Acceptance checks"]);
 	const evidenceBlock = latestReviewEvidenceBlock(params.comments ?? "");
 	const checkResults = [...params.automatedChecks.map(parseCheckResult), ...parseEvidenceChecks(evidenceBlock)];
+	const artifactMatrixRows = parseSupervisorArtifactMatrix(evidenceBlock);
 	const hasFailedCheck = checkResults.some((check) => check.result === "FAIL");
 	const hasNotRunCheck = checkResults.some((check) => check.result === "NOT RUN");
 	const rows: AcceptanceMatrixRow[] = [];
@@ -841,6 +929,22 @@ export async function buildAcceptanceMatrix(params: {
 			}
 		}
 
+		// Supervisor artifact markdown matrix (PASS/N-A + nonempty evidence) after allowlist, before suite fallback.
+		let artifactMatrixEvidence: string | undefined;
+		if (!check && !conditionalEvidence) {
+			const artifactMatch = matchingSupervisorArtifactRow(item, artifactMatrixRows);
+			if (artifactMatch?.result === "PASS") {
+				check = {
+					command: "supervisor artifact matrix",
+					output: artifactMatch.evidence,
+					result: "PASS",
+				};
+				artifactMatrixEvidence = `supervisor artifact matrix: ${evidenceExcerpt(artifactMatch.evidence)}`;
+			} else if (artifactMatch?.result === "N/A") {
+				conditionalEvidence = `supervisor artifact matrix: ${evidenceExcerpt(artifactMatch.evidence)}`;
+			}
+		}
+
 		if (!check && !conditionalEvidence) {
 			const normalizedItem = normalizeVerificationText(item);
 			const suiteShaped = /\b(pnpm|vitest|vue-tsc|cargo)\b/.test(normalizedItem);
@@ -852,10 +956,11 @@ export async function buildAcceptanceMatrix(params: {
 
 		rows.push({
 			item,
-			evidence: check
-				? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}`
-				: conditionalEvidence
-					?? `Required verification evidence missing: no applicable automated check or supervisor artifact output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`,
+			evidence: artifactMatrixEvidence
+				?? (check
+					? `command: ${check.command}; ${check.exitCode === undefined ? "exit code: not recorded" : `exit code: ${check.exitCode}`}; output: ${evidenceExcerpt(check.output)}`
+					: conditionalEvidence
+						?? `Required verification evidence missing: no applicable automated check or supervisor artifact output matched this verification item. Automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`),
 			result: check ? check.result : conditionalEvidence ? "N/A" : "NOT RUN",
 		});
 	}
