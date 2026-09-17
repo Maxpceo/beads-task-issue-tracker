@@ -80,10 +80,21 @@ export function linkParentsAndChildren(issues: Issue[]): void {
 }
 
 /**
- * Remove closed issue IDs from dependency references.
+ * True when `id` is a non-empty bead id without relationship-type prefixes.
+ * Rejects empty strings and values containing `:` (e.g. `discovered-from:…`).
+ */
+function isWellFormedIssueId(id: string): boolean {
+  return id.length > 0 && !id.includes(':')
+}
+
+/**
+ * Remove closed and malformed issue IDs from dependency references.
  *
  * `bd list/show` can return stale `blockedBy`/`blocks` links after a blocker is
- * closed. Pruning them here keeps status-column blocker indicators accurate.
+ * closed, and occasionally malformed ids (empty or relationship-prefixed like
+ * `discovered-from:…`). Malformed ids are always dropped; closed ids present in
+ * the current list are dropped; well-formed unknown ids are kept (they may be
+ * live blockers outside the current fetch window).
  */
 export function pruneClosedBlockers(issues: Issue[]): void {
   const closedIds = new Set(
@@ -92,16 +103,18 @@ export function pruneClosedBlockers(issues: Issue[]): void {
       .map(issue => issue.id),
   )
 
-  if (closedIds.size === 0) return
-
   for (const issue of issues) {
     if (issue.blockedBy?.length) {
-      const activeBlockers = issue.blockedBy.filter(id => !closedIds.has(id))
+      const activeBlockers = issue.blockedBy.filter(
+        id => isWellFormedIssueId(id) && !closedIds.has(id),
+      )
       issue.blockedBy = activeBlockers.length ? activeBlockers : undefined
     }
 
     if (issue.blocks?.length) {
-      const activeBlockedIssues = issue.blocks.filter(id => !closedIds.has(id))
+      const activeBlockedIssues = issue.blocks.filter(
+        id => isWellFormedIssueId(id) && !closedIds.has(id),
+      )
       issue.blocks = activeBlockedIssues.length ? activeBlockedIssues : undefined
     }
   }
@@ -110,13 +123,14 @@ export function pruneClosedBlockers(issues: Issue[]): void {
 /**
  * Determine whether an issue should appear in blocked views.
  *
- * Supports both explicit blocked status and dependency-based blockers
- * (`blockedBy`) while ignoring closed issues.
+ * BLOCKED when status is explicitly `blocked`, or when status is not closed and
+ * `blockedBy` contains at least one well-formed id. Malformed entries
+ * (empty / containing `:`) do not count as live blockers.
  */
 export function isIssueBlocked(issue: Pick<Issue, 'status' | 'blockedBy'>): boolean {
   if (issue.status === 'blocked') return true
-  if (!issue.blockedBy?.length) return false
-  return issue.status !== 'closed'
+  if (issue.status === 'closed') return false
+  return !!issue.blockedBy?.some(isWellFormedIssueId)
 }
 
 /**

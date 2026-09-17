@@ -655,6 +655,12 @@ fn normalize_issue_status(status: &str) -> String {
     }
 }
 
+/// True when `id` is a non-empty bead id without relationship-type prefixes.
+/// Rejects empty strings and values containing `:` (e.g. `discovered-from:…`).
+fn is_well_formed_issue_id(id: &str) -> bool {
+    !id.is_empty() && !id.contains(':')
+}
+
 fn transform_issue(raw: BdRawIssue) -> Issue {
     // Parent info - dependencies array now contains relationship info, not full issue details
     // For now, we just use the parent ID if available
@@ -780,20 +786,32 @@ fn transform_issue(raw: BdRawIssue) -> Issue {
             }
         }).collect(),
         blocked_by: {
-            // Try raw.blocked_by first (if bd ever populates it directly)
-            let mut bb = raw.blocked_by.unwrap_or_default();
+            // Try raw.blocked_by first (if bd ever populates it directly).
+            // Drop malformed ids (empty / containing ':') from raw and dep paths.
+            let mut bb: Vec<String> = raw
+                .blocked_by
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|id| is_well_formed_issue_id(id))
+                .collect();
             // Extract from dependencies array (bd show: objects with dependency_type "blocks" = blockers)
             if let Some(ref deps) = raw.dependencies {
                 // bd show format: [{id, dependency_type: "blocks"}] — these block the current issue
                 for dep in deps {
                     if let (Some(ref dep_type), Some(ref id)) = (&dep.dependency_type, &dep.id) {
-                        if dep_type == "blocks" && !bb.contains(id) {
+                        if dep_type == "blocks"
+                            && is_well_formed_issue_id(id)
+                            && !bb.contains(id)
+                        {
                             bb.push(id.clone());
                         }
                     }
                     // bd list format: [{issue_id, depends_on_id, type: "blocks"}]
                     if let (Some(ref dep_type), Some(ref depends_on_id), Some(ref _issue_id)) = (&dep.dependency_type, &dep.depends_on_id, &dep.issue_id) {
-                        if dep_type == "blocks" && !bb.contains(depends_on_id) {
+                        if dep_type == "blocks"
+                            && is_well_formed_issue_id(depends_on_id)
+                            && !bb.contains(depends_on_id)
+                        {
                             bb.push(depends_on_id.clone());
                         }
                     }
@@ -802,13 +820,21 @@ fn transform_issue(raw: BdRawIssue) -> Issue {
             if bb.is_empty() { None } else { Some(bb) }
         },
         blocks: {
-            let mut bl = raw.blocks.unwrap_or_default();
+            let mut bl: Vec<String> = raw
+                .blocks
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|id| is_well_formed_issue_id(id))
+                .collect();
             // Extract from dependents array (bd show: objects with dependency_type "blocks" = issues blocked by current)
             // Filter to only "blocks" type — exclude "parent-child" which are children, not dependencies
             if let Some(ref dependents) = raw.dependents {
                 for dep in dependents {
                     if let (Some(ref dep_type), Some(ref id)) = (&dep.dependency_type, &dep.id) {
-                        if dep_type == "blocks" && !bl.contains(id) {
+                        if dep_type == "blocks"
+                            && is_well_formed_issue_id(id)
+                            && !bl.contains(id)
+                        {
                             bl.push(id.clone());
                         }
                     }
@@ -6219,6 +6245,100 @@ mod tests {
             created_at: None,
             created_by: None,
         }
+    }
+
+    /// bd list format: type=blocks with issue_id + depends_on_id.
+    fn make_blocks_dep_list(issue_id: &str, depends_on_id: &str) -> BdRawDependency {
+        BdRawDependency {
+            id: None,
+            issue_id: Some(issue_id.to_string()),
+            depends_on_id: Some(depends_on_id.to_string()),
+            dependency_type: Some("blocks".to_string()),
+            created_at: None,
+            created_by: None,
+        }
+    }
+
+    /// bd show format: type=blocks with id of the blocker.
+    fn make_blocks_dep_show(blocker_id: &str) -> BdRawDependency {
+        BdRawDependency {
+            id: Some(blocker_id.to_string()),
+            issue_id: None,
+            depends_on_id: None,
+            dependency_type: Some("blocks".to_string()),
+            created_at: None,
+            created_by: None,
+        }
+    }
+
+    #[test]
+    fn test_transform_issue_drops_malformed_depends_on_id_from_blocked_by() {
+        let raw = make_issue_with_deps(
+            "issue-a",
+            "in_progress",
+            Some(vec![
+                make_blocks_dep_list(
+                    "issue-a",
+                    "discovered-from:beads-task-issue-tracker-garn",
+                ),
+                make_blocks_dep_list("issue-a", "open-blocker-1"),
+                make_blocks_dep_list("issue-a", ""),
+            ]),
+        );
+        let issue = transform_issue(raw);
+        assert_eq!(
+            issue.blocked_by.as_deref(),
+            Some(vec!["open-blocker-1".to_string()].as_slice()),
+            "malformed depends_on_id must be dropped; valid id kept"
+        );
+    }
+
+    #[test]
+    fn test_transform_issue_drops_malformed_show_id_from_blocked_by() {
+        let raw = make_issue_with_deps(
+            "issue-a",
+            "open",
+            Some(vec![
+                make_blocks_dep_show("discovered-from:x"),
+                make_blocks_dep_show("valid-blocker"),
+            ]),
+        );
+        let issue = transform_issue(raw);
+        assert_eq!(
+            issue.blocked_by.as_deref(),
+            Some(vec!["valid-blocker".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn test_transform_issue_filters_malformed_raw_blocked_by() {
+        let mut raw = make_issue_with_deps("issue-a", "in_progress", None);
+        raw.blocked_by = Some(vec![
+            "discovered-from:beads-task-issue-tracker-garn".to_string(),
+            "".to_string(),
+            "open-2".to_string(),
+        ]);
+        raw.blocks = Some(vec![
+            "discovered-from:x".to_string(),
+            "child-1".to_string(),
+        ]);
+        let issue = transform_issue(raw);
+        assert_eq!(
+            issue.blocked_by.as_deref(),
+            Some(vec!["open-2".to_string()].as_slice())
+        );
+        assert_eq!(
+            issue.blocks.as_deref(),
+            Some(vec!["child-1".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn test_transform_issue_malformed_only_blocked_by_is_none() {
+        let mut raw = make_issue_with_deps("issue-a", "in_progress", None);
+        raw.blocked_by = Some(vec!["discovered-from:garn".to_string()]);
+        let issue = transform_issue(raw);
+        assert!(issue.blocked_by.is_none());
     }
 
     #[test]

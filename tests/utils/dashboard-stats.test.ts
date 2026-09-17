@@ -273,6 +273,22 @@ describe('computeStatsFromIssues — category-mode with custom statuses', () => 
     expect(stats.inProgress).toBe(0)
   })
 
+  it('СТРАЖ: in_progress + malformed blockedBy не считается blocked KPI', () => {
+    const issues = [
+      makeIssue({
+        id: '1',
+        status: 'in_progress',
+        blockedBy: ['discovered-from:beads-task-issue-tracker-garn'],
+      }),
+    ]
+    const statuses = [
+      makeStatus({ name: 'in_progress', label: 'In Progress', category: 'wip' }),
+    ]
+    const stats = computeStatsFromIssues(issues, statuses)
+    expect(stats.blocked).toBe(0)
+    expect(stats.inProgress).toBe(1)
+  })
+
   it('СТРАЖ: inreview + blockedBy → blocked, не inReview', () => {
     const issues = [
       makeIssue({ id: '1', status: 'inreview', blockedBy: ['2'] }),
