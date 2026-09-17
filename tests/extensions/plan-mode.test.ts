@@ -228,6 +228,8 @@ function makeHarness(options: {
   activeBead?: string
   entries?: Array<{ type?: string; customType?: string; data?: unknown }>
   failPreDispatchProgressMessage?: boolean
+  /** Throw from pi.sendMessage when message.customType is in this list (f3zr transcript resilience). */
+  failSendMessageCustomTypes?: string[]
   initialActiveTools?: string[]
   registeredTools?: string[]
   mode?: 'tui' | 'rpc' | 'json' | 'print'
@@ -310,6 +312,9 @@ function makeHarness(options: {
     appendEntry: (customType: string, data: unknown) => { sessionEntries.push({ type: 'custom', customType, data }) },
     sendMessage: (message: any, sendOptions?: any) => {
       if (options.failPreDispatchProgressMessage && message.customType === 'post-approval-continuation-started') throw new Error('progress display failed')
+      if (options.failSendMessageCustomTypes?.includes(message.customType)) {
+        throw new Error(`sendMessage failed for ${message.customType}`)
+      }
       sendMessages.push({ message, options: sendOptions })
     },
     sendUserMessage: (message: string) => sendUserMessages.push(message),
@@ -2668,7 +2673,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(escHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
   })
 
-  it('plan-review clean: notify + re-show select + execute approves; no sendMessage findings; cycle unchanged', async () => {
+  it('plan-review clean: transcript clean note + plan document + re-show select + execute; cycle unchanged', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['plan-review', 'execute'],
@@ -2690,6 +2695,17 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: запускаю 3 ревьюеров'))).toBe(true)
     expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: чисто'))).toBe(true)
 
+    const cleanMsg = harness.sendMessages.find((message) => message.message.customType === 'plan-review-clean')
+    expect(cleanMsg).toBeTruthy()
+    expect(String(cleanMsg?.message.content)).toContain('plan-review: чисто')
+    expect(cleanMsg?.message.display).toBe(true)
+    expect(cleanMsg?.options).toMatchObject({ triggerTurn: false })
+
+    const planDocs = harness.sendMessages.filter((message) => message.message.customType === 'plan-ready-document')
+    expect(planDocs.length).toBeGreaterThanOrEqual(2) // initial select + clean re-show
+    expect(planDocs.every((message) => message.options?.triggerTurn === false)).toBe(true)
+    expect(String(planDocs[0]?.message.content)).toContain('Plan:')
+
     const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
     const cycleAfter = afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0
     expect(cycleAfter).toBe(cycleBefore)
@@ -2702,7 +2718,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(2)
   })
 
-  it('plan-review dirty: tool result carries findings, pending cleared, exactly one select, cycle unchanged', async () => {
+  it('plan-review dirty: transcript findings triggerTurn false + tool result; pending cleared; one select; cycle unchanged', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['plan-review', 'execute'],
@@ -2734,10 +2750,21 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(complete.details.pending).toBe(false)
     expect(complete.details.findings).toBe(true)
 
-    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(false)
+    const findingsMsgs = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-findings')
+    expect(findingsMsgs).toHaveLength(1)
+    expect(findingsMsgs[0]?.message.display).toBe(true)
+    expect(findingsMsgs[0]?.options).toMatchObject({ triggerTurn: false })
+    expect(String(findingsMsgs[0]?.message.content)).toContain('Strict plan critique complete')
+    expect(String(findingsMsgs[0]?.message.content)).toMatch(/NEEDS_CHANGES|missing delivery path/)
+
+    const planDoc = harness.sendMessages.find((message) => message.message.customType === 'plan-ready-document')
+    expect(planDoc).toBeTruthy()
+    expect(planDoc?.options).toMatchObject({ triggerTurn: false })
+
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     expect(mockSupervisorDispatchCalls).toHaveLength(0)
+    expect(harness.customCalls).toHaveLength(0)
 
     const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
     expect(afterEntries.at(-1)?.data?.pendingReadyPlan).toBeUndefined()
@@ -2813,17 +2840,137 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
 
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
-    const findingsMsg = harness.sendMessages.find((message) => message.message.customType === 'plan-review-findings')
-    expect(findingsMsg).toBeTruthy()
-    expect(findingsMsg?.options?.triggerTurn).toBe(true)
-    expect(String(findingsMsg?.message.content)).toContain('Strict plan critique complete')
-    expect(String(findingsMsg?.message.content)).toContain('call plan_mode_complete')
+    // Leftover has no tool-result channel: exactly one findings message wakes the model.
+    const findingsMsgs = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-findings')
+    expect(findingsMsgs).toHaveLength(1)
+    expect(findingsMsgs[0]?.options?.triggerTurn).toBe(true)
+    expect(String(findingsMsgs[0]?.message.content)).toContain('Strict plan critique complete')
+    expect(String(findingsMsgs[0]?.message.content)).toContain('call plan_mode_complete')
+
+    const planDoc = harness.sendMessages.find((message) => message.message.customType === 'plan-ready-document')
+    expect(planDoc).toBeTruthy()
+    expect(planDoc?.options).toMatchObject({ triggerTurn: false })
 
     const persisted = harness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
       .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
     expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
     expect(persisted?.data?.enabled).toBe(true)
+  })
+
+  it('ready select is preceded by plan-ready-document with triggerTurn false', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+    })
+    const order: string[] = []
+    const originalSelect = harness.ctx.ui.select.bind(harness.ctx.ui)
+    harness.ctx.ui.select = async (title: string, labels: string[]) => {
+      order.push(`select:${harness.sendMessages.filter((m) => m.message.customType === 'plan-ready-document').length}`)
+      return originalSelect(title, labels)
+    }
+
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    expect(order.some((entry) => entry.startsWith('select:') && Number(entry.split(':')[1]) >= 1)).toBe(true)
+    const planDoc = harness.sendMessages.find((message) => message.message.customType === 'plan-ready-document')
+    expect(planDoc).toBeTruthy()
+    expect(planDoc?.message.display).toBe(true)
+    expect(planDoc?.options).toMatchObject({ triggerTurn: false })
+    expect(String(planDoc?.message.content)).toContain('Plan:')
+    expect(harness.customCalls).toHaveLength(0)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
+  })
+
+  it('sendMessage throw for plan-ready-document does not block ready select', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+      failSendMessageCustomTypes: ['plan-ready-document'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await expect(markPlanReady(harness.toolHandlers, harness.ctx)).resolves.toBeDefined()
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-ready-document')).toBe(false)
+    expect(harness.customCalls).toHaveLength(0)
+  })
+
+  it('questionnaire sends plan-questionnaire transcript before UI with triggerTurn false', async () => {
+    const questions = [
+      {
+        id: 'scope',
+        prompt: 'Какой scope?',
+        options: [
+          { value: 'narrow', label: 'Узкий' },
+          { value: 'wide', label: 'Широкий' },
+        ],
+      },
+    ]
+    const harness = makeHarness({
+      customResult: {
+        questions,
+        answers: [{ id: 'scope', value: 'narrow', label: 'Узкий', wasCustom: false, index: 1 }],
+        cancelled: false,
+      },
+    })
+    const order: string[] = []
+    const originalCustom = harness.ctx.ui.custom.bind(harness.ctx.ui)
+    harness.ctx.ui.custom = async (...args: unknown[]) => {
+      order.push(`custom:${harness.sendMessages.filter((m) => m.message.customType === 'plan-questionnaire').length}`)
+      return originalCustom(...args)
+    }
+
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const result = await harness.toolHandlers.get('questionnaire')?.execute(
+      'q1',
+      { questions },
+      undefined,
+      undefined,
+      harness.ctx,
+    )
+
+    expect(order.some((entry) => entry.startsWith('custom:') && Number(entry.split(':')[1]) >= 1)).toBe(true)
+    const qMsg = harness.sendMessages.find((message) => message.message.customType === 'plan-questionnaire')
+    expect(qMsg).toBeTruthy()
+    expect(qMsg?.message.display).toBe(true)
+    expect(qMsg?.options).toMatchObject({ triggerTurn: false })
+    expect(String(qMsg?.message.content)).toContain('Какой scope?')
+    expect(String(qMsg?.message.content)).toContain('Узкий')
+    expect(String(qMsg?.message.content)).toContain('Широкий')
+    expect(result.content[0].text).toContain('Узкий')
+  })
+
+  it('sendMessage throw for plan-questionnaire does not block questionnaire UI', async () => {
+    const questions = [
+      {
+        id: 'scope',
+        prompt: 'Какой scope?',
+        options: [
+          { value: 'narrow', label: 'Узкий' },
+          { value: 'wide', label: 'Широкий' },
+        ],
+      },
+    ]
+    const harness = makeHarness({
+      failSendMessageCustomTypes: ['plan-questionnaire'],
+      customResult: {
+        questions,
+        answers: [{ id: 'scope', value: 'narrow', label: 'Узкий', wasCustom: false, index: 1 }],
+        cancelled: false,
+      },
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const result = await harness.toolHandlers.get('questionnaire')?.execute(
+      'q1',
+      { questions },
+      undefined,
+      undefined,
+      harness.ctx,
+    )
+    expect(result.content[0].text).toContain('Узкий')
+    expect(harness.customCalls.length).toBeGreaterThanOrEqual(1)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-questionnaire')).toBe(false)
   })
 
   it('auto/autopilot agent_end clears pending and never opens ready UI', async () => {
