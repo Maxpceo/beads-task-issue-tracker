@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **Pi epic close missing-matrix policy message** (`beads-task-issue-tracker-96x4`): when `bd close` is blocked for an epic without a post-terminal `EPIC ACCEPTANCE MATRIX`, `beads-policy` now explains that the matrix must be written in a separate completed `bd comments add` before close, that chained comment+close in one bash call does not count (and none of the preparatory steps ran), and shows the two-step sequence. Invalid existing matrices get a distinct reason (need `result: PASS`/`N/A` and matching `PARENT_EPIC`) without the chained-call wording. Focused vitest under `tests/extensions/beads-policy.test.ts`.
+
 - **Pi `review_bead` supervisor artifact matrix mapping** (`beads-task-issue-tracker-0m3l`): `buildAcceptanceMatrix` now parses `SUPERVISOR ARTIFACT` markdown tables (`| Item/Criterion | Evidence | Result |`) and conservatively maps unique `PASS`/`N/A` rows with nonempty evidence onto Verification bullets after the allowlist and before suite fallback. `FAIL` rows and multi-candidate ties never map as `PASS`; empty-evidence `PASS` stays `NOT RUN`. Focused vitest under `tests/extensions/review-workflow.test.ts`.
 
 - **Pi plan ready-UI no longer uses `ctx.ui.custom`** (`beads-task-issue-tracker-51l5`): live `plan_mode_complete` still killed the TUI after m6ho clamped render lines and gauq moved the prompt to `agent_settled`. Strict ready-UI is now built-in `ctx.ui.select` (Исполнить / Остаться / Уточнить / Отправить на plan-review) inside the tool execute, matching questionnaire timing; leftover pending restores via the same select on `agent_settled`. Questionnaire custom UI is unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.

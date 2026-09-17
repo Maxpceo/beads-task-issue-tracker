@@ -1278,17 +1278,22 @@ exit 1
         '- All child beads are closed.',
       ].join('\n'),
     }
-    withFakeBd(epic, `EPIC ACCEPTANCE MATRIX
+    const matrixComment = JSON.stringify([{
+      text: `EPIC ACCEPTANCE MATRIX
 PARENT_EPIC: epic-a
 - criterion: All child beads are closed.
   evidence: bd list --parent epic-a
   result: PASS
-`, (cwd) => {
+`,
+      created_at: '2026-09-16T12:00:00Z',
+    }])
+    withFakeBd(epic, matrixComment, (cwd) => {
       const decision = evaluateBashPolicy('bd close epic-a --reason accepted', {
         activeBead: 'epic-a',
         bdStatus: 'accepted',
       }, { cwd })
 
+      expect(decision?.policy).not.toBe('requireEpicFinalizationSweep')
       expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
     }, [{ id: 'child-a', status: 'closed' }])
   })
@@ -1304,7 +1309,8 @@ PARENT_EPIC: epic-a
         '- Runtime smoke checks pass.',
       ].join('\n'),
     }
-    withFakeBd(epic, `EPIC ACCEPTANCE MATRIX
+    const matrixComment = JSON.stringify([{
+      text: `EPIC ACCEPTANCE MATRIX
 PARENT_EPIC: epic-a
 - criterion: All child beads are closed.
   evidence: bd list --parent epic-a
@@ -1312,7 +1318,10 @@ PARENT_EPIC: epic-a
 - criterion: Runtime smoke checks pass.
   evidence: not run
   result: PENDING
-`, (cwd) => {
+`,
+      created_at: '2026-09-16T12:00:00Z',
+    }])
+    withFakeBd(epic, matrixComment, (cwd) => {
       const decision = evaluateBashPolicy('bd close epic-a --reason accepted', {
         activeBead: 'epic-a',
         bdStatus: 'accepted',
@@ -1320,6 +1329,10 @@ PARENT_EPIC: epic-a
 
       expect(decision?.policy).toBe('requireEpicFinalizationSweep')
       expect(decision?.reason).toContain('EPIC ACCEPTANCE MATRIX')
+      expect(decision?.reason).toContain('невалидна')
+      expect(decision?.reason).not.toMatch(/chained/i)
+      expect(decision?.reason).not.toContain('не выполнились')
+      expect(decision?.reason).not.toContain('подготовительн')
     }, [{ id: 'child-a', status: 'closed' }])
   })
 
@@ -1341,6 +1354,39 @@ PARENT_EPIC: epic-a
 
       expect(decision?.policy).toBe('requireEpicFinalizationSweep')
       expect(decision?.reason).toContain('EPIC ACCEPTANCE MATRIX')
+      expect(decision?.reason).toContain('bd comments add')
+      expect(decision?.reason).toMatch(/chained comment\+close/i)
+      expect(decision?.reason).toContain('не выполнились')
+      expect(decision?.reason).toContain('bd close')
+    }, [{ id: 'child-a', status: 'closed' }, { id: 'child-b', status: 'closed' }])
+  })
+
+  it('blocks chained bd comments add && bd close without existing EPIC ACCEPTANCE MATRIX and keeps actionable missing-matrix reason', () => {
+    const epic = {
+      id: 'epic-a',
+      status: 'accepted',
+      issue_type: 'epic',
+      description: [
+        '### Acceptance criteria',
+        '- All child beads are closed.',
+      ].join('\n'),
+    }
+    withFakeBd(epic, '[]', (cwd) => {
+      const decision = evaluateBashPolicy(
+        'bd comments add epic-a --file /tmp/epic-matrix.txt && bd close epic-a --reason "finalize epic" --json',
+        {
+          activeBead: 'epic-a',
+          bdStatus: 'accepted',
+        },
+        { cwd },
+      )
+
+      expect(decision?.policy).toBe('requireEpicFinalizationSweep')
+      expect(decision?.block).toBe(true)
+      expect(decision?.reason).toContain('bd comments add')
+      expect(decision?.reason).toMatch(/chained comment\+close/i)
+      expect(decision?.reason).toContain('не выполнились')
+      expect(decision?.reason).toContain('bd close')
     }, [{ id: 'child-a', status: 'closed' }, { id: 'child-b', status: 'closed' }])
   })
 
