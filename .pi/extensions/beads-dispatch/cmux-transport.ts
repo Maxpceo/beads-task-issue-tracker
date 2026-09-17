@@ -300,6 +300,56 @@ export function findLiveRegistryEntriesForBead(
 	return matches;
 }
 
+function realpathOrResolved(targetPath: string): string {
+	try {
+		return fs.realpathSync(targetPath);
+	} catch {
+		return path.resolve(targetPath);
+	}
+}
+
+/**
+ * Live (spawned, non-hung) supervisor registry rows whose recorded worktree
+ * resolves to the same realpath as the given repo root. Used by beads-policy to
+ * recognize spawned supervisor child contexts that have no local workflow-state.
+ * Fail-closed: a corrupt/unreadable foreign ns file is skipped per file, a
+ * missing ns root yields no matches, and nothing here throws.
+ */
+export function findLiveSupervisorSpawnsForWorktree(
+	worktreePath: string,
+	env: NodeJS.ProcessEnv = process.env,
+): DispatchRegistryEntry[] {
+	if (!worktreePath?.trim()) return [];
+	const target = realpathOrResolved(worktreePath);
+	const root = path.join(orchRoot(env), "ns");
+	let names: string[] = [];
+	try {
+		if (!fs.existsSync(root)) return [];
+		names = fs.readdirSync(root);
+	} catch {
+		return [];
+	}
+	const matches: DispatchRegistryEntry[] = [];
+	for (const name of names) {
+		const file = path.join(root, name, "dispatch-registry.json");
+		let registry: DispatchRegistry;
+		try {
+			registry = loadRegistry(file);
+		} catch {
+			continue;
+		}
+		for (const entry of registry.entries) {
+			if (entry.status !== "spawned") continue;
+			if (entry.hung === true) continue;
+			if (!isSupervisorRole(entry.role)) continue;
+			if (!entry.worktree?.trim()) continue;
+			if (realpathOrResolved(entry.worktree) !== target) continue;
+			matches.push(entry);
+		}
+	}
+	return matches;
+}
+
 /** Mark a registry row tombstone in place and persist. */
 export function tombstoneRegistryEntry(
 	file: string,

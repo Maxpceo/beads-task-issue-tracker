@@ -15,6 +15,7 @@ import beadsDispatchExtension, {
   findRegistryByTaskId,
   followupVisibleDispatch,
   followupPayloadLooksLikeSpawnArgv,
+  findLiveSupervisorSpawnsForWorktree,
   loadRegistry,
   nsDir,
   orchRoot,
@@ -2220,5 +2221,96 @@ describe('close_visible_dispatch', () => {
     expect(fs.existsSync(files.taskFile)).toBe(false)
     expect(fs.existsSync(files.resultFile)).toBe(false)
     expect(fs.existsSync(files.digestFile)).toBe(false)
+  })
+})
+
+describe('findLiveSupervisorSpawnsForWorktree', () => {
+  let tmp: string
+  let worktree: string
+  const prevOrch = process.env.ORCH_ROOT
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), '3o7e-spawns-'))
+    worktree = fs.mkdtempSync(path.join(os.tmpdir(), '3o7e-wt-'))
+    process.env.ORCH_ROOT = tmp
+  })
+
+  afterEach(() => {
+    if (prevOrch === undefined) delete process.env.ORCH_ROOT
+    else process.env.ORCH_ROOT = prevOrch
+    fs.rmSync(tmp, { recursive: true, force: true })
+    fs.rmSync(worktree, { recursive: true, force: true })
+  })
+
+  function seed(ns: string, entries: Array<Record<string, unknown>>) {
+    const file = path.join(tmp, 'ns', ns, 'dispatch-registry.json')
+    saveRegistry(file, { entries: entries as any })
+    return file
+  }
+
+  function supervisorEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      taskId: 'task-1',
+      beadId: 'bead-a',
+      pane: 'surface:1',
+      worktree,
+      role: 'test-supervisor',
+      model: '',
+      taskFile: path.join(tmp, 't.md'),
+      resultFile: path.join(tmp, 'r.md'),
+      digestFile: path.join(tmp, 'd.digest'),
+      promptFile: path.join(tmp, 'p.md'),
+      status: 'spawned',
+      createdAt: 't',
+      ...overrides,
+    }
+  }
+
+  it('returns live supervisor rows matching the worktree realpath', () => {
+    seed('ws-1', [supervisorEntry()])
+    const matches = findLiveSupervisorSpawnsForWorktree(worktree)
+    expect(matches).toHaveLength(1)
+    expect(matches[0]!.beadId).toBe('bead-a')
+  })
+
+  it('ignores tombstone and hung rows', () => {
+    seed('ws-1', [
+      supervisorEntry({ taskId: 'task-t', status: 'tombstone' }),
+      supervisorEntry({ taskId: 'task-h', hung: true }),
+    ])
+    expect(findLiveSupervisorSpawnsForWorktree(worktree)).toEqual([])
+  })
+
+  it('ignores non-supervisor roles and foreign worktrees', () => {
+    seed('ws-1', [
+      supervisorEntry({ taskId: 'task-r', role: 'code-reviewer' }),
+      supervisorEntry({ taskId: 'task-f', worktree: path.join(tmp, 'other-wt') }),
+    ])
+    expect(findLiveSupervisorSpawnsForWorktree(worktree)).toEqual([])
+  })
+
+  it('skips a corrupt registry file and still returns matches from other ns dirs', () => {
+    seed('ws-good', [supervisorEntry()])
+    const badDir = path.join(tmp, 'ns', 'ws-bad')
+    fs.mkdirSync(badDir, { recursive: true })
+    fs.writeFileSync(path.join(badDir, 'dispatch-registry.json'), '{not json')
+    const matches = findLiveSupervisorSpawnsForWorktree(worktree)
+    expect(matches).toHaveLength(1)
+  })
+
+  it('returns multiple rows of the same bead and rows across bead ids for the policy to disambiguate', () => {
+    seed('ws-1', [supervisorEntry({ taskId: 'task-1' })])
+    seed('ws-2', [
+      supervisorEntry({ taskId: 'task-2' }),
+      supervisorEntry({ taskId: 'task-3', beadId: 'bead-b' }),
+    ])
+    const matches = findLiveSupervisorSpawnsForWorktree(worktree)
+    expect(matches).toHaveLength(3)
+  })
+
+  it('returns empty for missing ns root and empty worktree path', () => {
+    expect(findLiveSupervisorSpawnsForWorktree(worktree)).toEqual([])
+    seed('ws-1', [supervisorEntry()])
+    expect(findLiveSupervisorSpawnsForWorktree('')).toEqual([])
   })
 })
