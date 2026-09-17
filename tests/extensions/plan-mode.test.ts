@@ -118,6 +118,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     if (id === '../plan-review/index') {
       return {
         MAX_PLAN_REVIEW_CYCLES: 2,
+        MAX_PLAN_REVIEW_TOTAL_SPAWNS: 4,
         classifyPlanReviewRisk,
         planReviewStopAdvice,
         hasImportantOrCriticalFindings,
@@ -760,9 +761,12 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates).toHaveLength(beforeWorkflowUpdates)
     expect(execCalls).toHaveLength(beforeExecCalls)
     expect(source).toEqual(expect.stringContaining('MUST call workflow_plan_review'))
-    expect(source).toEqual(expect.stringContaining('MUST NOT call workflow_plan_review'))
+    expect(source).toEqual(expect.stringContaining('extraCycle'))
+    expect(source).toEqual(expect.stringContaining('MAX_PLAN_REVIEW_TOTAL_SPAWNS'))
     expect(source).toEqual(expect.stringContaining('Accepted findings'))
     expect(source).toEqual(expect.stringContaining('Rejected findings'))
+    // Absolute "MUST NOT call" removed; stop prompt documents extraCycle path instead.
+    expect(source).not.toMatch(/MUST NOT call workflow_plan_review again this planning session\. Present the current plan.*do not start a third review cycle/s)
   })
 
   it('workflow_plan_review caps at 2 spawns: clean APPROVED stops without second spawn; important CONTINUE then STOP; empty no increment; third skips spawn', async () => {
@@ -776,7 +780,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     const mustBefore = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
     expect(mustBefore?.message?.content).toContain('MUST call workflow_plan_review')
-    expect(mustBefore?.message?.content).not.toContain('MUST NOT call workflow_plan_review')
+    expect(mustBefore?.message?.content).not.toContain('Default auto path stopped')
 
     const clean = await toolHandlers.get('workflow_plan_review')?.execute('call-clean', {
       draftPlan: 'FAST_PATH_RATIONALE: docs-only\nPlan:\n1. Add one markdown file.\nFiles: docs/note.md',
@@ -784,11 +788,14 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(clean.details).toMatchObject({ ok: true, cycle: 1, stopAdvice: 'STOP_SHOW_USER', risk: 'low' })
     expect(clean.content[0].text).toContain('STOP_SHOW_USER')
-    expect(clean.content[0].text).toContain('MUST NOT call workflow_plan_review')
+    expect(clean.content[0].text).toContain('extraCycle: true')
+    expect(clean.content[0].text).not.toContain('MUST NOT call workflow_plan_review again this planning session')
 
     const mustNotAfterClean = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
-    expect(mustNotAfterClean?.message?.content).toContain('MUST NOT call workflow_plan_review')
+    expect(mustNotAfterClean?.message?.content).toContain('Default auto path stopped')
+    expect(mustNotAfterClean?.message?.content).toContain('extraCycle: true')
     expect(mustNotAfterClean?.message?.content).not.toMatch(/you MUST call workflow_plan_review/i)
+    expect(mustNotAfterClean?.message?.content).not.toContain('do not start a third review cycle')
 
     // New session path for important-finding CONTINUE → STOP → skip third
     const harness2 = makeHarness()
@@ -817,7 +824,7 @@ describe('Pi plan-mode typed workflow tools', () => {
 
     const mustContinue = await harness2.beforeAgentStartHandlers[0]?.({}, harness2.ctx) as { message?: { content?: string } }
     expect(mustContinue?.message?.content).toContain('MUST call workflow_plan_review')
-    expect(mustContinue?.message?.content).not.toContain('MUST NOT call workflow_plan_review')
+    expect(mustContinue?.message?.content).not.toContain('Default auto path stopped')
 
     const stopAtTwo = await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-important-2', {
       draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
@@ -831,14 +838,261 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(skipThird.details).toMatchObject({ ok: true, cycle: 2, stopAdvice: 'STOP_SHOW_USER', skippedSpawn: true })
     expect(mockPlanReviewSpawnCount).toBe(2)
     expect(skipThird.content[0].text).toContain('No additional reviewer spawn')
+    expect(skipThird.content[0].text).toContain('extraCycle: true')
 
     const mustNotAfterCap = await harness2.beforeAgentStartHandlers[0]?.({}, harness2.ctx) as { message?: { content?: string } }
-    expect(mustNotAfterCap?.message?.content).toContain('MUST NOT call workflow_plan_review')
+    expect(mustNotAfterCap?.message?.content).toContain('Default auto path stopped')
+    expect(mustNotAfterCap?.message?.content).toContain('extraCycle: true')
     expect(mustNotAfterCap?.message?.content).not.toMatch(/you MUST call workflow_plan_review/i)
+    expect(mustNotAfterCap?.message?.content).not.toContain('do not start a third review cycle')
 
     // Persist cycle fields on appendEntry
     const persisted = sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1)
     expect(persisted?.data).toMatchObject({ planReviewCycleCount: 1, lastPlanReviewStopAdvice: 'STOP_SHOW_USER' })
+  })
+
+  it('workflow_plan_review extraCycle spawns 3–4 orch; 5th without maxim skips; maxim spawns 5+ STOP; empty+maxim no count', async () => {
+    const { toolHandlers, beforeAgentStartHandlers, ctx } = makeHarness()
+
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-setup', { mode: 'strict' }, undefined, undefined, ctx)
+    mockPlanReviewImportantFindings = [{
+      severity: 'important',
+      issue: 'missing rollback',
+      evidence: 'plan omits rollback',
+      suggestedFix: 'add rollback',
+    }]
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? {
+          ...result,
+          verdict: 'NEEDS_CHANGES',
+          findings: mockPlanReviewImportantFindings,
+          raw: 'PLAN REVIEW: NEEDS_CHANGES',
+        }
+      : result)
+
+    const c1 = await toolHandlers.get('workflow_plan_review')?.execute('extra-1', {
+      draftPlan: 'Plan:\n1. High-risk policy change.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, ctx)
+    expect(c1.details).toMatchObject({ ok: true, cycle: 1, stopAdvice: 'CONTINUE' })
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    const c2 = await toolHandlers.get('workflow_plan_review')?.execute('extra-2', {
+      draftPlan: 'Plan:\n1. Revised high-risk policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, ctx)
+    expect(c2.details).toMatchObject({ ok: true, cycle: 2, stopAdvice: 'STOP_SHOW_USER' })
+    expect(mockPlanReviewSpawnCount).toBe(2)
+
+    // Without extraCycle: skip + cache
+    const skip = await toolHandlers.get('workflow_plan_review')?.execute('extra-skip', {
+      draftPlan: 'Plan:\n1. Still revised.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, ctx)
+    expect(skip.details).toMatchObject({ cycle: 2, skippedSpawn: true, stopAdvice: 'STOP_SHOW_USER' })
+    expect(mockPlanReviewSpawnCount).toBe(2)
+
+    // extraCycle true (default requestedBy=orchestrator) → cycle 3 spawn; never CONTINUE
+    const c3 = await toolHandlers.get('workflow_plan_review')?.execute('extra-3', {
+      draftPlan: 'Plan:\n1. Third-pass revised plan.\nFiles: .pi/extensions/plan-mode/index.ts',
+      extraCycle: true,
+    }, undefined, undefined, ctx)
+    expect(c3.details).toMatchObject({
+      ok: true,
+      cycle: 3,
+      stopAdvice: 'STOP_SHOW_USER',
+      extraCycle: true,
+      requestedBy: 'orchestrator',
+    })
+    expect(c3.details.skippedSpawn).toBeUndefined()
+    expect(mockPlanReviewSpawnCount).toBe(3)
+    expect(c3.content[0].text).toContain('3/4')
+    expect(c3.content[0].text).toContain('(extra)')
+    expect(c3.content[0].text).not.toContain('CONTINUE')
+
+    const promptAfter3 = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
+    expect(promptAfter3?.message?.content).toContain('extraCycle: true')
+    expect(promptAfter3?.message?.content).not.toContain('do not start a third review cycle')
+
+    // orch extra below ceiling still works for cycle 4
+    const c4 = await toolHandlers.get('workflow_plan_review')?.execute('extra-4', {
+      draftPlan: 'Plan:\n1. Fourth-pass revised plan.\nFiles: .pi/extensions/plan-mode/index.ts',
+      extraCycle: true,
+    }, undefined, undefined, ctx)
+    expect(c4.details).toMatchObject({
+      ok: true,
+      cycle: 4,
+      stopAdvice: 'STOP_SHOW_USER',
+      extraCycle: true,
+      requestedBy: 'orchestrator',
+    })
+    expect(mockPlanReviewSpawnCount).toBe(4)
+
+    // 5th extraCycle without maxim → skip + cache
+    const c5Orch = await toolHandlers.get('workflow_plan_review')?.execute('extra-5-orch', {
+      draftPlan: 'Plan:\n1. Fifth attempt orch.\nFiles: .pi/extensions/plan-mode/index.ts',
+      extraCycle: true,
+    }, undefined, undefined, ctx)
+    expect(c5Orch.details).toMatchObject({
+      cycle: 4,
+      stopAdvice: 'STOP_SHOW_USER',
+      skippedSpawn: true,
+      extraCycle: true,
+      requestedBy: 'orchestrator',
+    })
+    expect(mockPlanReviewSpawnCount).toBe(4)
+    expect(c5Orch.content[0].text).toContain('orchestrator extra')
+    expect(c5Orch.content[0].text).toContain('requestedBy: "maxim"')
+    expect(c5Orch.content[0].text).not.toContain('even with extraCycle')
+
+    const promptAfterTotal = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
+    expect(promptAfterTotal?.message?.content).toContain('requestedBy: "maxim"')
+    expect(promptAfterTotal?.message?.content).toContain('Orchestrator extra is forbidden')
+    expect(promptAfterTotal?.message?.content).not.toContain('even with extraCycle')
+    expect(promptAfterTotal?.message?.content).not.toMatch(/even extraCycle is skipped/i)
+
+    // 5th maxim → spawn cycle 5 STOP, label without /4 denominator
+    const c5Maxim = await toolHandlers.get('workflow_plan_review')?.execute('extra-5-maxim', {
+      draftPlan: 'Plan:\n1. Fifth attempt maxim.\nFiles: .pi/extensions/plan-mode/index.ts',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    }, undefined, undefined, ctx)
+    expect(c5Maxim.details).toMatchObject({
+      ok: true,
+      cycle: 5,
+      stopAdvice: 'STOP_SHOW_USER',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    })
+    expect(c5Maxim.details.skippedSpawn).toBeUndefined()
+    expect(mockPlanReviewSpawnCount).toBe(5)
+    expect(c5Maxim.content[0].text).toContain('5 (extra, maxim)')
+    expect(c5Maxim.content[0].text).not.toContain('5/4')
+    expect(c5Maxim.content[0].text).not.toContain('CONTINUE')
+    expect(c5Maxim.content[0].text).toContain('requestedBy: "maxim"')
+    expect(c5Maxim.content[0].text).not.toContain('even with extraCycle')
+
+    const promptAfter5 = await beforeAgentStartHandlers[0]?.({}, ctx) as { message?: { content?: string } }
+    expect(promptAfter5?.message?.content).toContain('requestedBy: "maxim"')
+    expect(promptAfter5?.message?.content).not.toContain('even with extraCycle')
+
+    // 6th maxim → spawn again
+    const c6Maxim = await toolHandlers.get('workflow_plan_review')?.execute('extra-6-maxim', {
+      draftPlan: 'Plan:\n1. Sixth attempt maxim.\nFiles: .pi/extensions/plan-mode/index.ts',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    }, undefined, undefined, ctx)
+    expect(c6Maxim.details).toMatchObject({
+      ok: true,
+      cycle: 6,
+      stopAdvice: 'STOP_SHOW_USER',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    })
+    expect(mockPlanReviewSpawnCount).toBe(6)
+    expect(c6Maxim.content[0].text).toContain('6 (extra, maxim)')
+
+    // empty + maxim does not increment
+    const emptyMaxim = await toolHandlers.get('workflow_plan_review')?.execute('extra-empty-maxim', {
+      draftPlan: '  ',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    }, undefined, undefined, ctx)
+    expect(emptyMaxim.details).toMatchObject({ ok: false, error: 'draftPlan is required' })
+    expect(mockPlanReviewSpawnCount).toBe(6)
+
+    // extraCycle + empty draft does not increment (orch path)
+    const emptyExtra = await toolHandlers.get('workflow_plan_review')?.execute('extra-empty', {
+      draftPlan: '  ',
+      extraCycle: true,
+    }, undefined, undefined, ctx)
+    expect(emptyExtra.details).toMatchObject({ ok: false, error: 'draftPlan is required' })
+    expect(mockPlanReviewSpawnCount).toBe(6)
+
+    // restore at 2 + extra → spawn 3
+    const restored2 = makeHarness({
+      entries: [
+        { type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' } },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            autopilot: false,
+            todos: [],
+            executing: false,
+            autoPlanReviewState: 'idle',
+            autoPlanReviewResults: [],
+            planReviewCycleCount: 2,
+            lastPlanReviewStopAdvice: 'STOP_SHOW_USER',
+            lastPlanReviewResults: defaultMockPlanReviewResults(),
+          },
+        },
+      ],
+    })
+    await restored2.sessionStartHandlers[0]?.({}, restored2.ctx)
+    mockPlanReviewSpawnCount = 0
+    const afterRestoreExtra = await restored2.toolHandlers.get('workflow_plan_review')?.execute('restored-extra', {
+      draftPlan: 'Plan:\n1. After restore extra.',
+      extraCycle: true,
+    }, undefined, undefined, restored2.ctx)
+    expect(afterRestoreExtra.details).toMatchObject({
+      cycle: 3,
+      stopAdvice: 'STOP_SHOW_USER',
+      extraCycle: true,
+      requestedBy: 'orchestrator',
+    })
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    // restore at 4 + orch extra → skip
+    const restored4 = makeHarness({
+      entries: [
+        { type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' } },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            autopilot: false,
+            todos: [],
+            executing: false,
+            autoPlanReviewState: 'idle',
+            autoPlanReviewResults: [],
+            planReviewCycleCount: 4,
+            lastPlanReviewStopAdvice: 'STOP_SHOW_USER',
+            lastPlanReviewResults: defaultMockPlanReviewResults(),
+          },
+        },
+      ],
+    })
+    await restored4.sessionStartHandlers[0]?.({}, restored4.ctx)
+    mockPlanReviewSpawnCount = 0
+    const afterRestoreSkip = await restored4.toolHandlers.get('workflow_plan_review')?.execute('restored-total', {
+      draftPlan: 'Plan:\n1. After restore total.',
+      extraCycle: true,
+    }, undefined, undefined, restored4.ctx)
+    expect(afterRestoreSkip.details).toMatchObject({
+      cycle: 4,
+      skippedSpawn: true,
+      stopAdvice: 'STOP_SHOW_USER',
+      requestedBy: 'orchestrator',
+    })
+    expect(mockPlanReviewSpawnCount).toBe(0)
+
+    // restore at 4 + maxim → spawn 5
+    const afterRestoreMaxim = await restored4.toolHandlers.get('workflow_plan_review')?.execute('restored-maxim', {
+      draftPlan: 'Plan:\n1. After restore maxim.',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    }, undefined, undefined, restored4.ctx)
+    expect(afterRestoreMaxim.details).toMatchObject({
+      cycle: 5,
+      stopAdvice: 'STOP_SHOW_USER',
+      extraCycle: true,
+      requestedBy: 'maxim',
+    })
+    expect(afterRestoreMaxim.details.skippedSpawn).toBeUndefined()
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(afterRestoreMaxim.content[0].text).toContain('5 (extra, maxim)')
   })
 
   it('workflow_plan_review persists/restores cycle state, does not reset on repeated plan_mode, failed spawn consumes slot, overlap ≤2', async () => {

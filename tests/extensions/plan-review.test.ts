@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import planReviewExtension, {
+  MAX_PLAN_REVIEW_CYCLES,
+  MAX_PLAN_REVIEW_TOTAL_SPAWNS,
   classifyPlanReviewRisk,
   evaluatePlanReviewGate,
   findInvalidSequentialReasons,
@@ -100,6 +102,11 @@ Risks / rollback:
     expect(findInvalidSequentialReasons(validRussianPlan)).toEqual([])
   })
 
+  it('exports auto cap 2 and total spawn ceiling 4', () => {
+    expect(MAX_PLAN_REVIEW_CYCLES).toBe(2)
+    expect(MAX_PLAN_REVIEW_TOTAL_SPAWNS).toBe(4)
+  })
+
   it('planReviewStopAdvice exclusive matrix ignores risk and caps at cycle 2', () => {
     expect(planReviewStopAdvice({ cycle: 1, gateOk: false, hasImportantOrCritical: false })).toBe('HARD_BLOCK')
     expect(planReviewStopAdvice({ cycle: 1, gateOk: false, hasImportantOrCritical: true })).toBe('HARD_BLOCK')
@@ -111,7 +118,9 @@ Risks / rollback:
     expect(planReviewStopAdvice({ cycle: 1, gateOk: true, hasImportantOrCritical: true })).toBe('CONTINUE')
     expect(planReviewStopAdvice({ cycle: 0, gateOk: true, hasImportantOrCritical: true })).toBe('CONTINUE')
     expect(planReviewStopAdvice({ cycle: 2, gateOk: true, hasImportantOrCritical: true })).toBe('STOP_SHOW_USER')
+    // Extra cycles 3–4 also STOP_SHOW_USER (never CONTINUE) via cycle >= MAX_PLAN_REVIEW_CYCLES
     expect(planReviewStopAdvice({ cycle: 3, gateOk: true, hasImportantOrCritical: true })).toBe('STOP_SHOW_USER')
+    expect(planReviewStopAdvice({ cycle: 4, gateOk: true, hasImportantOrCritical: true })).toBe('STOP_SHOW_USER')
   })
 
   it('classifyPlanReviewRisk is telemetry-only with FAST_PATH sticker and denylist', () => {

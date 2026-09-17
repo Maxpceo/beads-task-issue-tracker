@@ -36,6 +36,7 @@ import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/index";
 import {
 	MAX_PLAN_REVIEW_CYCLES,
+	MAX_PLAN_REVIEW_TOTAL_SPAWNS,
 	classifyPlanReviewRisk,
 	evaluatePlanReviewGate,
 	hasImportantOrCriticalFindings,
@@ -806,12 +807,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return { approved: true, beadId, worktreePath: result.details?.worktreePath as string | undefined };
 	}
 
-	function planReviewCapReached(): boolean {
+	function planReviewAutoCapReached(): boolean {
 		return planReviewCycleCount >= MAX_PLAN_REVIEW_CYCLES;
 	}
 
-	function shouldInjectMustNotPlanReview(): boolean {
-		return planReviewCapReached() || lastPlanReviewStopAdvice === "STOP_SHOW_USER";
+	function planReviewTotalCapReached(): boolean {
+		return planReviewCycleCount >= MAX_PLAN_REVIEW_TOTAL_SPAWNS;
+	}
+
+	/** True when default auto path has stopped (cap or STOP_SHOW_USER); prompt documents extraCycle instead of absolute MUST NOT. */
+	function shouldInjectPlanReviewStopPrompt(): boolean {
+		return planReviewAutoCapReached() || lastPlanReviewStopAdvice === "STOP_SHOW_USER";
 	}
 
 	function resetPlanReviewCycleState(): void {
@@ -828,34 +834,55 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		renderedResults: string;
 		reasons?: string[];
 		skippedSpawn?: boolean;
+		skipReason?: "auto-cap" | "total-ceiling";
+		extraCycle?: boolean;
+		requestedBy?: "maxim" | "orchestrator";
 	}): string {
-		const { advice, cycle, risk, gateOk, renderedResults, reasons, skippedSpawn } = input;
-		const cycleLabel = `${cycle}/${MAX_PLAN_REVIEW_CYCLES}`;
+		const { advice, cycle, risk, gateOk, renderedResults, reasons, skippedSpawn, skipReason, extraCycle, requestedBy } = input;
+		const cycleLabel = (extraCycle || cycle > MAX_PLAN_REVIEW_CYCLES)
+			? (requestedBy === "maxim" && cycle > MAX_PLAN_REVIEW_TOTAL_SPAWNS
+				? `${cycle} (extra, maxim)`
+				: `${cycle}/${MAX_PLAN_REVIEW_TOTAL_SPAWNS}${cycle > MAX_PLAN_REVIEW_CYCLES ? " (extra)" : ""}`)
+			: `${cycle}/${MAX_PLAN_REVIEW_CYCLES}`;
 		const riskLine = `risk=${risk} (telemetry only; does not change stop advice)`;
 		const reasonBlock = reasons && reasons.length > 0 ? `\n\n${reasons.map((reason) => `- ${reason}`).join("\n")}` : "";
-		const skipNote = skippedSpawn ? " No additional reviewer spawn (cycle cap)." : "";
+		let skipNote = "";
+		if (skippedSpawn) {
+			skipNote = skipReason === "total-ceiling"
+				? ` No additional reviewer spawn (orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}). Orchestrator extra is forbidden; if Maxim explicitly asked this turn, pass extraCycle: true and requestedBy: "maxim".`
+				: ` No additional reviewer spawn (auto cycle cap ${MAX_PLAN_REVIEW_CYCLES}). Pass extraCycle: true for another spawn when Maxim asks or residual important/critical remain on a high-risk plan (orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}; default requestedBy=orchestrator).`;
+		}
 		if (advice === "HARD_BLOCK") {
 			return `workflow_plan_review ${cycleLabel}: HARD_BLOCK. Do not execute or approve the plan until blockers are resolved.${skipNote}\n${riskLine}.${reasonBlock}\n\nReviewer output:\n\n${renderedResults}`;
 		}
 		if (advice === "CONTINUE") {
-			return `workflow_plan_review ${cycleLabel}: CONTINUE. Important/critical findings remain. Revise the plan and call workflow_plan_review again (max ${MAX_PLAN_REVIEW_CYCLES} cycles). Implementation remains blocked until the revised plan adjudicates findings and receives normal approval.\n${riskLine}.\n\nReviewer output:\n\n${renderedResults}`;
+			return `workflow_plan_review ${cycleLabel}: CONTINUE. Important/critical findings remain. Revise the plan and call workflow_plan_review again (auto max ${MAX_PLAN_REVIEW_CYCLES} cycles). Implementation remains blocked until the revised plan adjudicates findings and receives normal approval.\n${riskLine}.\n\nReviewer output:\n\n${renderedResults}`;
 		}
+		// After cycle>=4: only Maxim this-turn path; never residual-OR for cycle 5+.
+		const extraHint = planReviewTotalCapReached()
+			? ` Orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS} reached — orchestrator extra is forbidden. If Maxim explicitly asked this turn, call workflow_plan_review({ draftPlan, extraCycle: true, requestedBy: "maxim" }). Residual important/critical alone do not justify cycle 5+. Call plan_mode_complete so ready-UI remains available.`
+			: ` Default auto path stops at ${MAX_PLAN_REVIEW_CYCLES}. Another spawn: workflow_plan_review({ draftPlan, extraCycle: true }) (default requestedBy=orchestrator) only if Maxim explicitly asks or residual important/critical remain on a high-risk plan (not Fast Path nits); orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}. Still call plan_mode_complete so ready-UI exists.`;
 		const stopLead = gateOk
-			? `workflow_plan_review ${cycleLabel}: STOP_SHOW_USER. Present the plan to Maxim now. MUST NOT call workflow_plan_review again this planning session.`
+			? `workflow_plan_review ${cycleLabel}: STOP_SHOW_USER. Present the plan to Maxim now.${extraHint}`
 			: `workflow_plan_review ${cycleLabel}: STOP_SHOW_USER.`;
 		return `${stopLead}${skipNote} Implementation remains blocked until the revised plan explicitly adjudicates accepted/rejected findings and receives normal approval.\n${riskLine}.${reasonBlock}\n\nReviewer output:\n\n${renderedResults}`;
 	}
 
-	async function planReviewTool(params: { draftPlan: string }, ctx: ExtensionContext) {
+	async function planReviewTool(params: { draftPlan: string; extraCycle?: boolean; requestedBy?: "maxim" | "orchestrator" }, ctx: ExtensionContext) {
 		const draftPlan = params.draftPlan.trim();
+		const extraCycle = params.extraCycle === true;
+		// Fail-closed: missing/invalid requestedBy defaults to orchestrator (only explicit "maxim" bypasses total ceiling).
+		const requestedBy: "maxim" | "orchestrator" = params.requestedBy === "maxim" ? "maxim" : "orchestrator";
 		if (!draftPlan) {
 			return toolText("workflow_plan_review blocked: draftPlan is required", { ok: false, error: "draftPlan is required" });
 		}
 
 		const risk = classifyPlanReviewRisk(draftPlan);
 
-		// Cap reached: skip spawn, return cached results with STOP_SHOW_USER.
-		if (planReviewCapReached()) {
+		// Skip matrix: empty already returned; auto cap unless extraCycle; total cap unless maxim extra this turn.
+		const skipForTotal = planReviewTotalCapReached() && !(extraCycle && requestedBy === "maxim");
+		const skipForAuto = planReviewAutoCapReached() && !extraCycle;
+		if (skipForTotal || skipForAuto) {
 			const results = lastPlanReviewResults;
 			const gate = evaluatePlanReviewGate(results);
 			const advice: PlanReviewStopAdvice = "STOP_SHOW_USER";
@@ -864,6 +891,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const renderedResults = results.length > 0
 				? renderPlanReviewResults(results)
 				: "(no cached reviewer output)";
+			const skipReason = skipForTotal ? "total-ceiling" as const : "auto-cap" as const;
 			return toolText(
 				buildPlanReviewToolText({
 					advice,
@@ -873,6 +901,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					renderedResults,
 					reasons: gate.reasons,
 					skippedSpawn: true,
+					skipReason,
+					extraCycle,
+					requestedBy,
 				}),
 				{
 					ok: gate.ok,
@@ -882,13 +913,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					risk,
 					stopAdvice: advice,
 					skippedSpawn: true,
+					extraCycle,
+					requestedBy,
 				},
 			);
 		}
 
-		// Reserve cycle slot BEFORE await spawn so overlap ≤2 and failed spawn consumes the slot.
+		// Reserve cycle slot BEFORE await spawn so failed spawn consumes the slot (including maxim extra).
 		planReviewCycleCount += 1;
 		const cycle = planReviewCycleCount;
+		const usedExtra = extraCycle && cycle > MAX_PLAN_REVIEW_CYCLES;
 		persistState();
 
 		let results: PlanReviewResult[];
@@ -908,11 +942,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		const gate = evaluatePlanReviewGate(results);
 		const hasImportantOrCritical = hasImportantOrCriticalFindings(results, gate.importantFindings);
-		const advice = planReviewStopAdvice({
+		let advice = planReviewStopAdvice({
 			cycle,
 			gateOk: gate.ok,
 			hasImportantOrCritical,
 		});
+		// Extra path never CONTINUE (always STOP_SHOW_USER or HARD_BLOCK) — including maxim cycle 5+.
+		if (usedExtra && advice === "CONTINUE") {
+			advice = "STOP_SHOW_USER";
+		}
 		lastPlanReviewStopAdvice = advice;
 		lastPlanReviewResults = results;
 		persistState();
@@ -926,6 +964,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				gateOk: gate.ok,
 				renderedResults,
 				reasons: gate.ok ? undefined : gate.reasons,
+				extraCycle: usedExtra,
+				requestedBy,
 			}),
 			{
 				ok: gate.ok,
@@ -934,6 +974,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				cycle,
 				risk,
 				stopAdvice: advice,
+				extraCycle: usedExtra,
+				requestedBy,
 			},
 		);
 	}
@@ -1337,9 +1379,25 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		workflowPi.registerTool({
 			name: "workflow_plan_review",
 			label: "Workflow Plan Review",
-			description: "Run required plan-review reviewers against a draft plan and return structured gate findings without mutating files, bd, git, workflow approval, merge-slot, or plan mode state.",
-			parameters: { type: "object", properties: { draftPlan: { type: "string" } }, required: ["draftPlan"], additionalProperties: false },
-			async execute(_id: string, params: { draftPlan: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+			description: `Run required plan-review reviewers against a draft plan and return structured gate findings without mutating files, bd, git, workflow approval, merge-slot, or plan mode state. Auto cap ${MAX_PLAN_REVIEW_CYCLES} spawns; after auto cap pass extraCycle=true (default requestedBy=orchestrator) when Maxim asks or residual important/critical remain on a high-risk plan (orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}). Past ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS} only extraCycle=true + requestedBy="maxim" when Maxim explicitly asked this turn (no residual-OR). Extra path never returns CONTINUE.`,
+			parameters: {
+				type: "object",
+				properties: {
+					draftPlan: { type: "string" },
+					extraCycle: {
+						type: "boolean",
+						description: `Optional. After auto cap ${MAX_PLAN_REVIEW_CYCLES}, set true to spawn another review on the current draftPlan. Cycles 3–${MAX_PLAN_REVIEW_TOTAL_SPAWNS}: Maxim ask or residual important/critical on high-risk (default requestedBy=orchestrator). Cycle ${MAX_PLAN_REVIEW_TOTAL_SPAWNS + 1}+ requires requestedBy="maxim" when Maxim explicitly asked this turn. Ignored below auto cap. Extra never returns CONTINUE.`,
+					},
+					requestedBy: {
+						type: "string",
+						enum: ["maxim", "orchestrator"],
+						description: `Optional. Who requested the extra cycle. Default orchestrator when omitted (fail-closed). Use "maxim" only when Maxim explicitly asked this turn; required with extraCycle to bypass orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}. Without extraCycle, behaves as a normal call (still subject to auto cap).`,
+					},
+				},
+				required: ["draftPlan"],
+				additionalProperties: false,
+			},
+			async execute(_id: string, params: { draftPlan: string; extraCycle?: boolean; requestedBy?: "maxim" | "orchestrator" }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				return planReviewTool(params, ctx);
 			},
 		});
@@ -1897,9 +1955,11 @@ Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header.
 
-${shouldInjectMustNotPlanReview()
-	? `Plan-review cycle state: cycle=${planReviewCycleCount}/${MAX_PLAN_REVIEW_CYCLES}, lastAdvice=${lastPlanReviewStopAdvice ?? "none"}. You MUST NOT call workflow_plan_review again this planning session. Present the current plan (with Reviewer findings summary / Accepted findings / Rejected findings / Unresolved blockers when applicable) to Maxim now. Remaining important/critical findings are visible for Maxim; do not start a third review cycle.`
-	: `For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan (max ${MAX_PLAN_REVIEW_CYCLES} review cycles). After CONTINUE, revise and call again; after STOP_SHOW_USER, show Maxim; after HARD_BLOCK, resolve blockers then retry only if cycle < ${MAX_PLAN_REVIEW_CYCLES}. Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections.`}
+${shouldInjectPlanReviewStopPrompt()
+	? planReviewTotalCapReached()
+		? `Plan-review cycle state: cycle=${planReviewCycleCount} (orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}), lastAdvice=${lastPlanReviewStopAdvice ?? "none"}. Orchestrator extra is forbidden past ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}. If Maxim explicitly asked this turn, call workflow_plan_review({ draftPlan, extraCycle: true, requestedBy: "maxim" }). Residual important/critical alone do not justify cycle 5+. Present the current plan (with Reviewer findings summary / Accepted findings / Rejected findings / Unresolved blockers when applicable) to Maxim now. Call plan_mode_complete so ready-UI remains available.`
+		: `Plan-review cycle state: cycle=${planReviewCycleCount} (auto max ${MAX_PLAN_REVIEW_CYCLES}, orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}), lastAdvice=${lastPlanReviewStopAdvice ?? "none"}. Default auto path stopped. Present the current plan (with Reviewer findings summary / Accepted findings / Rejected findings / Unresolved blockers when applicable) to Maxim now. Additional spawn is allowed only via workflow_plan_review({ draftPlan, extraCycle: true }) (default requestedBy=orchestrator) when Maxim explicitly asks for another review, or residual important/critical findings remain on a high-risk plan (not Fast Path nits). Past ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS} only requestedBy="maxim" when Maxim asked this turn. Extra path never returns CONTINUE. Still call plan_mode_complete so ready-UI exists.`
+	: `For autonomous planning (for example, when the user says to work autonomously in plan mode), you MUST call workflow_plan_review with the complete draftPlan before presenting the final plan (auto max ${MAX_PLAN_REVIEW_CYCLES} review cycles; orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS} with extraCycle; cycle ${MAX_PLAN_REVIEW_TOTAL_SPAWNS + 1}+ only extraCycle+requestedBy="maxim" when Maxim asked this turn). After CONTINUE, revise and call again; after STOP_SHOW_USER, show Maxim (extraCycle if Maxim asks or residual important/critical on high-risk under ceiling; requestedBy="maxim" past ceiling); after HARD_BLOCK, resolve blockers then retry only if cycle < ${MAX_PLAN_REVIEW_CYCLES} (or with extraCycle under orchestrator ceiling / maxim path past it). Then revise the plan with Reviewer findings summary, Accepted findings, Rejected findings, and Unresolved blockers sections.`}
 Do not call workflow_plan_approved yourself unless Maxim explicitly approves — except in /plan-autopilot, where runtime approval records Approved-by: оркестратор after the plan-review gate.
 
 If /plan-autopilot (or NL «работаю автономно» / «работать автономно») is active: same multi-agent plan-review gate as /plan-auto; durable PLAN APPROVED uses Approved-by: оркестратор; the autopilot session flag survives plan=off. After CODE REVIEW: APPROVED and a green ACCEPTANCE MATRIX the orchestrator closes the bead without asking Maxim «закрывай?». Stop and ask Maxim on plan-review BLOCKED, missing revised sections, missing active bead/worktree, supervisor BLOCKED/NEEDS_CONTEXT, code-review NOT APPROVED, or matrix FAIL/NOT RUN/BLOCKED/SCOPE GAP. Do not call land or merge-to-main from autopilot.
