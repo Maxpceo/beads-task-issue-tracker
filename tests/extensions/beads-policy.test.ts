@@ -17,6 +17,7 @@ import beadsPolicyExtension, {
   resolveMergeSlotHolder,
   sessionUniqFromSessionKey,
 } from '../../.pi/extensions/beads-policy/index'
+import { saveRegistry } from '../../.pi/extensions/beads-dispatch/cmux-transport'
 
 const runtimeOwnerKey = 'runtime:test-beads-policy'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
@@ -3592,6 +3593,220 @@ exit 1
       expect(writeDecision.reason).toContain('workflow_reset')
     } finally {
       rmSync(main, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Pi spawned supervisor child fast path exemption', () => {
+  const prevOrch = process.env.ORCH_ROOT
+
+  function createChildRepo(risky: boolean): { repo: string; startCommit: string } {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-spawn-'))
+    execFileSync('git', ['init', '-b', 'task/spawned-child'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    let startCommit: string
+    if (risky) {
+      mkdirSync(join(repo, '.pi/extensions/beads-policy'), { recursive: true })
+      writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const before = true\n')
+      execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      startCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+      writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const first = true\n')
+      execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'first child commit'], { cwd: repo, stdio: 'ignore' })
+      writeFileSync(join(repo, '.pi/extensions/beads-policy/index.ts'), 'export const after = true\n')
+    } else {
+      mkdirSync(join(repo, 'tests/utils'), { recursive: true })
+      for (let i = 0; i < 4; i += 1) writeFileSync(join(repo, `tests/utils/active-${i}.ts`), `export const before${i} = true\n`)
+      execFileSync('git', ['add', 'tests/utils/active-0.ts', 'tests/utils/active-1.ts', 'tests/utils/active-2.ts', 'tests/utils/active-3.ts'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+      startCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+      for (let i = 0; i < 4; i += 1) writeFileSync(join(repo, `tests/utils/active-${i}.ts`), `export const first${i} = true\n`)
+      execFileSync('git', ['add', 'tests/utils/active-0.ts', 'tests/utils/active-1.ts', 'tests/utils/active-2.ts', 'tests/utils/active-3.ts'], { cwd: repo, stdio: 'ignore' })
+      execFileSync('git', ['commit', '-m', 'first child commit'], { cwd: repo, stdio: 'ignore' })
+      for (let i = 0; i < 4; i += 1) writeFileSync(join(repo, `tests/utils/active-${i}.ts`), `export const after${i} = true\n`)
+    }
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: repo, stdio: 'ignore' })
+    return { repo, startCommit }
+  }
+
+  function spawnComments(startCommit: string, overrides: { branch?: string; worktree?: string; noPlan?: boolean; noDispatch?: boolean } = {}): string {
+    const branch = overrides.branch ?? 'task/spawned-child'
+    const worktree = overrides.worktree ?? 'PLACEHOLDER_REPO'
+    const plan = `PLAN APPROVED
+Approved-by: Максим
+START_COMMIT: ${startCommit}
+BRANCH: ${branch}
+WORKTREE: ${worktree}
+`
+    const dispatch = `DISPATCH (test-supervisor)
+
+BRANCH: ${branch}
+WORKTREE: ${worktree}
+START_COMMIT: ${startCommit}
+`
+    if (overrides.noPlan) return dispatch
+    if (overrides.noDispatch) return plan
+    return `${plan}\n${dispatch}`
+  }
+
+  function installSpawnBd(binDir: string, comments: string) {
+    const escaped = comments.replace(/'/g, "'\\''")
+    writeFileSync(join(binDir, 'bd'), `#!/usr/bin/env bash
+if [[ "$1" == "list" ]]; then printf '[{"id":"bead-a"}]'; exit 0; fi
+if [[ "$1" == "comments" ]]; then printf '%s' '${escaped}'; exit 0; fi
+exit 1
+`)
+    chmodSync(join(binDir, 'bd'), 0o755)
+  }
+
+  function seedSpawnRegistry(orch: string, repo: string, overrides: Record<string, unknown> = {}, ns = 'ws-spawn') {
+    const file = join(orch, 'ns', ns, 'dispatch-registry.json')
+    saveRegistry(file, { entries: [{
+      taskId: 'task-spawn-1',
+      beadId: 'bead-a',
+      pane: 'surface:1',
+      worktree: repo,
+      role: 'test-supervisor',
+      model: '',
+      taskFile: join(orch, 't.md'),
+      resultFile: join(orch, 'r.md'),
+      digestFile: join(orch, 'd.digest'),
+      promptFile: join(orch, 'p.md'),
+      status: 'spawned',
+      createdAt: 't',
+      ...overrides,
+    } as any] })
+    return file
+  }
+
+  function withSpawnEnv(repo: string, comments: string, seed: (orch: string) => void, run: () => unknown): unknown {
+    const orch = mkdtempSync(join(tmpdir(), 'beads-policy-orch-'))
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    process.env.ORCH_ROOT = orch
+    try {
+      seed(orch)
+      installSpawnBd(binDir, comments.replaceAll('PLACEHOLDER_REPO', repo))
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+      return run()
+    } finally {
+      process.env.PATH = oldPath
+      if (prevOrch === undefined) delete process.env.ORCH_ROOT
+      else process.env.ORCH_ROOT = prevOrch
+      rmSync(orch, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  }
+
+  const childLikeState = { state: 'idle' as const }
+  const commitCommand = 'git commit -m "child work"'
+
+  it('allows large commit-like command for child-like session with unique live supervisor spawn (non-risky, HEAD moved past START_COMMIT)', () => {
+    const { repo, startCommit } = createChildRepo(false)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), (orch) => seedSpawnRegistry(orch, repo), () =>
+        evaluateBashPolicy(commitCommand, childLikeState, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+      expect(decision?.reason ?? '').not.toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('allows risky-scope commit-like command for child-like session with unique live supervisor spawn', () => {
+    const { repo, startCommit } = createChildRepo(true)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), (orch) => seedSpawnRegistry(orch, repo), () =>
+        evaluateBashPolicy(commitCommand, childLikeState, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks child-like commit without any registry match', () => {
+    const { repo, startCommit } = createChildRepo(false)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), () => {}, () =>
+        evaluateBashPolicy(commitCommand, childLikeState, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.reason).toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['tombstone entry', { status: 'tombstone' }],
+    ['hung entry', { hung: true }],
+    ['worktree mismatch', (orch: string) => ({ worktree: join(orch, 'other-wt') })],
+  ])('blocks child-like commit with %s', (_name, overrides) => {
+    const { repo, startCommit } = createChildRepo(false)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), (orch) => {
+        const extra = typeof overrides === 'function' ? (overrides as (orch: string) => Record<string, unknown>)(orch) : overrides
+        seedSpawnRegistry(orch, repo, extra)
+      }, () => evaluateBashPolicy(commitCommand, childLikeState, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.reason).toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks child-like commit when two live supervisor rows point to different beads in one worktree', () => {
+    const { repo, startCommit } = createChildRepo(false)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), (orch) => {
+        seedSpawnRegistry(orch, repo)
+        seedSpawnRegistry(orch, repo, { taskId: 'task-spawn-2', beadId: 'bead-b' }, 'ws-spawn-2')
+      }, () => evaluateBashPolicy(commitCommand, childLikeState, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.reason).toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    ['no DISPATCH marker', { noDispatch: true }],
+    ['no PLAN APPROVED marker', { noPlan: true }],
+    ['foreign branch and worktree fields', { branch: 'fix/other', worktree: '/repo/other' }],
+  ])('blocks child-like commit when comments have %s', (_name, overrides) => {
+    const { repo, startCommit } = createChildRepo(false)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit, overrides), (orch) => seedSpawnRegistry(orch, repo), () =>
+        evaluateBashPolicy(commitCommand, childLikeState, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.reason).toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks orchestrator-like session with sessionKey even with live supervisor spawn in the same worktree (non-risky)', () => {
+    const { repo, startCommit } = createChildRepo(false)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), (orch) => seedSpawnRegistry(orch, repo), () =>
+        evaluateBashPolicy(commitCommand, { state: 'idle', sessionKey: 'id:orch-session' }, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.reason).toContain('large code change без active bead')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks orchestrator-like session for risky scope even with live supervisor spawn in the same worktree', () => {
+    const { repo, startCommit } = createChildRepo(true)
+    try {
+      const decision = withSpawnEnv(repo, spawnComments(startCommit), (orch) => seedSpawnRegistry(orch, repo), () =>
+        evaluateBashPolicy(commitCommand, { state: 'idle', sessionKey: 'id:orch-session' }, { cwd: repo })) as ReturnType<typeof evaluateBashPolicy>
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(decision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 })

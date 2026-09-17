@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **Pi spawned supervisor child commits without `PI_SKIP_POLICY`** (`beads-task-issue-tracker-3o7e`): `fastPathDiscipline` no longer hard-blocks commit-like commands over the 80-line / 3-file threshold when the session is child-like (no `activeBead` / `sessionKey` / `planApproved`, the default for visible supervisor spawns with `--no-session`) and dispatch-registry evidence finds exactly one unique live supervisor row for the cwd repo root whose bead is non-terminal and carries `PLAN APPROVED` + `DISPATCH` markers. `START_COMMIT` is not compared to HEAD (child HEAD moves after the first commit). Orchestrator and reviewer sessions that keep a session identity stay fail-closed. Focused vitest under `tests/extensions/beads-policy.test.ts` and `tests/extensions/beads-dispatch-cmux.test.ts`.
+
 - **Pi ready-UI plan-review button delivers findings in-turn** (`beads-task-issue-tracker-9eth`): «Отправить на plan-review» no longer runs silent multi-minute critique behind a re-opened select. Notify fires before spawn; dirty findings return in the `plan_mode_complete` tool result (pending cleared, no second select / double run); clean gate notifies and re-shows select. Leftover `agent_settled` dirty path uses `sendMessage` with `triggerTurn: true`. Cycle counter still uncapped for the button. Contract in `.pi/extensions/plan-mode/README.md`; focused vitest under `tests/extensions/plan-mode.test.ts`.
 - **BLOCKED badge from malformed dependency ids** (`beads-task-issue-tracker-704v`): transformers and detectors now drop empty and relationship-prefixed `blockedBy` ids (for example `discovered-from:…`), so `in_progress` issues no longer render a false BLOCKED badge from stale/malformed bd dependency data.
 

@@ -11,6 +11,8 @@ Typed Pi dispatch wrappers for the beads workflow.
 - `close_visible_dispatch` — after terminal bead + no pending-fix: `cmux close-surface` this bead's live panes and tombstone registry entries. Optional `stopClose: true` allows the same close path on **non-terminal** `status=reviewed` only (grey-matrix STOP after CODE REVIEW APPROVED); tombstones without unlinking isolation/followup (later terminal close cleans leftovers). `pendingFix: true` still skips close and wins over `stopClose`. `in_progress` / `inreview` / `open` + `stopClose` → BLOCKED. `reviewed` is **not** in `CLOSE_VISIBLE_TERMINAL_STATUSES`.
 - `dispatch_docs_agent` — dispatches documentation review/update work to `documentation-expert` by default.
 
+Visible cmux supervisor spawns use `--no-session` and therefore have no local `workflow-state` `activeBead`. The dispatch registry records live supervisor rows so `beads-policy` `fastPathDiscipline` can recognize a unique spawned supervisor child for the cwd repo root and allow threshold-exceeding commits without `PI_SKIP_POLICY` when the bead still has `PLAN APPROVED` + `DISPATCH` evidence (see `findLiveSupervisorSpawnsForWorktree` in `cmux-transport.ts`). Orchestrator/reviewer sessions with session identity stay fail-closed.
+
 ## Why typed wrappers instead of raw subagent
 
 The generic Pi `subagent` example is copied into `.pi/extensions/subagent/` as reference material, but the workflow uses these typed wrappers as the main API. The wrappers know about:

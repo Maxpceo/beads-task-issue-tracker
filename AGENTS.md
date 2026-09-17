@@ -185,6 +185,7 @@ Fast Path разрешён только когда orchestrator явно счи�
 - Low-risk direct work: до 3 code files и до 80 added lines, с clear acceptance evidence.
 - Threshold exceeded: продолжай только с explicit `FAST_PATH_RATIONALE`/written rationale или переключайся на supervisor path.
 - Hard supervisor path: workflow/policy/review/merge logic, `.pi/agents`, scripts или cross-domain frontend + backend changes требуют active bead и approved plan/supervisor workflow.
+- Spawned supervisor children (`--no-session`, empty local workflow-state) may commit above the threshold without `PI_SKIP_POLICY` when `beads-policy` finds exactly one unique live supervisor registry row for the cwd repo root and the bead is non-terminal with `PLAN APPROVED` + `DISPATCH` markers. Sessions with a session identity (orchestrator, resumed reviewer) stay fail-closed even inside that worktree; ambiguous/multiple live beads fail closed. Do not treat `PI_SKIP_POLICY=fastPathDiscipline` as the normal supervisor path.
 - Mechanical batches разрешены только с explicit mechanical label/reason, narrow scope и review evidence.
 - Docs/beads-only maintenance не должен запускать Fast Path blocks, но всё равно требует accurate bd tracking, когда создаёт work.
 

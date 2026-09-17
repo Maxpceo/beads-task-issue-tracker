@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { requireTaskToolTarget, taskScopeErrorToPolicyReason } from "../worktree-scope/index";
+import { findLiveSupervisorSpawnsForWorktree } from "../beads-dispatch/cmux-transport";
 interface ExtensionAPI {
 	on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: any): void;
@@ -2590,6 +2591,61 @@ function isSupervisorPathActive(workflowState: WorkflowStateSnapshot, cwd?: stri
 	return Boolean(cwd && workflowState.activeBead && hasScopedApprovedPlanComment(cwd, workflowState.activeBead, currentRecoveryScope(cwd, workflowState.sessionKey)));
 }
 
+/**
+ * Spawned supervisor children run with --no-session and have no local
+ * workflow-state: no activeBead, no sessionKey, no planApproved. Sessions with
+ * a session identity (orchestrator, resumed reviewer) stay fail-closed even
+ * inside a live supervisor worktree.
+ */
+function isChildLikeWorkflowState(workflowState: WorkflowStateSnapshot): boolean {
+	return Boolean(!workflowState.activeBead && !workflowState.sessionKey && !workflowState.planApproved);
+}
+
+/**
+ * Unique live supervisor bead for this cwd, or undefined when the child-like
+ * guard fails, the registry has no match, or matches are ambiguous (multiple
+ * bead ids). Fail-closed by construction.
+ */
+function spawnedSupervisorBeadForCwd(cwd: string, workflowState: WorkflowStateSnapshot): string | undefined {
+	if (!isChildLikeWorkflowState(workflowState)) return undefined;
+	const repoRoot = getRepoRoot(cwd);
+	if (!repoRoot) return undefined;
+	const matches = findLiveSupervisorSpawnsForWorktree(repoRoot);
+	const beadIds = [...new Set(matches.map((entry) => entry.beadId).filter(Boolean))];
+	if (beadIds.length !== 1) return undefined;
+	return beadIds[0];
+}
+
+/**
+ * Relaxed approval evidence for a spawned supervisor child: the bead is in a
+ * non-terminal lifecycle status, the comment thread carries PLAN APPROVED and
+ * DISPATCH markers, and latest BRANCH/WORKTREE fields do not actively
+ * contradict this cwd. START_COMMIT is intentionally not compared — the
+ * child's HEAD legitimately moves after its first commit (pomp failure mode).
+ */
+function hasSpawnedSupervisorApproval(cwd: string, beadId: string): boolean {
+	let liveStatus = false;
+	for (const status of ["in_progress", "inreview", "reviewed", "accepted", "simplified"]) {
+		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+		if (!raw) continue;
+		try {
+			const issues = JSON.parse(raw) as BdIssueSummary[];
+			if (issues.some((issue) => issue.id === beadId)) {
+				liveStatus = true;
+			break;
+			}
+		} catch {
+			continue;
+		}
+	}
+	if (!liveStatus) return false;
+	const comments = getBdCommentsText(cwd, beadId);
+	if (!/PLAN APPROVED/i.test(comments)) return false;
+	if (!/DISPATCH(?: RESULT)?/i.test(comments)) return false;
+	if (hasForeignSessionOwnershipEvidence(comments, currentRecoveryScope(cwd))) return false;
+	return true;
+}
+
 interface RecoveryScope {
 	branch?: string;
 	worktreePath?: string;
@@ -2839,7 +2895,9 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 	const addedLines = getAddedLines(cwd, changedCodeFiles);
 	const thresholdExceeded = changedCodeFiles.length > FAST_PATH_FILE_THRESHOLD || addedLines > FAST_PATH_ADDED_LINE_THRESHOLD;
 	const risky = hasRiskyScope(changedCodeFiles) || hasCrossDomainScope(changedCodeFiles);
-	const supervisorPath = isSupervisorPathActive(workflowState, cwd);
+	const spawnedSupervisorBead = risky || thresholdExceeded ? spawnedSupervisorBeadForCwd(cwd, workflowState) : undefined;
+	const spawnedSupervisorApproved = spawnedSupervisorBead ? hasSpawnedSupervisorApproval(cwd, spawnedSupervisorBead) : false;
+	const supervisorPath = isSupervisorPathActive(workflowState, cwd) || spawnedSupervisorApproved;
 	const activeBead = hasActiveBead(workflowState);
 	const rationale = hasFastPathRationale(command) || hasMechanicalBatchMarker(command);
 
@@ -2860,7 +2918,7 @@ function evaluateFastPathDiscipline(command: string, cwd: string, workflowState:
 		};
 	}
 
-	if (thresholdExceeded && !activeBead && commandHasCommitLikeOperation(command)) {
+	if (thresholdExceeded && !activeBead && !spawnedSupervisorApproved && commandHasCommitLikeOperation(command)) {
 		return {
 			policy: "fastPathDiscipline",
 			block: true,
