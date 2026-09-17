@@ -2318,9 +2318,10 @@ describe('finalizeVisibleReviewClose', () => {
 
 describe('review-bead visible code-reviewer hop', () => {
   const skill = readFileSync(join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
+  const VISIBLE_REVIEW_DISPATCH = 'dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)'
 
   it('pins interactive dispatch_reviewer transport=cmux and does not auto-call review_bead after verdict', () => {
-    expect(skill).toContain('dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)')
+    expect(skill).toContain(VISIBLE_REVIEW_DISPATCH)
     expect(skill).toContain('status=verdict` → do not call `review_bead`')
     expect(skill).toContain('followup_visible_dispatch({ beadId, role: "code-reviewer", task })')
     expect(skill).toContain('complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`')
@@ -2334,7 +2335,37 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('worktree-fresh')
     expect(skill).toContain('PI_REVIEW_RUNTIME_DELEGATED')
     expect(skill).toContain('hash mismatch')
-    expect(skill).toContain('dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)')
+    expect(skill).toContain(VISIBLE_REVIEW_DISPATCH)
+  })
+
+  it('review_bead description and /review-bead notify pin canonical visible literal + headless-fallback', () => {
+    let registeredTool: any
+    let registeredCommand: any
+    const notifications: Array<{ message: string; level?: string }> = []
+    const pi = {
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand(name: string, config: any) {
+        if (name === 'review-bead') registeredCommand = config
+      },
+      exec: async () => ({ stdout: '', stderr: '', code: 0 }),
+    }
+    reviewWorkflowExtension(pi as any)
+
+    expect(registeredTool.description).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(registeredTool.description).toContain('headless-fallback')
+    expect(registeredTool.description.toLowerCase()).toContain('headless-fallback')
+
+    registeredCommand.handler('bead-a', { ui: { notify: (message: string, level?: string) => notifications.push({ message, level }) } })
+    expect(notifications[0]?.message).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(notifications[0]?.message).toContain('headless-fallback')
+    expect(notifications[0]?.message).toContain('beadId=bead-a')
+
+    notifications.length = 0
+    registeredCommand.handler('', { ui: { notify: (message: string, level?: string) => notifications.push({ message, level }) } })
+    expect(notifications[0]?.message).toContain(VISIBLE_REVIEW_DISPATCH)
+    expect(notifications[0]?.message).toContain('headless-fallback')
   })
 })
 

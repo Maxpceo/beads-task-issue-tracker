@@ -1915,13 +1915,13 @@ export function activeBeadLifecycleReason(targetBead: string | undefined, action
 			return `Заблокировано: live bd status для активного bead ${activeBead} unreadable/refresh failed; snapshot status не авторитетен. Повтори bd show в worktreePath (или cwd), либо вызови workflow_reset, если это stale/foreign state, перед ${action}${targetBead ? ` на ${targetBead}` : ""}. /workflow-reset — optional human UI shortcut.`;
 		}
 		const label = NON_TERMINAL_BD_STATUSES.has(bdStatus) ? bdStatus : `unknown bd status ${bdStatus}`;
-		if (bdStatus === "inreview") return `Заблокировано: активный bead ${activeBead} имеет bd:${bdStatus}; после подтверждения current-session branch/worktree ownership следующее допустимое действие — review-bead / review_bead для ${activeBead}, а не ${action}${targetBead ? ` на ${targetBead}` : ""}. Если ownership stale или foreign, agents могут вызвать workflow_reset; /workflow-reset — только optional human UI shortcut.`;
+		if (bdStatus === "inreview") return `Заблокировано: активный bead ${activeBead} имеет bd:${bdStatus}; после подтверждения current-session branch/worktree ownership следующее допустимое действие — dispatch_reviewer(transport=cmux) для ${activeBead} (видимый code-reviewer); review_bead — headless-fallback, а не ${action}${targetBead ? ` на ${targetBead}` : ""}. Если ownership stale или foreign, agents могут вызвать workflow_reset; /workflow-reset — только optional human UI shortcut.`;
 		return `Заблокировано: активный bead ${activeBead} не terminal (bd:${label}). Доведи его до closed, переведи в blocked/deferred с explicit reason, передай handoff или вызови workflow_reset, если это stale/foreign state, перед ${action}${targetBead ? ` на ${targetBead}` : ""}. /workflow-reset — optional human UI shortcut.`;
 	}
 
 	if (TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
 	if (!NON_TERMINAL_WORKFLOW_STATES.has(legacyState)) return undefined;
-	if (legacyState === "inreview") return `Заблокировано: активный bead ${activeBead} имеет inreview; после подтверждения current-session branch/worktree ownership следующее допустимое действие — review-bead / review_bead для ${activeBead}, а не ${action}${targetBead ? ` на ${targetBead}` : ""}. Если ownership stale или foreign, agents могут вызвать workflow_reset; /workflow-reset — только optional human UI shortcut.`;
+	if (legacyState === "inreview") return `Заблокировано: активный bead ${activeBead} имеет inreview; после подтверждения current-session branch/worktree ownership следующее допустимое действие — dispatch_reviewer(transport=cmux) для ${activeBead} (видимый code-reviewer); review_bead — headless-fallback, а не ${action}${targetBead ? ` на ${targetBead}` : ""}. Если ownership stale или foreign, agents могут вызвать workflow_reset; /workflow-reset — только optional human UI shortcut.`;
 	return `Заблокировано: активный bead ${activeBead} не terminal (${legacyState}). Доведи его до closed, переведи в blocked/deferred с explicit reason, передай handoff или вызови workflow_reset, если это stale/foreign state, перед ${action}${targetBead ? ` на ${targetBead}` : ""}. /workflow-reset — optional human UI shortcut.`;
 }
 
@@ -3341,7 +3341,7 @@ export function evaluateToolPolicy(toolName: string, input: Record<string, unkno
 			return {
 				policy: "enforceActiveBeadLifecycle",
 				block: true,
-				reason: `Заблокировано: активный bead ${workflowState.activeBead} имеет bd:inreview; workflow_complete ${targetState || "без blocker"} остановит workflow до review. Запусти review-bead / review_bead для ${workflowState.activeBead} или используй workflow_complete state=blocked|deferred с explicit blocker и next action, если review невозможно запустить.`,
+				reason: `Заблокировано: активный bead ${workflowState.activeBead} имеет bd:inreview; workflow_complete ${targetState || "без blocker"} остановит workflow до review. Запусти dispatch_reviewer(transport=cmux) для ${workflowState.activeBead} (видимый code-reviewer); review_bead — headless-fallback; или используй workflow_complete state=blocked|deferred с explicit blocker и next action, если review невозможно запустить.`,
 			};
 		}
 	}

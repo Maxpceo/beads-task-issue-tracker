@@ -15,6 +15,8 @@ interface ExtensionAPI {
 
 interface ExtensionContext {
 	cwd?: string;
+	/** Interactive TUI session flag from Pi runtime. Do not infer from `ui`. */
+	hasUI?: boolean;
 	sessionManager: {
 		getEntries(): Array<{ type: string; customType?: string; data?: unknown }>;
 		getSessionId?: () => string | undefined;
@@ -26,6 +28,28 @@ interface ExtensionContext {
 		setStatus(key: string, value: string | undefined): void;
 		theme: { fg(style: string, value: string): string };
 	};
+}
+
+/** Canonical interactive next-action pin (skill L26; no quotes around cmux). */
+const VISIBLE_REVIEW_DISPATCH = "dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)";
+
+function interactiveInreviewNextAction(activeBead: string): string {
+	return `следующее действие: ${VISIBLE_REVIEW_DISPATCH} для ${activeBead} (видимый code-reviewer); review_bead — только headless-fallback`;
+}
+
+function nonUiInreviewNextAction(activeBead: string): string {
+	return `следующее действие: review-bead / review_bead для ${activeBead}`;
+}
+
+function dualTokenInreviewNextAction(): string {
+	return `${VISIBLE_REVIEW_DISPATCH} (видимый code-reviewer); review_bead — только headless-fallback`;
+}
+
+function claimInreviewBlockReason(bead: string, activeBead: string, hasUI: boolean | undefined): string {
+	if (hasUI === true) {
+		return `Нельзя claim ${bead}: active bead ${activeBead} уже в inreview. Сначала запустите ${VISIBLE_REVIEW_DISPATCH} для active bead (видимый code-reviewer); review_bead — только headless-fallback. Затем можно брать unrelated work.`;
+	}
+	return `Нельзя claim ${bead}: active bead ${activeBead} уже в inreview. Сначала запустите review-bead / review_bead для active bead, затем можно брать unrelated work.`;
 }
 
 const WORKFLOW_STATES = [
@@ -998,7 +1022,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		if (workflowState.activeBead && workflowState.activeBead !== bead) {
 			const activeStatus = workflowState.bdStatus ?? (await readBdStatus(pi, workflowState.activeBead));
 			if (activeStatus === "inreview") {
-				return recordClaimError(ctx, `Нельзя claim ${bead}: active bead ${workflowState.activeBead} уже в inreview. Сначала запустите review-bead / review_bead для active bead, затем можно брать unrelated work.`);
+				return recordClaimError(ctx, claimInreviewBlockReason(bead, workflowState.activeBead, ctx.hasUI));
 			}
 			if (activeStatus && !isTerminalBdStatus(activeStatus)) {
 				return recordClaimError(ctx, `Нельзя claim ${bead}: active bead ${workflowState.activeBead} имеет non-terminal bd status ${activeStatus}. Завершите, отправьте на review или сбросьте active workflow перед claim unrelated work.`);
@@ -1348,7 +1372,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 		pi.registerTool({
 			name: "workflow_submit_for_review",
 			label: "Workflow Submit For Review",
-			description: "Atomically move the active bead to bd status inreview and sync Pi workflow-state so the next action is review_bead/review-bead.",
+			description: `Atomically move the active bead to bd status inreview and sync Pi workflow-state so the next action is ${VISIBLE_REVIEW_DISPATCH} (visible code-reviewer); review_bead is headless-fallback only.`,
 			parameters: WorkflowSubmitForReviewParams,
 			async execute(_id: string, params: { beadId: string; reason: string; endCommit?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				await ensureReconciled(ctx);
@@ -1390,7 +1414,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 					},
 					ctx,
 				);
-				return toolText(`workflow_submit_for_review выполнен для ${params.beadId}: ${params.reason}. Следующее действие: review_bead/review-bead, либо workflow_complete state=blocked|deferred с явным blocker, если review нельзя запустить. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
+				return toolText(`workflow_submit_for_review выполнен для ${params.beadId}: ${params.reason}. Следующее действие: ${dualTokenInreviewNextAction()}, либо workflow_complete state=blocked|deferred с явным blocker, если review нельзя запустить. ${formatState(workflowState)}`, { ok: true, ...cloneState(workflowState) });
 			},
 		});
 
@@ -1403,7 +1427,7 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 				await ensureReconciled(ctx);
 				if (workflowState.activeBead && workflowState.bdStatus === "inreview" && params.state !== "blocked" && params.state !== "deferred") {
 					return toolText(
-						`workflow_complete заблокирован: active bead ${workflowState.activeBead} имеет bd:inreview. Следующее допустимое действие: review_bead/review-bead, либо workflow_complete state=blocked|deferred с явным blocker, если review нельзя запустить.`,
+						`workflow_complete заблокирован: active bead ${workflowState.activeBead} имеет bd:inreview. Следующее допустимое действие: ${dualTokenInreviewNextAction()}, либо workflow_complete state=blocked|deferred с явным blocker, если review нельзя запустить.`,
 						{ ok: false, ...cloneState(workflowState) },
 					);
 				}
@@ -1441,8 +1465,11 @@ export default function workflowStateExtension(pi: ExtensionAPI): void {
 
 	pi.on("before_agent_start", async (_event, ctx) => {
 		if (ctx) await ensureReconciled(ctx);
+		const nextAction = ctx?.hasUI === true
+			? interactiveInreviewNextAction(workflowState.activeBead ?? "<ID>")
+			: nonUiInreviewNextAction(workflowState.activeBead ?? "<ID>");
 		const inreviewGuard = workflowState.activeBead && workflowState.bdStatus === "inreview"
-			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} имеет bdStatus=inreview. Не останавливайся с обычным final report. Если ты не в plan mode и ownership не stale/foreign, следующее действие: review-bead / review_bead для ${workflowState.activeBead}. Не заявляй, что review_bead или dispatch_reviewer недоступны, по памяти, compacted context или отсутствию предыдущего tool call: такой blocker допустим только если tool реально отсутствует в текущем tool surface или typed call вернул ошибку до запуска review. Если review нельзя запустить из-за доказанной недоступности tool, failed typed call или stale/foreign ownership, верни BLOCKED на русском с точным evidence, next action и затем workflow_complete state=blocked|deferred; workflow_complete допустим только для этого явного blocker.`
+			? `\n\n[PI INREVIEW GUARD]\nActive bead ${workflowState.activeBead} имеет bdStatus=inreview. Не останавливайся с обычным final report. Если ты не в plan mode и ownership не stale/foreign, ${nextAction}. Не заявляй, что review_bead или dispatch_reviewer недоступны, по памяти, compacted context или отсутствию предыдущего tool call: такой blocker допустим только если tool реально отсутствует в текущем tool surface или typed call вернул ошибку до запуска review. Если review нельзя запустить из-за доказанной недоступности tool, failed typed call или stale/foreign ownership, верни BLOCKED на русском с точным evidence, next action и затем workflow_complete state=blocked|deferred; workflow_complete допустим только для этого явного blocker.`
 			: "";
 		return {
 			message: {
