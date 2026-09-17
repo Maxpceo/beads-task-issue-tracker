@@ -2177,6 +2177,21 @@ function validateLastChildEpicSweep(cwd: string, childId: string, targetStatus: 
 	return undefined;
 }
 
+function missingEpicAcceptanceMatrixReason(id: string): string {
+	return [
+		`Заблокировано: epic ${id} требует post-terminal EPIC ACCEPTANCE MATRIX перед close.`,
+		"Матрица должна быть добавлена отдельным завершённым вызовом `bd comments add` до `bd close`; chained comment+close в одном bash-вызове не засчитывается.",
+		"Весь chained-вызов заблокирован целиком: подготовительные шаги (включая запись файла и `bd comments add`) в нём не выполнились.",
+		"Пример правильной последовательности:",
+		`  bd comments add ${id} --file /tmp/epic-matrix.txt`,
+		`  bd close ${id} --reason "…"`,
+	].join(" ");
+}
+
+function invalidEpicAcceptanceMatrixReason(id: string): string {
+	return `Заблокировано: epic ${id} имеет EPIC ACCEPTANCE MATRIX, но она невалидна (нужны result: PASS или N/A и строка PARENT_EPIC: ${id}). Исправьте матрицу отдельным bd comments add, затем повторите bd close.`;
+}
+
 function validateEpicCloseMatrix(cwd: string, id: string): string | undefined {
 	const issue = getBdIssue(cwd, id);
 	if (issue?.issue_type !== "epic") return undefined;
@@ -2186,7 +2201,8 @@ function validateEpicCloseMatrix(cwd: string, id: string): string | undefined {
 	const comments = getBdComments(cwd, id);
 	if (!comments) return `Заблокировано: не удалось прочитать comments epic ${id} для EPIC ACCEPTANCE MATRIX.`;
 	const matrix = latestCommentMatching(comments, (text) => text.includes("EPIC ACCEPTANCE MATRIX") && markerHasLine(text, "PARENT_EPIC", id));
-	if (!matrix || !hasValidEpicAcceptanceMatrix(matrix, id)) return `Заблокировано: epic ${id} требует post-terminal EPIC ACCEPTANCE MATRIX перед close.`;
+	if (!matrix) return missingEpicAcceptanceMatrixReason(id);
+	if (!hasValidEpicAcceptanceMatrix(matrix, id)) return invalidEpicAcceptanceMatrixReason(id);
 	return undefined;
 }
 
