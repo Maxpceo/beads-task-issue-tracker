@@ -8,6 +8,8 @@
 
 ### Changed
 
+- **Pi `workflow_plan_review` extraCycle and Maxim bypass past ceiling 4** (`beads-task-issue-tracker-9upg`): after the auto CONTINUE cap of 2 (`eb4k`), typed `workflow_plan_review` accepts `extraCycle: true` for orchestrator spawns 3–4 (`MAX_PLAN_REVIEW_TOTAL_SPAWNS`) when Maxim asks or residual important/critical findings remain on a high-risk plan (not Fast Path nits). Cycle 5+ requires `{ draftPlan, extraCycle: true, requestedBy: "maxim" }` only when Maxim explicitly asked this turn — residual alone does not unlock past the orchestrator ceiling; omitted/invalid `requestedBy` defaults fail-closed to `orchestrator`. Extra path never returns `CONTINUE` (always `STOP_SHOW_USER` or `HARD_BLOCK`). `/plan-auto` and ready-UI `/plan-review` stay separate and do not share this counter. Contract in `.pi/extensions/plan-mode/README.md` and `plan-bead`; focused vitest under `tests/extensions/plan-mode.test.ts` and `tests/extensions/plan-review.test.ts`.
+
 - **Pi session-scoped merge-slot holder** (`beads-task-issue-tracker-ho0p`): replace shared git `user.name` / `Maxpceo` merge-slot identity with `pi:<SESSION_UNIQ>:<suffix|none>` (`SESSION_UNIQ` = full `id:` body, dashes stripped). `beads-policy` requires `--holder` on acquire/release, allows push only for own-session `pi:` holders (footer-only when bd holder empty/unreadable; foreign/Maxpceo denied even if footer held), and teaches `land` / `merge-to-main` / `release` the literal `--holder` recipe. Git commit author is unchanged.
 
 ### Fixed
