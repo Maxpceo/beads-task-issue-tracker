@@ -43,6 +43,7 @@ import {
 	planReviewStopAdvice,
 	renderPlanReviewResults,
 	runPlanReviewers,
+	type PlanReviewGateResult,
 	type PlanReviewResult,
 	type PlanReviewStopAdvice,
 } from "../plan-review/index";
@@ -1077,35 +1078,72 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return matched?.value ?? null;
 	}
 
-	async function runReadyPlanCritique(ctx: ExtensionContext, draftPlan: string): Promise<void> {
-		// Uncapped critique path (same as /plan-review): does NOT increment planReviewCycleCount.
-		try {
-			const results = await runReviewGateForPlan(ctx, draftPlan);
-			pi.sendMessage(
-				{
-					customType: "plan-review-findings",
-					content: `**Strict plan critique complete.** Implementation remains blocked until explicit approval.\n\n${renderPlanReviewResults(results)}`,
-					display: true,
-				},
-				{ triggerTurn: false },
-			);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			pi.sendMessage(
-				{
-					customType: "plan-review-blocked",
-					content: `**Plan review failed.** ${message}\n\nPlan mode remains ON; pending ready plan kept.`,
-					display: true,
-				},
-				{ triggerTurn: false },
-			);
-		}
-		persistState();
+	type StrictReadyUiOutcome =
+		| { kind: "findings"; results: PlanReviewResult[]; gate: PlanReviewGateResult }
+		| { kind: "clean-reshow" }
+		| { kind: "cleared" }
+		| { kind: "error"; message: string };
+
+	function countImportantOrCritical(results: PlanReviewResult[], gate: PlanReviewGateResult): number {
+		if (gate.importantFindings.length > 0) return gate.importantFindings.length;
+		return results.reduce(
+			(total, result) =>
+				total + result.findings.filter((finding) => finding.severity === "critical" || finding.severity === "important").length,
+			0,
+		);
 	}
 
-	async function runStrictReadyUiLoopSafe(ctx: ExtensionContext): Promise<void> {
+	function minorFindingsExcerpt(results: PlanReviewResult[], limit = 3): string | undefined {
+		const minors = results.flatMap((result) =>
+			result.findings
+				.filter((finding) => finding.severity === "minor")
+				.map((finding) => finding.issue.trim())
+				.filter(Boolean),
+		);
+		if (minors.length === 0) return undefined;
+		const shown = minors.slice(0, limit);
+		const more = minors.length > limit ? ` (+${minors.length - limit} more)` : "";
+		return `${shown.join("; ")}${more}`;
+	}
+
+	function formatReadyCritiqueFindingsText(results: PlanReviewResult[]): string {
+		return [
+			"**Strict plan critique complete.** Implementation remains blocked until explicit approval.",
+			"",
+			renderPlanReviewResults(results),
+			"",
+			"Revise the plan. Adjudicate each finding (Accepted findings / Rejected findings), keep Unresolved blockers: none when clear, then call plan_mode_complete({ plan }) again with the revised plan.",
+		].join("\n");
+	}
+
+	async function runReadyPlanCritique(
+		ctx: ExtensionContext,
+		draftPlan: string,
+	): Promise<{ results: PlanReviewResult[]; gate: PlanReviewGateResult }> {
+		// Uncapped critique path (same as /plan-review): does NOT increment planReviewCycleCount.
+		// Does not sendMessage — caller delivers findings via tool result (execute) or leftover sendMessage.
+		let results: PlanReviewResult[];
 		try {
-			await runStrictReadyUiLoop(ctx);
+			results = await runReviewGateForPlan(ctx, draftPlan);
+		} catch (error) {
+			// Spawn/runtime failure is a findings outcome (BLOCKED), not a Safe rethrow.
+			const message = error instanceof Error ? error.message : String(error);
+			results = [{
+				reviewer: "plan-review-runtime",
+				verdict: "BLOCKED",
+				findings: [],
+				unresolvedBlockers: [message || "plan review spawn failed"],
+				raw: "",
+				error: message || "plan review spawn failed",
+			}];
+		}
+		const gate = evaluatePlanReviewGate(results);
+		return { results, gate };
+	}
+
+	async function runStrictReadyUiLoopSafe(ctx: ExtensionContext): Promise<StrictReadyUiOutcome> {
+		try {
+			return await runStrictReadyUiLoop(ctx);
 		} catch (error) {
 			// Graceful degradation: a TUI/render failure in the ready-UI must never
 			// kill the session. Clear pending, notify, and stay in strict plan mode.
@@ -1119,10 +1157,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			} catch {
 				// notify itself failing must not propagate either
 			}
+			return { kind: "error", message };
 		}
 	}
 
-	async function runStrictReadyUiLoop(ctx: ExtensionContext): Promise<void> {
+	async function runStrictReadyUiLoop(ctx: ExtensionContext): Promise<StrictReadyUiOutcome> {
+		let lastOutcome: StrictReadyUiOutcome = { kind: "cleared" };
 		while (planModeEnabled && !autoExecuteEnabled && pendingReadyPlan) {
 			const planText = pendingReadyPlan;
 			const action = await promptReadyAction(ctx, planText);
@@ -1131,14 +1171,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				const approval = await approvePlanForExecution(ctx, planText);
 				if (!approval.approved) {
 					persistState();
-					return;
+					return { kind: "cleared" };
 				}
 				clearPendingReadyPlan();
 				executionMode = false;
 				todoItems = [];
 				updateStatus(ctx);
 				persistState();
-				return;
+				return { kind: "cleared" };
 			}
 
 			if (action === "refine") {
@@ -1148,20 +1188,62 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (refinement?.trim()) {
 					pi.sendUserMessage(refinement.trim());
 				}
-				return;
+				return { kind: "cleared" };
 			}
 
 			if (action === "plan-review") {
-				await runReadyPlanCritique(ctx, planText);
-				// pending kept; re-show ready buttons
-				continue;
+				// Notify start before spawn; notify failure must not cancel critique.
+				try {
+					if (ctx.hasUI) {
+						ctx.ui.notify(
+							"plan-review: запускаю 3 ревьюеров (edge/consistency/dead-zone), это займёт несколько минут",
+							"info",
+						);
+					}
+				} catch {
+					// swallow — spawn still runs
+				}
+
+				const { results, gate } = await runReadyPlanCritique(ctx, planText);
+				const clean = gate.ok && !hasImportantOrCriticalFindings(results, gate.importantFindings);
+
+				if (clean) {
+					const minorExcerpt = minorFindingsExcerpt(results);
+					const cleanText = minorExcerpt
+						? `plan-review: чисто (нет important/critical). minor: ${minorExcerpt}`
+						: "plan-review: чисто (нет important/critical) — можно исполнять";
+					try {
+						if (ctx.hasUI) ctx.ui.notify(cleanText, "info");
+					} catch {
+						// swallow
+					}
+					persistState();
+					lastOutcome = { kind: "clean-reshow" };
+					// pending kept; re-show ready buttons so Maxim can execute immediately
+					continue;
+				}
+
+				// Dirty: deliver findings to the agent turn; no second select (prevents double run).
+				clearPendingReadyPlan();
+				persistState();
+				const importantCount = countImportantOrCritical(results, gate);
+				const dirtyText = gate.ok
+					? `plan-review: findings — important/critical: ${importantCount}; plan mode ON, pending cleared`
+					: `plan-review: gate blocked (${gate.reasons[0] ?? "see findings"}); important/critical: ${importantCount}; pending cleared`;
+				try {
+					if (ctx.hasUI) ctx.ui.notify(dirtyText, gate.ok ? "warning" : "error");
+				} catch {
+					// swallow
+				}
+				return { kind: "findings", results, gate };
 			}
 
 			// stay / Esc / null → clear pending, remain in plan mode
 			clearPendingReadyPlan();
 			persistState();
-			return;
+			return { kind: "cleared" };
 		}
+		return lastOutcome;
 	}
 
 	async function runQuestionnaireUi(
@@ -1295,13 +1377,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				pendingReadyPlan = plan;
 				persistState();
 				if (ctx.hasUI) {
-					await runStrictReadyUiLoopSafe(ctx);
+					const outcome = await runStrictReadyUiLoopSafe(ctx);
+					if (outcome.kind === "findings") {
+						// Deliver critique into this turn's tool result so the model can adjudicate now.
+						// Do NOT sendMessage(triggerTurn) here — tool execute has not returned yet (51l5).
+						return toolText(formatReadyCritiqueFindingsText(outcome.results), {
+							ok: false,
+							pending: false,
+							findings: true,
+							gate: outcome.gate,
+							results: outcome.results,
+						});
+					}
 					const stillPending = Boolean(pendingReadyPlan);
 					return toolText(
 						stillPending
 							? "plan_mode_complete: ready select opened; pending kept"
 							: "plan_mode_complete: ready select completed",
-						{ ok: true, pending: stillPending },
+						{ ok: true, pending: stillPending, outcome: outcome.kind },
 					);
 				}
 				return toolText("plan_mode_complete: pending ready plan stored; ready select will open on agent_settled", { ok: true, pending: true });
@@ -1799,7 +1892,7 @@ Restrictions:
 - Other bd mutating commands remain blocked: bd create/update/close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull. workflow_update and setup-worktree stay outside PLAN_MODE_TOOLS.
 
 Ask clarifying questions using the questionnaire tool (one question tool only — do not invent a second question tool).
-When the plan is fully ready for human decision, call plan_mode_complete({ plan }) as the last tool in the turn. Do NOT call plan_mode_complete after a clarifying question. Ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review) appears only after plan_mode_complete; the plan-review button runs critique without approving or starting a supervisor.
+When the plan is fully ready for human decision, call plan_mode_complete({ plan }) as the last tool in the turn. Do NOT call plan_mode_complete after a clarifying question. Ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review) appears only after plan_mode_complete; the plan-review button runs critique without approving or starting a supervisor. If the button returns findings, they arrive in the plan_mode_complete tool result — adjudicate Accepted/Rejected findings and call plan_mode_complete again with the revised plan.
 Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header.
@@ -1951,11 +2044,22 @@ After completing a step, include a [DONE:n] tag in your response.`,
 	});
 
 	// Restore leftover pendingReadyPlan (restart) with the same select path — never custom.
+	// Findings cannot ride a tool result here (no active execute), so wake the model via sendMessage.
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!planModeEnabled || autoExecuteEnabled || executionMode) return;
 		if (!pendingReadyPlan) return;
 		if (!ctx.hasUI) return;
-		await runStrictReadyUiLoopSafe(ctx);
+		const outcome = await runStrictReadyUiLoopSafe(ctx);
+		if (outcome.kind === "findings") {
+			pi.sendMessage(
+				{
+					customType: "plan-review-findings",
+					content: formatReadyCritiqueFindingsText(outcome.results),
+					display: true,
+				},
+				{ triggerTurn: true },
+			);
+		}
 	});
 
 	// Restore state on session start/resume
