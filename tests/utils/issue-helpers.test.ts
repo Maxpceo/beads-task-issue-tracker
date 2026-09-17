@@ -11,6 +11,7 @@ import {
   matchesSearch,
   groupIssues,
   pruneClosedBlockers,
+  isIssueBlocked,
   computeReadyIssues,
   statusOrder,
   priorityOrder,
@@ -827,6 +828,86 @@ describe('pruneClosedBlockers', () => {
     pruneClosedBlockers(issues)
 
     expect(issues[0]!.blockedBy).toEqual(['missing-1'])
+  })
+
+  it('prunes malformed blocker IDs even when closedIds is empty', () => {
+    const issues = [
+      makeIssue({
+        id: 'open-1',
+        status: 'in_progress',
+        blockedBy: ['discovered-from:beads-task-issue-tracker-garn', 'open-2', ''],
+        blocks: ['discovered-from:x', 'open-3'],
+      }),
+      makeIssue({ id: 'open-2', status: 'open' }),
+    ]
+
+    pruneClosedBlockers(issues)
+
+    expect(issues[0]!.blockedBy).toEqual(['open-2'])
+    expect(issues[0]!.blocks).toEqual(['open-3'])
+  })
+
+  it('clears blockedBy when only malformed ids remain', () => {
+    const issues = [
+      makeIssue({
+        id: 'open-1',
+        status: 'in_progress',
+        blockedBy: ['discovered-from:garn'],
+      }),
+    ]
+
+    pruneClosedBlockers(issues)
+
+    expect(issues[0]!.blockedBy).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isIssueBlocked
+// ---------------------------------------------------------------------------
+describe('isIssueBlocked', () => {
+  it('returns true for status=blocked without deps', () => {
+    expect(isIssueBlocked(makeIssue({ id: '1', status: 'blocked' }))).toBe(true)
+  })
+
+  it('returns true for in_progress with a known open blocker id', () => {
+    expect(
+      isIssueBlocked(
+        makeIssue({ id: '1', status: 'in_progress', blockedBy: ['open-2'] }),
+      ),
+    ).toBe(true)
+  })
+
+  it('returns true for mixed blockedBy with one well-formed id', () => {
+    expect(
+      isIssueBlocked(
+        makeIssue({
+          id: '1',
+          status: 'in_progress',
+          blockedBy: ['open-2', 'discovered-from:x'],
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  it('returns false for malformed-only blockedBy on in_progress', () => {
+    expect(
+      isIssueBlocked(
+        makeIssue({
+          id: '1',
+          status: 'in_progress',
+          blockedBy: ['discovered-from:beads-task-issue-tracker-garn'],
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it('returns false for closed issues even with blockedBy', () => {
+    expect(
+      isIssueBlocked(
+        makeIssue({ id: '1', status: 'closed', blockedBy: ['open-2'] }),
+      ),
+    ).toBe(false)
   })
 })
 

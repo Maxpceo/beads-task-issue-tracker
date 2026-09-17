@@ -74,24 +74,45 @@ export function normalizeIssueStatus(status: string): IssueStatus {
 }
 
 /**
+ * True when `id` is a non-empty bead id without relationship-type prefixes.
+ * Rejects empty strings and values containing `:` (e.g. `discovered-from:…`).
+ */
+function isWellFormedIssueId(id: string): boolean {
+  return id.length > 0 && !id.includes(':')
+}
+
+/**
  * Transform raw bd CLI issue to Issue type interface
  */
 export function transformIssue(raw: BdRawIssue): Issue {
-  // Compute blockedBy from dependencies (mirroring Tauri/Rust logic)
-  const blockedBy = [...(raw.blocked_by || [])]
+  // Compute blockedBy from dependencies (mirroring Tauri/Rust logic).
+  // Drop malformed ids (empty / containing ':') from both raw and dep paths.
+  const blockedBy = (raw.blocked_by || []).filter(isWellFormedIssueId)
   if (raw.dependencies) {
     for (const dep of raw.dependencies) {
       const depType = dep.dependency_type || dep.type
       // bd show format: { id, dependency_type: "blocks" }
-      if (depType === 'blocks' && dep.id && !blockedBy.includes(dep.id)) {
+      if (
+        depType === 'blocks'
+        && dep.id
+        && isWellFormedIssueId(dep.id)
+        && !blockedBy.includes(dep.id)
+      ) {
         blockedBy.push(dep.id)
       }
       // bd list format: { issue_id, depends_on_id, type: "blocks" }
-      if (depType === 'blocks' && dep.depends_on_id && !blockedBy.includes(dep.depends_on_id)) {
+      if (
+        depType === 'blocks'
+        && dep.depends_on_id
+        && isWellFormedIssueId(dep.depends_on_id)
+        && !blockedBy.includes(dep.depends_on_id)
+      ) {
         blockedBy.push(dep.depends_on_id)
       }
     }
   }
+
+  const blocks = (raw.blocks || []).filter(isWellFormedIssueId)
 
   return {
     id: raw.id,
@@ -113,7 +134,7 @@ export function transformIssue(raw: BdRawIssue): Issue {
       createdAt: c.created_at,
     })),
     blockedBy: blockedBy.length > 0 ? blockedBy : undefined,
-    blocks: raw.blocks,
+    blocks: blocks.length > 0 ? blocks : undefined,
     externalRef: raw.external_ref,
     estimateMinutes: raw.estimate,
     designNotes: raw.design,
