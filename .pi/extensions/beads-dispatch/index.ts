@@ -10,6 +10,11 @@ import { inferTargetFilesFromText, renderPathRulesLoaded } from "../path-rules/i
 import { resolveActiveTaskScope, taskScopeErrorToPolicyReason, taskScopeFromContext, type TaskScope } from "../worktree-scope/index";
 import { resolveAgentModelFromCwd } from "../agent-models/index";
 import {
+	loadSupervisorRouting,
+	resolveSupervisorFromRouting,
+	supervisorRoutingWarning,
+} from "./supervisor-routing";
+import {
 	appendPanesEnv,
 	beadSuffixFromId,
 	buildCloseWorkspaceArgv,
@@ -112,6 +117,7 @@ export {
 	saveRegistry,
 	findRegistryByTaskId,
 } from "./cmux-transport";
+export { chooseSupervisor, textForSupervisorRouting } from "./supervisor-routing";
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -185,6 +191,8 @@ interface DispatchResult {
 	renameAttempts?: number;
 	renameFailures?: number;
 	renameLastError?: string;
+	/** Observable load note from supervisor-routing.json (missing/invalid). */
+	routingWarning?: string;
 }
 
 type DispatchTransport = "headless" | "cmux";
@@ -474,51 +482,6 @@ async function getGitValue(pi: ExtensionAPI, cwd: string, args: string[]): Promi
 	const { stdout, stderr, code } = await pi.exec("git", ["-C", cwd, ...args]);
 	if (code !== 0) throw new Error(`git -C ${cwd} ${args.join(" ")} failed: ${stderr || stdout}`);
 	return stdout.trim();
-}
-
-const OUT_OF_SCOPE_HEADING_RE = /^#{2,6}\s*out of scope\s*:?\s*$/;
-const MARKDOWN_HEADING_RE = /^#{2,6}\s/;
-const NEGATION_OPENER_RE = /^[ \t]*(?:[-*][ \t]+|\d+\.[ \t]+)?(?:не трогать|do not touch|don't touch)\s*:?/;
-
-function isNegationContinuation(line: string): boolean {
-	if (/^\s*$/.test(line) || MARKDOWN_HEADING_RE.test(line)) return false;
-	return /^[ \t]+/.test(line) || /^(?:[-*][ \t]+|\d+\.[ \t]+)/.test(line);
-}
-
-/** Strip Out of scope headings and do-not-touch blocks from a bead description before supervisor routing. Title is not stripped. */
-export function textForSupervisorRouting(description: string): string {
-	const lines = description.toLowerCase().split(/\r?\n/);
-	const kept: string[] = [];
-	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i]!;
-		if (OUT_OF_SCOPE_HEADING_RE.test(line)) {
-			i++;
-			while (i < lines.length && !MARKDOWN_HEADING_RE.test(lines[i]!)) i++;
-			i--;
-			continue;
-		}
-		if (NEGATION_OPENER_RE.test(line)) {
-			i++;
-			while (i < lines.length && isNegationContinuation(lines[i]!)) i++;
-			i--;
-			continue;
-		}
-		kept.push(line);
-	}
-	return kept.join("\n");
-}
-
-/** Pick supervisor role from bead labels/text. Bare "tauri" in prose (role names) must not force tauri-supervisor. */
-export function chooseSupervisor(bead: BeadInfo): string {
-	const labels = new Set(bead.labels ?? []);
-	const text = `${bead.title ?? ""}\n${textForSupervisorRouting(bead.description ?? "")}`.toLowerCase();
-	// Keep rust|cargo|src-tauri; omit bare tauri so role-words like tauri-supervisor do not misroute.
-	if (labels.has("backend") || labels.has("tracker") || /rust|cargo|src-tauri/.test(text)) return "tauri-supervisor";
-	if (labels.has("ci") || labels.has("dx") || /test|vitest|ci|workflow/.test(text)) return "test-supervisor";
-	if (labels.has("frontend") || labels.has("ui") || labels.has("data") || /vue|component|composable|page|app\//.test(text)) {
-		return "vue-supervisor";
-	}
-	return "test-supervisor";
 }
 
 const REQUIRED_HANDOFF_SECTIONS = [
@@ -1921,7 +1884,19 @@ async function dispatch(
 			throw new Error(`dispatch_reviewer preflight заблокирован: recorded START_COMMIT отсутствует для ${params.beadId}`);
 		}
 	}
-	const agentName = params.agent ?? (mode === "supervisor" ? chooseSupervisor(bead) : mode === "reviewer" ? "code-reviewer" : "documentation-expert");
+	let routingWarning: string | undefined;
+	let agentName: string;
+	if (params.agent) {
+		agentName = params.agent;
+	} else if (mode === "reviewer") {
+		agentName = "code-reviewer";
+	} else if (mode !== "supervisor") {
+		agentName = "documentation-expert";
+	} else {
+		const routing = loadSupervisorRouting(cwd);
+		agentName = resolveSupervisorFromRouting(bead, routing);
+		routingWarning = supervisorRoutingWarning(routing);
+	}
 	const agent = loadAgent(cwd, agentName);
 	const contextText = `${bead.title ?? ""}\n${bead.description ?? ""}\n${comments.map((comment) => comment.text ?? "").join("\n")}`;
 	const targetFiles = inferTargetFilesFromText(contextText);
@@ -1934,7 +1909,8 @@ async function dispatch(
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
 	if ((mode === "supervisor" || mode === "reviewer") && transport === "cmux") {
-		return await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx, signal });
+		const visible = await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx, signal });
+		return routingWarning ? { ...visible, routingWarning } : visible;
 	}
 
 	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
@@ -1955,6 +1931,7 @@ async function dispatch(
 			stderr: "",
 			model: agent.model,
 			thinking: agent.thinking,
+			routingWarning,
 		};
 	}
 
@@ -1977,9 +1954,9 @@ async function dispatch(
 			startCommit,
 			endCommit,
 		});
-		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, model: agent.model, thinking: agent.thinking, ...result };
+		return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, endCommit, model: agent.model, thinking: agent.thinking, ...result, routingWarning };
 	}
-	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, model: agent.model, thinking: agent.thinking, ...result };
+	return { agent: agentName, beadId: bead.id, branch, worktreePath, startCommit, model: agent.model, thinking: agent.thinking, ...result, routingWarning };
 }
 
 function renderDispatchResult(result: DispatchResult): string {
@@ -2002,6 +1979,7 @@ function renderDispatchResult(result: DispatchResult): string {
 		result.status ? `status=${result.status}` : "",
 		result.model ? `model=${result.model}` : "model=(session inherit)",
 		result.thinking ? `thinking=${result.thinking}` : "thinking=(session inherit)",
+		result.routingWarning ? `routingWarning=${result.routingWarning}` : "",
 		`exit=${result.exitCode}`,
 		renameBits,
 		result.stderr ? `stderr:\n${result.stderr}` : "",

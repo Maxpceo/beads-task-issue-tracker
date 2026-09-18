@@ -972,6 +972,44 @@ describe('chooseSupervisor', () => {
     expect(result.details.error).toBeUndefined()
     expect(result.details.agent).toBe('test-supervisor')
   })
+
+  it('N15 dryRun with explicit agent= documentation-expert does not consult the routing table', async () => {
+    let registeredTool: any
+    const branch = currentBranch()
+    const title = 'vue/tauri/test-supervisor role words dryRun override'
+    const handoff = roleWordsHandoffDescription()
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-role-words-override',
+              title,
+              status: 'in_progress',
+              labels: ['backend', 'tracker'],
+              description: handoff,
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: currentPlan }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-1', { beadId: 'bead-role-words-override', dryRun: true, agent: 'documentation-expert' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-role-words-override', branch, 'abc1234'))
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('documentation-expert')
+    expect(result.details.routingWarning).toBeUndefined()
+  })
 })
 
 describe('parseVisiblePing', () => {
