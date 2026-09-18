@@ -3,10 +3,13 @@
  * Stable action values: execute | stay | refine | plan-review
  *
  * Execute-path layout: 4 action labels first (narrow cmux clips from the top),
- * then a wrap-then-window plan pane. PgUp/PgDn scroll the pane before SelectList.
+ * then a wrap-then-window plan pane. PgUp/PgDn scroll the pane before arrows.
+ *
+ * Crash-safe: no SelectList (live HA 2026-09-18: SelectList.render inside
+ * custom killed Pi / TUI.stop(); questionnaire custom without SelectList lives).
  */
 
-import { Key, matchesKey, SelectList, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Stable ready-action ids used by plan-mode agent_end loop. */
 export type ReadyAction = "execute" | "stay" | "refine" | "plan-review";
@@ -95,9 +98,9 @@ export function visiblePlanWindow(
 }
 
 /**
- * Sync factory for ctx.ui.custom — no overlay options.
+ * Sync factory for ctx.ui.custom — no overlay options, no SelectList.
  * Digits 1-4 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
- * PgUp/PgDn scroll the plan window only (not SelectList / not j-k dual-focus).
+ * PgUp/PgDn scroll the plan window only (not j-k dual-focus).
  */
 export function createReadyUiFactory(planPreview?: string) {
 	return (tui: ReadyUiTui, theme: ReadyUiTheme, _keybindings: unknown, done: ReadyDone) => {
@@ -105,17 +108,6 @@ export function createReadyUiFactory(planPreview?: string) {
 		let settled = false;
 		let planOffset = 0;
 		let cachedLines: string[] | undefined;
-		const items = READY_ACTIONS.map((item) => ({ value: item.value, label: item.label }));
-
-		const listTheme = (text: string) => theme.fg("accent", text);
-		let list = new SelectList(items, items.length, listTheme);
-		list.setSelectedIndex(0);
-		list.onSelect = (item) => finish(item?.value as ReadyAction | undefined);
-		list.onCancel = () => finish(undefined);
-		list.onSelectionChange = () => {
-			selectedIndex = list.selectedIndex;
-			refresh();
-		};
 
 		function refresh(): void {
 			cachedLines = undefined;
@@ -138,7 +130,6 @@ export function createReadyUiFactory(planPreview?: string) {
 			const digit = data.length === 1 ? data.charCodeAt(0) - 48 : -1;
 			if (digit >= 1 && digit <= READY_ACTIONS.length) {
 				selectedIndex = digit - 1;
-				list.setSelectedIndex(selectedIndex);
 				finish(READY_ACTIONS[selectedIndex]?.value);
 				return;
 			}
@@ -159,9 +150,19 @@ export function createReadyUiFactory(planPreview?: string) {
 				return;
 			}
 
-			list.handleInput?.(data);
-			selectedIndex = list.selectedIndex;
-			if (!settled) refresh();
+			if (matchesKey(data, Key.up) || data === "\x1b[A") {
+				selectedIndex = Math.max(0, selectedIndex - 1);
+				refresh();
+				return;
+			}
+			if (matchesKey(data, Key.down) || data === "\x1b[B") {
+				selectedIndex = Math.min(READY_ACTIONS.length - 1, selectedIndex + 1);
+				refresh();
+				return;
+			}
+			if (matchesKey(data, Key.enter) || data === "\r" || data === "\n") {
+				finish(selectedItem().value);
+			}
 		}
 
 		function render(width: number): string[] {
@@ -214,8 +215,6 @@ export function createReadyUiFactory(planPreview?: string) {
 
 			lines.push(divider);
 
-			// Keep SelectList in sync for tests that call list.handleInput via component
-			void list.render(w);
 			// Pi TUI aborts the process if any line exceeds terminal width.
 			cachedLines = clampRenderLines(lines, w);
 			return cachedLines;

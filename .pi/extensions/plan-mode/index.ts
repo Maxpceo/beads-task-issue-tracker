@@ -1161,7 +1161,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		const labels = READY_ACTIONS.map((item) => item.label);
 
-		// Execute (and clean re-show in that loop): document-flow custom, no overlay.
+		// Execute (and clean re-show in that loop): document-flow custom, no overlay,
+		// no SelectList (live HA: SelectList.render inside custom killed Pi).
 		// Leftover agent_settled keeps built-in select (gauq/m6ho TUI abort).
 		// RPC / missing custom → select. Custom throw must NOT fall back to select;
 		// runStrictReadyUiLoopSafe degrades (notify + clear pending).

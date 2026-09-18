@@ -3138,6 +3138,12 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     readyComp.handleInput('4')
     expect(readyDone).toEqual({ action: 'plan-review' })
 
+    let arrowDone: any
+    const arrowComp = readyUi.createReadyUiFactory('Plan preview line')(tui, theme, {}, (value: any) => { arrowDone = value })
+    arrowComp.handleInput(piTuiMock.Key.down)
+    arrowComp.handleInput(piTuiMock.Key.enter)
+    expect(arrowDone).toEqual({ action: 'stay' })
+
     const { commandHandlers, toolHandlers, customCalls, ctx } = makeHarness({
       customResult: {
         questions,
@@ -3253,8 +3259,13 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
 
   it('source no longer contains Plan mode - what next select copy', () => {
     const indexSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
+    const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/ready-ui.ts'), 'utf8')
     expect(indexSource).not.toContain('Plan mode - what next')
     expect(indexSource).toContain('plan_mode_complete')
     expect(indexSource).not.toMatch(/overlay:\s*true/)
+    expect(readyUiSource).not.toMatch(/import\s*\{[^}]*SelectList/)
+    expect(readyUiSource).not.toMatch(/new SelectList/)
+    expect(readyUiSource).toContain('createReadyUiFactory')
+    expect(readyUiSource).toContain('visiblePlanWindow')
   })
 })
