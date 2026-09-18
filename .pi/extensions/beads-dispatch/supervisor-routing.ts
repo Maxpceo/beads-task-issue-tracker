@@ -20,6 +20,8 @@ export type SupervisorRoutingLoadResult = {
 };
 
 export type RoutingBead = {
+	id?: string;
+	status?: string;
 	title?: string;
 	description?: string;
 	labels?: string[];
