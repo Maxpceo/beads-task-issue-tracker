@@ -2864,7 +2864,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(persisted?.data?.enabled).toBe(true)
   })
 
-  it('execute-path live factory shows actions first and windows a 200-line plan (sendMessage is not visibility)', async () => {
+  it('execute-path live factory shows plan window first and actions last (sendMessage is not visibility)', async () => {
     const longPlan = Array.from({ length: 200 }, (_, i) => `UNIQUE_PLAN_LINE_${String(i).padStart(3, '0')}`).join('\n')
     const harness = makeHarness({
       activeBead: 'bead-ui',
@@ -2889,7 +2889,9 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов'))).toHaveLength(0)
     expect(liveRender).toContain('Исполнить')
     expect(liveRender).toContain('Отправить на plan-review')
-    expect(liveRender.indexOf('Исполнить')).toBeLessThan(liveRender.indexOf('UNIQUE_PLAN_LINE_000'))
+    expect(liveRender).not.toContain('Превью:')
+    expect(liveRender).not.toContain('Записать PLAN APPROVED')
+    expect(liveRender.indexOf('UNIQUE_PLAN_LINE_000')).toBeLessThan(liveRender.indexOf('Исполнить'))
     expect(liveRender).toContain('UNIQUE_PLAN_LINE_000')
     expect(liveRender).not.toContain('UNIQUE_PLAN_LINE_199')
     const dumped = liveRender.split('\n').filter((line) => /UNIQUE_PLAN_LINE_\d+/.test(line))
@@ -3132,9 +3134,10 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const readyRender = readyComp.render(80).join('\n')
     expect(readyRender).toContain('Исполнить')
     expect(readyRender).toContain('Отправить на plan-review')
-    expect(readyRender).toContain('Превью:')
+    expect(readyRender).not.toContain('Превью:')
+    expect(readyRender).not.toContain('Записать PLAN APPROVED')
     expect(readyRender).toContain('Plan preview line')
-    expect(readyRender.indexOf('Исполнить')).toBeLessThan(readyRender.indexOf('Plan preview line'))
+    expect(readyRender.indexOf('Plan preview line')).toBeLessThan(readyRender.indexOf('Исполнить'))
     readyComp.handleInput('4')
     expect(readyDone).toEqual({ action: 'plan-review' })
 
@@ -3200,7 +3203,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const manyLines = Array.from({ length: 200 }, (_, i) => `LINE_${i}`).join('\n')
     const windowed = readyUi.createReadyUiFactory(manyLines)(tui, theme, {}, () => {})
     const windowedText = windowed.render(80).join('\n')
-    expect(windowedText.indexOf('Исполнить')).toBeLessThan(windowedText.indexOf('LINE_0'))
+    expect(windowedText.indexOf('LINE_0')).toBeLessThan(windowedText.indexOf('Исполнить'))
     expect(windowedText).toContain('LINE_0')
     expect(windowedText).not.toContain('LINE_199')
     expect(windowedText.split('\n').filter((line: string) => /LINE_\d+/.test(line)).length).toBeLessThanOrEqual(6)

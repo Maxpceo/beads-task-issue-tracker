@@ -2,8 +2,9 @@
  * Plan-ready UI (document flow, no floating overlay).
  * Stable action values: execute | stay | refine | plan-review
  *
- * Execute-path layout: 4 action labels first (narrow cmux clips from the top),
- * then a wrap-then-window plan pane. PgUp/PgDn scroll the pane before arrows.
+ * Execute-path layout: wrap-then-window plan pane first (PgUp/PgDn),
+ * then 4 action labels (no descriptions, no Preview). Labels stay in the
+ * suffix so they remain on screen; the plan pages in place.
  *
  * Crash-safe: no SelectList (live HA 2026-09-18: SelectList.render inside
  * custom killed Pi / TUI.stop(); questionnaire custom without SelectList lives).
@@ -101,6 +102,7 @@ export function visiblePlanWindow(
  * Sync factory for ctx.ui.custom — no overlay options, no SelectList.
  * Digits 1-4 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
  * PgUp/PgDn scroll the plan window only (not j-k dual-focus).
+ * Render: plan window, then 4 labels — never descriptions or «Превью».
  */
 export function createReadyUiFactory(planPreview?: string) {
 	return (tui: ReadyUiTui, theme: ReadyUiTheme, _keybindings: unknown, done: ReadyDone) => {
@@ -173,6 +175,18 @@ export function createReadyUiFactory(planPreview?: string) {
 			const divider = truncateToWidth(theme.fg("accent", "─".repeat(w)), w, "");
 
 			lines.push(divider);
+
+			if (planPreview?.trim()) {
+				const wrapWidth = Math.max(1, w - 1);
+				const wrapped = wrapPlanToWidth(planPreview, wrapWidth);
+				const window = visiblePlanWindow(wrapped, planOffset, PLAN_WINDOW_LINES);
+				planOffset = window.offset;
+				for (const line of window.lines) {
+					lines.push(truncateToWidth(` ${theme.fg("muted", line)}`, w, ""));
+				}
+				lines.push("");
+			}
+
 			addWrappedWithPrefix(lines, " ", theme.fg("accent", bold("План готов — что дальше?")), w);
 			lines.push("");
 
@@ -182,37 +196,10 @@ export function createReadyUiFactory(planPreview?: string) {
 				const prefix = selected ? theme.fg("accent", "> ") : "  ";
 				const label = `${i + 1}. ${item.label}`;
 				addWrappedWithPrefix(lines, prefix, theme.fg(selected ? "accent" : "text", label), w);
-				if (item.description) {
-					addWrappedWithPrefix(lines, "     ", theme.fg("muted", item.description), w);
-				}
-			}
-
-			const current = selectedItem();
-			lines.push("");
-			addWrappedWithPrefix(
-				lines,
-				" ",
-				theme.fg("success", "Превью: ") + theme.fg("text", `${current.label} (${current.value})`),
-				w,
-			);
-			if (current.description) {
-				addWrappedWithPrefix(lines, " ", theme.fg("muted", current.description), w);
 			}
 
 			lines.push("");
 			addWrappedWithPrefix(lines, " ", theme.fg("dim", "1-4 / ↑↓ • Enter • Esc отмена • PgUp/PgDn план"), w);
-
-			if (planPreview?.trim()) {
-				lines.push("");
-				const wrapWidth = Math.max(1, w - 1);
-				const wrapped = wrapPlanToWidth(planPreview, wrapWidth);
-				const window = visiblePlanWindow(wrapped, planOffset, PLAN_WINDOW_LINES);
-				planOffset = window.offset;
-				for (const line of window.lines) {
-					lines.push(truncateToWidth(` ${theme.fg("muted", line)}`, w, ""));
-				}
-			}
-
 			lines.push(divider);
 
 			// Pi TUI aborts the process if any line exceeds terminal width.
