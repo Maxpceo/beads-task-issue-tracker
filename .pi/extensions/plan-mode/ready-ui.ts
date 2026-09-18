@@ -1,13 +1,9 @@
 /**
- * Plan-ready UI (document flow, no floating overlay).
- * Stable action values: execute | stay | refine | plan-review
- *
- * Execute-path layout: wrap-then-window plan pane first (PgUp/PgDn),
- * then 4 action labels (no descriptions, no Preview). Labels stay in the
- * suffix so they remain on screen; the plan pages in place.
+ * Plan-ready UI: four action labels only (no plan text, no pager).
+ * Execute-path uses this as a bottom overlay so the chat stays scrollable.
  *
  * Crash-safe: no SelectList (live HA 2026-09-18: SelectList.render inside
- * custom killed Pi / TUI.stop(); questionnaire custom without SelectList lives).
+ * custom killed Pi / TUI.stop(); questionnaire-style hand-rolled 1–4 / ↑↓ / Enter lives).
  */
 
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
@@ -28,9 +24,6 @@ export const READY_ACTIONS: readonly ReadyActionItem[] = [
 	{ value: "refine", label: "Уточнить", description: "Очистить pending и открыть редактор уточнения" },
 	{ value: "plan-review", label: "Отправить на plan-review", description: "Критика без approve; findings → tool result; cycle не увеличивается; dirty очищает pending" },
 ] as const;
-
-/** Visible wrapped-line count for the plan window (not a full dump). */
-export const PLAN_WINDOW_LINES = 6;
 
 export interface ReadyUiTheme {
 	fg: (color: string, text: string) => string;
@@ -68,8 +61,8 @@ function addWrappedWithPrefix(lines: string[], prefix: string, text: string, wid
 }
 
 /**
- * Wrap the full plan to width first. Do not slice raw source lines and then wrap:
- * a long unspaced line would still dump after wrap.
+ * Wrap the full plan to width. Used by the transcript entry renderer so mouse-wheel
+ * chat scroll shows the whole document. Do not slice a pager window here.
  */
 export function wrapPlanToWidth(planText: string, width: number): string[] {
 	const lines: string[] = [];
@@ -82,33 +75,20 @@ export function wrapPlanToWidth(planText: string, width: number): string[] {
 	return lines;
 }
 
-/** Clamp offset and return a 4–6 line window into already-wrapped plan lines. */
-export function visiblePlanWindow(
-	wrappedLines: string[],
-	offset: number,
-	windowSize = PLAN_WINDOW_LINES,
-): { lines: string[]; offset: number; total: number } {
-	const size = Math.max(1, windowSize);
-	const maxOffset = Math.max(0, wrappedLines.length - size);
-	const clamped = Math.min(Math.max(0, offset), maxOffset);
-	return {
-		lines: wrappedLines.slice(clamped, clamped + size),
-		offset: clamped,
-		total: wrappedLines.length,
-	};
+/** Full plan lines for `registerEntryRenderer` — clamp to terminal width (m6ho). */
+export function renderPlanTranscriptLines(planText: string, width: number): string[] {
+	return clampRenderLines(wrapPlanToWidth(planText, width), width);
 }
 
 /**
- * Sync factory for ctx.ui.custom — no overlay options, no SelectList.
+ * Sync factory for ctx.ui.custom — overlay buttons only, no plan, no SelectList.
  * Digits 1-4 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
- * PgUp/PgDn scroll the plan window only (not j-k dual-focus).
- * Render: plan window, then 4 labels — never descriptions or «Превью».
+ * Unhandled keys (including paging) are ignored so this is not a widget pager.
  */
-export function createReadyUiFactory(planPreview?: string) {
+export function createReadyUiFactory() {
 	return (tui: ReadyUiTui, theme: ReadyUiTheme, _keybindings: unknown, done: ReadyDone) => {
 		let selectedIndex = 0;
 		let settled = false;
-		let planOffset = 0;
 		let cachedLines: string[] | undefined;
 
 		function refresh(): void {
@@ -141,17 +121,6 @@ export function createReadyUiFactory(planPreview?: string) {
 				return;
 			}
 
-			if (matchesKey(data, Key.pageUp) || data === "\x1b[5~") {
-				planOffset = Math.max(0, planOffset - PLAN_WINDOW_LINES);
-				refresh();
-				return;
-			}
-			if (matchesKey(data, Key.pageDown) || data === "\x1b[6~") {
-				planOffset += PLAN_WINDOW_LINES;
-				refresh();
-				return;
-			}
-
 			if (matchesKey(data, Key.up) || data === "\x1b[A") {
 				selectedIndex = Math.max(0, selectedIndex - 1);
 				refresh();
@@ -175,18 +144,6 @@ export function createReadyUiFactory(planPreview?: string) {
 			const divider = truncateToWidth(theme.fg("accent", "─".repeat(w)), w, "");
 
 			lines.push(divider);
-
-			if (planPreview?.trim()) {
-				const wrapWidth = Math.max(1, w - 1);
-				const wrapped = wrapPlanToWidth(planPreview, wrapWidth);
-				const window = visiblePlanWindow(wrapped, planOffset, PLAN_WINDOW_LINES);
-				planOffset = window.offset;
-				for (const line of window.lines) {
-					lines.push(truncateToWidth(` ${theme.fg("muted", line)}`, w, ""));
-				}
-				lines.push("");
-			}
-
 			addWrappedWithPrefix(lines, " ", theme.fg("accent", bold("План готов — что дальше?")), w);
 			lines.push("");
 
@@ -199,7 +156,7 @@ export function createReadyUiFactory(planPreview?: string) {
 			}
 
 			lines.push("");
-			addWrappedWithPrefix(lines, " ", theme.fg("dim", "1-4 / ↑↓ • Enter • Esc отмена • PgUp/PgDn план"), w);
+			addWrappedWithPrefix(lines, " ", theme.fg("dim", "1-4 / ↑↓ • Enter • Esc отмена"), w);
 			lines.push(divider);
 
 			// Pi TUI aborts the process if any line exceeds terminal width.

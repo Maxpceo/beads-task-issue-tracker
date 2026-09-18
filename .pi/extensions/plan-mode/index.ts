@@ -31,6 +31,7 @@ import {
 import {
 	READY_ACTIONS,
 	createReadyUiFactory,
+	renderPlanTranscriptLines,
 	type ReadyAction,
 } from "./ready-ui.js";
 import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/index";
@@ -277,6 +278,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let prePlanActiveToolNames: string[] | undefined;
 	/** Set only by plan_mode_complete; gates ready-UI in strict agent_end. */
 	let pendingReadyPlan: string | undefined;
+
+	pi.registerEntryRenderer("plan-ready-document", (entry) => {
+		const data = entry.data as { content?: unknown } | undefined;
+		const content = typeof data?.content === "string" ? data.content : "";
+		return {
+			render(width: number): string[] {
+				return renderPlanTranscriptLines(content, width);
+			},
+		};
+	});
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -1126,6 +1137,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	/** Immediate chat document: appendEntry renders now; sendMessage is steered until the tool returns. */
+	function showImmediatePlanDocument(planText: string): void {
+		try {
+			pi.appendEntry("plan-ready-document", { content: planText });
+		} catch {
+			// appendEntry failure must not block ready-UI
+		}
+	}
+
 	function formatQuestionnaireTranscript(
 		questions: Array<{ label: string; prompt: string; options: Array<{ label: string }>; allowOther: boolean }>,
 	): string {
@@ -1152,22 +1172,28 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	): Promise<ReadyAction | null> {
 		if (!ctx.hasUI) return null;
 
-		// Transcript still gets the full plan (f3zr), but sendMessage is not visibility
-		// proof: Pi steers it until after the blocking widget. Execute-path custom UI
-		// carries a wrap-then-window plan pane. Re-sends on clean re-show / leftover.
+		// Full plan goes into the chat immediately via appendEntry + entry renderer.
+		// sendMessage(plan-ready-document) is steered until the blocking widget returns,
+		// so it is not the visibility path. Re-append on clean re-show / leftover.
 		if (planText.trim()) {
-			showVisibleTranscript("plan-ready-document", planText);
+			showImmediatePlanDocument(planText);
 		}
 
 		const labels = READY_ACTIONS.map((item) => item.label);
 
-		// Execute (and clean re-show in that loop): document-flow custom, no overlay,
-		// no SelectList (live HA: SelectList.render inside custom killed Pi).
-		// Leftover agent_settled keeps built-in select (gauq/m6ho TUI abort).
-		// RPC / missing custom → select. Custom throw must NOT fall back to select;
-		// runStrictReadyUiLoopSafe degrades (notify + clear pending).
+		// Execute (and clean re-show in that loop): short custom overlay, no plan, no
+		// SelectList (live HA: SelectList.render inside custom killed Pi). overlay:true
+		// leaves the transcript scrollable (mouse wheel). Leftover agent_settled keeps
+		// built-in select (gauq/m6ho TUI abort). RPC / missing custom → select.
+		// Custom throw must NOT fall back to select; runStrictReadyUiLoopSafe degrades.
 		if (source === "execute" && canUseCustomUi(ctx)) {
-			const result = await ctx.ui.custom<{ action: ReadyAction } | null>(createReadyUiFactory(planText));
+			const result = await ctx.ui.custom<{ action: ReadyAction } | null>(createReadyUiFactory(), {
+				overlay: true,
+				overlayOptions: {
+					anchor: "bottom-center",
+					width: "100%",
+				},
+			});
 			return result?.action ?? null;
 		}
 
