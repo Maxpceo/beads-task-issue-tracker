@@ -862,6 +862,77 @@ describe('chooseSupervisor', () => {
     })).toBe('tauri-supervisor')
   })
 
+  it('picks test-supervisor for hy3z-like pi+workflow handoff with src-tauri only in Out of scope', () => {
+    // textForSupervisorRouting strips ### Out of scope; title has no rust tokens; do not reuse description().
+    const description = roleWordsHandoffDescription().replace(
+      /### Out of scope\n[\s\S]*$/,
+      '### Out of scope\n- src-tauri\n- app/',
+    )
+    expect(chooseSupervisor({
+      id: '0nvj-hy3z-like',
+      title: 'hy3z-like pi workflow routing',
+      description,
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+  })
+
+  it('picks test-supervisor when Не трогать block sits outside an Out of scope heading', () => {
+    const description = `${roleWordsHandoffDescription()}\n\nНе трогать:\n- src-tauri/\n- app/`
+    expect(chooseSupervisor({
+      id: '0nvj-ne-trogat',
+      title: 'negation block outside heading',
+      description,
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+  })
+
+  it('picks test-supervisor for do not touch and don\'t touch openers', () => {
+    const doNotTouch = `${roleWordsHandoffDescription()}\n\ndo not touch:\n- src-tauri/`
+    const dontTouch = `${roleWordsHandoffDescription()}\n\n- don't touch src-tauri/`
+    expect(chooseSupervisor({
+      id: '0nvj-do-not-touch',
+      title: 'do not touch opener',
+      description: doNotTouch,
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+    expect(chooseSupervisor({
+      id: '0nvj-dont-touch',
+      title: 'dont touch list opener',
+      description: dontTouch,
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+  })
+
+  it('picks tauri-supervisor when title contains src-tauri even if description is clean', () => {
+    expect(chooseSupervisor({
+      id: '0nvj-title-src-tauri',
+      title: 'chooseSupervisor: src-tauri in title stays a tauri signal',
+      description: roleWordsHandoffDescription(),
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('tauri-supervisor')
+  })
+
+  it('picks tauri-supervisor when Files lists src-tauri even if Out of scope also mentions it', () => {
+    const description = roleWordsHandoffDescription()
+      .replace('- .pi/extensions/beads-dispatch/index.ts', '- src-tauri/src/lib.rs')
+      .replace(
+        /### Out of scope\n[\s\S]*$/,
+        '### Out of scope\n- documentation-only notes.',
+      )
+    expect(chooseSupervisor({
+      id: '0nvj-files-and-oos',
+      title: 'mixed files and out of scope',
+      description,
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('tauri-supervisor')
+  })
+
   it('dryRun without agent= uses chooseSupervisor on role-words handoff fixture → test-supervisor', async () => {
     // Separate dryRun fixture: do not reuse description() (it embeds src-tauri and would force tauri-supervisor).
     // Role-words must appear in description; title-only would still work via text concat, but empty/missing desc is a vacuum case.
