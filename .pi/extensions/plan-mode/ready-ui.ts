@@ -6,7 +6,7 @@
  * custom killed Pi / TUI.stop(); questionnaire-style hand-rolled 1–4 / ↑↓ / Enter lives).
  */
 
-import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, Markdown, matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Stable ready-action ids used by plan-mode agent_end loop. */
 export type ReadyAction = "execute" | "stay" | "refine" | "plan-review";
@@ -78,6 +78,24 @@ export function wrapPlanToWidth(planText: string, width: number): string[] {
 /** Full plan lines for `registerEntryRenderer` — clamp to terminal width (m6ho). */
 export function renderPlanTranscriptLines(planText: string, width: number): string[] {
 	return clampRenderLines(wrapPlanToWidth(planText, width), width);
+}
+
+/** Markdown document with post-clamp so wide fences cannot abort the TUI (m6ho). */
+export class ClampedMarkdown extends Markdown {
+	constructor(text: string, paddingX = 0, paddingY = 0, mdTheme?: unknown) {
+		super(text, paddingX, paddingY, mdTheme);
+	}
+
+	render(width: number): string[] {
+		return clampRenderLines(super.render(width), Math.max(1, width));
+	}
+}
+
+/** Live plan-ready transcript component: themed Markdown, not wrap-only source. */
+export function createPlanDocumentComponent(content: string, mdTheme: unknown): Markdown | Text {
+	const text = content.trim();
+	if (!text) return new Text("", 0, 0);
+	return new ClampedMarkdown(text, 0, 0, mdTheme);
 }
 
 /**

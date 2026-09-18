@@ -213,7 +213,8 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         },
       }
     }
-    if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
+    if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai') return {}
+    if (id === '@earendil-works/pi-coding-agent') return { getMarkdownTheme: () => ({}) }
     throw new Error(`Unexpected require: ${id}`)
   }
   new Function('require', 'module', 'exports', outputText)(mockRequire, module, module.exports)
@@ -2926,12 +2927,25 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const renderer = harness.entryRenderers.get('plan-ready-document')
     expect(renderer).toBeTypeOf('function')
     const transcript = renderer!({ type: 'custom', customType: 'plan-ready-document', data: { content: longPlan } }, { expanded: false }, harness.ctx.ui.theme)
+    expect(transcript).toBeInstanceOf(piTuiMock.Markdown)
     const transcriptText = transcript.render(80).join('\n')
     expect(transcriptText).toContain('UNIQUE_PLAN_LINE_000')
     expect(transcriptText).toContain('UNIQUE_PLAN_LINE_199')
     for (const line of transcript.render(40)) {
       expect(piTuiMock.visibleWidth(line)).toBeLessThanOrEqual(40)
     }
+
+    const chrome = harness.toolHandlers.get('plan_mode_complete')?.renderCall(
+      { plan: longPlan },
+      harness.ctx.ui.theme,
+      {},
+    )
+    expect(chrome).toBeInstanceOf(piTuiMock.Text)
+    const chromeText = chrome.render(80).join('\n')
+    expect(chromeText).toContain('plan_mode_complete')
+    expect(chromeText).not.toContain('UNIQUE_PLAN_LINE_000')
+    expect(chromeText).not.toContain('UNIQUE_PLAN_LINE_199')
+    expect(chromeText).not.toContain('UNIQUE_PLAN_LINE')
   })
 
   it('appendEntry throw for plan-ready-document does not block execute-path overlay ready-UI', async () => {
@@ -3237,6 +3251,17 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const wrapDumpLines = readyUi.wrapPlanToWidth('word '.repeat(400), 40)
     expect(wrapDumpLines.length).toBeGreaterThan(6)
 
+    const emptyDoc = readyUi.createPlanDocumentComponent('   ', {})
+    expect(emptyDoc).toBeInstanceOf(piTuiMock.Text)
+    expect(emptyDoc).not.toBeInstanceOf(piTuiMock.Markdown)
+    const mdDoc = readyUi.createPlanDocumentComponent(`${longToken}\nUNIQUE_PLAN_LINE_000`, {})
+    expect(mdDoc).toBeInstanceOf(piTuiMock.Markdown)
+    expect(mdDoc).toBeInstanceOf(readyUi.ClampedMarkdown)
+    expect(mdDoc.render(80).join('\n')).toContain('UNIQUE_PLAN_LINE_000')
+    for (const line of mdDoc.render(width)) {
+      expect(piTuiMock.visibleWidth(line)).toBeLessThanOrEqual(width)
+    }
+
     const questionUi = transpileSibling('question-ui.ts') as any
     const questions = questionUi.normalizeQuestions([
       {
@@ -3288,9 +3313,14 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(indexSource).toMatch(/overlay:\s*true/)
     expect(indexSource).toContain('registerEntryRenderer')
     expect(indexSource).toContain('appendEntry("plan-ready-document"')
+    expect(indexSource).toContain('createPlanDocumentComponent')
+    expect(indexSource).toContain('getMarkdownTheme')
+    expect(indexSource).toContain('renderCall')
     expect(readyUiSource).not.toMatch(/import\s*\{[^}]*SelectList/)
     expect(readyUiSource).not.toMatch(/new SelectList/)
     expect(readyUiSource).toContain('createReadyUiFactory')
+    expect(readyUiSource).toContain('createPlanDocumentComponent')
+    expect(readyUiSource).toContain('ClampedMarkdown')
     expect(readyUiSource).not.toContain('visiblePlanWindow')
     expect(readyUiSource).not.toMatch(/PgUp|pageUp/)
   })

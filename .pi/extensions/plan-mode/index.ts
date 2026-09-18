@@ -14,8 +14,8 @@
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Key } from "@earendil-works/pi-tui";
+import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { Key, Text } from "@earendil-works/pi-tui";
 import {
 	extractTodoItems,
 	isSafeCommand,
@@ -30,8 +30,8 @@ import {
 } from "./question-ui.js";
 import {
 	READY_ACTIONS,
+	createPlanDocumentComponent,
 	createReadyUiFactory,
-	renderPlanTranscriptLines,
 	type ReadyAction,
 } from "./ready-ui.js";
 import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/index";
@@ -282,11 +282,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer("plan-ready-document", (entry) => {
 		const data = entry.data as { content?: unknown } | undefined;
 		const content = typeof data?.content === "string" ? data.content : "";
-		return {
-			render(width: number): string[] {
-				return renderPlanTranscriptLines(content, width);
-			},
-		};
+		return createPlanDocumentComponent(content, getMarkdownTheme());
 	});
 
 	pi.registerFlag("plan", {
@@ -1506,6 +1502,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			label: "Plan Mode Complete",
 			description: "Mark the draft plan as ready for the human ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review). Call only when the plan is complete — never after a clarifying question. Empty/whitespace plan is rejected.",
 			parameters: PlanModeCompleteParams,
+			renderCall(_args: { plan?: string }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, _context: unknown) {
+				return new Text(
+					theme.fg("toolTitle", theme.bold("plan_mode_complete")) +
+						theme.fg("muted", " ready"),
+					0,
+					0,
+				);
+			},
 			async execute(_id: string, params: { plan: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
 				const plan = typeof params.plan === "string" ? params.plan.trim() : "";
 				if (!plan) {

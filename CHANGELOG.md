@@ -24,6 +24,8 @@
 
 - **Pi beads-policy recovery beyond the first `bd list` page** (`beads-task-issue-tracker-7uoa`): recovery marker search lists each status with `--limit=0` (fallback without the flag for older bd) and probes at most 30 freshest `updated_at` candidates per recoverable function, so a valid POST-CLOSE MERGE FIX on a closed low-priority bead past the default 50-item page is visible without scanning the whole archive. Focused vitest under `tests/extensions/beads-policy.test.ts`.
 
+- **Pi plan-mode transcript is themed Markdown, not a raw dump** (`beads-task-issue-tracker-pwx6`): `plan-ready-document` renders `ClampedMarkdown` + `getMarkdownTheme()` with post-clamp width, and `plan_mode_complete.renderCall` stays a compact label instead of dumping `args.plan`.
+
 - **Pi chooseSupervisor ignores rust tokens in Out of scope / do-not-touch** (`beads-task-issue-tracker-0nvj`): `src-tauri` / `rust` / `cargo` only inside `### Out of scope` or «Не трогать» / `do not touch` / `don't touch` blocks no longer force `tauri-supervisor` for `pi`/`workflow` beads. Title and Files path signals still route to tauri. Focused vitest under `tests/extensions/beads-dispatch.test.ts`.
 
 - **Pi plan-mode execute ready-UI no longer hides the plan behind `select`** (`beads-task-issue-tracker-ph4p`): `plan_mode_complete` puts the full plan in the chat immediately via `appendEntry` + `registerEntryRenderer` (mouse-wheel transcript; `sendMessage` is steered too late) and opens a bottom `overlay: true` custom of four action labels only, without `SelectList` and without a PgUp/PgDn pager; leftover `agent_settled` stays `select`. Focused vitest under `tests/extensions/plan-mode.test.ts`.
