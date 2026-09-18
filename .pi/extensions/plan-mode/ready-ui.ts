@@ -1,9 +1,12 @@
 /**
- * Plan-ready UI (document flow, no floating overlay).
- * Stable action values: execute | stay | refine | plan-review
+ * Plan-ready UI: four action labels only (no plan text, no pager).
+ * Execute-path uses this as a bottom overlay so the chat stays scrollable.
+ *
+ * Crash-safe: no SelectList (live HA 2026-09-18: SelectList.render inside
+ * custom killed Pi / TUI.stop(); questionnaire-style hand-rolled 1–4 / ↑↓ / Enter lives).
  */
 
-import { Key, matchesKey, SelectList, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Stable ready-action ids used by plan-mode agent_end loop. */
 export type ReadyAction = "execute" | "stay" | "refine" | "plan-review";
@@ -58,25 +61,35 @@ function addWrappedWithPrefix(lines: string[], prefix: string, text: string, wid
 }
 
 /**
- * Sync factory for ctx.ui.custom — no overlay options.
- * Digits 1-4 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
+ * Wrap the full plan to width. Used by the transcript entry renderer so mouse-wheel
+ * chat scroll shows the whole document. Do not slice a pager window here.
  */
-export function createReadyUiFactory(planPreview?: string) {
+export function wrapPlanToWidth(planText: string, width: number): string[] {
+	const lines: string[] = [];
+	const w = Math.max(1, width);
+	const text = planText.trim();
+	if (!text) return lines;
+	for (const raw of text.split(/\r?\n/)) {
+		addWrapped(lines, raw, w);
+	}
+	return lines;
+}
+
+/** Full plan lines for `registerEntryRenderer` — clamp to terminal width (m6ho). */
+export function renderPlanTranscriptLines(planText: string, width: number): string[] {
+	return clampRenderLines(wrapPlanToWidth(planText, width), width);
+}
+
+/**
+ * Sync factory for ctx.ui.custom — overlay buttons only, no plan, no SelectList.
+ * Digits 1-4 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
+ * Unhandled keys (including paging) are ignored so this is not a widget pager.
+ */
+export function createReadyUiFactory() {
 	return (tui: ReadyUiTui, theme: ReadyUiTheme, _keybindings: unknown, done: ReadyDone) => {
 		let selectedIndex = 0;
 		let settled = false;
 		let cachedLines: string[] | undefined;
-		const items = READY_ACTIONS.map((item) => ({ value: item.value, label: item.label }));
-
-		const listTheme = (text: string) => theme.fg("accent", text);
-		let list = new SelectList(items, items.length, listTheme);
-		list.setSelectedIndex(0);
-		list.onSelect = (item) => finish(item?.value as ReadyAction | undefined);
-		list.onCancel = () => finish(undefined);
-		list.onSelectionChange = () => {
-			selectedIndex = list.selectedIndex;
-			refresh();
-		};
 
 		function refresh(): void {
 			cachedLines = undefined;
@@ -99,7 +112,6 @@ export function createReadyUiFactory(planPreview?: string) {
 			const digit = data.length === 1 ? data.charCodeAt(0) - 48 : -1;
 			if (digit >= 1 && digit <= READY_ACTIONS.length) {
 				selectedIndex = digit - 1;
-				list.setSelectedIndex(selectedIndex);
 				finish(READY_ACTIONS[selectedIndex]?.value);
 				return;
 			}
@@ -109,9 +121,19 @@ export function createReadyUiFactory(planPreview?: string) {
 				return;
 			}
 
-			list.handleInput?.(data);
-			selectedIndex = list.selectedIndex;
-			if (!settled) refresh();
+			if (matchesKey(data, Key.up) || data === "\x1b[A") {
+				selectedIndex = Math.max(0, selectedIndex - 1);
+				refresh();
+				return;
+			}
+			if (matchesKey(data, Key.down) || data === "\x1b[B") {
+				selectedIndex = Math.min(READY_ACTIONS.length - 1, selectedIndex + 1);
+				refresh();
+				return;
+			}
+			if (matchesKey(data, Key.enter) || data === "\r" || data === "\n") {
+				finish(selectedItem().value);
+			}
 		}
 
 		function render(width: number): string[] {
@@ -125,43 +147,18 @@ export function createReadyUiFactory(planPreview?: string) {
 			addWrappedWithPrefix(lines, " ", theme.fg("accent", bold("План готов — что дальше?")), w);
 			lines.push("");
 
-			if (planPreview?.trim()) {
-				const preview = planPreview.trim().split(/\r?\n/).slice(0, 6).join("\n");
-				for (const line of preview.split("\n")) {
-					addWrappedWithPrefix(lines, " ", theme.fg("muted", line), w);
-				}
-				lines.push("");
-			}
-
 			for (let i = 0; i < READY_ACTIONS.length; i++) {
 				const item = READY_ACTIONS[i];
 				const selected = i === selectedIndex;
 				const prefix = selected ? theme.fg("accent", "> ") : "  ";
 				const label = `${i + 1}. ${item.label}`;
 				addWrappedWithPrefix(lines, prefix, theme.fg(selected ? "accent" : "text", label), w);
-				if (item.description) {
-					addWrappedWithPrefix(lines, "     ", theme.fg("muted", item.description), w);
-				}
-			}
-
-			const current = selectedItem();
-			lines.push("");
-			addWrappedWithPrefix(
-				lines,
-				" ",
-				theme.fg("success", "Превью: ") + theme.fg("text", `${current.label} (${current.value})`),
-				w,
-			);
-			if (current.description) {
-				addWrappedWithPrefix(lines, " ", theme.fg("muted", current.description), w);
 			}
 
 			lines.push("");
 			addWrappedWithPrefix(lines, " ", theme.fg("dim", "1-4 / ↑↓ • Enter • Esc отмена"), w);
 			lines.push(divider);
 
-			// Keep SelectList in sync for tests that call list.handleInput via component
-			void list.render(w);
 			// Pi TUI aborts the process if any line exceeds terminal width.
 			cachedLines = clampRenderLines(lines, w);
 			return cachedLines;
