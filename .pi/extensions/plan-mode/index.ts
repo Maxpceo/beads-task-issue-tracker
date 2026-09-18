@@ -30,6 +30,7 @@ import {
 } from "./question-ui.js";
 import {
 	READY_ACTIONS,
+	createReadyUiFactory,
 	type ReadyAction,
 } from "./ready-ui.js";
 import { currentRuntimeOwnerKey, requestWorkflowClaim } from "../workflow-state/index";
@@ -1142,18 +1143,33 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			.join("\n\n");
 	}
 
-	async function promptReadyAction(ctx: ExtensionContext, planText: string): Promise<ReadyAction | null> {
+	type ReadyUiSource = "execute" | "leftover";
+
+	async function promptReadyAction(
+		ctx: ExtensionContext,
+		planText: string,
+		source: ReadyUiSource,
+	): Promise<ReadyAction | null> {
 		if (!ctx.hasUI) return null;
 
-		// Full plan in the human transcript before the bare select title (f3zr).
-		// Re-sends on clean re-show and leftover agent_settled — intentional.
+		// Transcript still gets the full plan (f3zr), but sendMessage is not visibility
+		// proof: Pi steers it until after the blocking widget. Execute-path custom UI
+		// carries a wrap-then-window plan pane. Re-sends on clean re-show / leftover.
 		if (planText.trim()) {
 			showVisibleTranscript("plan-ready-document", planText);
 		}
 
-		// Never ctx.ui.custom here: live TUI abort on ready-UI (gauq/m6ho) even after
-		// agent_settled + truncateToWidth. Built-in select is the path that stays alive.
 		const labels = READY_ACTIONS.map((item) => item.label);
+
+		// Execute (and clean re-show in that loop): document-flow custom, no overlay.
+		// Leftover agent_settled keeps built-in select (gauq/m6ho TUI abort).
+		// RPC / missing custom → select. Custom throw must NOT fall back to select;
+		// runStrictReadyUiLoopSafe degrades (notify + clear pending).
+		if (source === "execute" && canUseCustomUi(ctx)) {
+			const result = await ctx.ui.custom<{ action: ReadyAction } | null>(createReadyUiFactory(planText));
+			return result?.action ?? null;
+		}
+
 		const choice = await ctx.ui.select("План готов — что дальше?", labels);
 		if (!choice) return null;
 		const matched = READY_ACTIONS.find((item) => item.label === choice);
@@ -1223,9 +1239,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return { results, gate };
 	}
 
-	async function runStrictReadyUiLoopSafe(ctx: ExtensionContext): Promise<StrictReadyUiOutcome> {
+	async function runStrictReadyUiLoopSafe(ctx: ExtensionContext, source: ReadyUiSource): Promise<StrictReadyUiOutcome> {
 		try {
-			return await runStrictReadyUiLoop(ctx);
+			return await runStrictReadyUiLoop(ctx, source);
 		} catch (error) {
 			// Graceful degradation: a TUI/render failure in the ready-UI must never
 			// kill the session. Clear pending, notify, and stay in strict plan mode.
@@ -1243,11 +1259,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function runStrictReadyUiLoop(ctx: ExtensionContext): Promise<StrictReadyUiOutcome> {
+	async function runStrictReadyUiLoop(ctx: ExtensionContext, source: ReadyUiSource): Promise<StrictReadyUiOutcome> {
 		let lastOutcome: StrictReadyUiOutcome = { kind: "cleared" };
 		while (planModeEnabled && !autoExecuteEnabled && pendingReadyPlan) {
 			const planText = pendingReadyPlan;
-			const action = await promptReadyAction(ctx, planText);
+			const action = await promptReadyAction(ctx, planText, source);
 
 			if (action === "execute") {
 				const approval = await approvePlanForExecution(ctx, planText);
@@ -1480,7 +1496,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				pendingReadyPlan = plan;
 				persistState();
 				if (ctx.hasUI) {
-					const outcome = await runStrictReadyUiLoopSafe(ctx);
+					const outcome = await runStrictReadyUiLoopSafe(ctx, "execute");
 					if (outcome.kind === "findings") {
 						const findingsText = formatReadyCritiqueFindingsText(outcome.results);
 						// Human transcript + model tool result. triggerTurn false during execute (51l5).
@@ -2149,13 +2165,13 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		// Do not open ready-UI from agent_end (gauq crash).
 	});
 
-	// Restore leftover pendingReadyPlan (restart) with the same select path — never custom.
+	// Restore leftover pendingReadyPlan (restart) with select — not custom (gauq/m6ho).
 	// Findings cannot ride a tool result here (no active execute), so wake the model via sendMessage.
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!planModeEnabled || autoExecuteEnabled || executionMode) return;
 		if (!pendingReadyPlan) return;
 		if (!ctx.hasUI) return;
-		const outcome = await runStrictReadyUiLoopSafe(ctx);
+		const outcome = await runStrictReadyUiLoopSafe(ctx, "leftover");
 		if (outcome.kind === "findings") {
 			pi.sendMessage(
 				{
