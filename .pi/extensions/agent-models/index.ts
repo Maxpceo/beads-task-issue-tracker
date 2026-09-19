@@ -18,6 +18,7 @@ import {
 	interpretPick,
 	MODEL_PICKER_OVERLAY_OPTIONS,
 	MODEL_PICKER_VIEWPORT,
+	modelLabelOptions,
 	pinThenCap,
 	runSearchableModelPicker,
 	UNBOUNDED_SELECT_MAX,
@@ -464,20 +465,33 @@ export function classDisplayLabel(className: string): string {
 	return CLASS_LABELS[className] ?? className;
 }
 
+/** Display-time provider from stored model id (first segment before `/`). */
+export function providerFromModelId(modelId: string | undefined | null): string | undefined {
+	if (!modelId || !modelId.includes("/")) return undefined;
+	const first = modelId.split("/")[0]?.trim();
+	return first || undefined;
+}
+
+function formatProviderSuffix(modelId: string | undefined | null): string {
+	const provider = providerFromModelId(modelId);
+	return provider ? ` [${provider}]` : "";
+}
+
 export function formatResolvedTable(config: AgentModelsConfig, agentNames?: string[], projectRoot?: string): string {
 	const names = agentNames && agentNames.length > 0
 		? agentNames
 		: projectRoot
 			? listKnownAgents(projectRoot, config)
 			: Array.from(new Set([...Object.keys(config.agentClasses), ...Object.keys(config.roles)])).sort();
-	const lines = ["agent | class | model source | model | thinking source | thinking"];
-	lines.push("---+---|---|---|---|---");
+	const lines = ["agent | class | model source | model | provider | thinking source | thinking"];
+	lines.push("---+---|---|---|---|---|---");
 	for (const name of names) {
 		const resolved = resolveAgentModel(name, config);
 		const className = resolved.className ?? config.agentClasses[name] ?? "—";
 		const model = resolved.model ?? "(session inherit)";
+		const provider = resolved.model ? (providerFromModelId(resolved.model) ?? "—") : "—";
 		const thinking = resolved.thinking ?? "(session inherit)";
-		lines.push(`${name} | ${className} | ${resolved.source} | ${model} | ${resolved.thinkingSource} | ${thinking}`);
+		lines.push(`${name} | ${className} | ${resolved.source} | ${model} | ${provider} | ${resolved.thinkingSource} | ${thinking}`);
 	}
 	return lines.join("\n");
 }
@@ -499,7 +513,7 @@ export function formatAgentModelsShow(loaded: AgentModelsLoadResult, cwd: string
 			const label = classDisplayLabel(name);
 			const thinking = loaded.config.classThinking?.[name];
 			const thinkingPart = thinking ? `, thinking=${thinking}` : "";
-			lines.push(`  ${name} (${label}): ${loaded.config.classes[name]}${thinkingPart}`);
+			lines.push(`  ${name} (${label}): ${loaded.config.classes[name]}${formatProviderSuffix(loaded.config.classes[name])}${thinkingPart}`);
 		}
 	}
 	const orphanThinking = Object.keys(loaded.config.classThinking ?? {})
@@ -1073,7 +1087,7 @@ export function formatCompactOverview(config: AgentModelsConfig, projectRoot?: s
 	else {
 		for (const name of classNames) {
 			const thinking = config.classThinking?.[name] ?? "inherit";
-			lines.push(`  ${name} (${classDisplayLabel(name)}): ${config.classes[name]} · thinking=${thinking}`);
+			lines.push(`  ${name} (${classDisplayLabel(name)}): ${config.classes[name]}${formatProviderSuffix(config.classes[name])} · thinking=${thinking}`);
 		}
 	}
 	const agents = projectRoot
@@ -1087,7 +1101,8 @@ export function formatCompactOverview(config: AgentModelsConfig, projectRoot?: s
 		const cls = resolved.className ?? "—";
 		const model = resolved.model ?? "session";
 		const thinking = resolved.thinking ?? "inherit";
-		lines.push(`  ${name}: ${cls} · ${model} · ${thinking}`);
+		const modelPart = resolved.model ? `${model}${formatProviderSuffix(resolved.model)}` : model;
+		lines.push(`  ${name}: ${cls} · ${modelPart} · ${thinking}`);
 	}
 	if (agents.length > 12) lines.push(`  … ещё ${agents.length - 12}`);
 	if (projectRoot) {
@@ -1187,12 +1202,7 @@ function thinkingSelectOptions(includeInherit: boolean, model?: ThinkingModelMet
 }
 
 function modelSelectOptions(models: AvailableModelInfo[]): SelectOption[] {
-	const opts = models.map((m) => {
-		const provider = m.provider ?? (m.id.includes("/") ? m.id.split("/")[0] : undefined);
-		const label = provider ? `${m.id}` : m.id;
-		const suffix = m.name && m.name !== m.modelId && m.name !== m.id ? ` — ${m.name}` : "";
-		return { id: m.id, label: `${label}${suffix}` };
-	});
+	const opts = modelLabelOptions(models);
 	opts.push({ id: OTHER_MODEL_ID, label: OTHER_MODEL_LABEL });
 	return opts;
 }
@@ -1385,7 +1395,7 @@ export async function runAgentModelsMenu(
 				"Мощность — выберите class",
 				classes.map((name) => ({
 					id: name,
-					label: `${name} (${classDisplayLabel(name)}) — ${config.classes[name]} · thinking=${config.classThinking?.[name] ?? "inherit"}`,
+					label: `${name} (${classDisplayLabel(name)}) — ${config.classes[name]}${formatProviderSuffix(config.classes[name])} · thinking=${config.classThinking?.[name] ?? "inherit"}`,
 				})),
 				"nested",
 			);
