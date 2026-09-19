@@ -323,18 +323,14 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
   })
 
-  it('omitted transport without UI stays headless and writes DISPATCH on dryRun', async () => {
+  it('omitted transport without UI stays headless and writes nothing on dryRun', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { registered, cwd, branch, beadId, head } = makePi({ execCalls })
     const result = await registered.execute('call-1', { beadId, dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, beadId, branch, head))
     expect(result.details.transport).toBeUndefined()
     expect(result.details.status).not.toBe('spawned')
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
-    expect(comments.length).toBeGreaterThan(0)
-    const headlessComment = comments[0]
-    expect(headlessComment).toBeDefined()
-    expect(headlessComment!.args.join(' ')).toContain('DISPATCH (')
-    expect(headlessComment!.args.join(' ')).not.toContain('DISPATCH RESULT')
+    expect(comments).toEqual([])
   })
 
   it('omitted transport with hasUI uses cmux spawn-ack on dryRun', async () => {

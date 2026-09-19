@@ -418,9 +418,9 @@ describe('beads-dispatch wrapper workflow boundary', () => {
     }
 
     beadsDispatchExtension(pi as any)
-    const missing = await registeredTool.execute('missing', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
-    const mismatched = await registeredTool.execute('mismatch', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'other-bead', branch, 'abc1234'))
-    const missingStart = await registeredTool.execute('missing-start', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, {
+    const missing = await registeredTool.execute('missing', { beadId: 'bead-preflight', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, { cwd: process.cwd() })
+    const mismatched = await registeredTool.execute('mismatch', { beadId: 'bead-preflight', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'other-bead', branch, 'abc1234'))
+    const missingStart = await registeredTool.execute('missing-start', { beadId: 'bead-preflight', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, {
       cwd: process.cwd(),
       sessionManager: { getEntries: () => [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-preflight', branch, worktreePath: process.cwd(), sessionKey: 'session:test' } }] },
     })
@@ -453,7 +453,7 @@ describe('beads-dispatch wrapper workflow boundary', () => {
     }
 
     beadsDispatchExtension(pi as any)
-    const stale = await registeredTool.execute('stale', { beadId: 'bead-preflight', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-preflight', branch, 'recorded-start'))
+    const stale = await registeredTool.execute('stale', { beadId: 'bead-preflight', dryRun: false, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(cwd, 'bead-preflight', branch, 'recorded-start'))
 
     expect(stale.details.error).toContain('recorded START_COMMIT stale')
     expect(spawnCount).toBe(0)
@@ -490,6 +490,170 @@ describe('beads-dispatch wrapper workflow boundary', () => {
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update')).toBe(false)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && call.args[3]?.includes('WORKFLOW SUBMIT FOR REVIEW'))).toBe(false)
     expect(events.at(-1)?.event).toMatchObject({ state: 'implementing', sessionMode: 'implementing', endCommit: 'def5678' })
+  })
+})
+
+
+describe('dryRun preflight relaxation', () => {
+  function inreviewPi(opts: {
+    beadId: string
+    status?: string
+    description: string
+    planText: string
+    labels?: string[]
+    execCalls: Array<{ command: string; args: string[] }>
+    events: Array<{ name: string; event: any }>
+    gitHead?: string
+  }) {
+    let registeredTool: any
+    const branch = currentBranch()
+    const cwd = process.cwd()
+    const gitHead = opts.gitHead ?? 'abc1234'
+    const pi = {
+      events: { emit(name: string, event: any) { opts.events.push({ name, event }) } },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_supervisor') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        opts.execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: opts.beadId,
+              status: opts.status ?? 'inreview',
+              labels: opts.labels ?? ['pi'],
+              description: opts.description,
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: opts.planText }]), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${cwd}\n` : `${gitHead}\n`, stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    beadsDispatchExtension(pi as any)
+    return { registeredTool, branch, cwd }
+  }
+
+  it('dryRun on inreview without workflow-state returns Supervisor field agent and writes nothing', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const events: Array<{ name: string; event: any }> = []
+    const { registeredTool, cwd } = inreviewPi({
+      beadId: 'bead-inreview-preview',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('test-supervisor'),
+      execCalls,
+      events,
+    })
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-inreview-preview', dryRun: true },
+      undefined,
+      undefined,
+      { cwd },
+    )
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('test-supervisor')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(events.some((entry) => entry.name === 'workflow-state:update')).toBe(false)
+  })
+
+  it('dryRun on inreview without Supervisor field uses routing table', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const events: Array<{ name: string; event: any }> = []
+    const { registeredTool, cwd } = inreviewPi({
+      beadId: 'bead-inreview-table',
+      description: srcTauriFilesHandoffDescription(),
+      planText: currentPlan,
+      labels: ['pi'],
+      execCalls,
+      events,
+    })
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-inreview-table', dryRun: true },
+      undefined,
+      undefined,
+      { cwd },
+    )
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('tauri-supervisor')
+  })
+
+  it('full dispatch on inreview stays BLOCKED for status in_progress', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const events: Array<{ name: string; event: any }> = []
+    const { registeredTool, branch, cwd } = inreviewPi({
+      beadId: 'bead-inreview-full',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('test-supervisor'),
+      execCalls,
+      events,
+    })
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-inreview-full', dryRun: false, agent: 'test-supervisor' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, 'bead-inreview-full', branch, 'abc1234'),
+    )
+    expect(result.details.error).toContain('dispatch_supervisor требует status in_progress, получен inreview')
+  })
+
+  it('dryRun with mismatched workflow-state is not BLOCKED and uses cwd fallback', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const events: Array<{ name: string; event: any }> = []
+    const { registeredTool, cwd } = inreviewPi({
+      beadId: 'bead-inreview-mismatch',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('test-supervisor'),
+      execCalls,
+      events,
+    })
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-inreview-mismatch', dryRun: true },
+      undefined,
+      undefined,
+      {
+        cwd,
+        sessionManager: {
+          getEntries: () => [{
+            type: 'custom',
+            customType: 'workflow-state',
+            data: { activeBead: 'other-bead', branch: 'task/other', worktreePath: '/tmp/foreign-worktree', startCommit: 'deadbeef', sessionKey: 'session:test' },
+          }],
+        },
+      },
+    )
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('test-supervisor')
+    expect(result.details.worktreePath).toBe(cwd)
+  })
+
+  it('dryRun on terminal closed bead is BLOCKED', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const events: Array<{ name: string; event: any }> = []
+    const { registeredTool, cwd } = inreviewPi({
+      beadId: 'bead-closed-preview',
+      status: 'closed',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('test-supervisor'),
+      execCalls,
+      events,
+    })
+    const result = await registeredTool.execute(
+      'call-1',
+      { beadId: 'bead-closed-preview', dryRun: true },
+      undefined,
+      undefined,
+      { cwd },
+    )
+    expect(result.details.error).toContain('terminal bead нельзя dispatch')
   })
 })
 

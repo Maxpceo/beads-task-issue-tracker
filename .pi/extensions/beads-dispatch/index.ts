@@ -338,6 +338,11 @@ const SupervisorDispatchParams = {
 	type: "object",
 	properties: {
 		...DispatchParams.properties,
+		dryRun: {
+			type: "boolean",
+			description: "Read-only preview: relaxes preflight; no registry write, no spawn, no bd mutation",
+			default: false,
+		},
 		transport: {
 			type: "string",
 			enum: ["headless", "cmux"],
@@ -485,6 +490,14 @@ async function getGitValue(pi: ExtensionAPI, cwd: string, args: string[]): Promi
 	const { stdout, stderr, code } = await pi.exec("git", ["-C", cwd, ...args]);
 	if (code !== 0) throw new Error(`git -C ${cwd} ${args.join(" ")} failed: ${stderr || stdout}`);
 	return stdout.trim();
+}
+
+async function getDryRunPreviewGitValue(pi: ExtensionAPI, cwd: string, args: string[]): Promise<string> {
+	try {
+		return await getGitValue(pi, cwd, args);
+	} catch (error) {
+		throw new Error(`dispatch_supervisor dryRun preview: cwd=${cwd} не читается как git worktree: ${(error as Error).message}`);
+	}
 }
 
 const REQUIRED_HANDOFF_SECTIONS = [
@@ -644,11 +657,15 @@ function unresolvedBlockers(bead: BeadInfo): DependencyInfo[] {
 	return (bead.dependencies ?? []).filter((dep) => dependencyType(dep) === "blocks" && dep.status !== "closed");
 }
 
-export function validateSupervisorReadiness(bead: BeadInfo, comments: BeadComment[]): string[] {
+export function validateSupervisorReadiness(bead: BeadInfo, comments: BeadComment[], opts?: { dryRun?: boolean }): string[] {
 	const errors: string[] = [];
 	if (!bead.id) errors.push("bead не найден или bd show не вернул id");
 	if (bead.status && TERMINAL_STATUSES.has(bead.status)) errors.push(`terminal bead нельзя dispatch: status=${bead.status}`);
-	if (!ALLOWED_SUPERVISOR_STATUSES.has(bead.status ?? "")) errors.push(`dispatch_supervisor требует status in_progress, получен ${bead.status ?? "unknown"}`);
+	if (opts?.dryRun) {
+		if (!bead.status) errors.push("dispatch_supervisor dryRun требует non-terminal status");
+	} else if (!ALLOWED_SUPERVISOR_STATUSES.has(bead.status ?? "")) {
+		errors.push(`dispatch_supervisor требует status in_progress, получен ${bead.status ?? "unknown"}`);
+	}
 	if ((bead.labels ?? []).length === 0) errors.push("перед supervisor dispatch у bead должен быть хотя бы один label");
 
 	const missingSections = REQUIRED_HANDOFF_SECTIONS.filter((section) => !bead.description?.includes(section));
@@ -1837,23 +1854,34 @@ async function dispatch(
 	defaultCwd?: string,
 	ctx?: ToolContext,
 ): Promise<DispatchResult> {
-	const supervisorPreflight = mode === "supervisor" ? await validateSupervisorPreflight(pi, params, ctx) : undefined;
+	const dryRunPreview = mode === "supervisor" && params.dryRun === true;
+	const supervisorPreflight = mode === "supervisor" && !dryRunPreview ? await validateSupervisorPreflight(pi, params, ctx) : undefined;
 	const stateScope = mode === "supervisor" ? undefined : resolveActiveTaskScope(taskScopeFromContext(ctx));
-	const cwd = supervisorPreflight?.cwd ?? params.cwd ?? (stateScope?.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
+	let previewScopeCwd: string | undefined;
+	if (dryRunPreview) {
+		const previewScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
+		if (previewScope.ok && previewScope.scope.activeBead === params.beadId && previewScope.scope.worktreePath) {
+			previewScopeCwd = previewScope.scope.worktreePath;
+		}
+	}
+	const cwd = supervisorPreflight?.cwd ?? previewScopeCwd ?? params.cwd ?? (stateScope?.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
 	const transport = resolveDispatchTransport(params, ctx);
 	if (mode === "supervisor") {
-		const readinessErrors = validateSupervisorReadiness(bead, comments);
+		const readinessErrors = validateSupervisorReadiness(bead, comments, { dryRun: dryRunPreview });
 		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);
 	}
 	if (mode === "reviewer" && bead.status !== "inreview") {
 		throw new Error(`dispatch_reviewer требует bead status inreview, получен ${bead.status}`);
 	}
 
-	const branch = supervisorPreflight?.branch ?? await getGitValue(pi, cwd, ["branch", "--show-current"]);
-	const worktreePath = supervisorPreflight?.worktreePath ?? await getGitValue(pi, cwd, ["rev-parse", "--show-toplevel"]);
-	let startCommit = supervisorPreflight?.startCommit ?? await getGitValue(pi, cwd, ["rev-parse", "HEAD"]);
+	const readGit = dryRunPreview
+		? (args: string[]) => getDryRunPreviewGitValue(pi, cwd, args)
+		: (args: string[]) => getGitValue(pi, cwd, args);
+	const branch = supervisorPreflight?.branch ?? await readGit(["branch", "--show-current"]);
+	const worktreePath = supervisorPreflight?.worktreePath ?? await readGit(["rev-parse", "--show-toplevel"]);
+	let startCommit = supervisorPreflight?.startCommit ?? await readGit(["rev-parse", "HEAD"]);
 	if (mode === "reviewer" && transport === "cmux") {
 		const reviewerScope = resolveActiveTaskScope(taskScopeFromContext(ctx));
 		if (reviewerScope.ok && reviewerScope.scope.activeBead === params.beadId) {
@@ -1912,12 +1940,6 @@ async function dispatch(
 		return routingWarning ? { ...visible, routingWarning } : visible;
 	}
 
-	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
-	if (mode === "supervisor") {
-		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", sessionMode: "implementing", branch, worktreePath, startCommit });
-	} else if (mode === "reviewer") {
-		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "reviewing", sessionMode: "reviewing", branch, worktreePath, startCommit });
-	}
 	if (params.dryRun) {
 		return {
 			agent: agentName,
@@ -1932,6 +1954,13 @@ async function dispatch(
 			thinking: agent.thinking,
 			routingWarning,
 		};
+	}
+
+	await addDispatchComment(pi, bead.id, agentName, branch, worktreePath, startCommit, supervisorPreflight ? `${supervisorPreflight.evidence}\n\n${prompt}` : prompt);
+	if (mode === "supervisor") {
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "implementing", sessionMode: "implementing", branch, worktreePath, startCommit });
+	} else if (mode === "reviewer") {
+		pi.events.emit("workflow-state:update", { activeBead: bead.id, state: "reviewing", sessionMode: "reviewing", branch, worktreePath, startCommit });
 	}
 
 	const result = await runPiAgentForDispatch(agent, prompt, cwd, signal, ctx);
@@ -2316,7 +2345,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_supervisor",
 		label: "Dispatch Supervisor",
-		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress. Interactive omit/hasUI → cmux pane; explicit transport=headless for CI/dark-window.",
+		description: "Typed beads workflow dispatch to the appropriate Pi supervisor agent. Requires bead status in_progress. Interactive omit/hasUI → cmux pane; explicit transport=headless for CI/dark-window. dryRun: read-only preview — any non-terminal status, no workflow-state/START_COMMIT freshness",
 		parameters: SupervisorDispatchParams,
 		execute: dispatchSupervisorTool,
 	});
