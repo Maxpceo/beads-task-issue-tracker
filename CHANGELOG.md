@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- **Pi beads-policy recovery no longer goes blind on large closed lists or conflicted rebase** (`beads-task-issue-tracker-mfam`): `bd list --status=… --json --limit=0` now uses `BD_LIST_MAX_BUFFER` 32 MiB so a >1 MB closed archive no longer ENOBUFS into an empty candidate set and a valid POST-CLOSE MERGE FIX stays visible. During rebase with empty `git branch --show-current`, ownership falls back through `git rev-parse --git-path rebase-merge|rebase-apply` (resolve relative paths against cwd) plus `head-name` and `ORIG_HEAD`; missing rebase dir/head-name/ORIG_HEAD stays fail-closed and does not use mid-rebase HEAD. Linked worktrees are covered. Do not `git merge origin/main` into a dirty post-close tree. Focused vitest under `tests/extensions/beads-policy.test.ts`.
+
 - **Pi plan-mode H3 / list / fence no longer show raw markdown** (`beads-task-issue-tracker-yxn0`): display-only `planMarkdownTransform` rewrites column-0 H3+ to `## ` and `wrapPlanMarkdownTheme` paints unordered bullets as `• ` and hides fence backtick borders; stored plan text is unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.
 
 - **Pi beads-policy recovery beyond the first `bd list` page** (`beads-task-issue-tracker-7uoa`): recovery marker search lists each status with `--limit=0` (fallback without the flag for older bd) and probes at most 30 freshest `updated_at` candidates per recoverable function, so a valid POST-CLOSE MERGE FIX on a closed low-priority bead past the default 50-item page is visible without scanning the whole archive. Focused vitest under `tests/extensions/beads-policy.test.ts`.

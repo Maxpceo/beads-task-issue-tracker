@@ -48,6 +48,8 @@ EOF
   ```
 - Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом запуска `pnpm test && npx vue-tsc --noEmit` после правки.
 - Без такого marker, без `FILES:`, или при изменении файлов вне `FILES:` новые risky-изменения в `.pi/extensions` / `workflow` на уже закрытом bead блокируются.
+- Не запускайте `git merge origin/main` в грязное post-close дерево: `changedCodeFiles` раздувается диффом main и выходит за `FILES:` (`every()` покрытия нет). Abort merge и остановитесь; merge-unscale маркера нет.
+- Конфликтный `git rebase origin/main` после ownership-fix, если конфликты только в `FILES:` POST-CLOSE MERGE FIX, — ожидаемый allow (rebase-fallback читает branch из `--git-path` rebase dir + `head-name` и `START_COMMIT` из `ORIG_HEAD`, в том числе в linked worktree). Не путать с `git merge origin/main`.
 
 4.2. Parent epic sweep checkpoint for session beads:
 - For every session bead with `parent-child` parent epic evidence, verify the parent has post-terminal `EPIC ACCEPTANCE MATRIX` or active `EPIC HANDOFF` with `REASON:` and `NEXT_ACTION:`.

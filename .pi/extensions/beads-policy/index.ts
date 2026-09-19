@@ -2653,11 +2653,17 @@ function spawnedSupervisorBeadForCwd(cwd: string, workflowState: WorkflowStateSn
  * child's HEAD legitimately moves after its first commit (pomp failure mode).
  */
 const RECOVERY_CANDIDATE_LIMIT = 30;
+const BD_LIST_MAX_BUFFER = 32 * 1024 * 1024;
 const beadsCliAvailableCache = new Map<string, boolean>();
 
-function runCommandResult(cwd: string, command: string, args: string[]): { failed: boolean; stdout?: string; stderr: string } {
+function runCommandResult(cwd: string, command: string, args: string[], maxBuffer?: number): { failed: boolean; stdout?: string; stderr: string } {
 	try {
-		const stdout = execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+		const stdout = execFileSync(command, args, {
+			cwd,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			...(maxBuffer !== undefined ? { maxBuffer } : {}),
+		}).trim();
 		return { failed: false, stdout, stderr: "" };
 	} catch (error) {
 		const stderr = error && typeof error === "object" && "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : "";
@@ -2672,7 +2678,7 @@ function isUnsupportedLimitFlag(stderr: string): boolean {
 function beadsCliAvailable(cwd: string): boolean {
 	const cached = beadsCliAvailableCache.get(cwd);
 	if (cached !== undefined) return cached;
-	const uncapped = runCommandResult(cwd, "bd", ["list", "--status=in_progress", "--json", "--limit=0"]);
+	const uncapped = runCommandResult(cwd, "bd", ["list", "--status=in_progress", "--json", "--limit=0"], BD_LIST_MAX_BUFFER);
 	let available = !uncapped.failed;
 	if (!available && isUnsupportedLimitFlag(uncapped.stderr)) {
 		available = runCommand(cwd, "bd", ["list", "--status=in_progress", "--json"]) !== undefined;
@@ -2683,7 +2689,7 @@ function beadsCliAvailable(cwd: string): boolean {
 
 function listBdStatusIssues(cwd: string, status: string): BdIssueSummary[] {
 	if (!beadsCliAvailable(cwd)) return [];
-	const uncapped = runCommandResult(cwd, "bd", ["list", `--status=${status}`, "--json", "--limit=0"]);
+	const uncapped = runCommandResult(cwd, "bd", ["list", `--status=${status}`, "--json", "--limit=0"], BD_LIST_MAX_BUFFER);
 	let raw: string | undefined;
 	if (!uncapped.failed) {
 		raw = uncapped.stdout;
@@ -2792,11 +2798,69 @@ export function hasSessionOwnershipEvidence(commentsText: string, scope: Recover
 	return hasExactField(commentsText, ["PI_SESSION_KEY", "SESSION_KEY", "sessionKey", "session"], scope.sessionKey);
 }
 
+function resolveGitPath(cwd: string, gitPath: string | undefined): string | undefined {
+	if (!gitPath) return undefined;
+	return path.isAbsolute(gitPath) ? gitPath : path.resolve(cwd, gitPath);
+}
+
+function rebaseStateDir(cwd: string): string | undefined {
+	for (const kind of ["rebase-merge", "rebase-apply"] as const) {
+		const gitPath = runGit(cwd, ["rev-parse", "--git-path", kind]);
+		const resolved = resolveGitPath(cwd, gitPath);
+		if (!resolved) continue;
+		try {
+			if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) return resolved;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
+}
+
+function rebaseHeadName(rebaseDir: string): string | undefined {
+	try {
+		const raw = fs.readFileSync(path.join(rebaseDir, "head-name"), "utf8").trim();
+		if (!raw) return undefined;
+		return raw.replace(/^refs\/heads\//, "");
+	} catch {
+		return undefined;
+	}
+}
+
 function currentRecoveryScope(cwd: string, sessionKey?: string): RecoveryScope {
+	const worktreePath = getRepoRoot(cwd);
+	const branch = getCurrentBranch(cwd);
+	if (branch) {
+		return {
+			branch,
+			worktreePath,
+			startCommit: runGit(cwd, ["rev-parse", "HEAD"]),
+			sessionKey,
+		};
+	}
+	const rebaseDir = rebaseStateDir(cwd);
+	if (!rebaseDir) {
+		return {
+			branch,
+			worktreePath,
+			startCommit: runGit(cwd, ["rev-parse", "HEAD"]),
+			sessionKey,
+		};
+	}
+	const rebaseBranch = rebaseHeadName(rebaseDir);
+	const origHead = runGit(cwd, ["rev-parse", "ORIG_HEAD"]);
+	if (!rebaseBranch || !origHead) {
+		return {
+			branch: rebaseBranch,
+			worktreePath,
+			startCommit: undefined,
+			sessionKey,
+		};
+	}
 	return {
-		branch: getCurrentBranch(cwd),
-		worktreePath: getRepoRoot(cwd),
-		startCommit: runGit(cwd, ["rev-parse", "HEAD"]),
+		branch: rebaseBranch,
+		worktreePath,
+		startCommit: origHead,
 		sessionKey,
 	};
 }
