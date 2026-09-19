@@ -1944,6 +1944,7 @@ interface BdIssueSummary {
 	issue_type?: string;
 	title?: string;
 	description?: string;
+	updated_at?: string;
 	metadata?: Record<string, unknown>;
 }
 
@@ -2651,19 +2652,80 @@ function spawnedSupervisorBeadForCwd(cwd: string, workflowState: WorkflowStateSn
  * contradict this cwd. START_COMMIT is intentionally not compared — the
  * child's HEAD legitimately moves after its first commit (pomp failure mode).
  */
+const RECOVERY_CANDIDATE_LIMIT = 30;
+const beadsCliAvailableCache = new Map<string, boolean>();
+
+function runCommandResult(cwd: string, command: string, args: string[]): { failed: boolean; stdout?: string; stderr: string } {
+	try {
+		const stdout = execFileSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+		return { failed: false, stdout, stderr: "" };
+	} catch (error) {
+		const stderr = error && typeof error === "object" && "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : "";
+		return { failed: true, stderr };
+	}
+}
+
+function isUnsupportedLimitFlag(stderr: string): boolean {
+	return /--limit|\blimit\b/i.test(stderr) && /unknown|invalid|unrecognized|not defined|unsupported|unexpected/i.test(stderr);
+}
+
+function beadsCliAvailable(cwd: string): boolean {
+	const cached = beadsCliAvailableCache.get(cwd);
+	if (cached !== undefined) return cached;
+	const uncapped = runCommandResult(cwd, "bd", ["list", "--status=in_progress", "--json", "--limit=0"]);
+	let available = !uncapped.failed;
+	if (!available && isUnsupportedLimitFlag(uncapped.stderr)) {
+		available = runCommand(cwd, "bd", ["list", "--status=in_progress", "--json"]) !== undefined;
+	}
+	beadsCliAvailableCache.set(cwd, available);
+	return available;
+}
+
+function listBdStatusIssues(cwd: string, status: string): BdIssueSummary[] {
+	if (!beadsCliAvailable(cwd)) return [];
+	const uncapped = runCommandResult(cwd, "bd", ["list", `--status=${status}`, "--json", "--limit=0"]);
+	let raw: string | undefined;
+	if (!uncapped.failed) {
+		raw = uncapped.stdout;
+	} else if (isUnsupportedLimitFlag(uncapped.stderr)) {
+		raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
+	}
+	if (!raw) return [];
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		return Array.isArray(parsed) ? (parsed as BdIssueSummary[]) : [];
+	} catch {
+		return [];
+	}
+}
+
+function updatedAtMs(issue: BdIssueSummary): number {
+	if (!issue.updated_at) return 0;
+	const ms = Date.parse(issue.updated_at);
+	return Number.isNaN(ms) ? 0 : ms;
+}
+
+function recoveryCandidateIds(cwd: string, statuses: string[]): string[] {
+	const byId = new Map<string, BdIssueSummary>();
+	for (const status of statuses) {
+		for (const issue of listBdStatusIssues(cwd, status)) {
+			if (!issue.id || byId.has(issue.id)) continue;
+			byId.set(issue.id, issue);
+		}
+	}
+	return [...byId.values()]
+		.sort((left, right) => updatedAtMs(right) - updatedAtMs(left))
+		.slice(0, RECOVERY_CANDIDATE_LIMIT)
+		.flatMap((issue) => (issue.id ? [issue.id] : []));
+}
+
 function hasSpawnedSupervisorApproval(cwd: string, beadId: string): boolean {
 	let liveStatus = false;
 	for (const status of ["in_progress", "inreview", "reviewed", "accepted", "simplified"]) {
-		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
-		if (!raw) continue;
-		try {
-			const issues = JSON.parse(raw) as BdIssueSummary[];
-			if (issues.some((issue) => issue.id === beadId)) {
-				liveStatus = true;
+		const issues = listBdStatusIssues(cwd, status);
+		if (issues.some((issue) => issue.id === beadId)) {
+			liveStatus = true;
 			break;
-			}
-		} catch {
-			continue;
 		}
 	}
 	if (!liveStatus) return false;
@@ -2836,63 +2898,31 @@ function hasScopedPostCloseMergeFixComment(cwd: string, beadId: string, scope: R
 
 function recoverableApprovedPlanBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
 	if (!scope.sessionKey) return undefined;
-	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
-		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
-		if (!raw) continue;
-		try {
-			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && hasScopedApprovedPlanComment(cwd, issue.id, scope));
-			if (bead?.id) return bead.id;
-		} catch {
-			continue;
-		}
+	for (const id of recoveryCandidateIds(cwd, ["inreview", "reviewed", "accepted", "in_progress"])) {
+		if (hasScopedApprovedPlanComment(cwd, id, scope)) return id;
 	}
 	return undefined;
 }
 
 function recoverableApprovedSupervisorWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
-	for (const status of ["inreview", "reviewed", "accepted", "in_progress", "simplified"]) {
-		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
-		if (!raw) continue;
-		try {
-			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && hasScopedApprovedSupervisorWorkflowComment(cwd, issue.id, scope));
-			if (bead?.id) return bead.id;
-		} catch {
-			continue;
-		}
+	for (const id of recoveryCandidateIds(cwd, ["inreview", "reviewed", "accepted", "in_progress", "simplified"])) {
+		if (hasScopedApprovedSupervisorWorkflowComment(cwd, id, scope)) return id;
 	}
 	return undefined;
 }
 
 function recoverablePostCloseMergeFixBead(cwd: string, scope = currentRecoveryScope(cwd), changedCodeFiles: string[] = []): string | undefined {
 	if (changedCodeFiles.length === 0) return undefined;
-	for (const status of ["closed"]) {
-		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
-		if (!raw) continue;
-		try {
-			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && hasScopedPostCloseMergeFixComment(cwd, issue.id, scope, changedCodeFiles));
-			if (bead?.id) return bead.id;
-		} catch {
-			continue;
-		}
+	for (const id of recoveryCandidateIds(cwd, ["closed"])) {
+		if (hasScopedPostCloseMergeFixComment(cwd, id, scope, changedCodeFiles)) return id;
 	}
 	return undefined;
 }
 
 function recoverableApprovedWorkflowBead(cwd: string, scope = currentRecoveryScope(cwd)): string | undefined {
 	if (!scope.sessionKey) return recoverableApprovedSupervisorWorkflowBead(cwd, scope);
-	for (const status of ["inreview", "reviewed", "accepted", "in_progress"]) {
-		const raw = runCommand(cwd, "bd", ["list", `--status=${status}`, "--json"]);
-		if (!raw) continue;
-		try {
-			const issues = JSON.parse(raw) as BdIssueSummary[];
-			const bead = issues.find((issue) => issue.id && (hasScopedApprovedWorkflowComment(cwd, issue.id, scope) || hasScopedApprovedSupervisorWorkflowComment(cwd, issue.id, scope)));
-			if (bead?.id) return bead.id;
-		} catch {
-			continue;
-		}
+	for (const id of recoveryCandidateIds(cwd, ["inreview", "reviewed", "accepted", "in_progress"])) {
+		if (hasScopedApprovedWorkflowComment(cwd, id, scope) || hasScopedApprovedSupervisorWorkflowComment(cwd, id, scope)) return id;
 	}
 	return undefined;
 }

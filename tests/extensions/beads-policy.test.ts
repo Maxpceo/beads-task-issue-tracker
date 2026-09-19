@@ -2251,6 +2251,153 @@ REASON: Recovery fix for merge quality gate
     }
   })
 
+  function installPagingFakeBd(
+    binDir: string,
+    issues: Array<{ id: string; status: string; priority: number; updated_at: string }>,
+    commentsById: Record<string, string>,
+    logFile: string,
+  ): void {
+    writeFileSync(join(binDir, 'issues.json'), JSON.stringify(issues))
+    mkdirSync(join(binDir, 'comments'), { recursive: true })
+    for (const [id, text] of Object.entries(commentsById)) {
+      writeFileSync(join(binDir, 'comments', id), text)
+    }
+    const issuesPath = join(binDir, 'issues.json')
+    const commentsDir = join(binDir, 'comments')
+    writeFileSync(join(binDir, 'bd'), `#!/usr/bin/env bash
+printf '%s\n' "$*" >> '${logFile.replace(/'/g, `'\\''`)}'
+if [[ "$1" == "list" ]]; then
+  python3 - '${issuesPath.replace(/'/g, `'\\''`)}' "$@" <<'PY'
+import json, sys
+path = sys.argv[1]
+args = sys.argv[2:]
+status = None
+uncapped = False
+for arg in args:
+    if arg.startswith('--status='):
+        status = arg.split('=', 1)[1]
+    if arg == '--limit=0' or arg.startswith('--limit=0'):
+        uncapped = True
+with open(path, encoding='utf-8') as handle:
+    issues = json.load(handle)
+if status:
+    issues = [issue for issue in issues if issue.get('status') == status]
+def sort_key(issue):
+    priority = issue.get('priority')
+    if not isinstance(priority, (int, float)):
+        priority = 99
+    stamp = issue.get('updated_at') or ''
+    return (priority, stamp)
+if not uncapped:
+    issues = sorted(issues, key=sort_key)[:50]
+print(json.dumps(issues))
+PY
+  exit 0
+fi
+if [[ "$1" == "comments" ]]; then
+  file='${commentsDir.replace(/'/g, `'\\''`)}'"/$2"
+  if [[ -f "$file" ]]; then cat "$file"; exit 0; fi
+  printf ''
+  exit 0
+fi
+exit 1
+`)
+    chmodSync(join(binDir, 'bd'), 0o755)
+  }
+
+  it('allows POST-CLOSE MERGE FIX recovery when the marker bead is past the default bd list page', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+    const markerId = 'bead-beyond-page'
+    const logFile = join(binDir, 'calls.log')
+    const closedPageFillers = Array.from({ length: 60 }, (_, index) => ({
+      id: `closed-p0-${String(index + 1).padStart(2, '0')}`,
+      status: 'closed',
+      priority: 0,
+      updated_at: `2020-01-01T00:00:${String(index).padStart(2, '0')}Z`,
+    }))
+    try {
+      installPagingFakeBd(
+        binDir,
+        [
+          ...closedPageFillers,
+          { id: markerId, status: 'closed', priority: 3, updated_at: '2026-09-19T23:51:00Z' },
+        ],
+        {
+          [markerId]: `POST-CLOSE MERGE FIX
+BRANCH: fix/current
+WORKTREE: ${repoRoot}
+START_COMMIT: ${head}
+FILES: .pi/extensions/beads-policy/index.ts
+REASON: Recovery fix for merge quality gate
+`,
+        },
+        logFile,
+      )
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+      }, { cwd: repo })
+
+      const log = readFileSync(logFile, 'utf8')
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+      expect(log).toContain('--limit=0')
+      expect(log).toContain(`comments ${markerId}`)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('caps bd comments recovery probes independently of total bead count', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const logFile = join(binDir, 'calls.log')
+    const closed = Array.from({ length: 200 }, (_, index) => ({
+      id: `closed-${index + 1}`,
+      status: 'closed',
+      priority: 0,
+      updated_at: `2020-01-01T00:00:00Z`,
+    }))
+    const inreview = Array.from({ length: 60 }, (_, index) => ({
+      id: `inreview-${index + 1}`,
+      status: 'inreview',
+      priority: 1,
+      updated_at: `2021-01-01T00:00:00Z`,
+    }))
+    const inProgress = Array.from({ length: 40 }, (_, index) => ({
+      id: `inprogress-${index + 1}`,
+      status: 'in_progress',
+      priority: 2,
+      updated_at: `2022-01-01T00:00:00Z`,
+    }))
+    const totalBeads = closed.length + inreview.length + inProgress.length
+    try {
+      installPagingFakeBd(binDir, [...closed, ...inreview, ...inProgress], {}, logFile)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+        sessionKey: 'id:session-current',
+      }, { cwd: repo })
+
+      const log = readFileSync(logFile, 'utf8')
+      const commentCalls = log.split('\n').filter((line) => line.startsWith('comments ')).length
+      expect(decision?.policy).toBe('fastPathDiscipline')
+      expect(commentCalls).toBeLessThanOrEqual(90)
+      expect(commentCalls).toBeLessThan(totalBeads)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
 
   function createRepoWithLargeNonRiskyDiff(): string {
     const repo = mkdtempSync(join(tmpdir(), 'beads-policy-active-large-'))
