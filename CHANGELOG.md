@@ -12,6 +12,8 @@
 
 ### Changed
 
+- **Pi approve-path autodispatch fork documented** (`beads-task-issue-tracker-4ict`): the `plan-bead` and `dispatch-supervisor` skills now record the approve-path fork — strict ready-UI «Исполнить» auto-dispatches the supervisor together with `PLAN APPROVED`, so after ready-UI execute the orchestrator waits for the ping instead of calling `dispatch_supervisor` (a repeat call is the documented expected `BLOCKED` «live pane already registered» no-op; `poll.sh` stays on-demand insurance), a nonempty `FAST_PATH_RATIONALE` skips dispatch entirely, and other non-Fast-Path approve paths keep the manual dispatch step. Docs-only; no runtime behavior changed.
+
 - **Pi supervisor routing workflow-label priority** (`beads-task-issue-tracker-9sj1`): first-match `workflow` label in `.pi/supervisor-routing.json` routes to `test-supervisor` before the tauri `src-tauri` text pattern. Rust work without the `workflow` label is unchanged. Focused vitest under `tests/extensions/supervisor-routing.test.ts` and `tests/extensions/beads-dispatch.test.ts`.
 
 - **Pi supervisor routing table** (`beads-task-issue-tracker-1mj1`): `chooseSupervisor` is a generic wrapper over `.pi/supervisor-routing.json` (first-match labels/textPatterns, fail-safe `implementer` when the file is missing or invalid). Shipped JSON reproduces the previous tauri → test → vue table. Focused vitest under `tests/extensions/supervisor-routing.test.ts` and `tests/extensions/beads-dispatch.test.ts`.

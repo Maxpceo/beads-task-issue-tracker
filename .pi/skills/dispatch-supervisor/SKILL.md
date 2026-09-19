@@ -7,6 +7,11 @@ description: Pi-native supervisor dispatch after an approved plan. Use after pla
 
 This skill runs only after a bead is claimed and the plan is approved. Approved plan means approved dispatch; do not ask an extra “continue?” question unless there is a real decision point. When the durable plan comment has `Approved-by: оркестратор` / `AUTOPILOT: true`, continue the same automatic path; still stop and ask Maxim on supervisor `BLOCKED`/`NEEDS_CONTEXT`. Autopilot does not authorize `land` or `merge-to-main`.
 
+Approve-path fork — when a manual `dispatch_supervisor` is the right step:
+- Strict ready-UI execute («Исполнить») without `FAST_PATH_RATIONALE` already auto-dispatched the supervisor together with `PLAN APPROVED`: the supervisor is live, so do not call `dispatch_supervisor`. Wait for the ping (path A); `poll.sh` (path B) stays on-demand insurance only (stall without ping markers / Maxim: «не пинганул»), one poll without a loop — never poll immediately after execute. A repeat manual call fails closed with `BLOCKED` «повторный spawn … live pane already registered» — an expected idempotent no-op, not a workflow failure; for pending-fix reuse of the live pane use `followup_visible_dispatch`.
+- Nonempty `FAST_PATH_RATIONALE` with autopilot off means no dispatch at all — the orchestrator implements directly (plan-bead step 6; `beads-task-issue-tracker-g1s1`).
+- Other non-Fast-Path approve paths without continuation (legacy/RPC-style approval) — the manual `dispatch_supervisor` in this skill is the required step.
+
 ## Workflow
 
 1. Guard session context and bd status in the orchestrator/wrapper, not inside the child supervisor. Use `workflow_status` when available before calling `dispatch_supervisor`; child supervisors must not be asked to call `workflow_status`.
@@ -49,7 +54,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    - Live `new-split` uses explicit `--focus false` (no focus-pane workaround); spawn must not steal Maxim focus.
    - Layout anchor (`resolveVisibleSplitAnchor`): first agent splits right of orch; each next agent splits right of the oldest live agent pane so **оркестратор** stays exclusive left and agents pack **side-by-side** on the right half (no hard N=2 cap; practical ~4–6). Never re-split orch when another live agent exists. See AGENTS.md «Layout geometry».
    - After spawn, dispatch renames tabs per AGENTS.md Cmux layout: child `{role} · {bead-suffix}`, caller `оркестратор` (not the default `π - …` title).
-   - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead.
+   - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead; after strict ready-UI execute («Исполнить») the supervisor is already live and a manual repeat call is the expected `BLOCKED` no-op (see approve-path fork).
    - Child ping: the visible supervisor must only run the quoted `AGENT_NAME=<posix-quoted role> DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body (`KIND=error` after BLOCKED/NEEDS_CONTEXT). Child stdout / printing `Ping` in the child pane is not delivery and must not trigger complete. Do not use raw `cmux send` / `send-key enter`.
    - Orchestrator delivery (exclusive):
      A (primary): this-turn inbound `[PING]` or `[PING-ERROR]` with id from `taskId=` OR `задача <id>` → one `complete_visible_dispatch({ taskId })`. incomplete → no review-bead; later ping may complete again. result-only → no review-bead; later ping after rewrite allowed. submitted/noop → same-turn review-bead. status=verdict → стоп, не review-bead. Ping markers present but neither `taskId=` nor `задача <id>` → BLOCKED, ask for taskId; no complete, no review-bead, no read-screen. Any throw/error from complete_visible_dispatch → one BLOCKED, no retry, no read-screen.
