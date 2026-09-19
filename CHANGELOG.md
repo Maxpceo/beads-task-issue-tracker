@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Pi post-approve continuation classifies dispatch readiness separately from worktree scope** (`beads-task-issue-tracker-r7yw`): `dispatch_supervisor readiness не пройдена` now writes `BLOCKED: dispatch readiness` with the original error as Reason (canonical `Acceptance:` recovery when fields are missing; otherwise retry dispatch without a new approval comment) instead of a false `BLOCKED: task worktree scope`. Live-pane alreadySpawned-skip and real worktree-scope BLOCKED stay unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.
+
+- **Pi post-approve continuation is idempotent when a supervisor is already live** (`beads-task-issue-tracker-5cb6`): a second PLAN APPROVED continuation (ready-UI «Исполнить» plus typed `workflow_plan_approved`, or a live-pane guard race) skips with `supervisor already spawned; waiting ping` instead of writing a false `BLOCKED: task worktree scope` comment and flipping `state=blocked`. Tool details expose `continuationSkipReason` (`fastPath` | `alreadySpawned`); `fastPathSkip: true` remains Fast Path only. Focused vitest under `tests/extensions/plan-mode.test.ts` and `tests/extensions/beads-dispatch-cmux.test.ts`.
+
 ### Added
 
 - **Pi visible cmux agents + 2-column down-stack layout** (`beads-task-issue-tracker-0qsm`): interactive `dispatch_docs_agent`, plan-review trio, `plan_subagent`, and `subagent` open cmux panes instead of headless dashboard cards. Placement is `resolveVisibleSplitPlacement` (0 live → right of orch; 1 → right of oldest agent; 2+ → `new-split down` on the shortest of two columns). Docs complete is `submitStatus=result-only` (no inreview). Headless remains for CI/no-UI and explicit `transport=headless`.
