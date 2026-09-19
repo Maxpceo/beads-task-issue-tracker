@@ -998,9 +998,9 @@ export function extractSupervisorArtifact(comments: string): SupervisorArtifactE
 	const nextMarker = comments.slice(start + 1).search(/\n\s*(?:PI WORKFLOW UPDATE|WORKFLOW CLAIM|PLAN APPROVED|DISPATCH(?: RESULT)?|WORKFLOW SUBMIT FOR REVIEW|REVIEW START|CODE REVIEW|ACCEPTANCE|ACCEPTANCE MATRIX)\b/i);
 	const raw = (nextMarker >= 0 ? comments.slice(start, start + 1 + nextMarker) : comments.slice(start)).trim();
 	const evidence = raw.split("\n").slice(0, 80).join("\n").slice(0, 4000);
-	const explicit = raw.match(/(^|\n)\s*(?:Artifact status|ARTIFACT STATUS)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
-	const verificationExit = raw.match(/(^|\n)\s*(?:exit code|exit|code)\s*[:=]\s*(-?\d+)/i)?.[2];
-	const verificationResult = raw.match(/(^|\n)\s*(?:verification result|result)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
+	const explicit = raw.match(/(^|\n)\s*(?:(?:[-*]|\d+[.)])\s+)?(?:Artifact status|ARTIFACT STATUS)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
+	const verificationExit = raw.match(/(^|\n)\s*(?:(?:[-*]|\d+[.)])\s+)?(?:exit code|exit|code)\s*[:=]\s*(-?\d+)/i)?.[2];
+	const verificationResult = raw.match(/(^|\n)\s*(?:(?:[-*]|\d+[.)])\s+)?(?:verification result|result)\s*[:=]\s*([^\n]+)/i)?.[2]?.trim();
 	const explicitReject = explicit !== undefined && /\b(rejected|reject|insufficient|missing|fail(?:ed)?|not[_ -]?approved|blocked|needs_context)\b/i.test(explicit);
 	const explicitAccept = explicit !== undefined && /\b(accepted|approved|sufficient|complete)\b/i.test(explicit);
 	const hasVerificationReject = (verificationExit !== undefined && verificationExit !== "0")
