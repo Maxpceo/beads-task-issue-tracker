@@ -25,6 +25,7 @@ import {
 
 export const DEFAULT_SYNC_VISIBLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_SYNC_VISIBLE_POLL_MS = 1000;
+export const DEFAULT_SYNC_VISIBLE_STARTUP_GRACE_MS = 30_000;
 
 export interface SyncVisibleAgentSpec {
 	role: string;
@@ -44,6 +45,7 @@ export interface SpawnSyncVisibleAgentsInput {
 	beadId?: string;
 	timeoutMs?: number;
 	pollMs?: number;
+	startupGraceMs?: number;
 	signal?: AbortSignal;
 	env?: NodeJS.ProcessEnv;
 	now?: () => number;
@@ -133,6 +135,7 @@ function readResultFile(resultFile: string): string | undefined {
 export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput): Promise<SyncVisibleAgentResult[]> {
 	const timeoutMs = input.timeoutMs ?? DEFAULT_SYNC_VISIBLE_TIMEOUT_MS;
 	const pollMs = input.pollMs ?? DEFAULT_SYNC_VISIBLE_POLL_MS;
+	const startupGraceMs = input.startupGraceMs ?? DEFAULT_SYNC_VISIBLE_STARTUP_GRACE_MS;
 	const now = input.now ?? Date.now;
 	const sleep = input.sleep ?? defaultSleep;
 	const classify = input.classifyPane ?? classifyVisiblePane;
@@ -249,6 +252,9 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				if (!screen.trim()) continue;
 				const health = classify(screen);
 				if (health === "dead" || health === "shell") {
+					const createdAtMs = Date.parse(entry.createdAt);
+					const ageMs = Number.isFinite(createdAtMs) ? now() - createdAtMs : startupGraceMs;
+					if (ageMs < startupGraceMs) continue;
 					row.error = `dead pane without result: ${entry.pane}`;
 					pending.delete(row.taskId);
 				}
