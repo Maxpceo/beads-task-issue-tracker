@@ -855,11 +855,17 @@ describe('dispatch_docs_agent visible cmux', () => {
   let tmp: string
   const prevOrch = process.env.ORCH_ROOT
   const prevHome = process.env.HOME
+  let prevCmuxSocket: string | undefined
+  let prevCmuxWorkspace: string | undefined
 
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), '0qsm-docs-'))
     process.env.ORCH_ROOT = tmp
     process.env.HOME = tmp
+    prevCmuxSocket = process.env.CMUX_SOCKET_PATH
+    prevCmuxWorkspace = process.env.CMUX_WORKSPACE_ID
+    delete process.env.CMUX_SOCKET_PATH
+    delete process.env.CMUX_WORKSPACE_ID
     setCmuxAdapterForTests(null)
     setStickyTabTitleDelayForTests(async () => {})
   })
@@ -871,6 +877,10 @@ describe('dispatch_docs_agent visible cmux', () => {
     else process.env.ORCH_ROOT = prevOrch
     if (prevHome === undefined) delete process.env.HOME
     else process.env.HOME = prevHome
+    if (prevCmuxSocket === undefined) delete process.env.CMUX_SOCKET_PATH
+    else process.env.CMUX_SOCKET_PATH = prevCmuxSocket
+    if (prevCmuxWorkspace === undefined) delete process.env.CMUX_WORKSPACE_ID
+    else process.env.CMUX_WORKSPACE_ID = prevCmuxWorkspace
     fs.rmSync(tmp, { recursive: true, force: true })
   })
 
@@ -887,7 +897,7 @@ describe('dispatch_docs_agent visible cmux', () => {
     const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
     const result = await tools.dispatch_docs_agent.execute(
       'd1',
-      { beadId, transport: 'cmux' },
+      { beadId },
       undefined,
       undefined,
       workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
@@ -895,11 +905,51 @@ describe('dispatch_docs_agent visible cmux', () => {
     expect(result.details.status).toBe('spawned')
     expect(result.details.pane).toBe('surface:docs')
     expect(result.details.agent).toBe('documentation-expert')
+    expect(result.details.error).toBeUndefined()
     const entry = findRegistryByTaskId(result.details.registryKey)?.entry
     expect(entry?.status).toBe('spawned')
     expect(entry?.role).toBe('documentation-expert')
     expect(entry?.kind).toBe('workflow')
     expect(entry?.layoutColumn).toBe(0)
+  })
+
+  it('omitted transport without UI stays headless on dryRun', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d', execCalls })
+    const result = await tools.dispatch_docs_agent.execute(
+      'd1',
+      { beadId, dryRun: true },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: false }),
+    )
+    expect(result.details.status).not.toBe('spawned')
+    expect(result.details.transport).toBeUndefined()
+    expect(result.details.pane).toBeUndefined()
+    expect(result.details.error).toBeUndefined()
+    expect(result.content[0].text).not.toMatch(/dispatch_docs_agent не выполнен/)
+    const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+    expect(comments).toEqual([])
+    expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
+  })
+
+  it('omitted transport without UI but CMUX_SOCKET_PATH fails closed', async () => {
+    process.env.CMUX_SOCKET_PATH = '/tmp/hpra-fake-cmux.sock'
+    const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
+    const result = await tools.dispatch_docs_agent.execute(
+      'd1',
+      { beadId },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: false }),
+    )
+    expect(result.details.error).toMatch(/интерактивная cmux-сессия обнаружена, но hasUI=false/)
+    expect(result.content[0].text).toMatch(/dispatch_docs_agent не выполнен:/)
+    expect(result.content[0].text).toMatch(/интерактивная cmux-сессия/)
+    expect(result.details.status).not.toBe('spawned')
+    expect(result.details.pane).toBeUndefined()
+    expect(result.details.registryKey).toBeUndefined()
+    expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
   })
 
   it('complete_visible_dispatch docs is result-only and does not inreview', async () => {

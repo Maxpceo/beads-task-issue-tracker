@@ -1868,6 +1868,16 @@ async function dispatch(
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
 	const transport = resolveDispatchTransport(params, ctx);
+	if (
+		mode === "docs"
+		&& params.transport === undefined
+		&& transport === "headless"
+		&& (Boolean(process.env.CMUX_SOCKET_PATH) || Boolean(process.env.CMUX_WORKSPACE_ID))
+	) {
+		throw new Error(
+			"интерактивная cmux-сессия обнаружена, но hasUI=false; docs не уходит молча в headless — передайте transport=cmux или явный transport=headless для CI",
+		);
+	}
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments, { dryRun: dryRunPreview });
 		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);

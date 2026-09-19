@@ -97,7 +97,7 @@ EOF
 8. Create PR with `gh pr create`.
 9. Dispatch docs agent for documentation coverage before merge:
    ```text
-   dispatch_docs_agent(beadId=<ID>, cwd=<feature-worktree-path>)
+   dispatch_docs_agent(beadId=<ID>, transport=cmux, cwd=<feature-worktree-path>)
    ```
    The docs agent must inspect the branch diff and handle CHANGELOG/README/docs coverage during this merge workflow, not during `land`:
    - for code changes, update `CHANGELOG.md` under `[Unreleased]` or record an explicit skip reason;
