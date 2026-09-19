@@ -2749,6 +2749,50 @@ describe('Pi plan-mode typed workflow tools', () => {
           expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-blocked')).toBe(false)
         })
 
+      it('dispatch readiness preflight BLOCKED is not task worktree scope',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          mockSupervisorDispatchError = 'dispatch_supervisor readiness не пройдена: в PLAN APPROVED comment отсутствуют fields: Acceptance (Acceptance:)'
+
+          await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-readiness-blocked', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          const comments = harness.execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+          const blocked = String(comments[1]?.args[3] ?? '')
+          expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
+          expect(blocked.startsWith('BLOCKED: dispatch readiness')).toBe(true)
+          expect(blocked).toContain('dispatch_supervisor readiness не пройдена: в PLAN APPROVED comment отсутствуют fields: Acceptance (Acceptance:)')
+          expect(blocked).toContain('exactly `Acceptance:`')
+          expect(blocked).not.toContain('BLOCKED: task worktree scope')
+          expect(blocked).not.toMatch(/Create or update the task worktree/i)
+          expect(blocked).not.toMatch(/просто повторить approve/i)
+          expect(harness.workflowUpdates.at(-1)).toMatchObject({ sessionMode: 'blocked', planApproved: true })
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(false)
+          expect(harness.sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
+        })
+
+      it('dispatch readiness without missing fields retries dispatch, not re-approve',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          mockSupervisorDispatchError = 'dispatch_supervisor readiness не пройдена: bead labels missing workflow'
+
+          await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-readiness-labels', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          const comments = harness.execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+          const blocked = String(comments[1]?.args[3] ?? '')
+          expect(blocked.startsWith('BLOCKED: dispatch readiness')).toBe(true)
+          expect(blocked).toContain('bead labels missing workflow')
+          expect(blocked).toContain('retry dispatch_supervisor')
+          expect(blocked).not.toContain('Repeat the approve path')
+          expect(blocked).not.toContain('BLOCKED: task worktree scope')
+          expect(harness.workflowUpdates.at(-1)).toMatchObject({ sessionMode: 'blocked', planApproved: true })
+        })
+
       it('real continuation scope errors still BLOCKED and state=blocked',
         async () => {
           const harness = makeHarness({ taskScopeGit: true })

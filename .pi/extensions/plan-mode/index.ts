@@ -668,6 +668,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return /live pane already registered|повторный spawn/i.test(error);
 	}
 
+	function isDispatchReadinessFailure(error: string): boolean {
+		return error.includes("readiness не пройдена");
+	}
+
 	function sendAlreadySpawnedSkip(beadId: string, live: Array<{ entry: { taskId?: string; role?: string } }>): void {
 		const liveSummary = live.length > 0
 			? live.map((item) => `${item.entry.taskId ?? "unknown"} (${item.entry.role ?? "unknown"})`).join(", ")
@@ -718,6 +722,26 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			`Bead: ${beadId}`,
 			`Reason: ${error}`,
 			"Continuation cannot start dispatch_supervisor without a readable task worktree. Create or update the task worktree, then retry dispatch_supervisor. Do not write another approval comment.",
+		].join("\n");
+		await pi.exec("bd", ["comments", "add", beadId, content]);
+		syncWorkflowPlanMode(ctx, "off", "blocked", { state: "blocked", activeBead: beadId, planApproved: true });
+		pi.sendMessage(
+			{ customType: "post-approval-continuation-blocked", content, display: true },
+			{ triggerTurn: false },
+		);
+	}
+
+	async function recordContinuationReadinessBlocked(ctx: ExtensionContext, beadId: string, error: string): Promise<void> {
+		const missingFields = error.includes("отсутствуют fields");
+		const recovery = missingFields
+			? "Fix canonical PLAN APPROVED fields. The heading must be exactly `Acceptance:` (not `Acceptance (…):`). Repeat the approve path only after that heading is already corrected. Do not re-approve with the same non-canonical heading."
+			: "Fix the named cause in Reason, then retry dispatch_supervisor. Do not write another approval comment.";
+		const content = [
+			"BLOCKED: dispatch readiness",
+			`Bead: ${beadId}`,
+			`Reason: ${error}`,
+			recovery,
+			"Do not create or update a task worktree for this error.",
 		].join("\n");
 		await pi.exec("bd", ["comments", "add", beadId, content]);
 		syncWorkflowPlanMode(ctx, "off", "blocked", { state: "blocked", activeBead: beadId, planApproved: true });
@@ -812,6 +836,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			if (isRuntimeHookUnavailable(error)) {
 				await recordRuntimeHookMissing(ctx, beadId, action, error);
+				return { skipped: false };
+			}
+			if (isDispatchReadinessFailure(error)) {
+				await recordContinuationReadinessBlocked(ctx, beadId, error);
 				return { skipped: false };
 			}
 			await recordContinuationScopeBlocked(ctx, beadId, error);
