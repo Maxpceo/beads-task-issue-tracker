@@ -4,11 +4,11 @@ import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
+  type CmuxAdapter,
   findRegistryByTaskId,
   loadRegistry,
   setCmuxAdapterForTests,
-  type CmuxAdapter,
-} from '../../.pi/extensions/beads-dispatch/index'
+} from '../../.pi/extensions/beads-dispatch/cmux-transport'
 import {
   spawnSyncVisibleAgents,
 } from '../../.pi/extensions/beads-dispatch/visible-agents'
