@@ -80,10 +80,42 @@ export function renderPlanTranscriptLines(planText: string, width: number): stri
 	return clampRenderLines(wrapPlanToWidth(planText, width), width);
 }
 
+/** Display-only: rewrite column-0 H3+ to `## ` so stock pi-tui does not print `###`. */
+export function planMarkdownTransform(markdown: string, _availableWidth?: number): string {
+	return markdown.replace(/^(#{3,})\s+/gm, "## ");
+}
+
+type MarkdownThemeFn = (text: string) => string;
+
+interface PlanMarkdownTheme {
+	listBullet?: MarkdownThemeFn;
+	codeBlockBorder?: MarkdownThemeFn;
+	[key: string]: unknown;
+}
+
+/** Display-only theme wrap: `•` bullets and fence borders without visible backticks. */
+export function wrapPlanMarkdownTheme(base: unknown): PlanMarkdownTheme {
+	const theme: PlanMarkdownTheme =
+		base && typeof base === "object" ? { ...(base as PlanMarkdownTheme) } : {};
+	const baseListBullet = theme.listBullet;
+	const baseCodeBlockBorder = theme.codeBlockBorder;
+	return {
+		...theme,
+		listBullet: (text: string) => {
+			const rewritten = text.replace(/^[-*+] /, "• ");
+			return typeof baseListBullet === "function" ? baseListBullet(rewritten) : rewritten;
+		},
+		codeBlockBorder: (text: string) => {
+			if (text.trimStart().startsWith("```")) return "";
+			return typeof baseCodeBlockBorder === "function" ? baseCodeBlockBorder(text) : text;
+		},
+	};
+}
+
 /** Markdown document with post-clamp so wide fences cannot abort the TUI (m6ho). */
 export class ClampedMarkdown extends Markdown {
 	constructor(text: string, paddingX = 0, paddingY = 0, mdTheme?: unknown) {
-		super(text, paddingX, paddingY, mdTheme);
+		super(text, paddingX, paddingY, mdTheme, undefined, { transform: planMarkdownTransform });
 	}
 
 	render(width: number): string[] {
@@ -95,7 +127,8 @@ export class ClampedMarkdown extends Markdown {
 export function createPlanDocumentComponent(content: string, mdTheme: unknown): Markdown | Text {
 	const text = content.trim();
 	if (!text) return new Text("", 0, 0);
-	return new ClampedMarkdown(text, 0, 0, mdTheme);
+	const theme = wrapPlanMarkdownTheme(mdTheme);
+	return new ClampedMarkdown(text, 0, 0, theme);
 }
 
 /**

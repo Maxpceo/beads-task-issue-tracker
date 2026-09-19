@@ -3325,3 +3325,58 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(readyUiSource).not.toMatch(/PgUp|pageUp/)
   })
 })
+
+describe('Pi plan-mode display markdown helpers (yxn0)', () => {
+  const readyUi = transpileSibling('ready-ui.ts') as {
+    planMarkdownTransform: (markdown: string, availableWidth?: number) => string
+    wrapPlanMarkdownTheme: (base: unknown) => {
+      listBullet: (text: string) => string
+      codeBlockBorder: (text: string) => string
+    }
+    createPlanDocumentComponent: (content: string, mdTheme: unknown) => unknown
+    ClampedMarkdown: new (...args: unknown[]) => { render: (width: number) => string[] }
+  }
+  const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/ready-ui.ts'), 'utf8')
+
+  it('planMarkdownTransform rewrites column-0 H3+ to ## and leaves H1/H2', () => {
+    expect(readyUi.planMarkdownTransform('### A\ntext\n### B')).toBe('## A\ntext\n## B')
+    expect(readyUi.planMarkdownTransform('# H1\n## H2\n### H3\n#### H4')).toBe('# H1\n## H2\n## H3\n## H4')
+    expect(readyUi.planMarkdownTransform('  ### indented')).toBe('  ### indented')
+  })
+
+  it('documents the column-0 ###-inside-fence rewrite limit', () => {
+    expect(readyUi.planMarkdownTransform('```\n### inside\n```')).toBe('```\n## inside\n```')
+  })
+
+  it('wrapPlanMarkdownTheme rewrites listBullet before the base theme and hides fence backticks', () => {
+    const wrapped = readyUi.wrapPlanMarkdownTheme({
+      listBullet: (text: string) => `[gold]${text}[/gold]`,
+      codeBlockBorder: (text: string) => `[border]${text}[/border]`,
+      heading: 'keep',
+    })
+    expect(wrapped.listBullet('- item')).toBe('[gold]• item[/gold]')
+    expect(wrapped.listBullet('* item')).toBe('[gold]• item[/gold]')
+    expect(wrapped.listBullet('+ item')).toBe('[gold]• item[/gold]')
+    expect(wrapped.codeBlockBorder('```json')).toBe('')
+    expect(wrapped.codeBlockBorder('```')).toBe('')
+    expect(wrapped.codeBlockBorder('plain')).toBe('[border]plain[/border]')
+    expect((wrapped as { heading?: string }).heading).toBe('keep')
+  })
+
+  it('wrapPlanMarkdownTheme empty theme still rewrites bullets and blank fence lines', () => {
+    const wrapped = readyUi.wrapPlanMarkdownTheme({})
+    expect(wrapped.listBullet('- a')).toBe('• a')
+    expect(wrapped.codeBlockBorder('```')).toBe('')
+    expect(wrapped.codeBlockBorder('x')).toBe('x')
+  })
+
+  it('ClampedMarkdown.super passes 5th undefined and 6th transform; createPlan only wraps theme', () => {
+    expect(readyUiSource).toContain('export function planMarkdownTransform')
+    expect(readyUiSource).toContain('export function wrapPlanMarkdownTheme')
+    expect(readyUiSource).toMatch(/super\(\s*text,\s*paddingX,\s*paddingY,\s*mdTheme,\s*undefined,\s*\{\s*transform:\s*planMarkdownTransform\s*\}\s*\)/)
+    expect(readyUiSource).toContain('wrapPlanMarkdownTheme(mdTheme)')
+    const createPlanSite = readyUiSource.slice(readyUiSource.indexOf('export function createPlanDocumentComponent'))
+    expect(createPlanSite).toContain('new ClampedMarkdown(text, 0, 0, theme)')
+    expect(createPlanSite).not.toContain('transform: planMarkdownTransform')
+  })
+})
