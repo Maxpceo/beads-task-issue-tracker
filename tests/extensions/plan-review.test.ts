@@ -245,4 +245,49 @@ Risks / rollback:
     expect(getSharedDashboardState()?.cards.get('plan-edge-reviewer')?.status).toBe('failed')
     expect(getSharedDashboardState()?.cards.get('plan-edge-reviewer')?.errorMessage).toBe('spawn failed')
   })
+
+  it('hasUI uses visible panes, parses result files, and does not publish dashboard cards', async () => {
+    const spawned: string[] = []
+    const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer', 'plan-consistency-reviewer'], {
+      hasUI: true,
+      spawnVisible: async (input) => {
+        spawned.push(...input.agents.map((agent) => agent.role))
+        return input.agents.map((agent) => ({
+          role: agent.role,
+          taskId: `sync-${agent.role}`,
+          pane: `surface:${agent.role}`,
+          output: 'PLAN REVIEW: APPROVED\nFindings:\n- severity: minor\n  issue: none\n  evidence: ok\n  suggested fix: none\nUnresolved blockers: none',
+        }))
+      },
+    })
+
+    expect(spawned).toEqual(['plan-edge-reviewer', 'plan-consistency-reviewer'])
+    expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
+    expect(getSharedDashboardState()).toBeNull()
+  })
+
+  it('no-UI keeps headless pi json and dashboard cards', async () => {
+    const calls: Array<{ command: string, args: string[] }> = []
+    const pi = {
+      exec: async (command: string, args: string[]) => {
+        calls.push({ command, args })
+        return {
+          code: 0,
+          stderr: '',
+          stdout: JSON.stringify({
+            type: 'message_end',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'PLAN REVIEW: APPROVED\nFindings:\n- severity: minor\n  issue: none\n  evidence: ok\n  suggested fix: none\nUnresolved blockers: none' }],
+            },
+          }) + '\n',
+        }
+      },
+    }
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer'], { hasUI: false })
+    expect(calls[0]?.command).toBe('pi')
+    expect(results[0]?.verdict).toBe('APPROVED')
+    expect(getSharedDashboardState()?.origin).toBe('auto')
+  })
 })

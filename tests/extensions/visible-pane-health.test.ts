@@ -50,6 +50,12 @@ describe('classifyVisiblePane', () => {
     expect(classifyVisiblePane(busyScreen)).toBe('busy')
   })
 
+  it('does not treat thinking inside a filename as busy', () => {
+    const recap = `Files: tests/extensions/subagent-thinking-argv.test.ts\n$\nsession idle | bead=0qsm`
+    expect(classifyVisiblePane(recap)).toBe('waiting')
+    expect(classifyVisiblePane('path/to/busy-work.md\nsession implementing')).toBe('waiting')
+  })
+
   it('treats a shell prompt without a Pi session-line as shell', () => {
     expect(classifyVisiblePane(shellOnly)).toBe('shell')
     expect(classifyVisiblePane('user@host ~/proj $\n')).toBe('shell')

@@ -107,7 +107,8 @@ The dashboard is read-only: it displays idle/running/done/error cards and live s
 - Running or queued headless agents auto-open an **active** dashboard (`origin=auto`) in the orchestrator TUI without `/agents-dashboard` — covers typed headless `dispatch_*`, plan reviewers, and subagent tool runs.
 - Lifecycle cards publish running → terminal; terminal cards stay visible until the host `turn_end`, then `origin=auto` dashboards auto-hide when no running/queued work remains.
 - Explicit `/agents-dashboard` is `origin=user` and is never auto-cleared by turn end.
-- Visible cmux spawn stays panel-only (no auto dashboard card path).
+- Visible cmux spawn stays panel-only (no auto dashboard card path). Interactive `plan_subagent` / `subagent` / plan-review / `dispatch_docs_agent` use visible panes; dashboard cards stay CI/headless-only.
+- Right-half geometry: 2 columns, then `new-split down` (`resolveVisibleSplitPlacement`).
 
 ## Tool Modes
 

@@ -8,7 +8,7 @@ Pi keeps an active project-local agent set in `.pi/agents/` and shared workflow/
 | `tauri-supervisor` | `.pi/agents/tauri-supervisor.md` + typed `dispatch_supervisor` + path rules | Active |
 | `test-supervisor` | `.pi/agents/test-supervisor.md` + typed `dispatch_supervisor` + path rules | Active |
 | `code-reviewer` | `.pi/agents/code-reviewer.md` + `review_bead` / `dispatch_reviewer` + path rules | Active with typed review workflow |
-| `documentation-expert` | `.pi/agents/documentation-expert.md` + `dispatch_docs_agent` + path rules | Active |
+| `documentation-expert` | `.pi/agents/documentation-expert.md` + `dispatch_docs_agent` (visible cmux by default; `complete_visible_dispatch` is result-only) + path rules | Active |
 | `architect` | `.pi/agents/architect.md` | Active planning/design agent for plan review, trade-offs, task breakdowns, and architecture gaps |
 | `detective` | `.pi/agents/detective.md` | Active investigation agent for root-cause analysis, dead-zone discovery, evidence gathering, and fix recommendations |
 | `discovery`, `scout`, `scribe`, `merge-supervisor` | No active Pi workflow caller | Intentionally omitted until a Pi workflow invokes them |
@@ -23,7 +23,8 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
   - `AGENTS.md`
   - `.pi/rules/domain.md`
   - `.pi/rules/codebase.md`
-- Generic `subagent` calls run project agents with isolated context but do not automatically render `PATH_RULES_LOADED`. In strict plan mode, use the dedicated `plan_subagent` tool for read-only `detective`/`architect` work; it injects bead/plan context from the wrapper and forces the child tool surface to `read,grep,find,ls`. Implementation supervisors still go through typed workflow dispatch after approval.
+- Generic `subagent` calls run project agents with isolated context but do not automatically render `PATH_RULES_LOADED`. Interactive `hasUI` opens visible cmux panes (sync wait, then close); CI/headless stays process+dashboard. In strict plan mode, use the dedicated `plan_subagent` tool for read-only `detective`/`architect` work; it injects bead/plan context from the wrapper and forces the child tool surface to `read,grep,find,ls`. Implementation supervisors still go through typed workflow dispatch after approval.
+- Visible layout is 2 columns on the right half, then `new-split down` (`resolveVisibleSplitPlacement`; AGENTS.md Layout geometry).
 
 ## Reporting and model guidance
 

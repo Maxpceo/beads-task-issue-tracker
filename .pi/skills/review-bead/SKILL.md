@@ -26,7 +26,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)
    ```
    - Return `status=spawned` is **not** DONE.
-   - Layout: reviewer `new-split right` anchors the live supervisor pane (not orch) so **оркестратор** stays exclusive left and supervisor+reviewer are **side-by-side** on the right (`resolveVisibleSplitAnchor`; AGENTS.md Layout geometry).
+   - Layout: reviewer `new-split right` anchors the live supervisor pane (not orch) so **оркестратор** stays exclusive left and supervisor+reviewer are **side-by-side** on the right (`resolveVisibleSplitPlacement`; AGENTS.md Layout geometry). A third visible agent stacks `down` in the shortest column.
    - Child ping uses `AGENT_NAME=code-reviewer` and the quoted `DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body.
    - Orchestrator delivery (exclusive; mirror dispatch-supervisor):
      A (primary): inbound `[PING]` / `[PING-ERROR]` with `taskId=` or `задача <id>` → one `complete_visible_dispatch({ taskId })`. `status=verdict` → do not call `review_bead`.

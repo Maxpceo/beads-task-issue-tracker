@@ -52,7 +52,7 @@ Approve-path fork — when a manual `dispatch_supervisor` is the right step:
    - `cwd` must be the task worktree, never protected `main`.
    - Return `status=spawned` is **not** DONE and not `continuation completed`.
    - Live `new-split` uses explicit `--focus false` (no focus-pane workaround); spawn must not steal Maxim focus.
-   - Layout anchor (`resolveVisibleSplitAnchor`): first agent splits right of orch; each next agent splits right of the oldest live agent pane so **оркестратор** stays exclusive left and agents pack **side-by-side** on the right half (no hard N=2 cap; practical ~4–6). Never re-split orch when another live agent exists. See AGENTS.md «Layout geometry».
+   - Layout (`resolveVisibleSplitPlacement`): first agent splits right of orch (column 0); second splits right of the oldest live agent (**side-by-side** column 1); third and later `new-split down` on the shortest column. Never re-split orch when another live agent exists. See AGENTS.md «Layout geometry».
    - After spawn, dispatch renames tabs per AGENTS.md Cmux layout: child `{role} · {bead-suffix}`, caller `оркестратор` (not the default `π - …` title).
    - Wrapper writes `DISPATCH (` on spawn. Do not re-dispatch the same live bead; after strict ready-UI execute («Исполнить») the supervisor is already live and a manual repeat call is the expected `BLOCKED` no-op (see approve-path fork).
    - Child ping: the visible supervisor must only run the quoted `AGENT_NAME=<posix-quoted role> DIGEST_FILE=... bash <worktree>/.pi/orchestrator/ping.sh <taskId>` command from the task body (`KIND=error` after BLOCKED/NEEDS_CONTEXT). Child stdout / printing `Ping` in the child pane is not delivery and must not trigger complete. Do not use raw `cmux send` / `send-key enter`.
@@ -68,7 +68,7 @@ Approve-path fork — when a manual `dispatch_supervisor` is the right step:
        Forbid: background 20-min timer, `scheduler_create`, read-screen as normal path, `watchdog.sh` auto, pane dump, send-key, wait loops, re-dispatch same-turn, same-turn second complete.
    - No cmux in interactive → BLOCKED. Not silent headless.
    - Explicit CI/dark-window path: `dispatch_supervisor(beadId=<ID>, transport="headless")`. Interactive omit (hasUI) resolves to cmux automatically — do not rely on headless-by-omit.
-   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_docs_agent` does not accept `transport`. Reviewer interactive omit/hasUI → cmux (same resolve as supervisor).
+   PLAN APPROVED continuation passes `transport=cmux` and `cwd=worktreePath`. `dispatch_docs_agent` uses the same transport resolve (omit/hasUI → cmux; explicit `transport=headless` for CI). Reviewer interactive omit/hasUI → cmux (same resolve as supervisor).
 5. The tool fail-closes readiness, resolves structured task scope from workflow-state, routes to `workflowState.worktreePath` in main-start sessions, collects canonical task-worktree branch/start commit, selects agent, logs `DISPATCH` context, and runs the Pi agent. If an explicit `cwd` is passed, policy requires it to be inside the active task worktree. Required prompt fields include `BEAD_ID`, `EPIC_ID`, `BRANCH`, `START_COMMIT`, context summary, approved plan, execution contract, do-not-guess guidance, over-your-head guidance, and status vocabulary.
 
 ## Supervisor execution contract

@@ -33,6 +33,7 @@ import {
 	buildVisibleFollowupPayload,
 	buildVisibleChildSpawnPayload,
 	classifyVisiblePane,
+	createLiveCmuxAdapter,
 	extractWorkspaceGroupId,
 	findLiveFollowupEntry,
 	findLiveRegistryEntriesForBead,
@@ -53,7 +54,7 @@ import {
 	pickTaskWorkspaceColor,
 	posixQuote,
 	readDigestPreview,
-	resolveVisibleSplitAnchor,
+	resolveVisibleSplitPlacement,
 	saveRegistry,
 	tombstoneRegistryEntry,
 	unlinkFollowupArtifacts,
@@ -85,6 +86,7 @@ export {
 	buildVisibleFollowupPayload,
 	classifyVisiblePane,
 	countTitleWords,
+	createLiveCmuxAdapter,
 	extractWorkspaceGroupId,
 	followupPayloadLooksLikeSpawnArgv,
 	findLiveFollowupEntry,
@@ -99,6 +101,7 @@ export {
 	parseSpawnLockComment,
 	pickTaskWorkspaceColor,
 	resolveVisibleSplitAnchor,
+	resolveVisibleSplitPlacement,
 	SPAWN_LOCK_MARKER,
 	TASK_WORKSPACE_COLOR_PALETTE,
 	tombstoneRegistryEntry,
@@ -1130,6 +1133,18 @@ async function completeVisibleDispatchUnlocked(pi: ExtensionAPI, params: { taskI
 		emitVisibleDispatchBind(pi, { beadId: entry.beadId, state: "inreview", branch, worktreePath: entry.worktree, startCommit }, ctx);
 		return { status: "verdict", text: `CODE REVIEW: ${verdict}` };
 	}
+	if (entry.role === "documentation-expert") {
+		let endCommit = startCommit;
+		try {
+			endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
+		} catch {
+			endCommit = startCommit;
+		}
+		await addEndCommitComment(pi, entry.beadId, entry.role, branch, entry.worktree, startCommit, endCommit);
+		registry.entries[index] = { ...entry, submitStatus: "result-only" };
+		saveRegistry(file, registry);
+		return { status: "result-only", text: preview.text };
+	}
 	const endCommit = await getGitValue(pi, entry.worktree, ["rev-parse", "HEAD"]);
 	const ready = supervisorArtifactReadyForReview({ output: resultText, exitCode: 0 }, startCommit, endCommit);
 	if (!ready) {
@@ -1250,17 +1265,18 @@ async function respawnVisibleFollowup(
 	const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath: entry.worktree, payload });
 	if (spawnFail) throw new Error(spawnFail);
 	await adapter.identify();
-	const livePanes = liveEntriesForBead(found.registry, entry.beadId);
+	const livePanes = found.registry.entries.filter((row) => row.status === "spawned");
 	const callerSurface = resolveCallerSurface(adapter, entry);
 	const orchSurface = callerSurface || entry.callerSurface || "";
-	const anchorSurface = resolveVisibleSplitAnchor({
+	const placement = resolveVisibleSplitPlacement({
 		callerSurface,
 		liveAgentPanes: livePanes,
 		excludePane: entry.pane,
+		preserveColumn: entry.layoutColumn,
 	});
 	let surface = "";
 	try {
-		const split = await adapter.newSplit({ anchorSurface });
+		const split = await adapter.newSplit({ anchorSurface: placement.anchorSurface, direction: placement.direction });
 		surface = split.surface;
 		await adapter.send(surface, payload);
 	} catch (error) {
@@ -1284,6 +1300,7 @@ async function respawnVisibleFollowup(
 		submitStatus: "none",
 		sendFailCount: 0,
 		hung: false,
+		layoutColumn: placement.layoutColumn,
 	});
 	const restSchedule = STICKY_TAB_TITLE_DELAYS_MS.slice(1);
 	if (restSchedule.length > 0) {
@@ -1445,56 +1462,6 @@ function cmuxSpawnAckResult(
 		renameAttempts: ack.renameAttempts,
 		renameFailures: ack.renameFailures,
 		renameLastError: ack.renameLastError,
-	};
-}
-
-function createLiveCmuxAdapter(exec: ExtensionAPI["exec"]): CmuxAdapter & { callerSurface(): string } {
-	let callerSurface = "";
-	return {
-		callerSurface: () => callerSurface,
-		async identify() {
-			const result = await exec("cmux", ["identify", "--json"]);
-			if (result.code !== 0) throw new Error("нет cmux (identify failed): BLOCKED");
-			let data: { caller?: { workspace_ref?: string; surface_ref?: string; surface?: string }; workspace?: string };
-			try {
-				data = JSON.parse(result.stdout || "{}") as typeof data;
-			} catch {
-				throw new Error("нет cmux (identify json): BLOCKED");
-			}
-			const caller = data.caller ?? {};
-			const workspaceId = String(caller.workspace_ref || data.workspace || "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-			if (!workspaceId) throw new Error("нет cmux workspace: BLOCKED");
-			callerSurface = String(caller.surface_ref || caller.surface || "").trim();
-			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
-			return { workspaceId };
-		},
-		async newSplit(opts?: { anchorSurface?: string }) {
-			const anchor = String(opts?.anchorSurface || callerSurface || "").trim();
-			if (!anchor) throw new Error("нет caller surface: BLOCKED");
-			// Explicit --focus false: pin non-stealing spawn across cmux versions (default is already false).
-			// Anchor is first live agent when present so orch stays exclusive left (kgvd).
-			const result = await exec("cmux", ["new-split", "right", "--surface", anchor, "--focus", "false"]);
-			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
-			const match = `${result.stdout || ""}`.match(/surface:\S+/);
-			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
-			return { surface: match[0] };
-		},
-		async send(surface, text) {
-			const result = await exec("cmux", ["send", "--surface", surface, text]);
-			if (result.code !== 0) throw new Error(`cmux send failed: ${result.stderr || result.stdout}`);
-		},
-		async readScreen(surface) {
-			const result = await exec("cmux", ["read-screen", "--surface", surface, "--lines", "20"]);
-			if (result.code !== 0) throw new Error(`cmux read-screen failed: ${result.stderr || result.stdout}`);
-			return `${result.stdout ?? ""}`;
-		},
-		async closeSurface(surface) {
-			await exec("cmux", ["close-surface", "--surface", surface]);
-		},
-		async renameSurface(surface, title) {
-			const result = await exec("cmux", buildCmuxRenameArgv(surface, title));
-			if (result.code !== 0) throw new Error(`cmux rename failed: ${result.stderr || result.stdout}`);
-		},
 	};
 }
 
@@ -1681,7 +1648,7 @@ async function dispatchVisibleCmux(input: {
 	worktreePath: string;
 	startCommit: string;
 	cwd: string;
-	mode: "supervisor" | "reviewer";
+	mode: "supervisor" | "reviewer" | "docs";
 	ctx?: ToolContext;
 	signal?: AbortSignal;
 }): Promise<DispatchResult> {
@@ -1745,7 +1712,16 @@ Do not write SUPERVISOR ARTIFACT.
 Do not call review_bead.
 Do not spawn a supervisor.
 `
-		: `${prompt}
+		: mode === "docs"
+			? `${prompt}
+
+WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
+1. Write the documentation report to ${resultFile}
+2. Write digest ≤10 lines to ${digestFile}
+${pingContract}
+Do not call review yourself. Do not submit-for-review.
+`
+			: `${prompt}
 
 WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
 1. Write SUPERVISOR ARTIFACT to ${resultFile}
@@ -1768,14 +1744,14 @@ Next step is review, same as today. Do not call review yourself.
 	if (argvErrors.length > 0) throw new Error(`transport=cmux argv fail-close: ${argvErrors.join("; ")}`);
 	const payload = buildVisibleChildSpawnPayload(worktreePath, argv);
 	const callerSurface = resolveCallerSurface(adapter);
-	const livePanes = liveEntriesForBead(existing, bead.id);
-	const anchorSurface = resolveVisibleSplitAnchor({
+	const livePanes = existing.entries.filter((row) => row.status === "spawned");
+	const placement = resolveVisibleSplitPlacement({
 		callerSurface,
 		liveAgentPanes: livePanes,
 	});
 	let surface = "";
 	try {
-		const split = await adapter.newSplit({ anchorSurface });
+		const split = await adapter.newSplit({ anchorSurface: placement.anchorSurface, direction: placement.direction });
 		surface = split.surface;
 		const spawnFail = visibleCmuxSpawnFailReason({ branch, worktreePath, payload });
 		if (spawnFail) throw new Error(spawnFail);
@@ -1812,6 +1788,8 @@ Next step is review, same as today. Do not call review yourself.
 		callerSurface: callerSurface || undefined,
 		startCommit,
 		createdAt: new Date().toISOString(),
+		layoutColumn: placement.layoutColumn,
+		kind: "workflow",
 	};
 	existing.entries.push(entry);
 	try {
@@ -1834,7 +1812,9 @@ Next step is review, same as today. Do not call review yourself.
 		startCommit,
 		`transport=cmux spawn-ack taskId=${taskId} pane=${surface} ${renameLine}\nDIGEST_FILE=${files.digestFile}\nRESULT_FILE=${files.resultFile}`,
 	);
-	emitVisibleDispatchBind(pi, { beadId: bead.id, state: mode === "reviewer" ? "reviewing" : "implementing", branch, worktreePath, startCommit }, ctx);
+	if (mode !== "docs") {
+		emitVisibleDispatchBind(pi, { beadId: bead.id, state: mode === "reviewer" ? "reviewing" : "implementing", branch, worktreePath, startCommit }, ctx);
+	}
 	return cmuxSpawnAckResult(agentName, bead.id, branch, worktreePath, startCommit, {
 		pane: surface,
 		taskFile: files.taskFile,
@@ -1862,10 +1842,7 @@ async function dispatch(
 	const cwd = supervisorPreflight?.cwd ?? params.cwd ?? (stateScope?.ok && stateScope.scope.activeBead === params.beadId ? stateScope.scope.worktreePath : undefined) ?? defaultCwd ?? process.cwd();
 	const bead = await getBead(pi, params.beadId);
 	const comments = await getComments(pi, params.beadId);
-	if (mode === "docs" && params.transport) {
-		throw new Error("dispatch_docs_agent does not accept transport");
-	}
-	const transport = mode === "docs" ? undefined : resolveDispatchTransport(params, ctx);
+	const transport = resolveDispatchTransport(params, ctx);
 	if (mode === "supervisor") {
 		const readinessErrors = validateSupervisorReadiness(bead, comments);
 		if (readinessErrors.length > 0) throw new Error(`dispatch_supervisor readiness не пройдена: ${readinessErrors.join("; ")}`);
@@ -1930,7 +1907,7 @@ async function dispatch(
 				? `${buildReviewerPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`
 				: `${buildDocsPrompt(bead, branch, startCommit, params.task)}\n\n${pathRules}`;
 
-	if ((mode === "supervisor" || mode === "reviewer") && transport === "cmux") {
+	if (transport === "cmux") {
 		const visible = await dispatchVisibleCmux({ pi, params, bead, agent, agentName, prompt, branch, worktreePath, startCommit, cwd, mode, ctx, signal });
 		return routingWarning ? { ...visible, routingWarning } : visible;
 	}
@@ -2370,7 +2347,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "complete_visible_dispatch",
 		label: "Complete Visible Dispatch",
-		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT and submit if the artifact is complete; after code-reviewer ping, record CODE REVIEW verdict. Does not spawn.",
+		description: "Orchestrator-only: after supervisor ping, record DISPATCH RESULT and submit if the artifact is complete; after code-reviewer ping, record CODE REVIEW verdict; after documentation-expert ping, DISPATCH RESULT with submitStatus=result-only (no inreview). Does not spawn.",
 		parameters: {
 			type: "object",
 			properties: { taskId: { type: "string", description: "Visible dispatch registry taskId" } },
@@ -2435,8 +2412,8 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "dispatch_docs_agent",
 		label: "Dispatch Docs Agent",
-		description: "Typed beads workflow dispatch to the Pi documentation-expert agent.",
-		parameters: DispatchParams,
+		description: "Typed beads workflow dispatch to the Pi documentation-expert agent. Interactive omit/hasUI → cmux pane; explicit transport=headless for CI/dark-window. complete_visible_dispatch is result-only (no inreview).",
+		parameters: SupervisorDispatchParams,
 		async execute(_id: string, params: DispatchToolParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
 				const result = await dispatch(pi, "docs", params, signal, ctx.cwd, ctx);

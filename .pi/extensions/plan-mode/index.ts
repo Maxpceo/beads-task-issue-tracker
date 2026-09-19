@@ -1608,7 +1608,21 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	async function runReviewGateForPlan(ctx: ExtensionContext, draftPlan: string): Promise<PlanReviewResult[]> {
 		const cwd = ctx.cwd || process.cwd();
-		return runPlanReviewers(pi, cwd, draftPlan);
+		const entries = ctx.sessionManager?.getEntries?.() ?? [];
+		let beadId: string | undefined;
+		for (const entry of [...entries].reverse()) {
+			const isWorkflow = entry.type === "workflow-state" || (entry.type === "custom" && entry.customType === "workflow-state");
+			if (!isWorkflow || !entry.data || typeof entry.data !== "object") continue;
+			const active = (entry.data as { activeBead?: string }).activeBead?.trim();
+			if (active) {
+				beadId = active;
+				break;
+			}
+		}
+		return runPlanReviewers(pi, cwd, draftPlan, undefined, {
+			hasUI: Boolean(ctx.hasUI),
+			beadId,
+		});
 	}
 
 	async function requestRevisionAfterPlanReview(ctx: ExtensionContext, draftPlan: string): Promise<void> {
