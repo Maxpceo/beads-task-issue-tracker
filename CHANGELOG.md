@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- **Pi close-hop reads list-item `Artifact status`** (`beads-task-issue-tracker-b9n6`): `extractSupervisorArtifact` now skips an optional markdown list marker (`- `, `* `, `1. `) before `Artifact status` / verification field lines, so the canonical supervisor template (`- Artifact status: complete`) is `accepted` instead of `missing`. Unmarked lines and `insufficient` / DONE-without-evidence stay unchanged. Focused vitest under `tests/extensions/review-workflow.test.ts`.
+
 - **Pi `spawn_task_workspace` inner-tab rename uses child workspace context** (`beads-task-issue-tracker-6olh`): `buildCmuxRenameArgv` optionally appends `--workspace` after `--surface` so spawn rename looks up the tab in the new workspace instead of the parent's default (`not_found`). Dispatch-path rename stays two-argument (no `--workspace`). Focused vitest under `tests/extensions/beads-dispatch-cmux.test.ts`.
 
 - **Pi visible poller no longer treats a post-spawn shell prompt as a dead pane** (`beads-task-issue-tracker-xdpq`): `spawnSyncVisibleAgents` keeps `shell` (and `dead`) without a result file pending for `DEFAULT_SYNC_VISIBLE_STARTUP_GRACE_MS` (30s, overridable via `startupGraceMs`) after `createdAt`. After grace the same screen still fails with `dead pane without result`. `classifyVisiblePane` is unchanged. Focused vitest under `tests/extensions/visible-agents.test.ts` and `tests/extensions/visible-pane-health.test.ts`.

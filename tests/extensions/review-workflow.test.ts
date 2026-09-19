@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import reviewWorkflowExtension, {
   buildAcceptanceMatrix,
+  extractSupervisorArtifact,
   finalizeVisibleReviewClose,
   isReviewApproved,
   setReviewRuntimeDelegateForTestOverride,
@@ -328,6 +329,52 @@ describe('review_workflow scoped review', () => {
     expect(insufficient.details.supervisorArtifact.status).toBe('insufficient')
     expect(doneWithoutEvidence.content[0].text).toContain('ARTIFACT STATUS: missing')
     expect(doneWithoutEvidence.details.supervisorArtifact.status).toBe('missing')
+  })
+
+  it('b9n6: list-item Artifact status from supervisor template is accepted, insufficient, or missing', () => {
+    const listedComplete = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'SUPERVISOR ARTIFACT:',
+      '- Status: DONE',
+      '- Files changed: .pi/extensions/review-workflow/index.ts',
+      '- Verification: pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot exit 0',
+      '- Artifact status: complete',
+    ].join('\n')
+    const listedInsufficient = [
+      'SUPERVISOR ARTIFACT:',
+      '- Status: DONE',
+      '- Artifact status: insufficient',
+    ].join('\n')
+    const listedDoneWithoutEvidence = [
+      'SUPERVISOR ARTIFACT:',
+      '- Status: DONE',
+      '- Verification: not run',
+    ].join('\n')
+    const starredComplete = [
+      'SUPERVISOR ARTIFACT:',
+      '* Status: DONE',
+      '* Artifact status: complete',
+    ].join('\n')
+    const numberedComplete = [
+      'SUPERVISOR ARTIFACT:',
+      '1. Status: DONE',
+      '1. Artifact status: complete',
+    ].join('\n')
+    const unmarkedAccepted = [
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Artifact status: accepted',
+    ].join('\n')
+
+    const complete = extractSupervisorArtifact(listedComplete)
+    expect(complete.status).toBe('accepted')
+    expect(complete.statusLine).toContain('ARTIFACT STATUS: accepted')
+    expect(extractSupervisorArtifact(listedInsufficient).status).toBe('insufficient')
+    expect(extractSupervisorArtifact(listedDoneWithoutEvidence).status).toBe('missing')
+    expect(extractSupervisorArtifact(starredComplete).status).toBe('accepted')
+    expect(extractSupervisorArtifact(numberedComplete).status).toBe('accepted')
+    expect(extractSupervisorArtifact(unmarkedAccepted).status).toBe('accepted')
   })
 
   it('accepts workflow_submit_for_review durable task worktree evidence from a main-session orchestrator', async () => {
@@ -2249,6 +2296,63 @@ describe('finalizeVisibleReviewClose', () => {
     expect(execCalls.some((call) => call.args.includes('accepted'))).toBe(true)
     const matrix = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
     expect(matrix).toBeDefined()
+  })
+
+  it('b9n6: does not missing-evidence only because Artifact status is a list item', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let status = 'inreview'
+    const comments = [
+      'CODE REVIEW: APPROVED',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      'SUPERVISOR ARTIFACT:',
+      '- Status: DONE',
+      '- Verification: pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot exit 0',
+      '- Artifact status: complete',
+    ].join('\n')
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status,
+              description: '### Acceptance criteria\n- hop works\n### Verification / acceptance checks\n- Manual check: hop closed',
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: comments, stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') {
+          status = String(args[args.indexOf('--status') + 1] ?? status)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'close') {
+          status = 'closed'
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: 'README.md\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/a\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    const result = await finalizeVisibleReviewClose(pi as any, {
+      beadId: 'bead-a',
+      worktreePath: '/tmp/task',
+      startCommit: 'aaa1111',
+      endCommit: 'bbb2222',
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe('closed')
+    expect(result.status).not.toBe('missing-evidence')
+    expect(status).toBe('closed')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(true)
   })
 
   it('STOPs without writing blocking matrix when verification would NOT RUN', async () => {
