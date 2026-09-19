@@ -5,7 +5,7 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, supervisorArtifactReadyForReview, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, extractPlanSupervisorAgent, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, supervisorArtifactReadyForReview, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
 import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
 
 const plan = `PLAN APPROVED
@@ -172,6 +172,59 @@ function roleWordsHandoffDescription() {
 - pnpm exec vitest run tests/extensions/beads-dispatch.test.ts
 ### Out of scope
 - vue false-positive routing.`
+}
+
+function srcTauriFilesHandoffDescription() {
+  return roleWordsHandoffDescription().replace(
+    '- .pi/extensions/beads-dispatch/index.ts',
+    '- src-tauri/src/lib.rs',
+  )
+}
+
+function planApprovedWithSupervisor(name?: string) {
+  return name ? `${currentPlan}\nSupervisor: ${name}` : currentPlan
+}
+
+async function dryRunDispatchSupervisor(opts: {
+  beadId: string
+  description: string
+  planText: string
+  agent?: string
+  title?: string
+  labels?: string[]
+}) {
+  let registeredTool: any
+  const branch = currentBranch()
+  const pi = {
+    events: { emit() {} },
+    registerTool(tool: any) {
+      if (tool.name === 'dispatch_supervisor') registeredTool = tool
+    },
+    exec: async (command: string, args: string[]) => {
+      if (command === 'bd' && args[0] === 'show') {
+        return {
+          stdout: JSON.stringify({
+            id: opts.beadId,
+            title: opts.title ?? 'qhdt plan supervisor autodispatch fixture',
+            status: 'in_progress',
+            labels: opts.labels ?? ['pi', 'workflow'],
+            description: opts.description,
+          }),
+          stderr: '',
+          code: 0,
+        }
+      }
+      if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: JSON.stringify([{ text: opts.planText }]), stderr: '', code: 0 }
+      if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+      if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+      if (command === 'git' && args.includes('rev-parse')) return { stdout: args.includes('--show-toplevel') ? `${process.cwd()}\n` : 'abc1234\n', stderr: '', code: 0 }
+      return { stdout: '', stderr: '', code: 0 }
+    },
+  }
+  beadsDispatchExtension(pi as any)
+  const params: { beadId: string; dryRun: true; agent?: string } = { beadId: opts.beadId, dryRun: true }
+  if (opts.agent) params.agent = opts.agent
+  return registeredTool.execute('call-1', params, undefined, undefined, workflowCtx(process.cwd(), opts.beadId, branch, 'abc1234'))
 }
 
 describe('beads-dispatch path rules integration', () => {
@@ -830,6 +883,38 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
   })
 })
 
+describe('extractPlanSupervisorAgent', () => {
+  it('returns the Supervisor field from the latest PLAN APPROVED comment', () => {
+    expect(extractPlanSupervisorAgent([{ text: planApprovedWithSupervisor('test-supervisor') }])).toBe('test-supervisor')
+  })
+
+  it('returns undefined when PLAN APPROVED has no Supervisor field', () => {
+    expect(extractPlanSupervisorAgent([{ text: currentPlan }])).toBeUndefined()
+  })
+
+  it('returns undefined when there is no PLAN APPROVED comment', () => {
+    expect(extractPlanSupervisorAgent([{ text: 'ordinary comment without a plan marker' }])).toBeUndefined()
+    expect(extractPlanSupervisorAgent([])).toBeUndefined()
+  })
+
+  it('uses the latest PLAN APPROVED comment; a newer plan without the field wins over an older one with it', () => {
+    expect(extractPlanSupervisorAgent([
+      { text: planApprovedWithSupervisor('test-supervisor') },
+      { text: planApprovedWithSupervisor('vue-supervisor') },
+    ])).toBe('vue-supervisor')
+    expect(extractPlanSupervisorAgent([
+      { text: planApprovedWithSupervisor('test-supervisor') },
+      { text: currentPlan },
+    ])).toBeUndefined()
+  })
+
+  it('rejects garbage that is not [a-z0-9-]+ and keeps regex prefix semantics', () => {
+    expect(extractPlanSupervisorAgent([{ text: `${currentPlan}\nSupervisor: Not An Agent!!` }])).toBeUndefined()
+    // Prefix-only capture: [a-z0-9-]+ stops at the space, so `Supervisor: test supervisor` → `test`.
+    expect(extractPlanSupervisorAgent([{ text: `${currentPlan}\nSupervisor: test supervisor` }])).toBe('test')
+  })
+})
+
 describe('chooseSupervisor', () => {
   it('does not pick tauri-supervisor from role-words in title+description with pi+workflow labels', () => {
     // Negative: prose about vue/tauri/test-supervisor must not force tauri path without rust context.
@@ -1008,6 +1093,49 @@ describe('chooseSupervisor', () => {
     const result = await registeredTool.execute('call-1', { beadId: 'bead-role-words-override', dryRun: true, agent: 'documentation-expert' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-role-words-override', branch, 'abc1234'))
     expect(result.details.error).toBeUndefined()
     expect(result.details.agent).toBe('documentation-expert')
+    expect(result.details.routingWarning).toBeUndefined()
+  })
+
+  it('dryRun PLAN APPROVED Supervisor: test-supervisor beats src-tauri Files routing', async () => {
+    const result = await dryRunDispatchSupervisor({
+      beadId: 'bead-qhdt-plan-supervisor',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('test-supervisor'),
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('test-supervisor')
+  })
+
+  it('dryRun same src-tauri Files bead without Supervisor field → tauri-supervisor', async () => {
+    const result = await dryRunDispatchSupervisor({
+      beadId: 'bead-qhdt-no-supervisor-field',
+      description: srcTauriFilesHandoffDescription(),
+      planText: currentPlan,
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('tauri-supervisor')
+  })
+
+  it('dryRun missing PLAN APPROVED Supervisor agent falls back to table with routingWarning', async () => {
+    const result = await dryRunDispatchSupervisor({
+      beadId: 'bead-qhdt-missing-agent',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('nonexistent-supervisor'),
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('tauri-supervisor')
+    expect(result.details.routingWarning).toContain('nonexistent-supervisor')
+  })
+
+  it('dryRun explicit agent= overrides PLAN APPROVED Supervisor field', async () => {
+    const result = await dryRunDispatchSupervisor({
+      beadId: 'bead-qhdt-agent-override',
+      description: srcTauriFilesHandoffDescription(),
+      planText: planApprovedWithSupervisor('test-supervisor'),
+      agent: 'tauri-supervisor',
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.agent).toBe('tauri-supervisor')
     expect(result.details.routingWarning).toBeUndefined()
   })
 })
