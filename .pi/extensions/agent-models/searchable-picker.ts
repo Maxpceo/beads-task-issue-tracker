@@ -14,6 +14,7 @@ export const OTHER_MODEL_ID = "__other__";
 export const OTHER_MODEL_LABEL = "Другая…";
 export const MENU_BACK_LABEL = "← Назад";
 export const FILTER_NOTIFY = "Уточните фильтр";
+export const FILTER_HINT = "Фильтр ищет по id, имени и provider";
 
 /** Near-fullscreen overlay options (session-replay canon). */
 export const MODEL_PICKER_OVERLAY_OPTIONS = {
@@ -57,12 +58,27 @@ export function filterAvailableModels<T extends PickerModel>(models: T[], query:
 	);
 }
 
+/** Display-time provider: explicit field, else first id segment before `/`. */
+export function modelDisplayProvider(m: PickerModel): string | undefined {
+	if (typeof m.provider === "string" && m.provider.trim()) return m.provider.trim();
+	if (!m.id.includes("/")) return undefined;
+	const first = m.id.split("/")[0]?.trim();
+	return first || undefined;
+}
+
 export function modelLabelOptions(models: PickerModel[]): SelectOption[] {
 	return models.map((m) => {
-		const provider = m.provider ?? (m.id.includes("/") ? m.id.split("/")[0] : undefined);
-		const label = provider ? `${m.id}` : m.id;
+		const provider = modelDisplayProvider(m);
+		let displayId = m.id;
+		if (provider) {
+			const slash = m.id.indexOf("/");
+			if (slash > 0 && m.id.slice(0, slash) === provider) {
+				displayId = m.id.slice(slash + 1);
+			}
+		}
+		const idPart = provider ? `[${provider}] ${displayId}` : displayId;
 		const suffix = m.name && m.name !== m.modelId && m.name !== m.id ? ` — ${m.name}` : "";
-		return { id: m.id, label: `${label}${suffix}` };
+		return { id: m.id, label: `${idPart}${suffix}` };
 	});
 }
 
@@ -125,6 +141,22 @@ function shouldSkipInput(kb: unknown, data: string): boolean {
 	);
 }
 
+function themeFg(theme: unknown): (color: string, text: string) => string {
+	return typeof (theme as { fg?: (c: string, t: string) => string })?.fg === "function"
+		? (theme as { fg: (c: string, t: string) => string }).fg.bind(theme)
+		: (_c: string, t: string) => t;
+}
+
+function mutedText(theme: unknown, text: string): string {
+	const fg = themeFg(theme);
+	try {
+		const out = fg("muted", text);
+		return out || fg("dim", text);
+	} catch {
+		return fg("dim", text);
+	}
+}
+
 function selectListTheme(theme: unknown): {
 	selectedPrefix: (t: string) => string;
 	selectedText: (t: string) => string;
@@ -132,18 +164,8 @@ function selectListTheme(theme: unknown): {
 	scrollInfo: (t: string) => string;
 	noMatch: (t: string) => string;
 } {
-	const fg =
-		typeof (theme as { fg?: (c: string, t: string) => string })?.fg === "function"
-			? (theme as { fg: (c: string, t: string) => string }).fg.bind(theme)
-			: (_c: string, t: string) => t;
-	const muted = (t: string): string => {
-		try {
-			const out = fg("muted", t);
-			return out || fg("dim", t);
-		} catch {
-			return fg("dim", t);
-		}
-	};
+	const fg = themeFg(theme);
+	const muted = (t: string): string => mutedText(theme, t);
 	return {
 		selectedPrefix: (t) => fg("accent", t),
 		selectedText: (t) => fg("accent", t),
@@ -190,6 +212,7 @@ export async function runSearchableModelPicker(input: {
 		const root = new Container();
 		root.addChild(new Text(title));
 		root.addChild(new Text("Фильтр моделей: "));
+		root.addChild(new Text(mutedText(theme, FILTER_HINT)));
 		root.addChild(searchInput);
 		root.addChild(listContainer);
 

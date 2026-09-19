@@ -17,7 +17,9 @@ import {
   collectModelsFromRegistry,
   defaultAgentModelsConfig,
   filterAvailableModels,
+  formatAgentModelsShow,
   formatCompactOverview,
+  formatResolvedTable,
   handleAgentModelsCommand,
   handleAgentModelsInvocation,
   interpretPick,
@@ -37,7 +39,9 @@ import {
   supportedThinkingLevels,
 } from '../../.pi/extensions/agent-models/index'
 import {
+  FILTER_HINT,
   MODEL_PICKER_MIN_RENDER_LINES,
+  modelLabelOptions,
   runSearchableModelPicker,
 } from '../../.pi/extensions/agent-models/searchable-picker'
 
@@ -614,7 +618,7 @@ describe('menu / hasUI', () => {
       (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
       (opts: string[]) => {
         modelOptions = opts
-        return opts.find((o) => o.includes('xai/live-model')) ?? null
+        return opts.find((o) => o.includes('[xai] live-model')) ?? null
       },
       // after model save, thinking step — back out of orphan/thinking if shown, then exit
       MENU_BACK,
@@ -636,12 +640,60 @@ describe('menu / hasUI', () => {
         ],
       },
     )
-    expect(modelOptions.some((o) => o.includes('xai/live-model'))).toBe(true)
+    expect(modelOptions.some((o) => o.includes('[xai] live-model'))).toBe(true)
     expect(modelOptions).toContain('Другая…')
     expect(modelOptions).toContain(MENU_BACK)
     expect(result.wrote).toBe(true)
     const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
     expect(raw.classes.strong).toBe('xai/live-model')
+  })
+
+  it('fallback-select shows zai/openrouter/no-slash badges without changing value', async () => {
+    const root = tempProject()
+    temps.push(root)
+    saveAgentModels(root, defaultAgentModelsConfig())
+    let classOptions: string[] = []
+    let modelOptions: string[] = []
+    const queue = [
+      'Настроить мощность (class)',
+      (opts: string[]) => {
+        classOptions = opts
+        return opts.find((o) => o.startsWith('strong ')) ?? null
+      },
+      (opts: string[]) => {
+        modelOptions = opts
+        return opts.find((o) => o.includes('[zai] glm-5.3')) ?? null
+      },
+      MENU_BACK,
+      MENU_EXIT,
+    ]
+    const result = await runAgentModelsMenu(
+      root,
+      {
+        select: async (_title, options) => {
+          const next = queue.shift()
+          if (typeof next === 'function') return next(options)
+          return (next as string | null | undefined) ?? null
+        },
+        notify: () => undefined,
+      },
+      {
+        listAvailableModels: async () => [
+          { id: 'glm-5.3', provider: 'zai', modelId: 'glm-5.3', name: 'GLM-5.3' },
+          { id: 'z-ai/glm-5.3', provider: 'openrouter', modelId: 'z-ai/glm-5.3', name: 'Z.ai: GLM 5.3' },
+          { id: 'glm-4.7' },
+        ],
+      },
+    )
+    expect(classOptions.some((o) => o.includes('xai/grok-4.5 [xai]'))).toBe(true)
+    expect(modelOptions.some((o) => o.includes('[zai] glm-5.3 — GLM-5.3'))).toBe(true)
+    expect(modelOptions.some((o) => o.includes('[openrouter] z-ai/glm-5.3 — Z.ai: GLM 5.3'))).toBe(true)
+    expect(modelOptions).toContain('glm-4.7')
+    expect(modelOptions).toContain('Другая…')
+    expect(result.wrote).toBe(true)
+    const raw = JSON.parse(fs.readFileSync(path.join(root, '.pi', 'agent-models.json'), 'utf8'))
+    expect(raw.classes.strong).toBe('zai/glm-5.3')
+    expect(raw.classes.strong).not.toContain('[')
   })
 
   it('catalog timeout falls back without hang', async () => {
@@ -653,7 +705,7 @@ describe('menu / hasUI', () => {
       'Настроить мощность (class)',
       (opts) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
       (opts) => {
-        sawFallbackModel = opts.some((o) => o.includes('xai/grok-4.5'))
+        sawFallbackModel = opts.some((o) => o.includes('[xai] grok-4.5'))
         return MENU_BACK
       },
       MENU_EXIT,
@@ -688,7 +740,7 @@ describe('menu / hasUI', () => {
     const queue: Array<string | null | ((opts: string[]) => string | null)> = [
       'Настроить мощность (class)',
       (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
-      (opts) => opts.find((o) => o.includes('xai/limited')) ?? opts[0] ?? null,
+      (opts) => opts.find((o) => o.includes('[xai] limited')) ?? opts[0] ?? null,
       (opts) => {
         thinkingOptions = opts
         return opts.find((o) => o === 'low') ?? MENU_BACK
@@ -737,7 +789,7 @@ describe('menu / hasUI', () => {
     const queue: Array<string | null | ((opts: string[]) => string | null)> = [
       'Настроить мощность (class)',
       (opts) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
-      (opts) => opts.find((o) => o.includes('xai/no-reason')) ?? opts[0] ?? null,
+      (opts) => opts.find((o) => o.includes('[xai] no-reason')) ?? opts[0] ?? null,
       // orphan prompt
       (opts) => opts.find((o) => o.includes('Сбросить')) ?? opts[0] ?? null,
       // thinking after clear path still offered — inherit
@@ -1123,6 +1175,43 @@ describe('menu / hasUI', () => {
     expect(text).toContain('Обзор agent-models')
     expect(text).toContain('Мощность')
     expect(text).toContain('strong')
+    expect(text).toContain('xai/grok-4.5 [xai]')
+    expect(text).not.toContain('[xai] xai/grok-4.5')
+  })
+
+  it('formatResolvedTable keeps exact model id and adds provider column', () => {
+    const config = {
+      classes: { strong: 'xai/grok-4.6', cheap: 'glm-4.7' },
+      classThinking: {},
+      roles: { detective: { model: 'z-ai/glm-5.3' } },
+      agentClasses: { architect: 'strong', docs: 'cheap' },
+    }
+    const text = formatResolvedTable(config, ['architect', 'docs', 'detective', 'unmapped'])
+    expect(text.split('\n')[0]).toBe('agent | class | model source | model | provider | thinking source | thinking')
+    expect(text).toContain('architect | strong | class | xai/grok-4.6 | xai | inherit | (session inherit)')
+    expect(text).toContain('docs | cheap | class | glm-4.7 | — | inherit | (session inherit)')
+    expect(text).toContain('detective | — | role | z-ai/glm-5.3 | z-ai | inherit | (session inherit)')
+    expect(text).toContain('unmapped | — | inherit | (session inherit) | — | inherit | (session inherit)')
+    expect(text).not.toContain('[xai] xai/grok-4.6')
+  })
+
+  it('formatAgentModelsShow suffixes provider on classes and keeps role override ids exact', () => {
+    const loaded = {
+      config: {
+        classes: { strong: 'xai/grok-4.6', cheap: 'glm-4.7' },
+        classThinking: { strong: 'high' as const },
+        roles: { detective: { model: 'z-ai/glm-5.3' } },
+        agentClasses: { architect: 'strong' },
+      },
+      path: '/tmp/agent-models-show/.pi/agent-models.json',
+      missing: false,
+    }
+    const text = formatAgentModelsShow(loaded, '/tmp/agent-models-show')
+    expect(text).toContain('strong (Сильная): xai/grok-4.6 [xai], thinking=high')
+    expect(text).toContain('cheap (Дешёвая): glm-4.7')
+    expect(text).not.toContain('glm-4.7 [')
+    expect(text).toContain('detective: model=z-ai/glm-5.3')
+    expect(text).not.toMatch(/role overrides:[\s\S]*model=\[z-ai\]/)
   })
 
   it('forwards modelRegistry into invocation menu path', async () => {
@@ -1143,7 +1232,7 @@ describe('menu / hasUI', () => {
           if (step === 1) return 'Настроить мощность (class)'
           if (step === 2) return options.find((o) => o.startsWith('standard ')) ?? options[0]
           if (step === 3) {
-            sawLive = options.some((o) => o.includes('xai/from-registry'))
+            sawLive = options.some((o) => o.includes('[xai] from-registry'))
             return MENU_BACK
           }
           return MENU_EXIT
@@ -1216,6 +1305,20 @@ describe('searchable model picker (khec / 2aqh)', () => {
     expect(interpretPick('xai/grok-4.5')).toEqual({ modelId: 'xai/grok-4.5' })
   })
 
+  it('modelLabelOptions badges provider and keeps value id unchanged', () => {
+    const opts = modelLabelOptions([
+      { id: 'glm-5.3', provider: 'zai', modelId: 'glm-5.3', name: 'GLM-5.3' },
+      { id: 'z-ai/glm-5.3', provider: 'openrouter', modelId: 'z-ai/glm-5.3', name: 'Z.ai: GLM 5.3' },
+      { id: 'glm-4.7' },
+      { id: 'xai/grok-4.6' },
+    ])
+    expect(opts.map((o) => o.id)).toEqual(['glm-5.3', 'z-ai/glm-5.3', 'glm-4.7', 'xai/grok-4.6'])
+    expect(opts[0]).toEqual({ id: 'glm-5.3', label: '[zai] glm-5.3 — GLM-5.3' })
+    expect(opts[1]).toEqual({ id: 'z-ai/glm-5.3', label: '[openrouter] z-ai/glm-5.3 — Z.ai: GLM 5.3' })
+    expect(opts[2]).toEqual({ id: 'glm-4.7', label: 'glm-4.7' })
+    expect(opts[3]).toEqual({ id: 'xai/grok-4.6', label: '[xai] grok-4.6' })
+  })
+
   it('pinThenCap keeps initial first when n>=40', () => {
     const models = catalogModels(40)
     const initial = 'prov/model-035'
@@ -1236,7 +1339,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
       'Настроить мощность (class)',
       (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
       (opts: string[]) => {
-        modelCount39 = opts.filter((o) => o.includes('prov/model-')).length
+        modelCount39 = opts.filter((o) => o.includes('[prov] model-')).length
         return MENU_BACK
       },
       MENU_EXIT,
@@ -1259,7 +1362,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
       'Настроить мощность (class)',
       (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
       (opts: string[]) => {
-        modelCount40 = opts.filter((o) => o.includes('prov/model-')).length
+        modelCount40 = opts.filter((o) => o.includes('[prov] model-')).length
         return MENU_BACK
       },
       MENU_EXIT,
@@ -1317,7 +1420,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
     const queueRpc = [
       'Настроить мощность (class)',
       (opts: string[]) => opts.find((o) => o.startsWith('cheap ')) ?? opts[0] ?? null,
-      (opts: string[]) => opts.find((o) => o.includes('xai/live-model')) ?? MENU_BACK,
+      (opts: string[]) => opts.find((o) => o.includes('[xai] live-model')) ?? MENU_BACK,
       MENU_BACK,
       MENU_EXIT,
     ]
@@ -1524,6 +1627,34 @@ describe('searchable model picker (khec / 2aqh)', () => {
     expect(lines[lines.length - 1]).toBe('')
   })
 
+  it('renders provider badges and filter hint', async () => {
+    let lines: string[] = []
+    await runSearchableModelPicker({
+      title: 'Pick model',
+      models: [
+        { id: 'glm-5.3', provider: 'zai', modelId: 'glm-5.3', name: 'GLM-5.3' },
+        { id: 'z-ai/glm-5.3', provider: 'openrouter', modelId: 'z-ai/glm-5.3', name: 'Z.ai: GLM 5.3' },
+        { id: 'glm-4.7' },
+      ],
+      custom: async (factory) => {
+        const comp = factory(
+          { requestRender: () => undefined },
+          { fg: (_c: string, t: string) => t },
+          { matches: () => false },
+          () => undefined,
+        )
+        lines = comp.render(80)
+        return null
+      },
+    })
+    const head = lines.slice(0, 20).join('\n')
+    expect(head).toContain(FILTER_HINT)
+    expect(head).toContain('[zai] glm-5.3 — GLM-5.3')
+    expect(head).toContain('[openrouter] z-ai/glm-5.3 — Z.ai: GLM 5.3')
+    expect(head).toMatch(/glm-4\.7/)
+    expect(head).not.toContain('[undefined]')
+  })
+
   it('Down+Enter selects models[1].id when initial is models[0].id', async () => {
     const models = [
       { id: 'prov/model-a', provider: 'prov', modelId: 'model-a' },
@@ -1670,7 +1801,7 @@ describe('searchable model picker (khec / 2aqh)', () => {
     const queue = [
       'Настроить мощность (class)',
       (opts: string[]) => opts.find((o) => o.startsWith('strong ')) ?? opts[0] ?? null,
-      (opts: string[]) => opts.find((o) => o.includes('xai/fallback-a')) ?? opts[0] ?? null,
+      (opts: string[]) => opts.find((o) => o.includes('[xai] fallback-a')) ?? opts[0] ?? null,
       MENU_BACK,
       MENU_EXIT,
     ]
