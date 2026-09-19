@@ -22,7 +22,11 @@
 
 ### Fixed
 
+- **Pi plan-mode H3 / list / fence no longer show raw markdown** (`beads-task-issue-tracker-yxn0`): display-only `planMarkdownTransform` rewrites column-0 H3+ to `## ` and `wrapPlanMarkdownTheme` paints unordered bullets as `• ` and hides fence backtick borders; stored plan text is unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.
+
 - **Pi beads-policy recovery beyond the first `bd list` page** (`beads-task-issue-tracker-7uoa`): recovery marker search lists each status with `--limit=0` (fallback without the flag for older bd) and probes at most 30 freshest `updated_at` candidates per recoverable function, so a valid POST-CLOSE MERGE FIX on a closed low-priority bead past the default 50-item page is visible without scanning the whole archive. Focused vitest under `tests/extensions/beads-policy.test.ts`.
+
+- **Pi plan-mode transcript is themed Markdown, not a raw dump** (`beads-task-issue-tracker-pwx6`): `plan-ready-document` renders `ClampedMarkdown` + `getMarkdownTheme()` with post-clamp width, and `plan_mode_complete.renderCall` stays a compact label instead of dumping `args.plan`.
 
 - **Pi chooseSupervisor ignores rust tokens in Out of scope / do-not-touch** (`beads-task-issue-tracker-0nvj`): `src-tauri` / `rust` / `cargo` only inside `### Out of scope` or «Не трогать» / `do not touch` / `don't touch` blocks no longer force `tauri-supervisor` for `pi`/`workflow` beads. Title and Files path signals still route to tauri. Focused vitest under `tests/extensions/beads-dispatch.test.ts`.
 

@@ -213,7 +213,8 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         },
       }
     }
-    if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai' || id === '@earendil-works/pi-coding-agent') return {}
+    if (id === '@earendil-works/pi-agent-core' || id === '@earendil-works/pi-ai') return {}
+    if (id === '@earendil-works/pi-coding-agent') return { getMarkdownTheme: () => ({}) }
     throw new Error(`Unexpected require: ${id}`)
   }
   new Function('require', 'module', 'exports', outputText)(mockRequire, module, module.exports)
@@ -2926,12 +2927,25 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const renderer = harness.entryRenderers.get('plan-ready-document')
     expect(renderer).toBeTypeOf('function')
     const transcript = renderer!({ type: 'custom', customType: 'plan-ready-document', data: { content: longPlan } }, { expanded: false }, harness.ctx.ui.theme)
+    expect(transcript).toBeInstanceOf(piTuiMock.Markdown)
     const transcriptText = transcript.render(80).join('\n')
     expect(transcriptText).toContain('UNIQUE_PLAN_LINE_000')
     expect(transcriptText).toContain('UNIQUE_PLAN_LINE_199')
     for (const line of transcript.render(40)) {
       expect(piTuiMock.visibleWidth(line)).toBeLessThanOrEqual(40)
     }
+
+    const chrome = harness.toolHandlers.get('plan_mode_complete')?.renderCall(
+      { plan: longPlan },
+      harness.ctx.ui.theme,
+      {},
+    )
+    expect(chrome).toBeInstanceOf(piTuiMock.Text)
+    const chromeText = chrome.render(80).join('\n')
+    expect(chromeText).toContain('plan_mode_complete')
+    expect(chromeText).not.toContain('UNIQUE_PLAN_LINE_000')
+    expect(chromeText).not.toContain('UNIQUE_PLAN_LINE_199')
+    expect(chromeText).not.toContain('UNIQUE_PLAN_LINE')
   })
 
   it('appendEntry throw for plan-ready-document does not block execute-path overlay ready-UI', async () => {
@@ -3237,6 +3251,17 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const wrapDumpLines = readyUi.wrapPlanToWidth('word '.repeat(400), 40)
     expect(wrapDumpLines.length).toBeGreaterThan(6)
 
+    const emptyDoc = readyUi.createPlanDocumentComponent('   ', {})
+    expect(emptyDoc).toBeInstanceOf(piTuiMock.Text)
+    expect(emptyDoc).not.toBeInstanceOf(piTuiMock.Markdown)
+    const mdDoc = readyUi.createPlanDocumentComponent(`${longToken}\nUNIQUE_PLAN_LINE_000`, {})
+    expect(mdDoc).toBeInstanceOf(piTuiMock.Markdown)
+    expect(mdDoc).toBeInstanceOf(readyUi.ClampedMarkdown)
+    expect(mdDoc.render(80).join('\n')).toContain('UNIQUE_PLAN_LINE_000')
+    for (const line of mdDoc.render(width)) {
+      expect(piTuiMock.visibleWidth(line)).toBeLessThanOrEqual(width)
+    }
+
     const questionUi = transpileSibling('question-ui.ts') as any
     const questions = questionUi.normalizeQuestions([
       {
@@ -3288,10 +3313,70 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(indexSource).toMatch(/overlay:\s*true/)
     expect(indexSource).toContain('registerEntryRenderer')
     expect(indexSource).toContain('appendEntry("plan-ready-document"')
+    expect(indexSource).toContain('createPlanDocumentComponent')
+    expect(indexSource).toContain('getMarkdownTheme')
+    expect(indexSource).toContain('renderCall')
     expect(readyUiSource).not.toMatch(/import\s*\{[^}]*SelectList/)
     expect(readyUiSource).not.toMatch(/new SelectList/)
     expect(readyUiSource).toContain('createReadyUiFactory')
+    expect(readyUiSource).toContain('createPlanDocumentComponent')
+    expect(readyUiSource).toContain('ClampedMarkdown')
     expect(readyUiSource).not.toContain('visiblePlanWindow')
     expect(readyUiSource).not.toMatch(/PgUp|pageUp/)
+  })
+})
+
+describe('Pi plan-mode display markdown helpers (yxn0)', () => {
+  const readyUi = transpileSibling('ready-ui.ts') as {
+    planMarkdownTransform: (markdown: string, availableWidth?: number) => string
+    wrapPlanMarkdownTheme: (base: unknown) => {
+      listBullet: (text: string) => string
+      codeBlockBorder: (text: string) => string
+    }
+    createPlanDocumentComponent: (content: string, mdTheme: unknown) => unknown
+    ClampedMarkdown: new (...args: unknown[]) => { render: (width: number) => string[] }
+  }
+  const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/ready-ui.ts'), 'utf8')
+
+  it('planMarkdownTransform rewrites column-0 H3+ to ## and leaves H1/H2', () => {
+    expect(readyUi.planMarkdownTransform('### A\ntext\n### B')).toBe('## A\ntext\n## B')
+    expect(readyUi.planMarkdownTransform('# H1\n## H2\n### H3\n#### H4')).toBe('# H1\n## H2\n## H3\n## H4')
+    expect(readyUi.planMarkdownTransform('  ### indented')).toBe('  ### indented')
+  })
+
+  it('documents the column-0 ###-inside-fence rewrite limit', () => {
+    expect(readyUi.planMarkdownTransform('```\n### inside\n```')).toBe('```\n## inside\n```')
+  })
+
+  it('wrapPlanMarkdownTheme rewrites listBullet before the base theme and hides fence backticks', () => {
+    const wrapped = readyUi.wrapPlanMarkdownTheme({
+      listBullet: (text: string) => `[gold]${text}[/gold]`,
+      codeBlockBorder: (text: string) => `[border]${text}[/border]`,
+      heading: 'keep',
+    })
+    expect(wrapped.listBullet('- item')).toBe('[gold]• item[/gold]')
+    expect(wrapped.listBullet('* item')).toBe('[gold]• item[/gold]')
+    expect(wrapped.listBullet('+ item')).toBe('[gold]• item[/gold]')
+    expect(wrapped.codeBlockBorder('```json')).toBe('')
+    expect(wrapped.codeBlockBorder('```')).toBe('')
+    expect(wrapped.codeBlockBorder('plain')).toBe('[border]plain[/border]')
+    expect((wrapped as { heading?: string }).heading).toBe('keep')
+  })
+
+  it('wrapPlanMarkdownTheme empty theme still rewrites bullets and blank fence lines', () => {
+    const wrapped = readyUi.wrapPlanMarkdownTheme({})
+    expect(wrapped.listBullet('- a')).toBe('• a')
+    expect(wrapped.codeBlockBorder('```')).toBe('')
+    expect(wrapped.codeBlockBorder('x')).toBe('x')
+  })
+
+  it('ClampedMarkdown.super passes 5th undefined and 6th transform; createPlan only wraps theme', () => {
+    expect(readyUiSource).toContain('export function planMarkdownTransform')
+    expect(readyUiSource).toContain('export function wrapPlanMarkdownTheme')
+    expect(readyUiSource).toMatch(/super\(\s*text,\s*paddingX,\s*paddingY,\s*mdTheme,\s*undefined,\s*\{\s*transform:\s*planMarkdownTransform\s*\}\s*\)/)
+    expect(readyUiSource).toContain('wrapPlanMarkdownTheme(mdTheme)')
+    const createPlanSite = readyUiSource.slice(readyUiSource.indexOf('export function createPlanDocumentComponent'))
+    expect(createPlanSite).toContain('new ClampedMarkdown(text, 0, 0, theme)')
+    expect(createPlanSite).not.toContain('transform: planMarkdownTransform')
   })
 })

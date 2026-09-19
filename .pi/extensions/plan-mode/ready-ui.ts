@@ -6,7 +6,7 @@
  * custom killed Pi / TUI.stop(); questionnaire-style hand-rolled 1–4 / ↑↓ / Enter lives).
  */
 
-import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Key, Markdown, matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Stable ready-action ids used by plan-mode agent_end loop. */
 export type ReadyAction = "execute" | "stay" | "refine" | "plan-review";
@@ -78,6 +78,57 @@ export function wrapPlanToWidth(planText: string, width: number): string[] {
 /** Full plan lines for `registerEntryRenderer` — clamp to terminal width (m6ho). */
 export function renderPlanTranscriptLines(planText: string, width: number): string[] {
 	return clampRenderLines(wrapPlanToWidth(planText, width), width);
+}
+
+/** Display-only: rewrite column-0 H3+ to `## ` so stock pi-tui does not print `###`. */
+export function planMarkdownTransform(markdown: string, _availableWidth?: number): string {
+	return markdown.replace(/^(#{3,})\s+/gm, "## ");
+}
+
+type MarkdownThemeFn = (text: string) => string;
+
+interface PlanMarkdownTheme {
+	listBullet?: MarkdownThemeFn;
+	codeBlockBorder?: MarkdownThemeFn;
+	[key: string]: unknown;
+}
+
+/** Display-only theme wrap: `•` bullets and fence borders without visible backticks. */
+export function wrapPlanMarkdownTheme(base: unknown): PlanMarkdownTheme {
+	const theme: PlanMarkdownTheme =
+		base && typeof base === "object" ? { ...(base as PlanMarkdownTheme) } : {};
+	const baseListBullet = theme.listBullet;
+	const baseCodeBlockBorder = theme.codeBlockBorder;
+	return {
+		...theme,
+		listBullet: (text: string) => {
+			const rewritten = text.replace(/^[-*+] /, "• ");
+			return typeof baseListBullet === "function" ? baseListBullet(rewritten) : rewritten;
+		},
+		codeBlockBorder: (text: string) => {
+			if (text.trimStart().startsWith("```")) return "";
+			return typeof baseCodeBlockBorder === "function" ? baseCodeBlockBorder(text) : text;
+		},
+	};
+}
+
+/** Markdown document with post-clamp so wide fences cannot abort the TUI (m6ho). */
+export class ClampedMarkdown extends Markdown {
+	constructor(text: string, paddingX = 0, paddingY = 0, mdTheme?: unknown) {
+		super(text, paddingX, paddingY, mdTheme, undefined, { transform: planMarkdownTransform });
+	}
+
+	render(width: number): string[] {
+		return clampRenderLines(super.render(width), Math.max(1, width));
+	}
+}
+
+/** Live plan-ready transcript component: themed Markdown, not wrap-only source. */
+export function createPlanDocumentComponent(content: string, mdTheme: unknown): Markdown | Text {
+	const text = content.trim();
+	if (!text) return new Text("", 0, 0);
+	const theme = wrapPlanMarkdownTheme(mdTheme);
+	return new ClampedMarkdown(text, 0, 0, theme);
 }
 
 /**

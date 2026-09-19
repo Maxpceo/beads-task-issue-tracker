@@ -69,7 +69,7 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 }
 
 export class Text implements Component {
-  constructor(private readonly text: string) {}
+  constructor(private readonly text: string, ..._rest: unknown[]) {}
   render(width: number): string[] { return [truncateToWidth(this.text, width, '')] }
 }
 
@@ -78,7 +78,19 @@ export class Spacer implements Component {
   render(): string[] { return Array.from({ length: this.lines }, () => '') }
 }
 
-export class Markdown extends Text {}
+export class Markdown implements Component {
+  constructor(private readonly text: string, ..._rest: unknown[]) {}
+  render(width: number): string[] {
+    const w = Math.max(1, width)
+    const lines: string[] = []
+    for (const raw of this.text.split(/\r?\n/)) {
+      for (const wrapped of wrapTextWithAnsi(raw, w)) {
+        lines.push(truncateToWidth(wrapped, w, ''))
+      }
+    }
+    return lines
+  }
+}
 
 export class Container implements Component {
   children: Component[] = []
