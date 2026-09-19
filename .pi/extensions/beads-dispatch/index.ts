@@ -1702,7 +1702,7 @@ async function dispatchVisibleCmux(input: {
 	const existing = loadRegistry(registryFile);
 	if (liveEntriesForBead(existing, bead.id, agentName).length > 0) {
 		const followupHint = agentName === "code-reviewer" ? `{ beadId, role: "code-reviewer" }` : `{ beadId }`;
-		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; use followup_visible_dispatch(${followupHint}))`);
+		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; supervisor already spawned — wait for ping; use followup_visible_dispatch(${followupHint}))`);
 	}
 	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
 	fs.mkdirSync(resultsDir, { recursive: true });

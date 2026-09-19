@@ -543,6 +543,8 @@ describe('dispatch_supervisor transport=cmux', () => {
     const second = await registered.execute('call-2', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
     expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId \}\)/)
     expect(second.content[0].text).toMatch(/BLOCKED/)
+    expect(second.content[0].text).toMatch(/live pane already registered/)
+    expect(second.content[0].text).toMatch(/supervisor already spawned/)
   })
 
   it('renames child and orchestrator tabs after visible spawn', async () => {

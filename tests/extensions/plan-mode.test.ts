@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import ts from 'typescript'
 import * as piTuiMock from '../mocks/pi-tui'
 
+import { findLiveRegistryEntriesForBead } from '../../.pi/extensions/beads-dispatch/index'
 import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
 import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
@@ -52,6 +54,8 @@ let mockSupervisorDispatchAvailable = true
 let mockSupervisorDispatchCalls: Array<{ beadId: string; cwd?: string; transport?: string }> = []
 let mockSupervisorDispatchGate: Promise<void> | undefined
 let mockSupervisorDispatchSpawned = false
+let mockSupervisorDispatchError: string | undefined
+let useRealLiveRegistry = false
 let mockCompleteVisibleCalls: Array<{ taskId: string }> = []
 let mockCompleteVisibleResult: { status: string; text: string } = { status: 'submitted', text: 'ok' }
 let mockCompleteVisibleImpl: ((taskId: string) => Promise<{ status: string; text: string }>) | undefined
@@ -172,6 +176,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string; transport?: string }) => {
           mockSupervisorDispatchCalls.push(params)
           await mockSupervisorDispatchGate
+          if (mockSupervisorDispatchError) return { ok: false, text: '', error: mockSupervisorDispatchError }
           if (!mockSupervisorDispatchAvailable) return { ok: false, text: '', error: 'runtime hook missing: test API unavailable' }
           if (mockSupervisorDispatchSpawned) {
             return { ok: true, text: 'status=spawned', details: { status: 'spawned', transport: 'cmux', beadId: params.beadId } }
@@ -202,7 +207,10 @@ function loadPlanModeExtension(): (pi: unknown) => void {
           return { ...mockCloseVisibleResult, text: mockCloseVisibleResult.text || `closed panes for ${params.beadId}` }
         },
         findRegistryByTaskId: (taskId: string) => mockRegistryByTaskId[taskId],
-        findLiveRegistryEntriesForBead: (beadId: string) => mockLiveRegistryByBead[beadId] ?? [],
+        findLiveRegistryEntriesForBead: (beadId: string) => {
+          if (useRealLiveRegistry) return findLiveRegistryEntriesForBead(beadId)
+          return mockLiveRegistryByBead[beadId] ?? []
+        },
       }
     }
     if (id === '../review-workflow/index') {
@@ -258,6 +266,8 @@ function makeHarness(options: {
   mockSupervisorDispatchCalls = []
   mockSupervisorDispatchGate = undefined
   mockSupervisorDispatchSpawned = false
+  mockSupervisorDispatchError = undefined
+  useRealLiveRegistry = false
   mockCompleteVisibleCalls = []
   mockCompleteVisibleResult = { status: 'submitted', text: 'ok' }
   mockCompleteVisibleImpl = undefined
@@ -1701,7 +1711,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
     expect(approved.content[0].text).toContain('fastPathSkip')
     expect(approved.content[0].text).not.toContain('continuation attempted')
-    expect(approved.details).toMatchObject({ ok: true, fastPathSkip: true })
+    expect(approved.details).toMatchObject({ ok: true, fastPathSkip: true, continuationSkipReason: 'fastPath' })
     expect(workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(mockSupervisorDispatchCalls).toHaveLength(0)
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
@@ -1731,6 +1741,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(approved.content[0].text).toContain('continuation attempted')
     expect(approved.content[0].text).not.toContain('fastPathSkip')
     expect(approved.details).toMatchObject({ ok: true, fastPathSkip: false })
+    expect(approved.details.continuationSkipReason).toBeUndefined()
     expect(mockSupervisorDispatchCalls).toHaveLength(1)
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-plan', cwd: '/tmp/task', transport: 'cmux' })
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(true)
@@ -2585,6 +2596,220 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(result).toBeUndefined()
     expect(mockCompleteVisibleCalls).toHaveLength(0)
   })
+
+  describe('post-approval continuation idempotent skip',
+    () => {
+      let tmp: string
+      const prevOrch = process.env.ORCH_ROOT
+      const prevHome = process.env.HOME
+
+      function seedLiveRegistry(opts: { beadId: string; role: string; hung?: boolean }) {
+        const dir = join(process.env.ORCH_ROOT!, 'ns', 'ws-test')
+        mkdirSync(dir, { recursive: true })
+        writeFileSync(join(dir, 'dispatch-registry.json'), `${JSON.stringify({
+          entries: [{
+            taskId: `task--${opts.role}`,
+            beadId: opts.beadId,
+            pane: 'surface:1',
+            worktree: '/tmp/task',
+            role: opts.role,
+            model: 'test',
+            taskFile: '/tmp/task.md',
+            resultFile: '/tmp/result.md',
+            digestFile: '/tmp/digest',
+            promptFile: '/tmp/prompt.md',
+            status: 'spawned',
+            hung: opts.hung,
+            createdAt: '2026-09-19T00:00:00.000Z',
+          }],
+        }, null, 2)}\n`)
+      }
+
+      const planEvidence = [
+        'Plan: implement supervisor path.',
+        'Files to change:',
+        '- .pi/extensions/plan-mode/index.ts',
+        'Acceptance: dispatch still runs',
+        'Branch: task/plan-approved',
+        'Worktree: /tmp/task',
+        'START_COMMIT: task123',
+      ].join('\n')
+
+      beforeEach(() => {
+        tmp = mkdtempSync(join(tmpdir(), '5cb6-plan-mode-'))
+        process.env.ORCH_ROOT = tmp
+        process.env.HOME = tmp
+      })
+
+      afterEach(() => {
+        if (prevOrch === undefined) delete process.env.ORCH_ROOT
+        else process.env.ORCH_ROOT = prevOrch
+        if (prevHome === undefined) delete process.env.HOME
+        else process.env.HOME = prevHome
+        rmSync(tmp, { recursive: true, force: true })
+      })
+
+      it('live supervisor skips continuation without BLOCKED and keeps implementing',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          useRealLiveRegistry = true
+          seedLiveRegistry({ beadId: 'bead-plan', role: 'test-supervisor' })
+
+          const approved = await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-already-spawned', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          const comments = harness.execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+          expect(comments).toHaveLength(1)
+          expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
+          expect(comments[0]?.args[3]).not.toContain('BLOCKED')
+          expect(approved.content[0].text).toContain('supervisor already spawned')
+          expect(approved.content[0].text).not.toContain('fastPathSkip')
+          expect(approved.details).toMatchObject({ ok: true, continuationSkipReason: 'alreadySpawned' })
+          expect(approved.details.fastPathSkip).not.toBe(true)
+          expect(harness.workflowUpdates.at(-1)).toMatchObject({ planMode: 'off', sessionMode: 'implementing', planApproved: true })
+          expect(mockSupervisorDispatchCalls).toHaveLength(0)
+          const skipMessage = harness.sendMessages.find((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')
+          expect(skipMessage?.message.content).toContain('supervisor already spawned; waiting ping')
+          expect(skipMessage?.message.content).toContain('If no ping arrives (dead pane)')
+          expect(skipMessage?.message.content).toContain('close_visible_dispatch')
+          expect(skipMessage?.options).toMatchObject({ triggerTurn: false })
+        })
+
+      it('live implementer failsafe entry skips continuation',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          useRealLiveRegistry = true
+          seedLiveRegistry({ beadId: 'bead-plan', role: 'implementer' })
+
+          const approved = await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-implementer-skip', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          expect(approved.details).toMatchObject({ continuationSkipReason: 'alreadySpawned' })
+          expect(mockSupervisorDispatchCalls).toHaveLength(0)
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(true)
+        })
+
+      it('live docs-agent entry does not skip supervisor continuation',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          useRealLiveRegistry = true
+          seedLiveRegistry({ beadId: 'bead-plan', role: 'docs-agent' })
+
+          const approved = await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-docs-no-skip', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          expect(approved.content[0].text).toContain('continuation attempted')
+          expect(approved.details.continuationSkipReason).toBeUndefined()
+          expect(mockSupervisorDispatchCalls).toHaveLength(1)
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(false)
+        })
+
+      it('corrupt dispatch-registry.json fail-opens to the dispatch path',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          useRealLiveRegistry = true
+          const dir = join(process.env.ORCH_ROOT!, 'ns', 'ws-test')
+          mkdirSync(dir, { recursive: true })
+          writeFileSync(join(dir, 'dispatch-registry.json'), '{not-json')
+
+          const approved = await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-corrupt-registry', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+          expect(mockSupervisorDispatchCalls).toHaveLength(1)
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(false)
+        })
+
+      it('dispatch live pane already registered skips instead of scope BLOCKED',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          mockSupervisorDispatchError = 'повторный spawn для bead-plan: BLOCKED (live pane already registered; use followup_visible_dispatch({ beadId }))'
+
+          const approved = await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-live-pane-error', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          const comments = harness.execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+          expect(comments).toHaveLength(1)
+          expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
+          expect(comments.some((call) => String(call.args[3]).includes('BLOCKED: task worktree scope'))).toBe(false)
+          expect(approved.details).toMatchObject({ continuationSkipReason: 'alreadySpawned' })
+          expect(harness.workflowUpdates.at(-1)).toMatchObject({ sessionMode: 'implementing' })
+          expect(mockSupervisorDispatchCalls).toHaveLength(1)
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(true)
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-blocked')).toBe(false)
+        })
+
+      it('real continuation scope errors still BLOCKED and state=blocked',
+        async () => {
+          const harness = makeHarness({ taskScopeGit: true })
+          mockSupervisorDispatchError = 'no readable task worktree for continuation'
+
+          await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-scope-regression', {
+            beadId: 'bead-plan',
+            planEvidence,
+          }, undefined, undefined, harness.ctx)
+
+          const comments = harness.execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+          expect(comments[0]?.args[3]).toContain('PLAN APPROVED')
+          expect(comments[1]?.args[3]).toContain('BLOCKED: task worktree scope')
+          expect(harness.workflowUpdates.at(-1)).toMatchObject({ sessionMode: 'blocked', planApproved: true })
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(false)
+          expect(harness.sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
+        })
+
+      it('autopilot live supervisor skip keeps autopilot flag and implementing',
+        async () => {
+          const harness = makeHarness()
+          useRealLiveRegistry = true
+          seedLiveRegistry({ beadId: 'bead-plan', role: 'test-supervisor' })
+
+          await harness.commandHandlers.get('plan-autopilot')?.handler('', harness.ctx)
+          await harness.agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Plan:\n1. Draft gate' }] }] }, harness.ctx)
+          await harness.agentEndHandlers[0]?.({
+            messages: [{
+              role: 'assistant',
+              content: [{
+                type: 'text',
+                text: [
+                  'Reviewer findings summary:',
+                  '- ok',
+                  'Accepted findings:',
+                  '- none',
+                  'Rejected findings:',
+                  '- none',
+                  'Unresolved blockers: none',
+                  'Revised plan:',
+                  '1. Implement',
+                  'Files to change:',
+                  '- .pi/extensions/plan-mode/index.ts',
+                  'Acceptance:',
+                  '- tests pass',
+                  'Risks / rollback:',
+                  '- revert',
+                  'AUTO_EXECUTE_ALLOWED: true',
+                ].join('\n'),
+              }],
+            }],
+          }, harness.ctx)
+
+          expect(harness.statuses['plan-mode']).toBe('autopilot')
+          expect(harness.workflowUpdates.at(-1)).toMatchObject({ sessionMode: 'implementing', planApproved: true })
+          expect(mockSupervisorDispatchCalls).toHaveLength(0)
+          const comments = harness.execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
+          expect(comments.some((call) => String(call.args[3]).includes('BLOCKED'))).toBe(false)
+          expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(true)
+        })
+    })
 })
 
 describe('Pi plan-mode complete-when-ready overlay', () => {

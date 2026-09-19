@@ -659,6 +659,43 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return /runtime hook missing|API unavailable|not available|registry/i.test(error);
 	}
 
+	// Close to isSupervisorRole (cmux-transport.ts:367); implementer clause is from KERNEL_FAILSAFE_AGENT (supervisor-routing.ts:6); the extra clause is intentional.
+	function isSupervisorRegistryRole(role: string): boolean {
+		return role.includes("supervisor") || role === "implementer";
+	}
+
+	function isLivePaneAlreadyRegistered(error: string): boolean {
+		return /live pane already registered|повторный spawn/i.test(error);
+	}
+
+	function sendAlreadySpawnedSkip(beadId: string, live: Array<{ entry: { taskId?: string; role?: string } }>): void {
+		const liveSummary = live.length > 0
+			? live.map((item) => `${item.entry.taskId ?? "unknown"} (${item.entry.role ?? "unknown"})`).join(", ")
+			: "(none listed)";
+		const content = [
+			"PLAN APPROVED continuation skipped: supervisor already spawned; waiting ping",
+			`Bead: ${beadId}`,
+			`Live: ${liveSummary}`,
+			"Next: complete_visible_dispatch after supervisor ping. Do not dispatch_supervisor again.",
+			"If no ping arrives (dead pane), inspect pane/registry and use close_visible_dispatch before re-dispatch.",
+		].join("\n");
+		pi.sendMessage(
+			{ customType: "post-approval-continuation-idempotent-skip", content, display: true },
+			{ triggerTurn: false },
+		);
+	}
+
+	function skipAlreadySpawnedContinuation(beadId: string): { skipped: true; reason: "alreadySpawned" } {
+		let live: ReturnType<typeof findLiveRegistryEntriesForBead> = [];
+		try {
+			live = findLiveRegistryEntriesForBead(beadId).filter((item) => isSupervisorRegistryRole(item.entry.role));
+		} catch {
+			live = [];
+		}
+		sendAlreadySpawnedSkip(beadId, live);
+		return { skipped: true, reason: "alreadySpawned" };
+	}
+
 	async function recordRuntimeHookMissing(ctx: ExtensionContext, beadId: string, action: string, error: string): Promise<void> {
 		const content = [
 			"BLOCKED: runtime hook missing",
@@ -732,7 +769,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		beadId: string,
 		options: { approvedWorktreePath?: string; planEvidence?: string; triggerTurn?: boolean } = {},
-	): Promise<{ skipped: boolean }> {
+	): Promise<{ skipped: boolean; reason?: "fastPath" | "alreadySpawned" }> {
 		// Fast Path: orchestrator implements; skip supervisor spawn before any pre-dispatch work.
 		if (hasNonemptyFastPathRationale(options.planEvidence ?? "") && !autopilotEnabled) {
 			const triggerTurn = options.triggerTurn === true;
@@ -747,7 +784,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				{ customType: "post-approval-fast-path-skip", content, display: true },
 				{ triggerTurn },
 			);
-			return { skipped: true };
+			return { skipped: true, reason: "fastPath" };
+		}
+
+		try {
+			const live = findLiveRegistryEntriesForBead(beadId).filter((item) => isSupervisorRegistryRole(item.entry.role));
+			if (live.length > 0) {
+				sendAlreadySpawnedSkip(beadId, live);
+				return { skipped: true, reason: "alreadySpawned" };
+			}
+		} catch {
+			// Fail-open: unreadable/corrupt registry must not skip; follow the existing dispatch path.
 		}
 
 		const resolved = await resolveContinuationCwd(ctx, beadId, options.approvedWorktreePath);
@@ -760,6 +807,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const result = await requestSupervisorDispatch(pi, { beadId, cwd: resolved.cwd, transport: "cmux" }, ctx);
 		if (!result.ok) {
 			const error = result.error ?? "typed continuation returned without success";
+			if (isLivePaneAlreadyRegistered(error)) {
+				return skipAlreadySpawnedContinuation(beadId);
+			}
 			if (isRuntimeHookUnavailable(error)) {
 				await recordRuntimeHookMissing(ctx, beadId, action, error);
 				return { skipped: false };
@@ -1030,12 +1080,23 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			planEvidence: params.planEvidence,
 			triggerTurn: params.triggerTurn === true,
 		});
-		const continuationLabel = continuation.skipped
-			? "fastPathSkip"
-			: `continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`;
+		const continuationLabel = continuation.reason === "alreadySpawned"
+			? "continuation skipped: supervisor already spawned; waiting ping"
+			: continuation.reason === "fastPath"
+				? "fastPathSkip"
+				: `continuation attempted${autopilotEnabled ? "; autopilot remains on" : ""}`;
 		return toolText(
 			`workflow_plan_approved recorded for ${params.beadId}; plan mode off; sessionMode=implementing; ${continuationLabel}`,
-			{ ok: true, beadId: params.beadId, branch, worktreePath, startCommit, autopilot: autopilotEnabled, fastPathSkip: continuation.skipped },
+			{
+				ok: true,
+				beadId: params.beadId,
+				branch,
+				worktreePath,
+				startCommit,
+				autopilot: autopilotEnabled,
+				fastPathSkip: continuation.reason === "fastPath",
+				continuationSkipReason: continuation.reason,
+			},
 		);
 	}
 
