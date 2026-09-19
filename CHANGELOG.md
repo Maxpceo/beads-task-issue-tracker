@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Pi visible cmux agents + 2-column down-stack layout** (`beads-task-issue-tracker-0qsm`): interactive `dispatch_docs_agent`, plan-review trio, `plan_subagent`, and `subagent` open cmux panes instead of headless dashboard cards. Placement is `resolveVisibleSplitPlacement` (0 live → right of orch; 1 → right of oldest agent; 2+ → `new-split down` on the shortest of two columns). Docs complete is `submitStatus=result-only` (no inreview). Headless remains for CI/no-UI and explicit `transport=headless`.
+
 - **Pi PLAN APPROVED `Supervisor:` autodispatch** (`beads-task-issue-tracker-qhdt`): `dispatch()` without `agent=` reads `Supervisor: <agent-name>` from the latest PLAN APPROVED comment (if `.pi/agents/<name>.md` exists) before the supervisor-routing table. Missing or unknown names stay fail-open to the table. Focused vitest under `tests/extensions/beads-dispatch.test.ts`.
 
 - **Pi parallel task workspace spawn** (`beads-task-issue-tracker-hy3z`): typed tool `spawn_task_workspace({ beadId, title })` opens an independent open bead in a new cmux workspace (name `{title} · {suffix}`, inner tab `оркестратор`, sidebar color rotation Indigo→Teal→Orange→Purple→Green→Amber) with a fresh Pi on the main checkout. Parent does not claim the target; child runs `claim-bead` itself. Policy allows spawn of another open bead while the parent is non-terminal and `planMode=off`, while `workflow_claim` / `dispatch_*` of another bead stay blocked. Skill `.pi/skills/spawn-task-workspace/SKILL.md`; contract in `AGENTS.md`.

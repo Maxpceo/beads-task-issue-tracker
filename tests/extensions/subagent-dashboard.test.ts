@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { visibleWidth } from '@earendil-works/pi-tui'
 import { describe, expect, it, beforeEach } from 'vitest'
 import {
@@ -385,5 +387,12 @@ describe('subagent dashboard helpers', () => {
     expect(lines.join('\n')).toContain('Modes: active/all/refresh')
     expect(lines.some((line) => line.includes('⏳'))).toBe(true)
     expect(lines.every((line) => visibleWidth(line) <= 138)).toBe(true)
+  })
+
+  it('README keeps dashboard as CI/headless fallback and visible panes panel-only', () => {
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/subagent/README.md'), 'utf8')
+    expect(readme).toContain('Visible cmux spawn stays panel-only')
+    expect(readme).toContain('dashboard cards stay CI/headless-only')
+    expect(readme).toContain('resolveVisibleSplitPlacement')
   })
 })

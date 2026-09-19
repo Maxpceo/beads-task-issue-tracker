@@ -1,5 +1,12 @@
 import * as path from "node:path";
 import { publishDashboardCard } from "../subagent/dashboard.js";
+import {
+	resolveVisibleCmuxAdapter,
+	spawnSyncVisibleAgents,
+	type SpawnSyncVisibleAgentsInput,
+	type SyncVisibleAgentResult,
+} from "../beads-dispatch/visible-agents";
+import type { CmuxAdapter } from "../beads-dispatch/cmux-transport";
 
 export default function planReviewExtension(_pi: unknown): void {
 	// Helper module loaded from .pi/extensions; no runtime hooks are required here.
@@ -213,13 +220,92 @@ export function buildPlanReviewTask(draftPlan: string): string {
 	].join("\n");
 }
 
+export interface RunPlanReviewersOptions {
+	hasUI?: boolean;
+	beadId?: string;
+	branch?: string;
+	adapter?: CmuxAdapter;
+	signal?: AbortSignal;
+	timeoutMs?: number;
+	pollMs?: number;
+	sleep?: SpawnSyncVisibleAgentsInput["sleep"];
+	spawnVisible?: (input: SpawnSyncVisibleAgentsInput) => Promise<SyncVisibleAgentResult[]>;
+}
+
+const PLAN_REVIEW_VISIBLE_TOOLS = "read,grep,find,ls,write";
+
+function planReviewResultFromVisible(reviewer: string, row: SyncVisibleAgentResult): PlanReviewResult {
+	if (row.error && !row.output.trim()) {
+		return {
+			reviewer,
+			verdict: "BLOCKED",
+			findings: [],
+			unresolvedBlockers: [row.error],
+			raw: row.output,
+			error: row.error,
+		};
+	}
+	const parsed = parsePlanReviewOutput(reviewer, row.output);
+	if (row.error) parsed.error = row.error;
+	return parsed;
+}
+
 export async function runPlanReviewers(
 	pi: PlanReviewExecAPI,
 	cwd: string,
 	draftPlan: string,
 	reviewers: readonly string[] = REQUIRED_PLAN_REVIEWERS,
+	options?: RunPlanReviewersOptions,
 ): Promise<PlanReviewResult[]> {
-	const task = `Task: ${buildPlanReviewTask(draftPlan)}`;
+	const task = buildPlanReviewTask(draftPlan);
+	if (options?.hasUI) {
+		const adapter = options.adapter ?? resolveVisibleCmuxAdapter(pi.exec.bind(pi));
+		const spawnVisible = options.spawnVisible ?? spawnSyncVisibleAgents;
+		try {
+			const visible = await spawnVisible({
+				adapter,
+				worktreePath: cwd,
+				branch: options.branch,
+				beadId: options.beadId,
+				signal: options.signal,
+				timeoutMs: options.timeoutMs,
+				pollMs: options.pollMs,
+				sleep: options.sleep,
+				agents: reviewers.map((reviewer) => ({
+					role: reviewer,
+					task,
+					systemPromptFile: path.join(cwd, ".pi", "agents", `${reviewer}.md`),
+					tools: PLAN_REVIEW_VISIBLE_TOOLS,
+				})),
+			});
+			const byRole = new Map(visible.map((row) => [row.role, row]));
+			return reviewers.map((reviewer) => {
+				const row = byRole.get(reviewer);
+				if (!row) {
+					return {
+						reviewer,
+						verdict: "BLOCKED",
+						findings: [],
+						unresolvedBlockers: [`missing visible result for ${reviewer}`],
+						raw: "",
+						error: `missing visible result for ${reviewer}`,
+					} satisfies PlanReviewResult;
+				}
+				return planReviewResultFromVisible(reviewer, row);
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			return reviewers.map((reviewer) => ({
+				reviewer,
+				verdict: "BLOCKED",
+				findings: [],
+				unresolvedBlockers: [message],
+				raw: "",
+				error: message,
+			}));
+		}
+	}
+	const headlessTask = `Task: ${task}`;
 	return Promise.all(reviewers.map(async (reviewer) => {
 		const agentPath = path.join(cwd, ".pi", "agents", `${reviewer}.md`);
 		const startedAt = Date.now();
@@ -245,7 +331,7 @@ export async function runPlanReviewers(
 				"--no-prompt-templates",
 				"--tools", "read,grep,find,ls",
 				"--append-system-prompt", agentPath,
-				task,
+				headlessTask,
 			]);
 			if (result.code !== 0) {
 				terminalStatus = "failed";

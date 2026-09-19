@@ -33,6 +33,7 @@ import beadsDispatchExtension, {
   pruneRegistry,
   renameOnce,
   resolveVisibleSplitAnchor,
+  resolveVisibleSplitPlacement,
   spawnTaskWorkspace,
   STICKY_TAB_TITLE_DELAYS_MS,
   validateTaskWorkspaceTitle,
@@ -831,23 +832,105 @@ describe('resolveDispatchTransport', () => {
 })
 
 describe('reviewer/docs transport', () => {
-  it('dispatch_docs_agent execute rejects transport', async () => {
-    const { tools, cwd, branch } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
-    const result = await tools.dispatch_docs_agent.execute('call-1', { beadId: 'bead-d', transport: 'cmux' }, undefined, undefined, workflowCtx(cwd, 'bead-d', branch, 'abc1234'))
-    expect(result.content[0].text).toMatch(/does not accept transport/)
-  })
-
-  it('schemas: supervisor and reviewer have transport, docs does not', () => {
+  it('schemas: supervisor, reviewer, and docs have transport', () => {
     const { tools } = makePi({})
     expect(tools.dispatch_supervisor.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
     expect(tools.dispatch_reviewer.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
+    expect(tools.dispatch_docs_agent.parameters.properties.transport.enum).toEqual(['headless', 'cmux'])
     expect(tools.dispatch_supervisor.parameters.properties.transport.default).toBeUndefined()
     expect(tools.dispatch_reviewer.parameters.properties.transport.default).toBeUndefined()
     expect(tools.dispatch_supervisor.parameters.properties.transport.description).toMatch(/Omit: cmux when interactive/)
     expect(tools.followup_visible_dispatch).toBeDefined()
     expect(tools.followup_visible_dispatch.description).toMatch(/Единственный typed hop/)
-    expect(tools.dispatch_docs_agent.parameters.properties.transport).toBeUndefined()
     expect(tools.dispatch_reviewer.parameters.additionalProperties).toBe(false)
+  })
+})
+
+describe('dispatch_docs_agent visible cmux', () => {
+  let tmp: string
+  const prevOrch = process.env.ORCH_ROOT
+  const prevHome = process.env.HOME
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), '0qsm-docs-'))
+    process.env.ORCH_ROOT = tmp
+    process.env.HOME = tmp
+    setCmuxAdapterForTests(null)
+    setStickyTabTitleDelayForTests(async () => {})
+  })
+
+  afterEach(() => {
+    setCmuxAdapterForTests(null)
+    setStickyTabTitleDelayForTests(null)
+    if (prevOrch === undefined) delete process.env.ORCH_ROOT
+    else process.env.ORCH_ROOT = prevOrch
+    if (prevHome === undefined) delete process.env.HOME
+    else process.env.HOME = prevHome
+    fs.rmSync(tmp, { recursive: true, force: true })
+  })
+
+  it('omit/hasUI spawn-ack with live registry row and no dashboard card', async () => {
+    setCmuxAdapterForTests({
+      callerSurface: () => 'surface:orch',
+      async identify() { return { workspaceId: 'ws-docs' } },
+      async newSplit() { return { surface: 'surface:docs' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface() {},
+    })
+    const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
+    const result = await tools.dispatch_docs_agent.execute(
+      'd1',
+      { beadId, transport: 'cmux' },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.status).toBe('spawned')
+    expect(result.details.pane).toBe('surface:docs')
+    expect(result.details.agent).toBe('documentation-expert')
+    const entry = findRegistryByTaskId(result.details.registryKey)?.entry
+    expect(entry?.status).toBe('spawned')
+    expect(entry?.role).toBe('documentation-expert')
+    expect(entry?.kind).toBe('workflow')
+    expect(entry?.layoutColumn).toBe(0)
+  })
+
+  it('complete_visible_dispatch docs is result-only and does not inreview', async () => {
+    const resultFile = path.join(tmp, 'docs-result.md')
+    const digestFile = path.join(tmp, 'docs.digest')
+    fs.writeFileSync(resultFile, 'docs report done')
+    fs.writeFileSync(digestFile, 'docs digest')
+    const file = path.join(tmp, 'ns', 'ws-c', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [{
+        taskId: 'task-docs',
+        beadId: 'bead-d',
+        pane: 'surface:docs',
+        worktree: tmp,
+        role: 'documentation-expert',
+        model: '',
+        taskFile: path.join(tmp, 't.md'),
+        resultFile,
+        digestFile,
+        promptFile: path.join(tmp, 'p.md'),
+        status: 'spawned',
+        submitStatus: 'none',
+        startCommit: 'aaa1111',
+        createdAt: 't',
+        kind: 'workflow',
+        layoutColumn: 0,
+      }],
+    })
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const { pi } = makePi({ beadId: 'bead-d', head: 'bbb2222', execCalls })
+    const result = await completeVisibleDispatch(pi as any, { taskId: 'task-docs' })
+    expect(result.status).toBe('result-only')
+    expect(findRegistryByTaskId('task-docs')?.entry.submitStatus).toBe('result-only')
+    const comments = execCalls.filter((c) => c.command === 'bd' && c.args[0] === 'comments' && c.args[1] === 'add')
+    expect(comments.some((c) => c.args.join(' ').includes('DISPATCH RESULT (documentation-expert)'))).toBe(true)
+    expect(execCalls.some((c) => c.command === 'bd' && c.args.includes('inreview'))).toBe(false)
   })
 })
 
@@ -1624,71 +1707,125 @@ describe('followup_visible_dispatch', () => {
   })
 })
 
-describe('resolveVisibleSplitAnchor (kgvd layout)', () => {
-  it('N=0 candidates anchors orch caller', () => {
+describe('resolveVisibleSplitPlacement (2-column down-stack)', () => {
+  const pane = (id: string, createdAt: string, layoutColumn?: number, taskId = `task-${id}`) => ({
+    pane: `surface:${id}`,
+    status: 'spawned' as const,
+    createdAt,
+    taskId,
+    layoutColumn,
+  })
+
+  it('0 live → orch, right, column 0', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [],
+    })).toEqual({ anchorSurface: 'surface:orch', direction: 'right', layoutColumn: 0 })
     expect(resolveVisibleSplitAnchor({
       callerSurface: 'surface:orch',
       liveAgentPanes: [],
     })).toBe('surface:orch')
   })
 
-  it('N=1 anchors oldest live agent, never orch', () => {
-    expect(resolveVisibleSplitAnchor({
+  it('1 live → right of that agent, column 1, never orch', () => {
+    expect(resolveVisibleSplitPlacement({
       callerSurface: 'surface:orch',
-      liveAgentPanes: [{
-        pane: 'surface:sup',
-        status: 'spawned',
-        createdAt: '2026-09-14T10:00:00.000Z',
-        taskId: 'task-sup',
-      }],
-    })).toBe('surface:sup')
+      liveAgentPanes: [pane('sup', '2026-09-14T10:00:00.000Z', 0)],
+    })).toEqual({ anchorSurface: 'surface:sup', direction: 'right', layoutColumn: 1 })
   })
 
-  it('orders by createdAt then taskId', () => {
-    expect(resolveVisibleSplitAnchor({
+  it('2 live (1+1) → down, column 0', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('a', '2026-09-14T10:00:00.000Z', 0),
+        pane('b', '2026-09-14T11:00:00.000Z', 1),
+      ],
+    })).toEqual({ anchorSurface: 'surface:a', direction: 'down', layoutColumn: 0 })
+  })
+
+  it('3 live (2+1) → down, column 1', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('a', 't1', 0),
+        pane('b', 't2', 1),
+        pane('c', 't3', 0),
+      ],
+    })).toEqual({ anchorSurface: 'surface:b', direction: 'down', layoutColumn: 1 })
+  })
+
+  it('4 live (2+2) → down, column 0', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('a', 't1', 0),
+        pane('b', 't2', 1),
+        pane('c', 't3', 0),
+        pane('d', 't4', 1),
+      ],
+    })).toEqual({ anchorSurface: 'surface:c', direction: 'down', layoutColumn: 0 })
+  })
+
+  it('tie-break uses smaller column index', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('left', 't1', 0),
+        pane('right', 't2', 1),
+      ],
+    }).layoutColumn).toBe(0)
+  })
+
+  it('excludePane solo falls back to orch; with peer anchors peer', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [pane('self', 't', 0)],
+      excludePane: 'surface:self',
+    })).toEqual({ anchorSurface: 'surface:orch', direction: 'right', layoutColumn: 0 })
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('sup', '2026-09-14T10:00:00.000Z', 0),
+        pane('rev', '2026-09-14T11:00:00.000Z', 1),
+      ],
+      excludePane: 'surface:rev',
+    })).toEqual({ anchorSurface: 'surface:sup', direction: 'right', layoutColumn: 1 })
+  })
+
+  it('respawn preserveColumn stacks down in that column', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('a', 't1', 0),
+        pane('b', 't2', 1),
+        pane('c', 't3', 0),
+      ],
+      excludePane: 'surface:c',
+      preserveColumn: 0,
+    })).toEqual({ anchorSurface: 'surface:a', direction: 'down', layoutColumn: 0 })
+  })
+
+  it('legacy entries without layoutColumn map columns by createdAt', () => {
+    expect(resolveVisibleSplitPlacement({
       callerSurface: 'surface:orch',
       liveAgentPanes: [
         { pane: 'surface:b', status: 'spawned', createdAt: '2026-09-14T11:00:00.000Z', taskId: 'task-b' },
         { pane: 'surface:a', status: 'spawned', createdAt: '2026-09-14T10:00:00.000Z', taskId: 'task-z' },
-        { pane: 'surface:c', status: 'spawned', createdAt: '2026-09-14T10:00:00.000Z', taskId: 'task-a' },
       ],
-    })).toBe('surface:c')
+    })).toEqual({ anchorSurface: 'surface:a', direction: 'down', layoutColumn: 0 })
   })
 
-  it('excludePane drops self; solo falls back to orch', () => {
-    expect(resolveVisibleSplitAnchor({
-      callerSurface: 'surface:orch',
-      liveAgentPanes: [{
-        pane: 'surface:self',
-        status: 'spawned',
-        createdAt: 't',
-        taskId: 'task-1',
-      }],
-      excludePane: 'surface:self',
-    })).toBe('surface:orch')
-  })
-
-  it('excludePane with peer anchors the other live agent', () => {
-    expect(resolveVisibleSplitAnchor({
+  it('ignores tombstone panes and never anchors orch when live agents exist', () => {
+    const placement = resolveVisibleSplitPlacement({
       callerSurface: 'surface:orch',
       liveAgentPanes: [
-        { pane: 'surface:sup', status: 'spawned', createdAt: '2026-09-14T10:00:00.000Z', taskId: 'task-sup' },
-        { pane: 'surface:rev', status: 'spawned', createdAt: '2026-09-14T11:00:00.000Z', taskId: 'task-rev' },
+        { pane: 'surface:dead', status: 'tombstone', createdAt: 't', taskId: 'task-old' },
+        pane('live', 't2', 0),
       ],
-      excludePane: 'surface:rev',
-    })).toBe('surface:sup')
-  })
-
-  it('ignores tombstone panes', () => {
-    expect(resolveVisibleSplitAnchor({
-      callerSurface: 'surface:orch',
-      liveAgentPanes: [{
-        pane: 'surface:dead',
-        status: 'tombstone',
-        createdAt: 't',
-        taskId: 'task-old',
-      }],
-    })).toBe('surface:orch')
+    })
+    expect(placement.anchorSurface).toBe('surface:live')
+    expect(placement.anchorSurface).not.toBe('surface:orch')
   })
 })
 
@@ -1956,19 +2093,21 @@ describe('kgvd dual-agent layout wiring', () => {
     expect(findRegistryByTaskId('task-rev-close')?.entry.status).toBe('tombstone')
   })
 
-  it('docs mention resolveVisibleSplitAnchor and side-by-side orch exclusive layout', () => {
+  it('docs mention resolveVisibleSplitPlacement and 2-column down-stack layout', () => {
     const agents = fs.readFileSync(path.join(process.cwd(), 'AGENTS.md'), 'utf8')
     const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
     const review = fs.readFileSync(path.join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
     const transport = fs.readFileSync(path.join(process.cwd(), '.pi/extensions/beads-dispatch/cmux-transport.ts'), 'utf8')
-    expect(transport).toContain('resolveVisibleSplitAnchor')
-    expect(agents).toContain('resolveVisibleSplitAnchor')
+    expect(transport).toContain('resolveVisibleSplitPlacement')
+    expect(agents).toContain('resolveVisibleSplitPlacement')
     expect(agents).toContain('side-by-side')
+    expect(agents).toContain('new-split down')
     expect(agents).toContain('оркестратор')
     expect(agents).not.toContain('Geometry 1/2 layout is a separate concern (evxj)')
-    expect(skill).toContain('resolveVisibleSplitAnchor')
+    expect(agents).not.toContain('no hard N=2 cap')
+    expect(skill).toContain('resolveVisibleSplitPlacement')
     expect(skill).toContain('side-by-side')
-    expect(review).toContain('resolveVisibleSplitAnchor')
+    expect(review).toContain('resolveVisibleSplitPlacement')
     expect(review).toContain('side-by-side')
   })
 })

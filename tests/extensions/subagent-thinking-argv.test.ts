@@ -77,6 +77,12 @@ function loadSubagentExtension(
         AGENT_MODELS_FILENAME: 'agent-models.json',
       }
     }
+    if (id.includes('beads-dispatch/visible-agents') || id.includes('beads-dispatch/cmux-transport')) {
+      return {
+        resolveVisibleCmuxAdapter: () => ({ identify: async () => ({ workspaceId: 'ws' }) }),
+        spawnSyncVisibleAgents: async () => [],
+      }
+    }
     throw new Error(`Unexpected require: ${id}`)
   }
   new Function('require', 'module', 'exports', outputText)(mockRequire, module, module.exports)

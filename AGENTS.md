@@ -148,19 +148,19 @@ Visible cmux agent panes must be distinguishable by tab title:
 - Orchestrator tab: `оркестратор`
 - Agent tabs: `{role} · {bead-suffix}` (example: `test-supervisor · fo5d`, where `bead-suffix` is the last `-` segment of the bead id)
 
-Visible `dispatch_supervisor` / `dispatch_reviewer` (`transport=cmux`) auto-renames after spawn (`cmux tab-action rename`, `--focus false`). Do not rely on manual rename each spawn.
+Visible cmux agents (`dispatch_supervisor` / `dispatch_reviewer` / `dispatch_docs_agent`, plan-review, `plan_subagent`, `subagent`) auto-rename after spawn (`cmux tab-action rename`, `--focus false`). Do not rely on manual rename each spawn.
 
-### Layout geometry (orch exclusive left, agents side-by-side right)
+### Layout geometry (orch exclusive left, 2 columns, then down-stack)
 
-Accepted multi-agent geometry (`beads-task-issue-tracker-kgvd`, Maxim HA f8fl; capacity update 2026-09-15 Maxim / `beads-task-issue-tracker-k9j6`):
+Accepted multi-agent geometry (`beads-task-issue-tracker-0qsm`; dual HA still `f8fl` / kgvd):
 
 - **Оркестратор** stays exclusive on the left (~50%). Agent panes never `new-split` from the orch surface when another live agent already exists.
-- First visible agent: `new-split right --surface <orch-caller> --focus false`.
-- Each next visible agent: `new-split right --surface <first-live-agent> --focus false` so agents pack **side-by-side on the right half**, not as tabs in one pane and not as a third column that squeezes orch. Typical dual case is supervisor + reviewer (~25%+25% of full width); further agents keep splitting inside that right half.
-- Anchor selection uses `resolveVisibleSplitAnchor`: live spawned panes for the bead, oldest `createdAt` then `taskId`; respawn excludes self (solo → orch; with peer → peer). Code has **no hard N=2 cap** — every additional spawn reuses right-from-first.
-- **Right-half capacity:** dual is live-HA proven (`f8fl`); Maxim accepts **4–6** simultaneous agent panes on the right half as practical. Prefer readable titles (`{role} · {bead-suffix}`); beyond ~6 is operator judgment, not a code block. No tabs/down overflow path is required in this contract.
-- kgvd supersedes the older N=2 tabs geometry note (evxj) and the earlier «N>2 not guaranteed» wording.
-- Parallel cross-role double-spawn race is out of scope; sequential orch dispatch is assumed.
+- First visible agent: `new-split right --surface <orch-caller> --focus false` (column 0).
+- Second visible agent: `new-split right --surface <oldest live agent> --focus false` so two agent columns sit **side-by-side on the right half** (typical dual: supervisor + reviewer).
+- Third and later agents: `new-split down` from the bottom pane of the **shortest** column (tie → column 0). Never a third column that squeezes orch.
+- Placement uses `resolveVisibleSplitPlacement` → `{ anchorSurface, direction, layoutColumn }`. Respawn excludes self and keeps the closed pane's column when that column still has a live pane. Legacy registry rows without `layoutColumn` map columns by `createdAt`.
+- All interactive agents are visible cmux panes: `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, plan-review trio, `plan_subagent`, `subagent`. Headless remains only for CI / no-UI and explicit `transport=headless`.
+- Prefer readable titles (`{role} · {bead-suffix}`). Parallel cross-role double-spawn race is out of scope; sequential orch dispatch is assumed.
 
 ### Close supervisor pane after terminal bead
 

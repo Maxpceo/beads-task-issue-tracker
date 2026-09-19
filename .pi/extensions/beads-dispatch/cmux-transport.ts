@@ -36,6 +36,10 @@ export interface DispatchRegistryEntry {
 	sendFailCount?: number;
 	hung?: boolean;
 	createdAt: string;
+	/** Right-half column: 0 = first agent column, 1 = second. Legacy rows omit this. */
+	layoutColumn?: number;
+	/** workflow = ping-flow (supervisor/reviewer/docs); sync = blocking visible runner. */
+	kind?: "workflow" | "sync";
 }
 
 export interface DispatchRegistry {
@@ -44,9 +48,15 @@ export interface DispatchRegistry {
 
 export type VisiblePaneHealth = "waiting" | "busy" | "shell" | "dead";
 
+export type SplitDirection = "right" | "down";
+
+export const LAYOUT_COLUMN_COUNT = 2;
+
 export interface CmuxNewSplitOpts {
 	/** Surface to split from. When omitted, live adapter uses the identify caller surface. */
 	anchorSurface?: string;
+	/** Split direction. Default right. 3+ agents stack with down. */
+	direction?: SplitDirection;
 }
 
 export interface CmuxAdapter {
@@ -61,30 +71,106 @@ export interface CmuxAdapter {
 	callerSurface?(): string;
 }
 
-/**
- * Choose the cmux surface to split right-of for the next visible agent pane.
- * - 0 live candidates (after excludePane) → orchestrator/caller surface
- * - ≥1 candidates → oldest createdAt, then taskId; never re-split orch when another live agent exists
- * - No hard N=2 cap: Nth agent still anchors the first live agent so the right half packs side-by-side
- *   (practical capacity ~4–6 per AGENTS.md Layout geometry; operator judgment beyond that)
- */
-export function resolveVisibleSplitAnchor(input: {
-	callerSurface: string;
-	liveAgentPanes: Array<Pick<DispatchRegistryEntry, "pane" | "createdAt" | "taskId" | "status">>;
-	excludePane?: string;
-}): string {
-	const caller = (input.callerSurface ?? "").trim();
-	const exclude = (input.excludePane ?? "").trim();
-	const candidates = input.liveAgentPanes
+export type LivePlacementPane = Pick<DispatchRegistryEntry, "pane" | "createdAt" | "taskId" | "status"> & {
+	layoutColumn?: number;
+};
+
+export interface VisibleSplitPlacement {
+	anchorSurface: string;
+	direction: SplitDirection;
+	layoutColumn: number;
+}
+
+function compareLivePanes(a: LivePlacementPane, b: LivePlacementPane): number {
+	const createdCmp = (a.createdAt || "").localeCompare(b.createdAt || "");
+	if (createdCmp !== 0) return createdCmp;
+	return (a.taskId || "").localeCompare(b.taskId || "");
+}
+
+export function liveSpawnedPanes(entries: LivePlacementPane[], excludePane?: string): LivePlacementPane[] {
+	const exclude = (excludePane ?? "").trim();
+	return entries
 		.filter((entry) => entry.status === "spawned" && Boolean(entry.pane?.trim()) && entry.pane.trim() !== exclude)
 		.slice()
-		.sort((a, b) => {
-			const createdCmp = (a.createdAt || "").localeCompare(b.createdAt || "");
-			if (createdCmp !== 0) return createdCmp;
-			return (a.taskId || "").localeCompare(b.taskId || "");
-		});
-	if (candidates.length === 0) return caller;
-	return candidates[0]!.pane.trim();
+		.sort(compareLivePanes);
+}
+
+function assignLayoutColumns(candidates: LivePlacementPane[]): Array<LivePlacementPane & { layoutColumn: number }> {
+	return candidates.map((entry, index) => {
+		const col = entry.layoutColumn;
+		if (col === 0 || col === 1) return { ...entry, layoutColumn: col };
+		return { ...entry, layoutColumn: index % LAYOUT_COLUMN_COUNT };
+	});
+}
+
+function bottomOfColumn(panes: Array<LivePlacementPane & { layoutColumn: number }>): LivePlacementPane & { layoutColumn: number } {
+	const sorted = panes.slice().sort(compareLivePanes);
+	return sorted[sorted.length - 1]!;
+}
+
+/**
+ * Place the next visible agent pane on the right half: max 2 columns, then stack down.
+ * - 0 live → right of orch/caller, column 0
+ * - 1 live → right of that agent, column 1 (never re-split orch)
+ * - 2+ live → down from the bottom pane of the shortest column (tie → column 0)
+ * - preserveColumn (respawn): keep stacking in that column when it still has a live pane
+ * - legacy rows without layoutColumn → columns by createdAt (index % 2)
+ */
+export function resolveVisibleSplitPlacement(input: {
+	callerSurface: string;
+	liveAgentPanes: LivePlacementPane[];
+	excludePane?: string;
+	preserveColumn?: number;
+}): VisibleSplitPlacement {
+	const caller = (input.callerSurface ?? "").trim();
+	const candidates = liveSpawnedPanes(input.liveAgentPanes, input.excludePane);
+	const withCols = assignLayoutColumns(candidates);
+	const preserve = input.preserveColumn === 0 || input.preserveColumn === 1 ? input.preserveColumn : undefined;
+
+	if (preserve !== undefined) {
+		const inCol = withCols.filter((entry) => entry.layoutColumn === preserve);
+		if (inCol.length > 0) {
+			return {
+				anchorSurface: bottomOfColumn(inCol).pane.trim(),
+				direction: "down",
+				layoutColumn: preserve,
+			};
+		}
+	}
+
+	if (candidates.length === 0) {
+		return { anchorSurface: caller, direction: "right", layoutColumn: 0 };
+	}
+	if (candidates.length === 1) {
+		return { anchorSurface: candidates[0]!.pane.trim(), direction: "right", layoutColumn: 1 };
+	}
+
+	const col0 = withCols.filter((entry) => entry.layoutColumn === 0);
+	const col1 = withCols.filter((entry) => entry.layoutColumn === 1);
+	const targetCol = col0.length <= col1.length ? 0 : 1;
+	const colPanes = targetCol === 0 ? col0 : col1;
+	if (colPanes.length === 0) {
+		return {
+			anchorSurface: candidates[0]!.pane.trim(),
+			direction: "right",
+			layoutColumn: targetCol,
+		};
+	}
+	return {
+		anchorSurface: bottomOfColumn(colPanes).pane.trim(),
+		direction: "down",
+		layoutColumn: targetCol,
+	};
+}
+
+/** Anchor-only helper (placement.anchorSurface). Prefer resolveVisibleSplitPlacement. */
+export function resolveVisibleSplitAnchor(input: {
+	callerSurface: string;
+	liveAgentPanes: LivePlacementPane[];
+	excludePane?: string;
+	preserveColumn?: number;
+}): string {
+	return resolveVisibleSplitPlacement(input).anchorSurface;
 }
 
 export const ORCHESTRATOR_TAB_TITLE = "оркестратор";
@@ -269,6 +355,57 @@ export function setCmuxAdapterForTests(adapter: CmuxAdapter | null): void {
 
 export function getCmuxAdapterForTests(): CmuxAdapter | null {
 	return cmuxAdapterForTests;
+}
+
+export type CmuxExec = (command: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
+
+export function createLiveCmuxAdapter(exec: CmuxExec): CmuxAdapter & { callerSurface(): string } {
+	let callerSurface = "";
+	return {
+		callerSurface: () => callerSurface,
+		async identify() {
+			const result = await exec("cmux", ["identify", "--json"]);
+			if (result.code !== 0) throw new Error("нет cmux (identify failed): BLOCKED");
+			let data: { caller?: { workspace_ref?: string; surface_ref?: string; surface?: string }; workspace?: string };
+			try {
+				data = JSON.parse(result.stdout || "{}") as typeof data;
+			} catch {
+				throw new Error("нет cmux (identify json): BLOCKED");
+			}
+			const caller = data.caller ?? {};
+			const workspaceId = String(caller.workspace_ref || data.workspace || "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+			if (!workspaceId) throw new Error("нет cmux workspace: BLOCKED");
+			callerSurface = String(caller.surface_ref || caller.surface || "").trim();
+			if (!callerSurface) throw new Error("нет caller surface: BLOCKED");
+			return { workspaceId };
+		},
+		async newSplit(opts?: CmuxNewSplitOpts) {
+			const anchor = String(opts?.anchorSurface || callerSurface || "").trim();
+			if (!anchor) throw new Error("нет caller surface: BLOCKED");
+			const direction: SplitDirection = opts?.direction === "down" ? "down" : "right";
+			const result = await exec("cmux", ["new-split", direction, "--surface", anchor, "--focus", "false"]);
+			if (result.code !== 0) throw new Error(`cmux new-split failed: ${result.stderr || result.stdout}`);
+			const match = `${result.stdout || ""}`.match(/surface:\S+/);
+			if (!match?.[0]) throw new Error(`new-split не вернул surface: ${result.stdout}`);
+			return { surface: match[0] };
+		},
+		async send(surface, text) {
+			const result = await exec("cmux", ["send", "--surface", surface, text]);
+			if (result.code !== 0) throw new Error(`cmux send failed: ${result.stderr || result.stdout}`);
+		},
+		async readScreen(surface) {
+			const result = await exec("cmux", ["read-screen", "--surface", surface, "--lines", "20"]);
+			if (result.code !== 0) throw new Error(`cmux read-screen failed: ${result.stderr || result.stdout}`);
+			return `${result.stdout ?? ""}`;
+		},
+		async closeSurface(surface) {
+			await exec("cmux", ["close-surface", "--surface", surface]);
+		},
+		async renameSurface(surface, title) {
+			const result = await exec("cmux", buildCmuxRenameArgv(surface, title));
+			if (result.code !== 0) throw new Error(`cmux rename failed: ${result.stderr || result.stdout}`);
+		},
+	};
 }
 
 export function worktreeOrchDir(worktree: string): string {

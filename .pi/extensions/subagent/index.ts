@@ -24,6 +24,8 @@ import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type AgentConfig, type AgentScope, discoverAgents, loadProjectAgentTeams } from "./agents.js";
 import { resolveAgentModelFromCwd } from "../agent-models/index";
+import { resolveVisibleCmuxAdapter, spawnSyncVisibleAgents } from "../beads-dispatch/visible-agents";
+import type { CmuxAdapter } from "../beads-dispatch/cmux-transport";
 import {
 	AgentDashboardComponent,
 	type AgentDashboardCard,
@@ -369,6 +371,41 @@ Constraints:
 
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
+type VisibleRunOpts = {
+	hasUI?: boolean;
+	adapter?: CmuxAdapter;
+	beadId?: string;
+	branch?: string;
+};
+
+function visibleResultToSingle(
+	spec: { agent: string; agentSource: SingleResult["agentSource"]; task: string; step?: number; model?: string },
+	row: { output: string; error?: string },
+): SingleResult {
+	const failed = Boolean(row.error && !row.output.trim());
+	const now = Date.now();
+	return {
+		agent: spec.agent,
+		agentSource: spec.agentSource,
+		task: spec.task,
+		exitCode: failed ? 1 : 0,
+		status: failed ? "failed" : "completed",
+		startedAt: now,
+		completedAt: now,
+		messages: [
+			{
+				role: "assistant",
+				content: [{ type: "text", text: row.output || row.error || "" }],
+			} as Message,
+		],
+		stderr: row.error ?? "",
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+		model: spec.model,
+		errorMessage: row.error,
+		step: spec.step,
+	};
+}
+
 async function runSingleAgent(
 	defaultCwd: string,
 	agents: AgentConfig[],
@@ -380,6 +417,7 @@ async function runSingleAgent(
 	onUpdate: OnUpdateCallback | undefined,
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 	toolOverride?: string[],
+	visible?: VisibleRunOpts,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
 
@@ -436,6 +474,31 @@ async function runSingleAgent(
 			});
 		}
 	};
+
+	if (visible?.hasUI) {
+		emitUpdate();
+		const adapter = visible.adapter ?? resolveVisibleCmuxAdapter();
+		const visibleRows = await spawnSyncVisibleAgents({
+			adapter,
+			worktreePath: cwd ?? defaultCwd,
+			branch: visible.branch,
+			beadId: visible.beadId,
+			signal,
+			agents: [{
+				role: agentName,
+				task,
+				systemPrompt: agent.systemPrompt,
+				tools: (tools && tools.length > 0 ? tools : undefined)?.join(","),
+				model: resolvedRouting.model,
+				thinking: resolvedRouting.thinking,
+			}],
+		});
+		const row = visibleRows[0];
+		return visibleResultToSingle(
+			{ agent: agentName, agentSource: agent.source, task, step, model: resolvedRouting.model },
+			row ?? { output: "", error: "missing visible result" },
+		);
+	}
 
 	try {
 		if (agent.systemPrompt.trim()) {
@@ -754,6 +817,12 @@ export default function (pi: ExtensionAPI) {
 				projectAgentsDir: discovery.projectAgentsDir,
 				results,
 			});
+			const visible: VisibleRunOpts = {
+				hasUI: Boolean(ctx.hasUI),
+				adapter: ctx.hasUI ? resolveVisibleCmuxAdapter(pi.exec.bind(pi)) : undefined,
+				beadId: latestWorkflowState(ctx)?.activeBead,
+				branch: latestWorkflowState(ctx)?.branch,
+			};
 			const result = await runSingleAgent(
 				ctx.cwd,
 				discovery.agents,
@@ -763,13 +832,14 @@ export default function (pi: ExtensionAPI) {
 				undefined,
 				signal,
 				(partial) => {
-					if (partial.details?.results[0]) updateDashboardFromResults([partial.details.results[0]], ctx);
+					if (!ctx.hasUI && partial.details?.results[0]) updateDashboardFromResults([partial.details.results[0]], ctx);
 					onUpdate?.(partial);
 				},
 				makeDetails,
 				PLAN_SUBAGENT_TOOLS,
+				visible,
 			);
-			updateDashboardFromResults([result], ctx);
+			if (!ctx.hasUI) updateDashboardFromResults([result], ctx);
 			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
 			return {
 				content: [{ type: "text", text: isError ? `Plan agent ${result.stopReason || "failed"}: ${result.errorMessage || result.stderr || getFinalOutput(result.messages) || "(no output)"}` : getFinalOutput(result.messages) || "(no output)" }],
@@ -811,7 +881,15 @@ export default function (pi: ExtensionAPI) {
 					results,
 				});
 
-			const emitDashboard = (results: SingleResult[]) => updateDashboardFromResults(results, ctx);
+			const visible: VisibleRunOpts = {
+				hasUI: Boolean(ctx.hasUI),
+				adapter: ctx.hasUI ? resolveVisibleCmuxAdapter(pi.exec.bind(pi)) : undefined,
+				beadId: latestWorkflowState(ctx)?.activeBead,
+				branch: latestWorkflowState(ctx)?.branch,
+			};
+			const emitDashboard = (results: SingleResult[]) => {
+				if (!ctx.hasUI) updateDashboardFromResults(results, ctx);
+			};
 
 			if (modeCount !== 1) {
 				const available = agents.map((a) => `${a.name} (${a.source})`).join(", ") || "none";
@@ -883,6 +961,8 @@ export default function (pi: ExtensionAPI) {
 						signal,
 						chainUpdate,
 						makeDetails("chain"),
+						undefined,
+						visible,
 					);
 					results.push(result);
 					emitDashboard(results);
@@ -948,28 +1028,61 @@ export default function (pi: ExtensionAPI) {
 					});
 				};
 
-				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
-					const result = await runSingleAgent(
-						ctx.cwd,
-						agents,
-						t.agent,
-						t.task,
-						t.cwd,
-						undefined,
-						signal,
-						// Per-task update callback
-						(partial) => {
-							if (partial.details?.results[0]) {
-								allResults[index] = partial.details.results[0];
-								emitParallelUpdate();
-							}
-						},
-						makeDetails("parallel"),
-					);
-					allResults[index] = result;
-					emitParallelUpdate();
-					return result;
-				});
+				const results = ctx.hasUI
+					? await (async () => {
+						const adapter = visible.adapter ?? resolveVisibleCmuxAdapter(pi.exec.bind(pi));
+						const specs = params.tasks.map((t) => {
+							const agent = agents.find((a) => a.name === t.agent);
+							const resolved = resolveAgentModelFromCwd(t.cwd ?? ctx.cwd, t.agent);
+							return {
+								role: t.agent,
+								task: t.task,
+								systemPrompt: agent?.systemPrompt ?? "",
+								tools: agent?.tools?.join(","),
+								model: resolved.model,
+								thinking: resolved.thinking,
+							};
+						});
+						const rows = await spawnSyncVisibleAgents({
+							adapter,
+							worktreePath: ctx.cwd,
+							branch: visible.branch,
+							beadId: visible.beadId,
+							signal,
+							agents: specs,
+						});
+						return params.tasks.map((t, index) => {
+							const agent = agents.find((a) => a.name === t.agent);
+							const row = rows[index] ?? { output: "", error: "missing visible result", role: t.agent, taskId: "", pane: "" };
+							const converted = visibleResultToSingle(
+								{ agent: t.agent, agentSource: agent?.source ?? "unknown", task: t.task, model: specs[index]?.model },
+								row,
+							);
+							allResults[index] = converted;
+							return converted;
+						});
+					})()
+					: await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
+						const result = await runSingleAgent(
+							ctx.cwd,
+							agents,
+							t.agent,
+							t.task,
+							t.cwd,
+							undefined,
+							signal,
+							(partial) => {
+								if (partial.details?.results[0]) {
+									allResults[index] = partial.details.results[0];
+									emitParallelUpdate();
+								}
+							},
+							makeDetails("parallel"),
+						);
+						allResults[index] = result;
+						emitParallelUpdate();
+						return result;
+					});
 
 				const successCount = results.filter((r) => r.exitCode === 0).length;
 				const summaries = results.map((r) => {
@@ -1002,6 +1115,8 @@ export default function (pi: ExtensionAPI) {
 						onUpdate?.(partial);
 					},
 					makeDetails("single"),
+					undefined,
+					visible,
 				);
 				emitDashboard([result]);
 				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
