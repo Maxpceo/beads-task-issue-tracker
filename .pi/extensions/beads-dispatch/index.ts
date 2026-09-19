@@ -2171,7 +2171,7 @@ export async function spawnTaskWorkspace(
 		focus: false,
 	});
 	const colorArgv = buildSetWorkspaceColorArgv("workspace:NEW", color);
-	const renameArgv = buildCmuxRenameArgv("surface:NEW", ORCHESTRATOR_TAB_TITLE);
+	const renameArgv = buildCmuxRenameArgv("surface:NEW", ORCHESTRATOR_TAB_TITLE, "workspace:NEW");
 	const reorderArgv = buildReorderWorkspaceArgv("workspace:NEW", callerWorkspaceRef);
 
 	const argvPlan: string[][] = [baseCreateArgv, colorArgv];
@@ -2275,7 +2275,7 @@ export async function spawnTaskWorkspace(
 		surface = parseFirstTerminalSurfaceRef(surfacesResult.stdout || "");
 	}
 	if (surface) {
-		const renameResult = await pi.exec("cmux", buildCmuxRenameArgv(surface, ORCHESTRATOR_TAB_TITLE));
+		const renameResult = await pi.exec("cmux", buildCmuxRenameArgv(surface, ORCHESTRATOR_TAB_TITLE, workspaceRef));
 		if (renameResult.code !== 0) {
 			renameWarning = `rename failed: ${(renameResult.stderr || renameResult.stdout || "").trim()}`;
 		}
@@ -2306,7 +2306,7 @@ export async function spawnTaskWorkspace(
 		colorWarning,
 		renameWarning,
 		groupUsed: usedGroup,
-		argvPlan: [createArgv, buildSetWorkspaceColorArgv(workspaceRef, color), ...(usedGroup ? [] : [buildReorderWorkspaceArgv(workspaceRef, callerWorkspaceRef)]), ...(surface ? [buildCmuxRenameArgv(surface, ORCHESTRATOR_TAB_TITLE)] : [])],
+		argvPlan: [createArgv, buildSetWorkspaceColorArgv(workspaceRef, color), ...(usedGroup ? [] : [buildReorderWorkspaceArgv(workspaceRef, callerWorkspaceRef)]), ...(surface ? [buildCmuxRenameArgv(surface, ORCHESTRATOR_TAB_TITLE, workspaceRef)] : [])],
 		text,
 	};
 }

@@ -191,9 +191,12 @@ export function visibleChildTabTitle(role: string, beadId: string): string {
 	return `${role} · ${beadSuffixFromId(beadId)}`;
 }
 
-/** Exact argv for `cmux tab-action rename` with `--focus false`. */
-export function buildCmuxRenameArgv(surface: string, title: string): string[] {
-	return ["tab-action", "--action", "rename", "--surface", surface, "--title", title, "--focus", "false"];
+/** Exact argv for `cmux tab-action rename` with `--focus false`. Nonempty workspace appends `--workspace` after existing flags; `--surface` stays primary. */
+export function buildCmuxRenameArgv(surface: string, title: string, workspace?: string): string[] {
+	const argv = ["tab-action", "--action", "rename", "--surface", surface, "--title", title, "--focus", "false"];
+	const workspaceRef = (workspace ?? "").trim();
+	if (workspaceRef) argv.push("--workspace", workspaceRef);
+	return argv;
 }
 
 export function orchRoot(env: NodeJS.ProcessEnv = process.env): string {

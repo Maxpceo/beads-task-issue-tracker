@@ -158,6 +158,13 @@ describe('visible cmux tab titles', () => {
     expect(buildCmuxRenameArgv('surface:x', 't')).toEqual([
       'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
     ])
+    expect(buildCmuxRenameArgv('surface:x', 't', 'workspace:28')).toEqual([
+      'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
+      '--workspace', 'workspace:28',
+    ])
+    expect(buildCmuxRenameArgv('surface:x', 't', '  ')).toEqual([
+      'tab-action', '--action', 'rename', '--surface', 'surface:x', '--title', 't', '--focus', 'false',
+    ])
   })
 })
 
@@ -2714,7 +2721,13 @@ describe('spawn_task_workspace tool', () => {
     expect(flat).not.toContain('pi --name')
     expect(flat).toContain('set-color')
     expect(flat).toContain('--surface')
+    expect(flat).toContain('--workspace')
+    expect(flat).toContain('workspace:NEW')
     expect(flat).toContain(ORCHESTRATOR_TAB_TITLE)
+    const dryRename = (result.argvPlan ?? []).find((row) => row[0] === 'tab-action') ?? []
+    expect(dryRename).toContain('--surface')
+    expect(dryRename).toContain('--workspace')
+    expect(dryRename).toContain('workspace:NEW')
     expect(result.text).toMatch(/set-color|argv/)
     // dryRun may identify for group/color context but must not create
     expect(cmuxCalls.some((c) => c[0] === 'new-workspace')).toBe(false)
@@ -2756,7 +2769,16 @@ describe('spawn_task_workspace tool', () => {
     expect(cmuxCalls.some((c) => c[0] === 'new-workspace' && c.includes('--focus') && c.includes('false'))).toBe(true)
     expect(cmuxCalls.some((c) => c[0] === 'workspace-action' && c.includes('set-color'))).toBe(true)
     expect(cmuxCalls.some((c) => c[0] === 'tab-action' && c.includes('--surface') && c.includes(ORCHESTRATOR_TAB_TITLE))).toBe(true)
+    expect(cmuxCalls.some((c) =>
+      c[0] === 'tab-action'
+      && c.includes('--surface')
+      && c.includes('surface:500')
+      && c.includes('--workspace')
+      && c.includes('workspace:99')
+      && c.includes(ORCHESTRATOR_TAB_TITLE),
+    )).toBe(true)
     expect(cmuxCalls.some((c) => c[0] === 'tab-action' && c.includes('--workspace') && !c.includes('--surface'))).toBe(false)
+    expect(result.renameWarning).toBeUndefined()
     const lockAdds = bdCalls.filter((c) => c[0] === 'comments' && c.includes('add'))
     expect(lockAdds.some((c) => String(c[c.length - 1]).includes('SPAWN_LOCK'))).toBe(true)
   })
@@ -2821,6 +2843,19 @@ describe('spawn_task_workspace tool', () => {
       ORCHESTRATOR_TAB_TITLE,
       '--focus',
       'false',
+    ])
+    expect(buildCmuxRenameArgv('surface:500', ORCHESTRATOR_TAB_TITLE, 'workspace:99')).toEqual([
+      'tab-action',
+      '--action',
+      'rename',
+      '--surface',
+      'surface:500',
+      '--title',
+      ORCHESTRATOR_TAB_TITLE,
+      '--focus',
+      'false',
+      '--workspace',
+      'workspace:99',
     ])
   })
 })

@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- **Pi `spawn_task_workspace` inner-tab rename uses child workspace context** (`beads-task-issue-tracker-6olh`): `buildCmuxRenameArgv` optionally appends `--workspace` after `--surface` so spawn rename looks up the tab in the new workspace instead of the parent's default (`not_found`). Dispatch-path rename stays two-argument (no `--workspace`). Focused vitest under `tests/extensions/beads-dispatch-cmux.test.ts`.
+
 - **Pi visible poller no longer treats a post-spawn shell prompt as a dead pane** (`beads-task-issue-tracker-xdpq`): `spawnSyncVisibleAgents` keeps `shell` (and `dead`) without a result file pending for `DEFAULT_SYNC_VISIBLE_STARTUP_GRACE_MS` (30s, overridable via `startupGraceMs`) after `createdAt`. After grace the same screen still fails with `dead pane without result`. `classifyVisiblePane` is unchanged. Focused vitest under `tests/extensions/visible-agents.test.ts` and `tests/extensions/visible-pane-health.test.ts`.
 
 - **Pi beads-policy recovery no longer goes blind on large closed lists or conflicted rebase** (`beads-task-issue-tracker-mfam`): `bd list --status=… --json --limit=0` now uses `BD_LIST_MAX_BUFFER` 32 MiB so a >1 MB closed archive no longer ENOBUFS into an empty candidate set and a valid POST-CLOSE MERGE FIX stays visible. During rebase with empty `git branch --show-current`, ownership falls back through `git rev-parse --git-path rebase-merge|rebase-apply` (resolve relative paths against cwd) plus `head-name` and `ORIG_HEAD`; missing rebase dir/head-name/ORIG_HEAD stays fail-closed and does not use mid-rebase HEAD. Linked worktrees are covered. Do not `git merge origin/main` into a dirty post-close tree. Focused vitest under `tests/extensions/beads-policy.test.ts`.
