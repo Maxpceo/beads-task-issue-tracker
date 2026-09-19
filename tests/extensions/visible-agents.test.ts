@@ -92,8 +92,41 @@ describe('spawnSyncVisibleAgents', () => {
     expect(registry.entries.every((entry) => entry.status === 'tombstone')).toBe(true)
   })
 
-  it('fail-fast on dead pane without result', async () => {
+  it('keeps a startup shell-prompt pending until the result file exists', async () => {
+    let resultFile = ''
     const closed: string[] = []
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
+          const taskPath = taskMatch?.[1]
+          if (!taskPath || !fs.existsSync(taskPath)) return
+          const body = fs.readFileSync(taskPath, 'utf8')
+          const resultMatch = body.match(/write your final report to ([^\n]+)/)
+          if (resultMatch?.[1]) resultFile = resultMatch[1]
+        },
+        async readScreen() { return 'user@host ~/proj $\n' },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      startupGraceMs: 50,
+      now: () => 0,
+      sleep: async () => {
+        if (resultFile) fs.writeFileSync(resultFile, 'started after shell\n')
+      },
+      agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
+    })
+    expect(results[0]?.error).toBeUndefined()
+    expect(results[0]?.output).toContain('started after shell')
+    expect(closed).toEqual(['surface:a1'])
+  })
+
+  it('marks the same shell-prompt dead after startup grace without a result file', async () => {
+    const closed: string[] = []
+    let now = 0
     const results = await spawnSyncVisibleAgents({
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
@@ -103,7 +136,30 @@ describe('spawnSyncVisibleAgents', () => {
       branch: 'feat/x',
       pollMs: 1,
       timeoutMs: 2000,
-      sleep: async () => {},
+      startupGraceMs: 30,
+      now: () => now,
+      sleep: async () => { now += 40 },
+      agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
+    })
+    expect(results[0]?.error).toMatch(/dead pane without result/)
+    expect(closed).toEqual(['surface:a1'])
+  })
+
+  it('fail-fast on dead pane without result', async () => {
+    const closed: string[] = []
+    let now = 0
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async readScreen() { return 'surface closed\nno prompt here' },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      startupGraceMs: 30,
+      now: () => now,
+      sleep: async () => { now += 40 },
       classifyPane: () => 'dead',
       agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
     })
