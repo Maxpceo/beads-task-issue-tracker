@@ -947,6 +947,16 @@ describe('chooseSupervisor', () => {
     })).toBe('tauri-supervisor')
   })
 
+  it('picks test-supervisor when workflow label is set even if prose mentions src-tauri', () => {
+    expect(chooseSupervisor({
+      id: '9sj1-workflow-beats-src-tauri',
+      title: 'Routing table label priority',
+      description: 'Mentions src-tauri in Files notes; edits go to .pi/supervisor-routing.json.',
+      labels: ['pi', 'workflow'],
+      status: 'in_progress',
+    })).toBe('test-supervisor')
+  })
+
   it('picks test-supervisor for hy3z-like pi+workflow handoff with src-tauri only in Out of scope', () => {
     // textForSupervisorRouting strips ### Out of scope; title has no rust tokens; do not reuse description().
     const description = roleWordsHandoffDescription().replace(
@@ -992,17 +1002,17 @@ describe('chooseSupervisor', () => {
     })).toBe('test-supervisor')
   })
 
-  it('picks tauri-supervisor when title contains src-tauri even if description is clean', () => {
+  it('picks test-supervisor when workflow label is set even if title contains src-tauri', () => {
     expect(chooseSupervisor({
       id: '0nvj-title-src-tauri',
       title: 'chooseSupervisor: src-tauri in title stays a tauri signal',
       description: roleWordsHandoffDescription(),
       labels: ['pi', 'workflow'],
       status: 'in_progress',
-    })).toBe('tauri-supervisor')
+    })).toBe('test-supervisor')
   })
 
-  it('picks tauri-supervisor when Files lists src-tauri even if Out of scope also mentions it', () => {
+  it('picks test-supervisor when workflow label is set even if Files lists src-tauri', () => {
     const description = roleWordsHandoffDescription()
       .replace('- .pi/extensions/beads-dispatch/index.ts', '- src-tauri/src/lib.rs')
       .replace(
@@ -1015,7 +1025,7 @@ describe('chooseSupervisor', () => {
       description,
       labels: ['pi', 'workflow'],
       status: 'in_progress',
-    })).toBe('tauri-supervisor')
+    })).toBe('test-supervisor')
   })
 
   it('dryRun without agent= uses chooseSupervisor on role-words handoff fixture → test-supervisor', async () => {
@@ -1111,6 +1121,7 @@ describe('chooseSupervisor', () => {
       beadId: 'bead-qhdt-no-supervisor-field',
       description: srcTauriFilesHandoffDescription(),
       planText: currentPlan,
+      labels: ['pi'],
     })
     expect(result.details.error).toBeUndefined()
     expect(result.details.agent).toBe('tauri-supervisor')
@@ -1121,6 +1132,7 @@ describe('chooseSupervisor', () => {
       beadId: 'bead-qhdt-missing-agent',
       description: srcTauriFilesHandoffDescription(),
       planText: planApprovedWithSupervisor('nonexistent-supervisor'),
+      labels: ['pi'],
     })
     expect(result.details.error).toBeUndefined()
     expect(result.details.agent).toBe('tauri-supervisor')

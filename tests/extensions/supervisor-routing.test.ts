@@ -245,3 +245,23 @@ describe('resolveSupervisorFromRouting', () => {
     expect(resolveSupervisorFromRouting({ title: 'plain', description: '', labels: ['camellabel'] }, routing)).toBe('case-agent')
   })
 })
+
+describe('repo supervisor-routing.json (9sj1)', () => {
+  it('workflow label beats src-tauri in prose outside negation', () => {
+    expect(chooseSupervisor({
+      id: '9sj1-workflow-beats-src-tauri',
+      title: 'Routing table label priority',
+      description: 'Mentions src-tauri in Files notes; edits go to .pi/supervisor-routing.json.',
+      labels: ['pi', 'workflow'],
+    })).toBe('test-supervisor')
+  })
+
+  it('ve9e-src-tauri still routes to tauri without the workflow label', () => {
+    expect(chooseSupervisor({
+      id: 've9e-src-tauri',
+      title: 'Path touch',
+      description: 'Edit src-tauri/src/lib.rs only.',
+      labels: ['pi'],
+    })).toBe('tauri-supervisor')
+  })
+})
