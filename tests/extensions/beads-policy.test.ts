@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -2395,6 +2395,187 @@ REASON: Recovery fix for merge quality gate
     } finally {
       process.env.PATH = oldPath
       rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  function installLargeClosedListFakeBd(
+    binDir: string,
+    markerId: string,
+    comments: string,
+    logFile: string,
+  ): number {
+    const pad = 'x'.repeat(20_000)
+    const closed = Array.from({ length: 70 }, (_, index) => ({
+      id: `closed-pad-${String(index + 1).padStart(2, '0')}`,
+      status: 'closed',
+      updated_at: `2020-01-01T00:00:${String(index % 60).padStart(2, '0')}Z`,
+      description: pad,
+    }))
+    closed.push({
+      id: markerId,
+      status: 'closed',
+      updated_at: '2026-09-19T23:59:59Z',
+      description: pad,
+    })
+    const closedPath = join(binDir, 'closed.json')
+    writeFileSync(closedPath, JSON.stringify(closed))
+    const closedBytes = statSync(closedPath).size
+    mkdirSync(join(binDir, 'comments'), { recursive: true })
+    writeFileSync(join(binDir, 'comments', markerId), comments)
+    const escapedLog = logFile.replace(/'/g, `'\\''`)
+    const escapedClosed = closedPath.replace(/'/g, `'\\''`)
+    const escapedCommentsDir = join(binDir, 'comments').replace(/'/g, `'\\''`)
+    writeFileSync(join(binDir, 'bd'), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${escapedLog}'
+if [[ "$1" == "list" ]]; then
+  status=""
+  for arg in "$@"; do
+    case "$arg" in
+      --status=*) status="\${arg#--status=}" ;;
+    esac
+  done
+  if [[ "$status" == "closed" ]]; then cat '${escapedClosed}'; exit 0; fi
+  printf '[]'
+  exit 0
+fi
+if [[ "$1" == "comments" ]]; then
+  file='${escapedCommentsDir}'"/$2"
+  if [[ -f "$file" ]]; then cat "$file"; exit 0; fi
+  printf ''
+  exit 0
+fi
+exit 1
+`)
+    chmodSync(join(binDir, 'bd'), 0o755)
+    return closedBytes
+  }
+
+  it('allows POST-CLOSE MERGE FIX recovery when closed bd list stdout exceeds 1 MB and the marker is newest in top-30', () => {
+    const repo = createRepoWithRiskyPolicyDiff()
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: repo, encoding: 'utf8' }).trim()
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim()
+    const markerId = 'bead-newest-closed'
+    const logFile = join(binDir, 'calls.log')
+    try {
+      const closedBytes = installLargeClosedListFakeBd(
+        binDir,
+        markerId,
+        `POST-CLOSE MERGE FIX
+BRANCH: fix/current
+WORKTREE: ${repoRoot}
+START_COMMIT: ${head}
+FILES: .pi/extensions/beads-policy/index.ts
+REASON: Recovery fix for merge quality gate
+`,
+        logFile,
+      )
+      expect(closedBytes).toBeGreaterThan(1024 * 1024)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+      }, { cwd: repo })
+
+      const log = readFileSync(logFile, 'utf8')
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+      expect(log).toContain('--limit=0')
+      expect(log).toContain(`comments ${markerId}`)
+    } finally {
+      process.env.PATH = oldPath
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(binDir, { recursive: true, force: true })
+    }
+  })
+
+  function createConflictedRebaseOnPolicyFile(linked: boolean): { cwd: string; origHead: string; worktreePath: string; cleanup: () => void } {
+    const main = mkdtempSync(join(tmpdir(), 'beads-policy-rebase-main-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: main, stdio: 'ignore' })
+    mkdirSync(join(main, '.pi/extensions/beads-policy'), { recursive: true })
+    writeFileSync(join(main, '.pi/extensions/beads-policy/index.ts'), 'export const base = true\n')
+    execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'base'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['checkout', '-b', 'fix/current'], { cwd: main, stdio: 'ignore' })
+    writeFileSync(join(main, '.pi/extensions/beads-policy/index.ts'), 'export const feature = true\n')
+    execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'feature'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['checkout', 'main'], { cwd: main, stdio: 'ignore' })
+    writeFileSync(join(main, '.pi/extensions/beads-policy/index.ts'), 'export const mainline = true\n')
+    execFileSync('git', ['add', '.pi/extensions/beads-policy/index.ts'], { cwd: main, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'mainline'], { cwd: main, stdio: 'ignore' })
+
+    let cwd = main
+    let extraCleanup = (): void => {}
+    if (linked) {
+      const linkedDir = join(tmpdir(), `beads-policy-rebase-linked-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      execFileSync('git', ['worktree', 'add', linkedDir, 'fix/current'], { cwd: main, stdio: 'ignore' })
+      cwd = linkedDir
+      extraCleanup = () => {
+        try {
+          execFileSync('git', ['worktree', 'remove', '--force', linkedDir], { cwd: main, stdio: 'ignore' })
+        } catch {
+          rmSync(linkedDir, { recursive: true, force: true })
+        }
+      }
+    } else {
+      execFileSync('git', ['checkout', 'fix/current'], { cwd: main, stdio: 'ignore' })
+    }
+
+    try {
+      execFileSync('git', ['rebase', 'main'], { cwd, stdio: 'ignore' })
+    } catch {
+      // expected conflict on .pi/extensions/beads-policy/index.ts
+    }
+    const origHead = execFileSync('git', ['rev-parse', 'ORIG_HEAD'], { cwd, encoding: 'utf8' }).trim()
+    const worktreePath = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim()
+    return {
+      cwd,
+      origHead,
+      worktreePath,
+      cleanup: () => {
+        extraCleanup()
+        rmSync(main, { recursive: true, force: true })
+      },
+    }
+  }
+
+  it.each([
+    { name: 'regular repo', linked: false },
+    { name: 'linked worktree', linked: true },
+  ])('allows POST-CLOSE MERGE FIX recovery during conflicted rebase in $name with START_COMMIT=ORIG_HEAD', ({ linked }) => {
+    const fixture = createConflictedRebaseOnPolicyFile(linked)
+    const binDir = mkdtempSync(join(tmpdir(), 'beads-policy-bin-'))
+    const oldPath = process.env.PATH
+    try {
+      const currentBranch = execFileSync('git', ['branch', '--show-current'], { cwd: fixture.cwd, encoding: 'utf8' }).trim()
+      const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: fixture.cwd, encoding: 'utf8' }).trim()
+      expect(currentBranch).toBe('')
+      expect(head).not.toBe(fixture.origHead)
+      if (linked) {
+        expect(statSync(join(fixture.cwd, '.git')).isFile()).toBe(true)
+      }
+
+      installFakeBd(binDir, `POST-CLOSE MERGE FIX
+BRANCH: fix/current
+WORKTREE: ${fixture.worktreePath}
+START_COMMIT: ${fixture.origHead}
+FILES: .pi/extensions/beads-policy/index.ts
+REASON: Recovery fix for merge quality gate
+`)
+      process.env.PATH = `${binDir}:${oldPath ?? ''}`
+
+      const decision = evaluateBashPolicy('git add .pi/extensions/beads-policy/index.ts', {
+        state: 'idle',
+      }, { cwd: fixture.cwd })
+
+      expect(decision?.policy).not.toBe('fastPathDiscipline')
+    } finally {
+      process.env.PATH = oldPath
+      fixture.cleanup()
       rmSync(binDir, { recursive: true, force: true })
     }
   })
