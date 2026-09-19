@@ -42,7 +42,7 @@ Keep the invariant **one cmux workspace = one Pi session = one bead**, while let
    - `--focus false`, `--name "{title} · {suffix}"`, `--command 'pi --approve -- "<Возьми …>"'` (no `pi --name`, no non-ASCII flags).
    - Group flags only when workspace JSON has a group id; else `reorder-workspace --after` caller. One retry without group on group-create fail.
    - `workspace-action set-color` (palette Indigo→Teal→Orange→Purple→Green→Amber, skip parent color); color fail = warning.
-   - Resolve child surface; `tab-action rename --surface … --title оркестратор --focus false`. Never rename via `--workspace` alone as the primary path; never rename the **workspace** title to `оркестратор`.
+   - Resolve child surface; `tab-action rename --surface … --title оркестратор --focus false --workspace <workspaceRef>`. `--workspace` is extra context next to `--surface`, never instead of it. Never rename via `--workspace` alone as the primary path; never rename the **workspace** title to `оркестратор`.
    - Writes `SPAWN_LOCK` on the target; releases on create-fail before Pi starts.
 
 5. Parent after spawn:
@@ -64,7 +64,7 @@ Keep the invariant **one cmux workspace = one Pi session = one bead**, while let
 - `--cwd` main (not parent hy3z/worktree path)
 - `--name` containing ` · {suffix}`
 - `pi --approve --` and **no** `pi --name`
-- later plan rows for `set-color` and inner `tab-action … --surface` rename to `оркестратор`
+- later plan rows for `set-color` and inner `tab-action … --surface` rename to `оркестратор` with `--workspace` beside `--surface` (dryRun placeholder `workspace:NEW`)
 
 ## Policy notes
 
