@@ -528,6 +528,7 @@ export const PLAN_APPROVED_READINESS_MATRIX = {
 		"Worktree / cwd:",
 		"WORKTREE_LOCK:",
 		"Risks / rollback:",
+		"Supervisor:",
 		"AUTO_EXECUTE_ALLOWED: true",
 	],
 } as const;
@@ -563,6 +564,18 @@ function isPlanApprovedComment(text: string): boolean {
 
 function getPlanComment(comments: BeadComment[]): string | undefined {
 	return comments.map((comment) => comment.text ?? "").reverse().find((text) => isPlanApprovedComment(text));
+}
+
+/** Latest PLAN APPROVED `Supervisor: <agent>` at start of line. Prefix-only: `Supervisor: test supervisor` → `test`. */
+export function extractPlanSupervisorAgent(comments: BeadComment[]): string | undefined {
+	const plan = getPlanComment(comments);
+	if (!plan) return undefined;
+	const match = plan.match(/(?:^|\n)Supervisor:\s*([a-z0-9-]+)/);
+	return match?.[1];
+}
+
+function supervisorAgentExists(cwd: string, name: string): boolean {
+	return fs.existsSync(path.join(cwd, ".pi", "agents", `${name}.md`));
 }
 
 function extractRecordedStartCommit(comments: BeadComment[]): string | undefined {
@@ -1893,9 +1906,18 @@ async function dispatch(
 	} else if (mode !== "supervisor") {
 		agentName = "documentation-expert";
 	} else {
-		const routing = loadSupervisorRouting(cwd);
-		agentName = resolveSupervisorFromRouting(bead, routing);
-		routingWarning = supervisorRoutingWarning(routing);
+		const planSupervisor = extractPlanSupervisorAgent(comments);
+		if (planSupervisor && supervisorAgentExists(cwd, planSupervisor)) {
+			agentName = planSupervisor;
+		} else {
+			const routing = loadSupervisorRouting(cwd);
+			agentName = resolveSupervisorFromRouting(bead, routing);
+			routingWarning = supervisorRoutingWarning(routing);
+			if (planSupervisor) {
+				const planWarning = `PLAN APPROVED Supervisor agent not found in .pi/agents: ${planSupervisor}; falling back to supervisor-routing table`;
+				routingWarning = routingWarning ? `${planWarning}; ${routingWarning}` : planWarning;
+			}
+		}
 	}
 	const agent = loadAgent(cwd, agentName);
 	const contextText = `${bead.title ?? ""}\n${bead.description ?? ""}\n${comments.map((comment) => comment.text ?? "").join("\n")}`;

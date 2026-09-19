@@ -33,6 +33,7 @@ This skill runs only after a bead is claimed and the plan is approved. Approved 
    Edge-case review: <edge cases>
    Worktree / cwd: <path>
    WORKTREE_LOCK: <mutation scope>
+   Supervisor: <agent-name>
    Acceptance: <observable checks>
    Verification / acceptance checks: <commands/manual checks>
    Risks / rollback: <risks and rollback>
@@ -84,13 +85,17 @@ Every `dispatch_supervisor` prompt must render the same section names, even for 
 
 ## Supervisor selection
 
-Typed dispatch selects the default agent from labels/description/files:
+Typed `dispatch_supervisor` picks the agent in this order:
 
-- `frontend` / `ui` / Vue/component/page/composable → `vue-supervisor`;
-- `backend` / `tracker` labels, or `src-tauri` / `rust` / `cargo` in title+description → `tauri-supervisor` (bare `tauri` in prose or role names like `tauri-supervisor` does not route here);
-- `ci` / `dx` / tests/workflow/tooling → `test-supervisor`.
+1. Explicit `agent=` — manual override. Use this when the orchestrator doubts the table or when dispatching a multi-supervisor plan (`spawn_task_workspace` / a second explicit call).
+2. `Supervisor:` from the latest PLAN APPROVED comment, if `.pi/agents/<name>.md` exists. Canonical form is a start-of-line field (`Supervisor: test-supervisor`), not indented or bulleted.
+3. First-match routing table `.pi/supervisor-routing.json` (labels/description/files):
+   - `frontend` / `ui` / Vue/component/page/composable → `vue-supervisor`;
+   - `backend` / `tracker` labels, or `src-tauri` / `rust` / `cargo` in title+description → `tauri-supervisor` (bare `tauri` in prose or role names like `tauri-supervisor` does not route here);
+   - `ci` / `dx` / tests/workflow/tooling → `test-supervisor`.
+4. Fail-safe `implementer`.
 
-If the domain is ambiguous, ask one concrete question with 2-4 options before dispatch.
+A PLAN APPROVED `Supervisor:` name that does not exist in `.pi/agents` is not a hard error: `details.routingWarning` includes the missing name and selection falls back to the table. Typed no-agent dispatch does not ask a question. Ask one concrete question with 2-4 options only for **manual** dispatch when the orchestrator doubts the table — then pass explicit `agent=`.
 
 ## Rules
 
