@@ -134,6 +134,36 @@ describe('spawnSyncVisibleAgents', () => {
     expect(closed).toEqual(['surface:a1'])
   })
 
+  it('readScreen throw does not mark dead; waits until result file exists', async () => {
+    let resultFile = ''
+    const closed: string[] = []
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
+          const taskPath = taskMatch?.[1]
+          if (!taskPath || !fs.existsSync(taskPath)) return
+          const body = fs.readFileSync(taskPath, 'utf8')
+          const resultMatch = body.match(/write your final report to ([^\n]+)/)
+          if (resultMatch?.[1]) resultFile = resultMatch[1]
+        },
+        async readScreen() { throw new Error('transient read-screen') },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {
+        if (resultFile) fs.writeFileSync(resultFile, 'recovered after throw\n')
+      },
+      agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
+    })
+    expect(results[0]?.error).toBeUndefined()
+    expect(results[0]?.output).toContain('recovered after throw')
+    expect(closed).toEqual(['surface:a1'])
+  })
+
   it('timeout closes spawned panes', async () => {
     const closed: string[] = []
     let now = 0

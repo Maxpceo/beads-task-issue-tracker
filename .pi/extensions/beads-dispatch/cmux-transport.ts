@@ -112,7 +112,7 @@ function bottomOfColumn(panes: Array<LivePlacementPane & { layoutColumn: number 
  * Place the next visible agent pane on the right half: max 2 columns, then stack down.
  * - 0 live → right of orch/caller, column 0
  * - 1 live → right of that agent, column 1 (never re-split orch)
- * - 2+ live → down from the bottom pane of the shortest column (tie → column 0)
+ * - 2+ live → down from the bottom pane of the shortest column (tie → column 0); never right. Empty shortest column stacks down on the occupied column.
  * - preserveColumn (respawn): keep stacking in that column when it still has a live pane
  * - legacy rows without layoutColumn → columns by createdAt (index % 2)
  */
@@ -150,10 +150,12 @@ export function resolveVisibleSplitPlacement(input: {
 	const targetCol = col0.length <= col1.length ? 0 : 1;
 	const colPanes = targetCol === 0 ? col0 : col1;
 	if (colPanes.length === 0) {
+		const occupiedCol = targetCol === 0 ? 1 : 0;
+		const occupied = occupiedCol === 0 ? col0 : col1;
 		return {
-			anchorSurface: candidates[0]!.pane.trim(),
-			direction: "right",
-			layoutColumn: targetCol,
+			anchorSurface: bottomOfColumn(occupied).pane.trim(),
+			direction: "down",
+			layoutColumn: occupiedCol,
 		};
 	}
 	return {
@@ -232,7 +234,8 @@ export function buildVisibleChildSpawnPayload(worktreePath: string, argv: string
 }
 
 const SESSION_LINE_RE = /\bsession(?:Mode)?(?:\s*[:=]\s*|\s+)(idle|implementing|inreview|waiting|reviewing|planning)\b/i;
-const BUSY_RE = /\b(thinking|busy)\b/i;
+/** Status tokens only — not path fragments like `subagent-thinking-argv.test.ts`. */
+const BUSY_RE = /(?<![\w/_-])(thinking|busy)(?![\w/_-])/i;
 const SHELL_PROMPT_RE = /(?:^|\n)[^\n]*[$%❯]\s*$/m;
 
 export function classifyVisiblePane(text: string): VisiblePaneHealth {

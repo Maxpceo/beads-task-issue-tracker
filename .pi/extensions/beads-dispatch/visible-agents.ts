@@ -240,13 +240,15 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 					pending.delete(row.taskId);
 					continue;
 				}
-				let screen = "";
+				let screen: string | undefined;
 				try {
 					screen = await adapter.readScreen(entry.pane);
 				} catch {
-					screen = "";
+					continue;
 				}
-				if (classify(screen) === "dead") {
+				if (!screen.trim()) continue;
+				const health = classify(screen);
+				if (health === "dead" || health === "shell") {
 					row.error = `dead pane without result: ${entry.pane}`;
 					pending.delete(row.taskId);
 				}

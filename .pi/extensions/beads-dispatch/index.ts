@@ -1300,7 +1300,7 @@ async function respawnVisibleFollowup(
 		submitStatus: "none",
 		sendFailCount: 0,
 		hung: false,
-		layoutColumn: entry.layoutColumn ?? placement.layoutColumn,
+		layoutColumn: placement.layoutColumn,
 	});
 	const restSchedule = STICKY_TAB_TITLE_DELAYS_MS.slice(1);
 	if (restSchedule.length > 0) {

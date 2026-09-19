@@ -1767,6 +1767,16 @@ describe('resolveVisibleSplitPlacement (2-column down-stack)', () => {
     })).toEqual({ anchorSurface: 'surface:c', direction: 'down', layoutColumn: 0 })
   })
 
+  it('2 live both column 1 → down on occupied column, never right', () => {
+    expect(resolveVisibleSplitPlacement({
+      callerSurface: 'surface:orch',
+      liveAgentPanes: [
+        pane('b', 't1', 1),
+        pane('c', 't2', 1),
+      ],
+    })).toEqual({ anchorSurface: 'surface:c', direction: 'down', layoutColumn: 1 })
+  })
+
   it('tie-break uses smaller column index', () => {
     expect(resolveVisibleSplitPlacement({
       callerSurface: 'surface:orch',
@@ -2036,6 +2046,70 @@ describe('kgvd dual-agent layout wiring', () => {
     expect(peer.status).toBe('spawned')
     expect(peerAnchors).toEqual(['surface:sup-live'])
     expect(peerAnchors[0]).not.toBe('surface:orch')
+  })
+
+  it('respawn after col-0 gone records placement column, not the old column', async () => {
+    const filesDir = path.join(tmp, 'col0-gone')
+    fs.mkdirSync(filesDir, { recursive: true })
+    const taskFile = path.join(filesDir, 't.md')
+    const promptFile = path.join(filesDir, 'p.md')
+    const peerTask = path.join(filesDir, 'rev-t.md')
+    const peerPrompt = path.join(filesDir, 'rev-p.md')
+    for (const f of [taskFile, promptFile, peerTask, peerPrompt]) fs.writeFileSync(f, 'x')
+    const file = path.join(tmp, 'ns', 'ws-kgvd-col0', 'dispatch-registry.json')
+    saveRegistry(file, {
+      entries: [
+        {
+          taskId: 'task-sup-col0',
+          beadId: 'bead-kgvd-col0',
+          pane: 'surface:sup-old',
+          worktree: process.cwd(),
+          role: 'test-supervisor',
+          model: '',
+          taskFile,
+          resultFile: path.join(filesDir, 'r.md'),
+          digestFile: path.join(filesDir, 'd.digest'),
+          promptFile,
+          status: 'spawned',
+          submitStatus: 'none',
+          callerSurface: 'surface:orch',
+          startCommit: 'aaa1111',
+          createdAt: '2026-09-14T10:00:00.000Z',
+          layoutColumn: 0,
+        },
+        {
+          taskId: 'task-rev-col1',
+          beadId: 'bead-kgvd-col0',
+          pane: 'surface:rev-live',
+          worktree: process.cwd(),
+          role: 'code-reviewer',
+          model: '',
+          taskFile: peerTask,
+          resultFile: path.join(filesDir, 'rr.md'),
+          digestFile: path.join(filesDir, 'rd.digest'),
+          promptFile: peerPrompt,
+          status: 'spawned',
+          submitStatus: 'none',
+          callerSurface: 'surface:orch',
+          startCommit: 'aaa1111',
+          createdAt: '2026-09-14T11:00:00.000Z',
+          layoutColumn: 1,
+        },
+      ],
+    })
+    setCmuxAdapterForTests({
+      callerSurface: () => 'surface:orch',
+      async identify() { return { workspaceId: 'ws-kgvd-col0' } },
+      async newSplit() { return { surface: 'surface:sup-new' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return 'user@host ~/proj $\n' },
+    })
+    const { pi, cwd, branch } = makePi({ beadId: 'bead-kgvd-col0' })
+    const result = await followupVisibleDispatch(pi as any, { beadId: 'bead-kgvd-col0', task: 'respawn after col0 gone' }, workflowCtx(cwd, 'bead-kgvd-col0', branch, 'aaa1111'))
+    expect(result.status).toBe('spawned')
+    expect(findRegistryByTaskId('task-sup-col0')?.entry.pane).toBe('surface:sup-new')
+    expect(findRegistryByTaskId('task-sup-col0')?.entry.layoutColumn).toBe(1)
   })
 
   it('close_visible_dispatch closes both agent panes for bead', async () => {
