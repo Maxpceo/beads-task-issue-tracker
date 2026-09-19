@@ -1,6 +1,7 @@
 {
   "default": "test-supervisor",
   "rules": [
+    { "agent": "test-supervisor",  "labels": ["workflow"],           "textPatterns": [] },
     { "agent": "tauri-supervisor", "labels": ["backend", "tracker"], "textPatterns": ["rust", "cargo", "src-tauri"] },
     { "agent": "test-supervisor",  "labels": ["ci", "dx"],            "textPatterns": ["test", "vitest", "ci", "workflow"] },
     { "agent": "vue-supervisor",   "labels": ["frontend", "ui", "data"], "textPatterns": ["vue", "component", "composable", "page", "app/"] }
