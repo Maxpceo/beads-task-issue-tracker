@@ -257,6 +257,56 @@ function latestAssistantTextFromEntries(entries: Array<{ type?: string; message?
 	return "";
 }
 
+type AutoPlanReviewState = "idle" | "awaiting_revision" | "blocked" | "stopped";
+
+function restoreAutoPlanReviewState(value: unknown): AutoPlanReviewState | undefined {
+	if (value === "idle" || value === "awaiting_revision" || value === "blocked" || value === "stopped") return value;
+	return undefined;
+}
+
+function samePlanReviewDraft(a: string | undefined, b: string | undefined): boolean {
+	return Boolean(a && b && a.trim() === b.trim());
+}
+
+function collectDeadPaneWithoutResultMarks(results: PlanReviewResult[]): string[] {
+	const marks: string[] = [];
+	const seen = new Set<string>();
+	const consider = (text: string | undefined) => {
+		if (!text) return;
+		const match = text.match(/dead pane without result(?::\s*(\S+))?/i);
+		if (!match) return;
+		const pane = (match[1] ?? "").replace(/[.,;]+$/u, "");
+		const mark = pane ? `dead pane without result: ${pane}` : "dead pane without result";
+		if (seen.has(mark)) return;
+		seen.add(mark);
+		marks.push(mark);
+	};
+	for (const result of results) {
+		consider(result.error);
+		for (const blocker of result.unresolvedBlockers) consider(blocker);
+		for (const finding of result.findings) {
+			consider(finding.issue);
+			consider(finding.evidence);
+		}
+	}
+	return marks;
+}
+
+function isDeadPaneHardBlock(results: PlanReviewResult[]): boolean {
+	return collectDeadPaneWithoutResultMarks(results).length > 0;
+}
+
+function formatDeadPaneHardBlockCopy(results: PlanReviewResult[]): string {
+	const marks = collectDeadPaneWithoutResultMarks(results);
+	const paneLine = marks.length > 0 ? marks.join("; ") : "dead pane without result";
+	return [
+		`HARD_BLOCK. ${paneLine}. findings=[].`,
+		"This is a pane/runtime failure, not a plan-quality finding.",
+		"Do not approve.",
+		"Retry only with an explicit extraCycle, /plan-review, or Maxim «Отправить на plan-review» using the cached draftPlan.",
+	].join(" ");
+}
+
 export default function planModeExtension(pi: ExtensionAPI): void {
 	const workflowPi = pi as ExtensionAPI & {
 		registerTool?: (tool: any) => void;
@@ -269,12 +319,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let autopilotEnabled = false;
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
-	let autoPlanReviewState: "idle" | "awaiting_revision" = "idle";
+	let autoPlanReviewState: AutoPlanReviewState = "idle";
 	let autoPlanReviewResults: PlanReviewResult[] = [];
 	/** workflow_plan_review spawn counter only (not /plan-auto runReviewGateForPlan). Reset on plan-mode off→on. */
 	let planReviewCycleCount = 0;
 	let lastPlanReviewStopAdvice: PlanReviewStopAdvice | undefined;
 	let lastPlanReviewResults: PlanReviewResult[] = [];
+	/** Last draft actually sent to reviewers; used for anti-respawn and /plan-review while blocked. */
+	let lastPlanReviewDraftPlan: string | undefined;
 	let prePlanActiveToolNames: string[] | undefined;
 	/** Set only by plan_mode_complete; gates ready-UI in strict agent_end. */
 	let pendingReadyPlan: string | undefined;
@@ -933,6 +985,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		planReviewCycleCount = 0;
 		lastPlanReviewStopAdvice = undefined;
 		lastPlanReviewResults = [];
+		lastPlanReviewDraftPlan = undefined;
+		autoPlanReviewState = "idle";
+		autoPlanReviewResults = [];
+	}
+
+	function applyPlanReviewAdvice(advice: PlanReviewStopAdvice): void {
+		if (advice === "HARD_BLOCK") autoPlanReviewState = "blocked";
+		else if (advice === "CONTINUE") autoPlanReviewState = "awaiting_revision";
+		else autoPlanReviewState = "stopped";
 	}
 
 	function buildPlanReviewToolText(input: {
@@ -942,12 +1003,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		gateOk: boolean;
 		renderedResults: string;
 		reasons?: string[];
+		results?: PlanReviewResult[];
 		skippedSpawn?: boolean;
 		skipReason?: "auto-cap" | "total-ceiling";
 		extraCycle?: boolean;
 		requestedBy?: "maxim" | "orchestrator";
 	}): string {
-		const { advice, cycle, risk, gateOk, renderedResults, reasons, skippedSpawn, skipReason, extraCycle, requestedBy } = input;
+		const { advice, cycle, risk, gateOk, renderedResults, reasons, results, skippedSpawn, skipReason, extraCycle, requestedBy } = input;
 		const cycleLabel = (extraCycle || cycle > MAX_PLAN_REVIEW_CYCLES)
 			? (requestedBy === "maxim" && cycle > MAX_PLAN_REVIEW_TOTAL_SPAWNS
 				? `${cycle} (extra, maxim)`
@@ -962,6 +1024,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				: ` No additional reviewer spawn (auto cycle cap ${MAX_PLAN_REVIEW_CYCLES}). Pass extraCycle: true for another spawn when Maxim asks or residual important/critical remain on a high-risk plan (orchestrator extra ceiling ${MAX_PLAN_REVIEW_TOTAL_SPAWNS}; default requestedBy=orchestrator).`;
 		}
 		if (advice === "HARD_BLOCK") {
+			if (results && isDeadPaneHardBlock(results)) {
+				return `workflow_plan_review ${cycleLabel}: ${formatDeadPaneHardBlockCopy(results)}${skipNote}\n${riskLine}.${reasonBlock}`;
+			}
 			return `workflow_plan_review ${cycleLabel}: HARD_BLOCK. Do not execute or approve the plan until blockers are resolved.${skipNote}\n${riskLine}.${reasonBlock}\n\nReviewer output:\n\n${renderedResults}`;
 		}
 		if (advice === "CONTINUE") {
@@ -996,6 +1061,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const gate = evaluatePlanReviewGate(results);
 			const advice: PlanReviewStopAdvice = "STOP_SHOW_USER";
 			lastPlanReviewStopAdvice = advice;
+			applyPlanReviewAdvice(advice);
 			persistState();
 			const renderedResults = results.length > 0
 				? renderPlanReviewResults(results)
@@ -1009,6 +1075,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					gateOk: gate.ok,
 					renderedResults,
 					reasons: gate.reasons,
+					results,
 					skippedSpawn: true,
 					skipReason,
 					extraCycle,
@@ -1062,6 +1129,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 		lastPlanReviewStopAdvice = advice;
 		lastPlanReviewResults = results;
+		lastPlanReviewDraftPlan = draftPlan;
+		applyPlanReviewAdvice(advice);
 		persistState();
 
 		const renderedResults = renderPlanReviewResults(results);
@@ -1073,6 +1142,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				gateOk: gate.ok,
 				renderedResults,
 				reasons: gate.ok ? undefined : gate.reasons,
+				results,
 				extraCycle: usedExtra,
 				requestedBy,
 			}),
@@ -1170,6 +1240,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionMode = false;
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
+		lastPlanReviewDraftPlan = undefined;
 		todoItems = [];
 		// Auto/autopilot never uses ready-UI; clear any leftover strict pending.
 		if (autoExecute || autopilot) clearPendingReadyPlan();
@@ -1191,6 +1262,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		executionMode = false;
 		autoPlanReviewState = "idle";
 		autoPlanReviewResults = [];
+		lastPlanReviewDraftPlan = undefined;
 		todoItems = [];
 		clearPendingReadyPlan();
 		resetPlanReviewCycleState();
@@ -1221,6 +1293,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			planReviewCycleCount,
 			lastPlanReviewStopAdvice,
 			lastPlanReviewResults,
+			lastPlanReviewDraftPlan,
 			pendingReadyPlan,
 		});
 	}
@@ -1385,6 +1458,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	function formatReadyCritiqueFindingsText(results: PlanReviewResult[]): string {
+		if (isDeadPaneHardBlock(results)) {
+			return [
+				formatDeadPaneHardBlockCopy(results),
+				"",
+				renderPlanReviewResults(results),
+			].join("\n");
+		}
 		return [
 			"**Strict plan critique complete.** Implementation remains blocked until explicit approval.",
 			"",
@@ -1416,6 +1496,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}];
 		}
 		const gate = evaluatePlanReviewGate(results);
+		lastPlanReviewDraftPlan = draftPlan;
+		lastPlanReviewResults = results;
+		autoPlanReviewResults = results;
+		const advice = planReviewStopAdvice({
+			cycle: Math.max(planReviewCycleCount, 1),
+			gateOk: gate.ok,
+			hasImportantOrCritical: hasImportantOrCriticalFindings(results, gate.importantFindings),
+		});
+		lastPlanReviewStopAdvice = advice;
+		applyPlanReviewAdvice(advice);
+		persistState();
 		return { results, gate };
 	}
 
@@ -1672,6 +1763,22 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (!planModeEnabled) {
 					return toolText("plan_mode_complete blocked: plan mode is off", { ok: false, error: "plan mode is off" });
 				}
+				if (
+					!autoExecuteEnabled
+					&& autoPlanReviewState === "blocked"
+					&& samePlanReviewDraft(plan, lastPlanReviewDraftPlan)
+					&& isDeadPaneHardBlock(lastPlanReviewResults)
+				) {
+					const copy = formatDeadPaneHardBlockCopy(lastPlanReviewResults);
+					persistState();
+					return toolText(copy, {
+						ok: false,
+						pending: false,
+						cachedHardBlock: true,
+						stopAdvice: "HARD_BLOCK",
+						results: lastPlanReviewResults,
+					});
+				}
 				if (autoExecuteEnabled) {
 					// Auto/autopilot ignores ready-UI; still accept the text as the latest draft without pending.
 					clearPendingReadyPlan();
@@ -1785,12 +1892,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const results = await runReviewGateForPlan(ctx, draftPlan);
 		const gate = evaluatePlanReviewGate(results);
 		autoPlanReviewResults = results;
+		lastPlanReviewResults = results;
+		lastPlanReviewDraftPlan = draftPlan;
 		if (!gate.ok) {
+			autoPlanReviewState = "blocked";
+			lastPlanReviewStopAdvice = "HARD_BLOCK";
 			const reasons = gate.reasons.map((reason) => `- ${reason}`).join("\n");
+			const content = isDeadPaneHardBlock(results)
+				? `**Auto-execute blocked.** ${formatDeadPaneHardBlockCopy(results)}\n\n${reasons}`
+				: `**Auto-execute blocked by plan-review gate.**\n\n${reasons}\n\nReviewer output:\n\n${renderPlanReviewResults(results)}\n\nRemain in plan mode/read-only and resolve blockers before execution.`;
 			pi.sendMessage(
 				{
 					customType: "plan-review-gate-blocked",
-					content: `**Auto-execute blocked by plan-review gate.**\n\n${reasons}\n\nReviewer output:\n\n${renderPlanReviewResults(results)}\n\nRemain in plan mode/read-only and resolve blockers before execution.`,
+					content,
 					display: true,
 				},
 				{ triggerTurn: false },
@@ -1812,16 +1926,33 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function runStrictPlanCritique(ctx: ExtensionContext): Promise<void> {
-		const draftPlan = latestAssistantTextFromEntries(ctx.sessionManager.getEntries() as Array<{ type?: string; message?: AgentMessage }>);
+		const cached = lastPlanReviewDraftPlan?.trim() ?? "";
+		const draftPlan = autoPlanReviewState === "blocked" && cached
+			? cached
+			: latestAssistantTextFromEntries(ctx.sessionManager.getEntries() as Array<{ type?: string; message?: AgentMessage }>);
 		if (!draftPlan.trim()) {
 			pi.sendMessage({ customType: "plan-review-blocked", content: "**Plan review blocked.** No draft plan found in the current session.", display: true }, { triggerTurn: false });
 			return;
 		}
 		const results = await runReviewGateForPlan(ctx, draftPlan);
+		const gate = evaluatePlanReviewGate(results);
+		lastPlanReviewDraftPlan = draftPlan;
+		lastPlanReviewResults = results;
+		autoPlanReviewResults = results;
+		const advice = planReviewStopAdvice({
+			cycle: Math.max(planReviewCycleCount, 1),
+			gateOk: gate.ok,
+			hasImportantOrCritical: hasImportantOrCriticalFindings(results, gate.importantFindings),
+		});
+		lastPlanReviewStopAdvice = advice;
+		applyPlanReviewAdvice(advice);
+		const content = isDeadPaneHardBlock(results)
+			? `${formatDeadPaneHardBlockCopy(results)}\n\n${renderPlanReviewResults(results)}`
+			: `**Strict plan critique complete.** Implementation remains blocked until explicit approval.\n\n${renderPlanReviewResults(results)}`;
 		pi.sendMessage(
 			{
 				customType: "plan-review-findings",
-				content: `**Strict plan critique complete.** Implementation remains blocked until explicit approval.\n\n${renderPlanReviewResults(results)}`,
+				content,
 				display: true,
 			},
 			{ triggerTurn: false },
@@ -2328,6 +2459,10 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		if (autoExecuteEnabled) {
 			// Auto/autopilot never shows ready-UI; drop any stale pending.
 			clearPendingReadyPlan();
+			if (autoPlanReviewState === "blocked" || autoPlanReviewState === "stopped") {
+				persistState();
+				return;
+			}
 			if (autoPlanReviewState === "idle") {
 				await requestRevisionAfterPlanReview(ctx, lastAssistantText);
 				return;
@@ -2403,11 +2538,12 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				autopilot?: boolean;
 				todos?: TodoItem[];
 				executing?: boolean;
-				autoPlanReviewState?: "idle" | "awaiting_revision";
+				autoPlanReviewState?: AutoPlanReviewState;
 				autoPlanReviewResults?: PlanReviewResult[];
 				planReviewCycleCount?: number;
 				lastPlanReviewStopAdvice?: PlanReviewStopAdvice;
 				lastPlanReviewResults?: PlanReviewResult[];
+				lastPlanReviewDraftPlan?: string;
 				pendingReadyPlan?: string;
 			} }
 			| undefined;
@@ -2418,11 +2554,12 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			autopilotEnabled = planModeEntry.data.autopilot ?? autopilotEnabled;
 			todoItems = planModeEntry.data.todos ?? todoItems;
 			executionMode = planModeEntry.data.executing ?? executionMode;
-			autoPlanReviewState = planModeEntry.data.autoPlanReviewState ?? autoPlanReviewState;
+			autoPlanReviewState = restoreAutoPlanReviewState(planModeEntry.data.autoPlanReviewState) ?? autoPlanReviewState;
 			autoPlanReviewResults = planModeEntry.data.autoPlanReviewResults ?? autoPlanReviewResults;
 			planReviewCycleCount = planModeEntry.data.planReviewCycleCount ?? planReviewCycleCount;
 			lastPlanReviewStopAdvice = planModeEntry.data.lastPlanReviewStopAdvice ?? lastPlanReviewStopAdvice;
 			lastPlanReviewResults = planModeEntry.data.lastPlanReviewResults ?? lastPlanReviewResults;
+			lastPlanReviewDraftPlan = planModeEntry.data.lastPlanReviewDraftPlan ?? lastPlanReviewDraftPlan;
 			pendingReadyPlan = planModeEntry.data.pendingReadyPlan ?? pendingReadyPlan;
 			// Auto/autopilot never keeps ready pending across restore.
 			if (autoExecuteEnabled) clearPendingReadyPlan();

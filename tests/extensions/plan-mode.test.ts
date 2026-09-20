@@ -46,6 +46,7 @@ let mockPlanReviewReasons: string[] = []
 let mockPlanReviewImportantFindings: PlanReviewFinding[] = []
 let mockPlanReviewResults: PlanReviewResult[] | undefined
 let mockPlanReviewSpawnCount = 0
+let mockPlanReviewDrafts: string[] = []
 let mockPlanReviewSpawnError: Error | undefined
 let mockPlanReviewSpawnGate: Promise<void> | undefined
 let mockMissingRevisedPlanSections: string[] = []
@@ -162,8 +163,9 @@ function loadPlanModeExtension(): (pi: unknown) => void {
           }
           return mockRenderedPlanReviewResults
         },
-        runPlanReviewers: async () => {
+        runPlanReviewers: async (_pi: unknown, _cwd: string, draftPlan?: string) => {
           mockPlanReviewSpawnCount += 1
+          if (typeof draftPlan === 'string') mockPlanReviewDrafts.push(draftPlan)
           if (mockPlanReviewSpawnGate) await mockPlanReviewSpawnGate
           if (mockPlanReviewSpawnError) throw mockPlanReviewSpawnError
           return mockPlanReviewResults ?? defaultMockPlanReviewResults()
@@ -258,6 +260,7 @@ function makeHarness(options: {
   mockPlanReviewImportantFindings = []
   mockPlanReviewResults = undefined
   mockPlanReviewSpawnCount = 0
+  mockPlanReviewDrafts = []
   mockPlanReviewSpawnError = undefined
   mockPlanReviewSpawnGate = undefined
   mockMissingRevisedPlanSections = []
@@ -493,6 +496,24 @@ function makeHarness(options: {
     selectCalls,
     ctx,
   }
+}
+
+function deadPaneResults(pane = 'surface:335'): PlanReviewResult[] {
+  return ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({
+    reviewer,
+    verdict: 'BLOCKED' as const,
+    findings: [] as PlanReviewFinding[],
+    unresolvedBlockers: [`dead pane without result: ${pane}`],
+    raw: '',
+    error: `dead pane without result: ${pane}`,
+  }))
+}
+
+function armDeadPaneGate(pane = 'surface:335') {
+  mockPlanReviewGateOk = false
+  mockPlanReviewResults = deadPaneResults(pane)
+  mockPlanReviewReasons = [`unresolved blocker: plan-edge-reviewer: dead pane without result: ${pane}`]
+  mockRenderedPlanReviewResults = 'PLAN REVIEW: BLOCKED\n- none'
 }
 
 const SAMPLE_READY_PLAN = [
@@ -2900,6 +2921,145 @@ describe('Pi plan-mode typed workflow tools', () => {
           expect(harness.sendMessages.some((message) => message.message.customType === 'post-approval-continuation-idempotent-skip')).toBe(true)
         })
     })
+})
+
+describe('Pi plan-mode plan-review anti-respawn (cm5b)', () => {
+  const cachedDraft = 'Plan:\n1. Implement typed anti-respawn.\nFiles to change:\n- .pi/extensions/plan-mode/index.ts'
+  const chatStop = 'Нужен выбор. Это не implementation plan alpn.'
+
+  it('table 2: auto agent_end after HARD_BLOCK does not spawn chat or approve', async () => {
+    const { commandHandlers, agentEndHandlers, execCalls, ctx } = makeHarness()
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    armDeadPaneGate('surface:335')
+
+    await agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: cachedDraft }] }],
+    }, ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(mockPlanReviewDrafts.at(-1)).toBe(cachedDraft)
+
+    await agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: chatStop }] }],
+    }, ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(mockPlanReviewDrafts).toEqual([cachedDraft])
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+  })
+
+  it('table 4/5: extraCycle nonempty params win; empty draft errors without spawn', async () => {
+    const { toolHandlers, ctx } = makeHarness()
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-on', { mode: 'auto' }, undefined, undefined, ctx)
+    armDeadPaneGate('surface:341')
+
+    const blocked = await toolHandlers.get('workflow_plan_review')?.execute('call-1', { draftPlan: cachedDraft }, undefined, undefined, ctx)
+    expect(blocked.details.stopAdvice).toBe('HARD_BLOCK')
+    expect(blocked.content[0].text).toContain('dead pane without result: surface:341')
+    expect(blocked.content[0].text).toContain('findings=[]')
+    expect(blocked.content[0].text).not.toContain('call plan_mode_complete')
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    const emptyExtra = await toolHandlers.get('workflow_plan_review')?.execute('call-empty', {
+      draftPlan: '   ',
+      extraCycle: true,
+    }, undefined, undefined, ctx)
+    expect(emptyExtra.details).toMatchObject({ ok: false, error: 'draftPlan is required' })
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    const extra = await toolHandlers.get('workflow_plan_review')?.execute('call-extra', {
+      draftPlan: cachedDraft,
+      extraCycle: true,
+    }, undefined, undefined, ctx)
+    expect(extra.details.stopAdvice).toBe('HARD_BLOCK')
+    expect(mockPlanReviewSpawnCount).toBe(2)
+    expect(mockPlanReviewDrafts).toEqual([cachedDraft, cachedDraft])
+  })
+
+  it('table 6/7: same-draft complete after dead-pane HARD_BLOCK is cache-hit; other draft opens ready-UI spawn', async () => {
+    const otherDraft = `${cachedDraft}\n2. Different step.`
+    const blockedHarness = makeHarness({ readyActionQueue: ['execute'] })
+    await blockedHarness.toolHandlers.get('workflow_plan_mode')?.execute('call-on', { mode: 'strict' }, undefined, undefined, blockedHarness.ctx)
+    armDeadPaneGate('surface:343')
+    await blockedHarness.toolHandlers.get('workflow_plan_review')?.execute('call-1', {
+      draftPlan: cachedDraft,
+    }, undefined, undefined, blockedHarness.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    const same = await blockedHarness.toolHandlers.get('plan_mode_complete')?.execute('complete-same', {
+      plan: cachedDraft,
+    }, undefined, undefined, blockedHarness.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(same.details).toMatchObject({ ok: false, cachedHardBlock: true, stopAdvice: 'HARD_BLOCK' })
+    expect(String(same.content[0].text)).toContain('dead pane without result: surface:343')
+    expect(String(same.content[0].text)).toContain('findings=[]')
+    expect(String(same.content[0].text)).not.toContain('call plan_mode_complete')
+    expect(blockedHarness.customCalls).toHaveLength(0)
+
+    const otherHarness = makeHarness({ readyActionQueue: ['plan-review'] })
+    await otherHarness.toolHandlers.get('workflow_plan_mode')?.execute('call-on', { mode: 'strict' }, undefined, undefined, otherHarness.ctx)
+    armDeadPaneGate('surface:343')
+    await otherHarness.toolHandlers.get('workflow_plan_review')?.execute('call-1', {
+      draftPlan: cachedDraft,
+    }, undefined, undefined, otherHarness.ctx)
+    const beforeOther = mockPlanReviewSpawnCount
+    const other = await otherHarness.toolHandlers.get('plan_mode_complete')?.execute('complete-other', {
+      plan: otherDraft,
+    }, undefined, undefined, otherHarness.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(beforeOther + 1)
+    expect(mockPlanReviewDrafts.at(-1)).toBe(otherDraft)
+    expect(other.details.cachedHardBlock).not.toBe(true)
+    expect(String(other.content[0].text)).not.toContain('call plan_mode_complete')
+    expect(otherHarness.customCalls.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('table 9: /plan-review while blocked uses cached draft, not lastAssistantText', async () => {
+    const { toolHandlers, commandHandlers, sessionEntries, ctx } = makeHarness()
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-on', { mode: 'strict' }, undefined, undefined, ctx)
+    armDeadPaneGate('surface:347')
+    await toolHandlers.get('workflow_plan_review')?.execute('call-1', { draftPlan: cachedDraft }, undefined, undefined, ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+
+    sessionEntries.push({
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text: chatStop }] },
+    } as never)
+
+    await commandHandlers.get('plan-review')?.handler('', ctx)
+    expect(mockPlanReviewSpawnCount).toBe(2)
+    expect(mockPlanReviewDrafts.at(-1)).toBe(cachedDraft)
+    expect(mockPlanReviewDrafts.at(-1)).not.toContain('Нужен выбор')
+  })
+
+  it('restore blocked does not idle-spawn on auto agent_end', async () => {
+    const harness = makeHarness({
+      entries: [
+        { type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-plan', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' } },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: true,
+            autopilot: false,
+            todos: [],
+            executing: false,
+            autoPlanReviewState: 'blocked',
+            autoPlanReviewResults: deadPaneResults('surface:335'),
+            planReviewCycleCount: 1,
+            lastPlanReviewStopAdvice: 'HARD_BLOCK',
+            lastPlanReviewResults: deadPaneResults('surface:335'),
+            lastPlanReviewDraftPlan: cachedDraft,
+          },
+        },
+      ],
+    })
+    await harness.sessionStartHandlers[0]?.({}, harness.ctx)
+    armDeadPaneGate('surface:335')
+    await harness.agentEndHandlers[0]?.({
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: chatStop }] }],
+    }, harness.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(0)
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+  })
 })
 
 describe('Pi plan-mode complete-when-ready overlay', () => {
