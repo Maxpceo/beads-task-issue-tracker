@@ -11,6 +11,9 @@ import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extension
 import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
 import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
 import {
+  PLAN_REVIEW_WAITING_TRIO_ENTRY,
+  PLAN_REVIEW_WAITING_TRIO_NOTICE,
+  announceVisiblePlanReviewWait,
   classifyPlanReviewRisk,
   evaluatePlanReviewGate as realEvaluatePlanReviewGate,
   hasImportantOrCriticalFindings,
@@ -125,6 +128,9 @@ function loadPlanModeExtension(): (pi: unknown) => void {
       return {
         MAX_PLAN_REVIEW_CYCLES: 2,
         MAX_PLAN_REVIEW_TOTAL_SPAWNS: 4,
+        PLAN_REVIEW_WAITING_TRIO_ENTRY,
+        PLAN_REVIEW_WAITING_TRIO_NOTICE,
+        announceVisiblePlanReviewWait,
         classifyPlanReviewRisk,
         planReviewStopAdvice,
         hasImportantOrCriticalFindings,
@@ -539,6 +545,15 @@ function planReadyChoices(harness: { sessionEntries: Array<{ customType?: string
   return harness.sessionEntries.filter((entry) => entry.customType === 'plan-ready-choice') as Array<{ data?: { content?: string } }>
 }
 
+function waitingTrioNotices(harness: {
+  trace: string[]
+  sessionEntries: Array<{ customType?: string; data?: unknown }>
+}) {
+  const notifies = harness.trace.filter((entry) => entry.startsWith('notify:') && entry.includes('всех троих') && entry.includes('после одного'))
+  const entries = harness.sessionEntries.filter((entry) => entry.customType === PLAN_REVIEW_WAITING_TRIO_ENTRY) as Array<{ data?: { content?: string } }>
+  return { notifies, entries }
+}
+
 function expectNoStalePlanWait(text: string) {
   expect(text).not.toContain('жду решения по плану')
   expect(text).not.toMatch(/ping либо Fast Path|ping или Fast Path/i)
@@ -928,6 +943,59 @@ describe('Pi plan-mode typed workflow tools', () => {
     // Persist cycle fields on appendEntry
     const persisted = sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1)
     expect(persisted?.data).toMatchObject({ planReviewCycleCount: 1, lastPlanReviewStopAdvice: 'STOP_SHOW_USER' })
+  })
+
+  it('workflow_plan_review visible spawn shows waiting-trio caption; skip and headless do not', async () => {
+    const harness = makeHarness()
+    await harness.toolHandlers.get('workflow_plan_mode')?.execute('call-setup', { mode: 'strict' }, undefined, undefined, harness.ctx)
+
+    await harness.toolHandlers.get('workflow_plan_review')?.execute('call-spawn', {
+      draftPlan: 'Plan:\n1. Implement typed plan review tool.',
+    }, undefined, undefined, harness.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    const afterSpawn = waitingTrioNotices(harness)
+    expect(afterSpawn.notifies).toHaveLength(1)
+    expect(afterSpawn.notifies[0]).toContain(PLAN_REVIEW_WAITING_TRIO_NOTICE)
+    expect(afterSpawn.entries).toHaveLength(1)
+    expect(afterSpawn.entries[0]?.data?.content).toContain('всех троих')
+    expect(afterSpawn.entries[0]?.data?.content).toContain('после одного')
+    expect(harness.sendMessages.some((message) => String(message.message.content ?? '').includes('всех троих'))).toBe(false)
+    expect(harness.entryRenderers.has(PLAN_REVIEW_WAITING_TRIO_ENTRY)).toBe(true)
+
+    const harness2 = makeHarness()
+    mockPlanReviewImportantFindings = [{
+      severity: 'important',
+      issue: 'missing rollback',
+      evidence: 'plan omits rollback',
+      suggestedFix: 'add rollback',
+    }]
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? { ...result, verdict: 'NEEDS_CHANGES' as const, findings: mockPlanReviewImportantFindings }
+      : result)
+    await harness2.toolHandlers.get('workflow_plan_mode')?.execute('call-setup-2', { mode: 'strict' }, undefined, undefined, harness2.ctx)
+    await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-1', {
+      draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, harness2.ctx)
+    await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-2', {
+      draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, harness2.ctx)
+    expect(waitingTrioNotices(harness2).notifies).toHaveLength(2)
+    const skip = await harness2.toolHandlers.get('workflow_plan_review')?.execute('call-skip', {
+      draftPlan: 'Plan:\n1. Change workflow policy.\nFiles: .pi/extensions/plan-mode/index.ts',
+    }, undefined, undefined, harness2.ctx)
+    expect(skip.details.skippedSpawn).toBe(true)
+    expect(mockPlanReviewSpawnCount).toBe(2)
+    expect(waitingTrioNotices(harness2).notifies).toHaveLength(2)
+    expect(waitingTrioNotices(harness2).entries).toHaveLength(2)
+
+    const headless = makeHarness({ hasUI: false })
+    await headless.toolHandlers.get('workflow_plan_mode')?.execute('call-setup-h', { mode: 'strict' }, undefined, undefined, headless.ctx)
+    await headless.toolHandlers.get('workflow_plan_review')?.execute('call-headless', {
+      draftPlan: 'Plan:\n1. Implement typed plan review tool.',
+    }, undefined, undefined, headless.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(waitingTrioNotices(headless).notifies).toHaveLength(0)
+    expect(waitingTrioNotices(headless).entries).toHaveLength(0)
   })
 
   it('workflow_plan_review extraCycle spawns 3–4 orch; 5th without maxim skips; maxim spawns 5+ STOP; empty+maxim no count', async () => {
@@ -3275,7 +3343,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(complete.details.pending).toBe(false)
     expect(complete.details.ok).toBe(true)
 
-    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: запускаю 3 ревьюеров'))).toBe(true)
+    expect(waitingTrioNotices(harness).notifies.length).toBeGreaterThanOrEqual(1)
+    expect(waitingTrioNotices(harness).entries.length).toBeGreaterThanOrEqual(1)
     expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: чисто (нет important/critical) — можно исполнять'))).toBe(true)
     expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('minor:'))).toBe(false)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-clean')).toBe(false)
@@ -3352,7 +3421,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(afterEntries.at(-1)?.data?.enabled).toBe(true)
     expect(afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0).toBe(cycleBefore)
 
-    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: запускаю 3 ревьюеров'))).toBe(true)
+    expect(waitingTrioNotices(harness).notifies.length).toBeGreaterThanOrEqual(1)
+    expect(waitingTrioNotices(harness).entries.length).toBeGreaterThanOrEqual(1)
     expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: findings'))).toBe(true)
   })
 
@@ -3365,7 +3435,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const originalNotify = harness.ctx.ui.notify.bind(harness.ctx.ui)
     harness.ctx.ui.notify = (text: string, level?: string) => {
       harness.trace.push(`notify-order:${mockPlanReviewSpawnCount}:${text}`)
-      if (text.includes('запускаю 3 ревьюеров')) {
+      if (text.includes('всех троих')) {
         throw new Error('notify exploded')
       }
       return originalNotify(text, level)
@@ -3375,11 +3445,12 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     await markPlanReady(harness.toolHandlers, harness.ctx)
 
     expect(mockPlanReviewSpawnCount).toBe(1)
-    const startNotify = harness.trace.find((entry) => entry.includes('запускаю 3 ревьюеров'))
+    const startNotify = harness.trace.find((entry) => entry.includes('всех троих'))
     expect(startNotify).toBeTruthy()
     expect(startNotify).toMatch(/^notify-order:0:/)
     spawnObserved = mockPlanReviewSpawnCount
     expect(spawnObserved).toBe(1)
+    expect(waitingTrioNotices(harness).entries.length).toBeGreaterThanOrEqual(1)
   })
 
   it('agent_settled leftover plan-review dirty delivers findings via sendMessage triggerTurn:true', async () => {

@@ -225,6 +225,28 @@ export function buildPlanReviewTask(draftPlan: string): string {
 	].join("\n");
 }
 
+/** Immediate hasUI caption while workflow_plan_review holds Using Tools (jipg). */
+export const PLAN_REVIEW_WAITING_TRIO_NOTICE =
+	"Жду трёх ревьюеров плана — панели справа. Оценка начнётся, только когда закончат всех троих: после одного или двух ничего не произойдёт. Пока они работают, оркестратор не читает чат. Когда будут все три отчёта — разберу план.";
+
+export const PLAN_REVIEW_WAITING_TRIO_ENTRY = "plan-review-waiting";
+
+export function announceVisiblePlanReviewWait(channels?: {
+	notify?: (text: string, level?: string) => void;
+	appendEntry?: (customType: string, data: unknown) => void;
+}): void {
+	try {
+		channels?.notify?.(PLAN_REVIEW_WAITING_TRIO_NOTICE, "info");
+	} catch {
+		// notify failure must not cancel spawn
+	}
+	try {
+		channels?.appendEntry?.(PLAN_REVIEW_WAITING_TRIO_ENTRY, { content: PLAN_REVIEW_WAITING_TRIO_NOTICE });
+	} catch {
+		// appendEntry failure must not cancel spawn
+	}
+}
+
 export interface RunPlanReviewersOptions {
 	hasUI?: boolean;
 	beadId?: string;
@@ -235,6 +257,8 @@ export interface RunPlanReviewersOptions {
 	pollMs?: number;
 	sleep?: SpawnSyncVisibleAgentsInput["sleep"];
 	spawnVisible?: (input: SpawnSyncVisibleAgentsInput) => Promise<SyncVisibleAgentResult[]>;
+	notify?: (text: string, level?: string) => void;
+	appendEntry?: (customType: string, data: unknown) => void;
 }
 
 const PLAN_REVIEW_VISIBLE_TOOLS = "read,grep,find,ls,write";
@@ -264,6 +288,12 @@ export async function runPlanReviewers(
 ): Promise<PlanReviewResult[]> {
 	const task = buildPlanReviewTask(draftPlan);
 	if (options?.hasUI) {
+		if (options.notify || options.appendEntry) {
+			announceVisiblePlanReviewWait({
+				notify: options.notify,
+				appendEntry: options.appendEntry,
+			});
+		}
 		const adapter = options.adapter ?? resolveVisibleCmuxAdapter(pi.exec.bind(pi));
 		const spawnVisible = options.spawnVisible ?? spawnSyncVisibleAgents;
 		try {
