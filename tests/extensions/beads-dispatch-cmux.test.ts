@@ -1912,7 +1912,7 @@ describe('followup_visible_dispatch', () => {
         if (surface === 'surface:new') throw new Error('spawn send failed')
       },
       async closeSurface(surface) { closed.push(surface) },
-      async readScreen() { return 'dead screen' },
+      async readScreen() { return '' },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
     await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'respawn' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/spawn send failed/)

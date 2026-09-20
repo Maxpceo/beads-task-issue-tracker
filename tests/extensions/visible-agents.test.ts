@@ -10,6 +10,7 @@ import {
   setCmuxAdapterForTests,
 } from '../../.pi/extensions/beads-dispatch/cmux-transport'
 import {
+  BPAZ_WATCHDOG_TRACE_RELATIVE_PATH,
   spawnSyncVisibleAgents,
 } from '../../.pi/extensions/beads-dispatch/visible-agents'
 
@@ -248,6 +249,79 @@ describe('spawnSyncVisibleAgents', () => {
     expect(results[0]?.error).toBeUndefined()
     expect(results[0]?.output).toContain('recovered after throw')
     expect(closed).toEqual(['surface:a1'])
+  })
+
+  it('does not fail-fast after grace on live non-shell text from watchdog trace', async () => {
+    const liveFrame = ' Сверю черновик с формулировкой bpaz и критериями приёмки, не меняя рабочие файлы.\n'
+    let resultFile = ''
+    let now = 0
+    let polls = 0
+    const closed: string[] = []
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
+          const taskPath = taskMatch?.[1]
+          if (!taskPath || !fs.existsSync(taskPath)) return
+          const body = fs.readFileSync(taskPath, 'utf8')
+          const resultMatch = body.match(/write your final report to ([^\n]+)/)
+          if (resultMatch?.[1]) resultFile = resultMatch[1]
+        },
+        async readScreen() { return liveFrame },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      startupGraceMs: 30,
+      now: () => now,
+      sleep: async () => {
+        now += 40
+        polls += 1
+        if (polls >= 2 && resultFile) fs.writeFileSync(resultFile, 'PLAN REVIEW: APPROVED\n')
+      },
+      agents: [{ role: 'plan-consistency-reviewer', task: 'Review plan', systemPrompt: '# c', tools: 'read' }],
+    })
+    expect(results[0]?.error).toBeUndefined()
+    expect(results[0]?.output).toContain('APPROVED')
+    expect(closed).toEqual(['surface:a1'])
+  })
+
+  it('watchdog jsonl does not change xdpq shell-grace fail-fast', async () => {
+    const closed: string[] = []
+    let now = 0
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async readScreen() { return 'user@host ~/proj $\n' },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      startupGraceMs: 30,
+      now: () => now,
+      sleep: async () => { now += 40 },
+      agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
+    })
+    expect(results[0]?.error).toMatch(/dead pane without result: surface:a1/)
+    expect(closed).toEqual(['surface:a1'])
+    const traceFile = path.join(tmp, BPAZ_WATCHDOG_TRACE_RELATIVE_PATH)
+    expect(fs.existsSync(traceFile)).toBe(true)
+    const samples = fs.readFileSync(traceFile, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as {
+      pane: string
+      ageMs: number
+      health: string
+      hasResultFile: boolean
+      excerpt: string
+    })
+    expect(samples.length).toBeGreaterThanOrEqual(1)
+    expect(samples.every((sample) => sample.pane === 'surface:a1')).toBe(true)
+    expect(samples.some((sample) => sample.health === 'shell' && sample.hasResultFile === false)).toBe(true)
+    expect(samples.some((sample) => sample.excerpt.includes('user@host'))).toBe(true)
+    expect(samples.every((sample) => sample.excerpt.length <= 200)).toBe(true)
+    expect(samples.some((sample) => sample.ageMs >= 30)).toBe(true)
   })
 
   it('timeout closes spawned panes', async () => {
