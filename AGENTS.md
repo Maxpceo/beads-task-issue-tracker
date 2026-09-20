@@ -164,6 +164,10 @@ Accepted multi-agent geometry (`beads-task-issue-tracker-0qsm`; dual HA still `f
 - All interactive agents are visible cmux panes: `dispatch_supervisor`, `dispatch_reviewer`, `dispatch_docs_agent`, plan-review trio, `plan_subagent`, `subagent`. Headless remains only for CI / no-UI and explicit `transport=headless`.
 - Prefer readable titles (`{role} · {bead-suffix}`). Parallel cross-role double-spawn race is out of scope; sequential orch dispatch is assumed.
 
+### Plan-review — блокирующий гейт (не ping)
+
+Typed `workflow_plan_review` (и тот же visible-путь кнопки «Отправить на plan-review» / `/plan-auto`) — сознательный блокирующий гейт: оркестратор остаётся в Using Tools, пока `spawnSyncVisibleAgents` не соберёт все три result-файла (капа ~10 мин). Ping как у супервизора нет — оценка начнётся, только когда закончат всех троих: после одного или двух ничего не произойдёт. В момент старта visible spawn (`hasUI`) Максим видит одну русскую подпись в чат (`appendEntry` + `notify`, без `triggerTurn`). Headless/CI (`!hasUI`) — без подписи, wait как сейчас. Skip spawn (auto-cap / cached STOP) подпись не повторяет. Супервизор / code-reviewer / docs по-прежнему async ping.
+
 ### Close supervisor pane after terminal bead
 
 After the bead is terminal (`closed` / `blocked` / `deferred` without continuation) **and** no pending-fix reuse is needed, the orchestrator closes **this bead's** live registry panes only:

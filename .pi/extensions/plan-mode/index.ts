@@ -39,6 +39,9 @@ import { parseWorkflowIntent, shouldAutoClaimAndPlan } from "../workflow-intent/
 import {
 	MAX_PLAN_REVIEW_CYCLES,
 	MAX_PLAN_REVIEW_TOTAL_SPAWNS,
+	PLAN_REVIEW_WAITING_TRIO_ENTRY,
+	PLAN_REVIEW_WAITING_TRIO_NOTICE,
+	announceVisiblePlanReviewWait,
 	classifyPlanReviewRisk,
 	evaluatePlanReviewGate,
 	hasImportantOrCriticalFindings,
@@ -341,6 +344,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const data = entry.data as { content?: unknown } | undefined;
 		const content = typeof data?.content === "string" ? data.content : "";
 		return createPlanDocumentComponent(content, getMarkdownTheme());
+	});
+
+	pi.registerEntryRenderer(PLAN_REVIEW_WAITING_TRIO_ENTRY, (entry) => {
+		const data = entry.data as { content?: unknown } | undefined;
+		const content = typeof data?.content === "string" ? data.content : PLAN_REVIEW_WAITING_TRIO_NOTICE;
+		return new Text(content, 0, 0);
 	});
 
 	pi.registerFlag("plan", {
@@ -1563,18 +1572,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 
 			if (action === "plan-review") {
-				// Notify start before spawn; notify failure must not cancel critique.
-				try {
-					if (ctx.hasUI) {
-						ctx.ui.notify(
-							"plan-review: запускаю 3 ревьюеров (edge/consistency/dead-zone), это займёт несколько минут",
-							"info",
-						);
-					}
-				} catch {
-					// swallow — spawn still runs
-				}
-
 				const { results, gate } = await runReadyPlanCritique(ctx, planText);
 				const clean = gate.ok && !hasImportantOrCriticalFindings(results, gate.importantFindings);
 
@@ -1881,6 +1878,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				beadId = active;
 				break;
 			}
+		}
+		// One caption at visible spawn start (всех троих / после одного); sendMessage would be steered until the tool returns.
+		if (ctx.hasUI) {
+			announceVisiblePlanReviewWait({
+				notify: (text, level) => ctx.ui.notify(text, level),
+				appendEntry: (customType, data) => pi.appendEntry(customType, data),
+			});
 		}
 		return runPlanReviewers(pi, cwd, draftPlan, undefined, {
 			hasUI: Boolean(ctx.hasUI),

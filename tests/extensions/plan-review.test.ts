@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import planReviewExtension, {
   MAX_PLAN_REVIEW_CYCLES,
   MAX_PLAN_REVIEW_TOTAL_SPAWNS,
+  PLAN_REVIEW_WAITING_TRIO_ENTRY,
+  PLAN_REVIEW_WAITING_TRIO_NOTICE,
+  announceVisiblePlanReviewWait,
   classifyPlanReviewRisk,
   evaluatePlanReviewGate,
   findInvalidSequentialReasons,
@@ -430,5 +433,71 @@ Risks / rollback:
     expect(headless[0]?.verdict).toBe('APPROVED')
     expect(calls.at(-1)?.args).not.toEqual(expect.arrayContaining(['--model']))
     expect(calls.at(-1)?.args).not.toEqual(expect.arrayContaining(['--thinking']))
+  })
+
+  it('announceVisiblePlanReviewWait writes notify and chat entry with waiting-trio phrases', () => {
+    const notifies: Array<{ text: string; level?: string }> = []
+    const entries: Array<{ customType: string; data: unknown }> = []
+    announceVisiblePlanReviewWait({
+      notify: (text, level) => notifies.push({ text, level }),
+      appendEntry: (customType, data) => entries.push({ customType, data }),
+    })
+    expect(PLAN_REVIEW_WAITING_TRIO_NOTICE).toContain('всех троих')
+    expect(PLAN_REVIEW_WAITING_TRIO_NOTICE).toContain('после одного')
+    expect(notifies).toEqual([{ text: PLAN_REVIEW_WAITING_TRIO_NOTICE, level: 'info' }])
+    expect(entries).toEqual([{ customType: PLAN_REVIEW_WAITING_TRIO_ENTRY, data: { content: PLAN_REVIEW_WAITING_TRIO_NOTICE } }])
+  })
+
+  it('announceVisiblePlanReviewWait swallows notify and appendEntry failures', () => {
+    expect(() => announceVisiblePlanReviewWait({
+      notify: () => { throw new Error('notify exploded') },
+      appendEntry: () => { throw new Error('append exploded') },
+    })).not.toThrow()
+  })
+
+  it('hasUI spawn announces waiting-trio before spawnVisible and still waits for results', async () => {
+    const order: string[] = []
+    const notifies: string[] = []
+    const entries: Array<{ customType: string; data: unknown }> = []
+    const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'], {
+      hasUI: true,
+      notify: (text) => {
+        order.push('notify')
+        notifies.push(text)
+      },
+      appendEntry: (customType, data) => {
+        order.push('append')
+        entries.push({ customType, data })
+      },
+      spawnVisible: async (input) => {
+        order.push('spawn')
+        expect(input.agents).toHaveLength(3)
+        return input.agents.map((agent) => ({
+          role: agent.role,
+          taskId: `sync-${agent.role}`,
+          pane: `surface:${agent.role}`,
+          output: approvedReviewText,
+        }))
+      },
+    })
+    expect(order.slice(0, 3)).toEqual(['notify', 'append', 'spawn'])
+    expect(notifies[0]).toContain('всех троих')
+    expect(notifies[0]).toContain('после одного')
+    expect(entries[0]?.customType).toBe(PLAN_REVIEW_WAITING_TRIO_ENTRY)
+    expect(results).toHaveLength(3)
+    expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
+  })
+
+  it('headless runPlanReviewers does not announce waiting-trio', async () => {
+    const notifies: string[] = []
+    const pi = {
+      exec: async () => jsonAssistant(approvedReviewText),
+    }
+    await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer'], {
+      hasUI: false,
+      notify: (text) => notifies.push(text),
+    })
+    expect(notifies).toEqual([])
   })
 })

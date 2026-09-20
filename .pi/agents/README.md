@@ -25,6 +25,7 @@ All active Pi agents must preserve: `BEAD_ID` input when supplied, read bead fir
   - `.pi/rules/codebase.md`
 - Generic `subagent` calls run project agents with isolated context but do not automatically render `PATH_RULES_LOADED`. Interactive `hasUI` opens visible cmux panes (sync wait, then close); CI/headless stays process+dashboard. In strict plan mode, use the dedicated `plan_subagent` tool for read-only `detective`/`architect` work; it injects bead/plan context from the wrapper and forces the child tool surface to `read,grep,find,ls`. Implementation supervisors still go through typed workflow dispatch after approval.
 - Visible layout is 2 columns on the right half, then `new-split down` (`resolveVisibleSplitPlacement`; AGENTS.md Layout geometry).
+- Typed `workflow_plan_review` is a blocking gate, not a ping-flow: Using Tools holds until all three visible reviewers finish (`spawnSyncVisibleAgents`, ~10 min cap). There is no `ping.sh` for the trio. On `hasUI` spawn Maxim sees one caption that оценка начнётся только когда закончат всех троих: после одного или двух ничего не произойдёт (`appendEntry` + `notify`, no `triggerTurn`). Headless/CI has no caption. Skip spawn (auto-cap / cached STOP) does not repeat it. Supervisor/code-reviewer/docs stay async ping.
 
 ## Reporting and model guidance
 
