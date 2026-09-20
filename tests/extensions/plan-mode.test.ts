@@ -514,6 +514,24 @@ function planReadyDocuments(harness: { sessionEntries: Array<{ customType?: stri
   return harness.sessionEntries.filter((entry) => entry.customType === 'plan-ready-document') as Array<{ data?: { content?: string } }>
 }
 
+function planReadyChoices(harness: { sessionEntries: Array<{ customType?: string; data?: unknown }> }) {
+  return harness.sessionEntries.filter((entry) => entry.customType === 'plan-ready-choice') as Array<{ data?: { content?: string } }>
+}
+
+function expectNoStalePlanWait(text: string) {
+  expect(text).not.toContain('жду решения по плану')
+  expect(text).not.toMatch(/ping либо Fast Path|ping или Fast Path/i)
+}
+
+function expectReadyChoiceLegend(content: string) {
+  expect(content).toContain('Исполнить')
+  expect(content).toContain('Записать PLAN APPROVED и выйти из plan mode')
+  expect(content).toContain('Остаться в plan mode')
+  expect(content).toContain('Уточнить')
+  expect(content).toContain('Отправить на plan-review')
+  expect(content).not.toMatch(/Исполнить = супервизор/i)
+}
+
 function expectExecuteReadyOverlay(customCalls: Array<{ options?: unknown }>) {
   expect(customCalls.length).toBeGreaterThanOrEqual(1)
   for (const call of customCalls) {
@@ -1801,9 +1819,14 @@ describe('Pi plan-mode typed workflow tools', () => {
     ].join('\n')
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await markPlanReady(toolHandlers, ctx, plan)
+    const complete = await markPlanReady(toolHandlers, ctx, plan)
     await agentSettledHandlers[0]?.({}, ctx)
 
+    expect(complete.details.outcome).toBe('executed')
+    expect(complete.details.next).toBe('fastPath')
+    expect(String(complete.content[0].text)).toContain('implement now')
+    expect(String(complete.content[0].text)).not.toContain('ждать ping')
+    expectNoStalePlanWait(String(complete.content[0].text))
     const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
     expect(comment).toContain('FAST_PATH_RATIONALE:')
@@ -2038,7 +2061,14 @@ describe('Pi plan-mode typed workflow tools', () => {
     const { commandHandlers, toolHandlers, agentSettledHandlers, sendMessages, workflowUpdates, execCalls, activeTools, ctx } = makeHarness({ activeBead: 'bead-ui', commentAddFails: true })
 
     await commandHandlers.get('plan')?.handler('', ctx)
-    await markPlanReady(toolHandlers, ctx)
+    const complete = await markPlanReady(toolHandlers, ctx)
+    expect(complete.details.outcome).toBe('execute-blocked')
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.pending).toBe(true)
+    expect(String(complete.content[0].text)).toContain('Pending kept')
+    expect(String(complete.content[0].text)).toContain('plan-approval-recovery')
+    expect(String(complete.content[0].text)).not.toContain('implement now')
+    expectNoStalePlanWait(String(complete.content[0].text))
     await agentSettledHandlers[0]?.({}, ctx)
 
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(true)
@@ -2897,21 +2927,53 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
   })
 
   it('plan_mode_complete + ready execute writes PLAN APPROVED via ready UI', async () => {
-    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, workflowUpdates, ctx } = makeHarness({
+    const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['execute'],
     })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, workflowUpdates, ctx } = harness
     await commandHandlers.get('plan')?.handler('', ctx)
     const complete = await markPlanReady(toolHandlers, ctx)
     expect(complete.details.pending).toBe(false)
+    expect(complete.details.ok).toBe(true)
+    expect(complete.details.outcome).toBe('executed')
+    expect(complete.details.next).toBe('dispatched')
+    expect(String(complete.content[0].text)).toContain('ждать ping')
+    expect(String(complete.content[0].text)).not.toContain('implement now')
+    expectNoStalePlanWait(String(complete.content[0].text))
     expectExecuteReadyOverlay(customCalls)
     expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(false)
+    const choices = planReadyChoices(harness)
+    expect(choices.length).toBe(1)
+    expectReadyChoiceLegend(String(choices[0]?.data?.content))
     const comment = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
     expect(workflowUpdates.at(-1)).toMatchObject({ planApproved: true, planMode: 'off' })
     const customAfter = customCalls.length
     await agentSettledHandlers[0]?.({}, ctx)
     expect(customCalls.length).toBe(customAfter)
+  })
+
+  it('plan-ready-choice legend is appended before execute-path overlay', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+    })
+    const order: string[] = []
+    const originalCustom = harness.ctx.ui.custom.bind(harness.ctx.ui)
+    harness.ctx.ui.custom = async (...args: unknown[]) => {
+      order.push(`custom:${planReadyChoices(harness).length}`)
+      return originalCustom(...args)
+    }
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(order.some((entry) => entry.startsWith('custom:') && Number(entry.split(':')[1]) >= 1)).toBe(true)
+    const renderer = harness.entryRenderers.get('plan-ready-choice')
+    expect(renderer).toBeTypeOf('function')
+    const legend = planReadyChoices(harness)[0]
+    expectReadyChoiceLegend(String(legend?.data?.content))
+    const rendered = renderer!({ type: 'custom', customType: 'plan-ready-choice', data: legend?.data }, { expanded: false }, harness.ctx.ui.theme)
+    expect(rendered).toBeInstanceOf(piTuiMock.Markdown)
   })
 
   it('ready-UI exception degrades gracefully: notify + clear pending, no throw, plan mode stays on', async () => {
@@ -2925,7 +2987,14 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     }
 
     const selectBefore = harness.selectCalls.length
-    await expect(markPlanReady(harness.toolHandlers, harness.ctx)).resolves.toBeDefined()
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete).toBeDefined()
+    expect(complete.details.outcome).toBe('error')
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.pending).toBe(false)
+    expect(String(complete.content[0].text)).toMatch(/Ready-UI упал/)
+    expect(String(complete.content[0].text)).toContain('overlay ждёт')
+    expectNoStalePlanWait(String(complete.content[0].text))
 
     expect(notifications.length).toBeGreaterThanOrEqual(1)
     expect(notifications.some((n) => n.text.includes('plan-mode ready-UI failed') && n.level === 'error')).toBe(true)
@@ -2953,7 +3022,11 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       readyActionQueue: ['stay'],
     })
     await stayHarness.commandHandlers.get('plan')?.handler('', stayHarness.ctx)
-    await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
+    const stayComplete = await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
+    expect(stayComplete.details.outcome).toBe('stay')
+    expect(stayComplete.details.pending).toBe(false)
+    expect(String(stayComplete.content[0].text)).toContain('Pending снят')
+    expectNoStalePlanWait(String(stayComplete.content[0].text))
 
     const stayPersisted = stayHarness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -2974,7 +3047,10 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       readyActionQueue: [null],
     })
     await escHarness.commandHandlers.get('plan')?.handler('', escHarness.ctx)
-    await markPlanReady(escHarness.toolHandlers, escHarness.ctx)
+    const escComplete = await markPlanReady(escHarness.toolHandlers, escHarness.ctx)
+    expect(escComplete.details.outcome).toBe('cancelled')
+    expect(String(escComplete.content[0].text)).toContain('Pending снят')
+    expectNoStalePlanWait(String(escComplete.content[0].text))
 
     const escPersisted = escHarness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -2983,6 +3059,41 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(escPersisted?.data?.enabled).toBe(true)
     expect(escHarness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     expect(escHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
+  })
+
+  it('ready refine clears pending and waits for refinement text', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['refine'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.outcome).toBe('refine')
+    expect(complete.details.pending).toBe(false)
+    expect(String(complete.content[0].text)).toContain('уточнения')
+    expectNoStalePlanWait(String(complete.content[0].text))
+    expect(harness.sendUserMessages.at(-1)).toBe('please refine the plan')
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+  })
+
+  it('ready execute continuation-blocked after PLAN APPROVED uses recovery tool text', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['execute'],
+    })
+    mockSupervisorDispatchAvailable = false
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.outcome).toBe('executed')
+    expect(complete.details.next).toBe('continuation-blocked')
+    expect(complete.details.pending).toBe(false)
+    expect(String(complete.content[0].text)).toContain('Continuation blocked')
+    expect(String(complete.content[0].text)).toContain('plan-approval-recovery')
+    expect(String(complete.content[0].text)).not.toContain('implement now')
+    expect(String(complete.content[0].text)).not.toContain('ждать ping')
+    expectNoStalePlanWait(String(complete.content[0].text))
+    const comment = harness.execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
+    expect(comment).toContain('PLAN APPROVED')
   })
 
   it('plan-review clean: toast without transcript dump + plan document + re-show select + execute; cycle unchanged', async () => {
@@ -3012,6 +3123,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const planDocs = planReadyDocuments(harness)
     expect(planDocs.length).toBeGreaterThanOrEqual(2) // initial overlay + clean re-show
     expect(String(planDocs[0]?.data?.content)).toContain('Plan:')
+    expect(planReadyChoices(harness)).toHaveLength(1)
 
     const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
     const cycleAfter = afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0
@@ -3242,8 +3354,23 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(planReadyDocuments(harness)).toHaveLength(0)
   })
 
+  it('appendEntry throw for plan-ready-choice does not block execute-path overlay ready-UI', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+      failAppendEntryCustomTypes: ['plan-ready-choice'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.outcome).toBe('stay')
+    expectExecuteReadyOverlay(harness.customCalls)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов'))).toHaveLength(0)
+    expect(planReadyChoices(harness)).toHaveLength(0)
+    expect(planReadyDocuments(harness).length).toBeGreaterThanOrEqual(1)
+  })
+
   it('leftover agent_settled ready-UI stays on select, not custom', async () => {
-    const { sessionStartHandlers, agentSettledHandlers, customCalls, selectCalls, ctx } = makeHarness({
+    const harness = makeHarness({
       activeBead: 'bead-ui',
       entries: [
         {
@@ -3265,11 +3392,15 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       ],
       readyActionQueue: ['stay'],
     })
+    const { sessionStartHandlers, agentSettledHandlers, customCalls, selectCalls, ctx } = harness
 
     await sessionStartHandlers[0]?.({}, ctx)
     await agentSettledHandlers[0]?.({}, ctx)
     expect(customCalls).toHaveLength(0)
     expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(true)
+    const leftoverChoices = planReadyChoices(harness)
+    expect(leftoverChoices.length).toBeGreaterThanOrEqual(1)
+    expectReadyChoiceLegend(String(leftoverChoices[0]?.data?.content))
   })
 
   it('questionnaire sends plan-questionnaire transcript before UI with triggerTurn false', async () => {
@@ -3406,19 +3537,23 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
   })
 
   it('RPC/no-custom path uses select fallback and never hangs on ui.custom', async () => {
-    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, ctx } = makeHarness({
+    const harness = makeHarness({
       activeBead: 'bead-ui',
       mode: 'rpc',
       noCustom: true,
       readyActionQueue: ['execute'],
     })
+    const { commandHandlers, toolHandlers, agentSettledHandlers, customCalls, selectCalls, execCalls, ctx } = harness
     await commandHandlers.get('plan')?.handler('', ctx)
-    await markPlanReady(toolHandlers, ctx)
+    const complete = await markPlanReady(toolHandlers, ctx)
     await agentSettledHandlers[0]?.({}, ctx)
 
     expect(customCalls).toHaveLength(0)
     expect(selectCalls.some((call) => call.title.includes('План готов'))).toBe(true)
     expect(execCalls.some((call) => call.args[1] === 'add')).toBe(true)
+    expect(planReadyChoices(harness)).toHaveLength(0)
+    expect(complete.details.outcome).toBe('executed')
+    expectNoStalePlanWait(String(complete.content[0].text))
   })
 
   it('questionnaire tool uses custom UI without overlay and supports digit preview path', async () => {
@@ -3594,6 +3729,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(indexSource).toMatch(/overlay:\s*true/)
     expect(indexSource).toContain('registerEntryRenderer')
     expect(indexSource).toContain('appendEntry("plan-ready-document"')
+    expect(indexSource).toContain('appendEntry("plan-ready-choice"')
+    expect(indexSource).toContain('registerEntryRenderer("plan-ready-choice"')
     expect(indexSource).toContain('createPlanDocumentComponent')
     expect(indexSource).toContain('getMarkdownTheme')
     expect(indexSource).toContain('renderCall')
