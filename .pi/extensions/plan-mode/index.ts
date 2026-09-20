@@ -751,7 +751,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
-	function sendPreDispatchProgress(beadId: string, action: string): void {
+	function sendPreDispatchProgress(ctx: ExtensionContext, beadId: string, action: string): void {
 		const content = [
 			"PLAN APPROVED: продолжение запущено.",
 			`Bead: ${beadId}`,
@@ -760,11 +760,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		].join("\n");
 		try {
 			pi.sendMessage(
-				{ customType: "post-approval-continuation-started", content, display: true },
+				{ customType: "post-approval-continuation-started", content, display: false },
 				{ triggerTurn: false },
 			);
 		} catch {
-			// Best-effort visible progress only: dispatch continuation must still run.
+			// Best-effort in-flight progress only: dispatch continuation must still run.
+		}
+		try {
+			if (ctx.hasUI) ctx.ui.notify("Запускаю супервизор…", "info");
+		} catch {
+			// Best-effort toast only: dispatch continuation must still run.
 		}
 	}
 
@@ -827,7 +832,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			return { skipped: false };
 		}
 		const action = renderPlanExecutionAction(beadId, resolved.cwd);
-		sendPreDispatchProgress(beadId, action);
+		sendPreDispatchProgress(ctx, beadId, action);
 		const result = await requestSupervisorDispatch(pi, { beadId, cwd: resolved.cwd, transport: "cmux" }, ctx);
 		if (!result.ok) {
 			const error = result.error ?? "typed continuation returned without success";
@@ -845,14 +850,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			await recordContinuationScopeBlocked(ctx, beadId, error);
 			return { skipped: false };
 		}
-		const details = result.details as { status?: string; transport?: string } | undefined;
-		const spawned = details?.status === "spawned" || details?.transport === "cmux";
 		pi.sendMessage(
 			{
 				customType: "post-approval-continuation",
-				content: spawned
-					? `PLAN APPROVED continuation: supervisor spawned, waiting ping\nBead: ${beadId}\n${result.text}\nNext: complete_visible_dispatch after supervisor ping. Spawn-ack is not DONE.`
-					: `PLAN APPROVED continuation completed: ${action}\n\n${result.text}`,
+				content: "Супервизор запущен, панель справа. Ждать не нужно.",
 				display: true,
 			},
 			{ triggerTurn: false },
@@ -1303,19 +1304,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
-	function minorFindingsExcerpt(results: PlanReviewResult[], limit = 3): string | undefined {
-		const minors = results.flatMap((result) =>
-			result.findings
-				.filter((finding) => finding.severity === "minor")
-				.map((finding) => finding.issue.trim())
-				.filter(Boolean),
-		);
-		if (minors.length === 0) return undefined;
-		const shown = minors.slice(0, limit);
-		const more = minors.length > limit ? ` (+${minors.length - limit} more)` : "";
-		return `${shown.join("; ")}${more}`;
-	}
-
 	function formatReadyCritiqueFindingsText(results: PlanReviewResult[]): string {
 		return [
 			"**Strict plan critique complete.** Implementation remains blocked until explicit approval.",
@@ -1418,17 +1406,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				const clean = gate.ok && !hasImportantOrCriticalFindings(results, gate.importantFindings);
 
 				if (clean) {
-					const minorExcerpt = minorFindingsExcerpt(results);
-					const cleanText = minorExcerpt
-						? `plan-review: чисто (нет important/critical). minor: ${minorExcerpt}`
-						: "plan-review: чисто (нет important/critical) — можно исполнять";
+					const cleanText = "plan-review: чисто (нет important/critical) — можно исполнять";
 					try {
 						if (ctx.hasUI) ctx.ui.notify(cleanText, "info");
 					} catch {
 						// swallow
 					}
-					// Toast alone is not enough for Maxim — put a short clean note in the transcript.
-					showVisibleTranscript("plan-review-clean", cleanText);
 					persistState();
 					lastOutcome = { kind: "clean-reshow" };
 					// pending kept; re-show ready buttons so Maxim can execute immediately

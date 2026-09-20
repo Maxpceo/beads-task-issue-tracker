@@ -1927,17 +1927,24 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', planMode: 'off', sessionMode: 'implementing', planApproved: true })
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task' })
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
+    expect(startedMessage?.message.display).toBe(false)
     expect(startedMessage?.message.content).toContain('PLAN APPROVED: продолжение запущено')
     expect(startedMessage?.message.content).toContain('Bead: bead-ui')
     expect(startedMessage?.message.content).toContain('State: started/running')
     expect(startedMessage?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/task)')
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation')).toBe(false)
+    expect(trace.some((entry) => entry.startsWith('notify:') && entry.includes('Запускаю супервизор'))).toBe(true)
 
     releaseDispatch()
     await execution
 
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
-    expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation completed')
+    expect(sendMessages.at(-1)?.message.display).toBe(true)
+    expect(sendMessages.at(-1)?.message.content).toBe('Супервизор запущен, панель справа. Ждать не нужно.')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('complete_visible_dispatch')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('taskFile')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('resultFile')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('Next typed action')
     expect(sendMessages.some((message) => message.message.customType === 'plan-todo-list')).toBe(false)
     expect(statuses['plan-mode']).toBeUndefined()
     expect(widgets['plan-todos']).toBeUndefined()
@@ -1956,9 +1963,11 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(comments[1]?.args[3]).toContain('BLOCKED: runtime hook missing')
     expect(comments[1]?.args[3]).not.toMatch(/PLAN APPROVED/)
     expect(workflowUpdates.at(-1)).toMatchObject({ activeBead: 'bead-ui', sessionMode: 'blocked', planApproved: true })
+    expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.display).toBe(false)
     expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).toContain('Next typed action: dispatch_supervisor(beadId=bead-ui, cwd=/tmp/task)')
     expect(sendMessages.find((message) => message.message.customType === 'post-approval-continuation-started')?.message.content).not.toContain('cwd=/tmp/project')
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation-blocked')
+    expect(sendMessages.at(-1)?.message.display).toBe(true)
     expect(sendMessages.at(-1)?.message.content).toContain('не silent stall')
     expect(sendMessages.at(-1)?.message.content).not.toMatch(/PLAN APPROVED/)
   })
@@ -1975,8 +1984,14 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(mockSupervisorDispatchCalls.at(-1)).toMatchObject({ beadId: 'bead-ui', cwd: '/tmp/task', transport: 'cmux' })
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe('/Users/maksimposudevskiy/Projects/beads-task-issue-tracker')
-    expect(sendMessages.at(-1)?.message.content).toContain('supervisor spawned, waiting ping')
+    expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
+    expect(sendMessages.at(-1)?.message.display).toBe(true)
+    expect(sendMessages.at(-1)?.message.content).toBe('Супервизор запущен, панель справа. Ждать не нужно.')
     expect(sendMessages.at(-1)?.message.content).not.toContain('PLAN APPROVED continuation completed')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('complete_visible_dispatch')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('taskFile')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('resultFile')
+    expect(sendMessages.at(-1)?.message.content).not.toContain('Next typed action')
   })
 
   it('continues dispatch when best-effort pre-dispatch progress message cannot be displayed', async () => {
@@ -1990,7 +2005,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(mockSupervisorDispatchCalls.at(-1)?.cwd).not.toBe(ctx.cwd)
     expect(sendMessages.some((message) => message.message.customType === 'post-approval-continuation-started')).toBe(false)
     expect(sendMessages.at(-1)?.message.customType).toBe('post-approval-continuation')
-    expect(sendMessages.at(-1)?.message.content).toContain('PLAN APPROVED continuation completed')
+    expect(sendMessages.at(-1)?.message.display).toBe(true)
+    expect(sendMessages.at(-1)?.message.content).toBe('Супервизор запущен, панель справа. Ждать не нужно.')
   })
 
   it('UI Execute blocks missing explicit worktree before durable comment or planApproved state', async () => {
@@ -2969,7 +2985,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(escHarness.workflowUpdates.some((update: any) => update.planApproved === true)).toBe(false)
   })
 
-  it('plan-review clean: transcript clean note + plan document + re-show select + execute; cycle unchanged', async () => {
+  it('plan-review clean: toast without transcript dump + plan document + re-show select + execute; cycle unchanged', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['plan-review', 'execute'],
@@ -2989,13 +3005,9 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(complete.details.ok).toBe(true)
 
     expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: запускаю 3 ревьюеров'))).toBe(true)
-    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: чисто'))).toBe(true)
-
-    const cleanMsg = harness.sendMessages.find((message) => message.message.customType === 'plan-review-clean')
-    expect(cleanMsg).toBeTruthy()
-    expect(String(cleanMsg?.message.content)).toContain('plan-review: чисто')
-    expect(cleanMsg?.message.display).toBe(true)
-    expect(cleanMsg?.options).toMatchObject({ triggerTurn: false })
+    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: чисто (нет important/critical) — можно исполнять'))).toBe(true)
+    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('minor:'))).toBe(false)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-clean')).toBe(false)
 
     const planDocs = planReadyDocuments(harness)
     expect(planDocs.length).toBeGreaterThanOrEqual(2) // initial overlay + clean re-show
