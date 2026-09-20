@@ -31,6 +31,24 @@ HEAD worktree: `docs/7fz7-pi-workflow-extract-design`.
 
 Скилл пакета (черновик имени): поставить workflow в этот репо. Шаги: detect → install → reload если нужно → doctor → скан/вопрос стека → routing+implementer → doctor зелёный.
 
+## Репорт бага workflow из consumer (скилл в пакете)
+
+Максим 2026-09-18: работая в трекере/sharks, ошибка процесса; вручную заводить bead в pi-workflow легко описать криво. Скилл должен оформить задачу **сразу в bd канона**.
+
+Возможно: да. `bd --db <pi-workflow>/.beads create …` из cwd consumer. Скилл едет в пакете (этап 3 / z6dd), триггеры: «баг pi», «зафиксируй в канон», «workflow сломался».
+
+Это хороший вариант: агент в сессии уже видит команду, exit, логи — человек не обязан помнить формулировку.
+
+Правила скилла:
+
+1. Классифицировать: баг продукта consumer → local `bd create`; баг claim/plan/review/land/policy/extension → канон; сомнение → один вопрос.
+2. Собрать evidence в consumer, не чиня пакет: cwd, git HEAD, команда, exit, кусок вывода, ожидалось vs получили, версия пакета / `.pi-workflow.version`.
+3. Писать в канон полным шаблоном create-bead, labels `pi`+`workflow`, секция Consumer-repo / Consumer-HEAD.
+4. Не claim/dispatch в pi-workflow из этой сессии. Не патчить установленные copies в consumer.
+5. Нет локального клона канона → стоп: «нужен clone pi-workflow», не тихий local bead.
+
+Не делать: дублировать баг в оба `.beads`; GitHub Issues вместо bd канона.
+
 ## GitHub и диск (зафиксировано Максимом)
 
 | Поле | Значение |
