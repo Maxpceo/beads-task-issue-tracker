@@ -14,6 +14,23 @@ HEAD worktree: `docs/7fz7-pi-workflow-extract-design`.
 
 Не цель пакета: GitHub Issues / Linear без beads.
 
+## Онбординг UX (этап 3 / z6dd) — взять у create-beads-orchestration
+
+Источник: глобальный Claude skill `~/.claude/skills/create-beads-orchestration/SKILL.md` (пакет beads-orchestration). Максим 2026-09-18: взять необходимое, не копировать продукт Claude.
+
+Брать в SETUP/doctor пакета:
+
+1. **Detect:** свежий проект vs продолжение (пакет уже в `.pi/settings.json`?). Не ставить второй раз.
+2. **Мало вопросов, потом команда** — не «прочитай AGENTS.md». Короче: Pi/git/bd есть? → `pi install -l git:github.com/Maxpceo/pi-workflow@tag`.
+3. **Честный стоп на reload:** после install Pi может требовать trust проекта / `/reload`. Сказать человеку перезапустить Pi; иначе «не работает» = ложный баг.
+4. **После install — разведка стека, не готовый vue.** Скан package.json / pyproject → overlay: routing + implementer (Python фонд) или vue-supervisor (трекер). Не качать чужих Claude-агентов.
+5. **Готово только когда doctor зелёный.** `pi list` недостаточно: bd, implementer, routing.
+6. **bd назван зависимостью явно** (уже: нет bd → hard fail).
+
+Не брать: `.claude/`, хуки Claude, `npx beads-orchestration`, Kanban UI, worktree `.worktrees/bd-…`, правило «оркестратор не пишет design».
+
+Скилл пакета (черновик имени): поставить workflow в этот репо. Шаги: detect → install → reload если нужно → doctor → скан/вопрос стека → routing+implementer → doctor зелёный.
+
 ## GitHub и диск (зафиксировано Максимом)
 
 | Поле | Значение |
@@ -172,7 +189,7 @@ Package-файл не импортирует overlay/tracker/delete.
 
 1. **7fz7 (этот файл)** — карта + аудит.
 2. **b18h** — репо + copy package-меток + vitest + **private** GitHub + tag. Acceptance: `pi list` в песочнице. **Не** «без vue-supervisor».
-3. **z6dd** — implementer+routing обязательный SETUP; stack overlay (H2); locale flag (H3); doctor.
+3. **z6dd** — implementer+routing обязательный SETUP; stack overlay (H2); locale flag (H3); doctor; онбординг UX как в секции выше (detect / install / reload / discovery overlay).
 4. **pv7r** — трекер consumer; overlay копирует **текущую** матрицу vue/tauri/test (не только frontend→vue).
 5. **ajex** — sharks той же git@tag командой.
 
