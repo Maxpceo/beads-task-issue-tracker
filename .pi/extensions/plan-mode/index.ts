@@ -1878,7 +1878,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 		if (ping.kind === "error") {
 			sendAutopilotHopMessage(
-				`STOP: child прислал [PING-ERROR]. Hop остановлен, панели не закрывались.\nПинг уже обработан; ждать [PING] не нужно.\nДействие Максима: разберите ошибку child или сделайте followup_visible_dispatch.${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
+				`STOP: child прислал [PING-ERROR]. Hop остановлен, панели не закрывались.\nПинг уже обработан; ждать [PING] не нужно.\nДействие Максима: разберите ошибку child или followup_visible_dispatch({ beadId, role: "<agentName>", task }).${formatAutopilotHopFooter(taskId, bestEffortBeadId())}`,
 				"autopilot-hop-stop",
 			);
 			return;
@@ -1987,7 +1987,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (completeResult.status === "verdict") {
 			if (/NOT APPROVED/i.test(completeResult.text)) {
 				sendAutopilotHopMessage(
-					`STOP: code review вернул NOT APPROVED. Bead остаётся inreview; панели живы для followup.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: правки по fix-list / followup_visible_dispatch.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+					`STOP: code review вернул NOT APPROVED. Bead остаётся inreview; панели живы для followup.\nПинг уже забран; ждать [PING] не нужно.\nДействие Максима: правки по fix-list / followup_visible_dispatch({ beadId, role: "<agentName>", task }).${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 					"autopilot-hop-stop",
 				);
 				return;

@@ -372,15 +372,15 @@ const ReviewerDispatchParams = {
 const FollowupVisibleDispatchParams = {
 	type: "object",
 	properties: {
-		beadId: { type: "string", description: "Bead ID with a live spawned supervisor or code-reviewer pane" },
+		beadId: { type: "string", description: "Bead ID with a live spawned supervisor, code-reviewer, or documentation-expert pane" },
 		task: { type: "string", description: "Follow-up task text sent into the waiting Pi (not spawn argv)" },
-		role: { type: "string", description: "Pane role when more than one live pane exists; use code-reviewer for the visible reviewer" },
+		role: { type: "string", description: "Required exact registry pane role: test-supervisor / vue-supervisor / tauri-supervisor / code-reviewer / documentation-expert" },
 	},
-	required: ["beadId", "task"],
+	required: ["beadId", "task", "role"],
 	additionalProperties: false,
 } as const;
 
-type FollowupVisibleParams = { beadId: string; task: string; role?: string };
+type FollowupVisibleParams = { beadId: string; task: string; role: string };
 
 const SpawnTaskWorkspaceParams = {
 	type: "object",
@@ -1340,7 +1340,9 @@ export async function followupVisibleDispatch(
 	renameFailures?: number;
 	renameLastError?: string;
 }> {
-	const found = findLiveFollowupEntry(params.beadId, params.role);
+	const role = params.role?.trim() ?? "";
+	if (!role) throw new Error("followup_visible_dispatch: укажите role: BLOCKED");
+	const found = findLiveFollowupEntry(params.beadId, role);
 	let entry = found.entry;
 	if (entry.hung) {
 		throw new Error(`followup_visible_dispatch: hung pane для ${entry.taskId}; close-surface + tombstone before new spawn: BLOCKED`);
@@ -1701,8 +1703,8 @@ async function dispatchVisibleCmux(input: {
 	const registryFile = path.join(dir, "dispatch-registry.json");
 	const existing = loadRegistry(registryFile);
 	if (liveEntriesForBead(existing, bead.id, agentName).length > 0) {
-		const followupHint = agentName === "code-reviewer" ? `{ beadId, role: "code-reviewer" }` : `{ beadId }`;
-		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; supervisor already spawned — wait for ping; use followup_visible_dispatch(${followupHint}))`);
+		const followupHint = `{ beadId, role: "${agentName}" }`;
+		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; ${agentName} already spawned — wait for ping; use followup_visible_dispatch(${followupHint}))`);
 	}
 	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
 	fs.mkdirSync(resultsDir, { recursive: true });
@@ -1737,6 +1739,8 @@ WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
 2. Write digest ≤10 lines to ${digestFile}
 ${pingContract}
 Do not call review yourself. Do not submit-for-review.
+Checklist: nonempty result file → nonempty digest ≤10 lines → exact ping command above.
+Child stdout is not delivery. Chat DOCS REPORT is not delivery.
 `
 			: `${prompt}
 
@@ -2371,7 +2375,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "followup_visible_dispatch",
 		label: "Follow-up Visible Dispatch",
-		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора или code-reviewer. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
+		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора, code-reviewer или documentation-expert. role обязателен (exact registry role). Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
 		parameters: FollowupVisibleDispatchParams,
 		async execute(_id: string, params: FollowupVisibleParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {

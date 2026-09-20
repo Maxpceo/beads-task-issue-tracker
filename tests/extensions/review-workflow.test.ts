@@ -2661,6 +2661,8 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain(VISIBLE_REVIEW_DISPATCH)
     expect(skill).toContain('status=verdict` → do not call `review_bead`')
     expect(skill).toContain('followup_visible_dispatch({ beadId, role: "code-reviewer", task })')
+    expect(skill).toContain('followup_visible_dispatch({ beadId, role: "<supervisor-role>", task })')
+    expect(dispatchSkill).toContain('followup_visible_dispatch({ beadId, role: "<agentName>", task })')
     expect(skill).toContain('complete_visible_dispatch` must not spawn a supervisor after `NOT APPROVED`')
     expect(skill).toContain('While a live code-reviewer pane exists, do not call `review_bead`')
     expect(skill).toContain('runtime hop')
@@ -2674,7 +2676,7 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('Do not `close_visible_dispatch` while pending-fix reuse is needed')
     expect(dispatchSkill).toContain('NOT APPROVED / pending-fix → do **not** close; keep pane for `followup_visible_dispatch`')
     expect(agents).toContain('`NOT APPROVED` / pending-fix: **do not** close')
-    expect(agents).toContain('`followup_visible_dispatch` (`pendingFix: true` skips close)')
+    expect(agents).toContain('`followup_visible_dispatch({ beadId, role: "<agentName>", task })` (`role` is the exact registry role; `pendingFix: true` skips close)')
     expect(agents).toContain('`pendingFix: true` wins over `stopClose` (skip close)')
   })
 

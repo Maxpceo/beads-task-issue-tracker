@@ -516,6 +516,8 @@ export function findLiveFollowupEntry(
 	role?: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): { file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number } {
+	const requestedRole = role?.trim() ?? "";
+	if (!requestedRole) throw new Error("followup_visible_dispatch: укажите role: BLOCKED");
 	const matches: Array<{ file: string; registry: DispatchRegistry; entry: DispatchRegistryEntry; index: number }> = [];
 	const root = path.join(orchRoot(env), "ns");
 	if (fs.existsSync(root)) {
@@ -528,11 +530,15 @@ export function findLiveFollowupEntry(
 			});
 		}
 	}
-	const selected = role ? matches.filter((item) => item.entry.role === role) : matches.filter((item) => isSupervisorRole(item.entry.role));
-	const firstSpawnHint = role === "code-reviewer" ? "dispatch_reviewer" : "dispatch_supervisor";
+	const selected = matches.filter((item) => item.entry.role === requestedRole);
+	const firstSpawnHint =
+		requestedRole === "code-reviewer"
+			? "dispatch_reviewer"
+			: requestedRole === "documentation-expert"
+				? "dispatch_docs_agent"
+				: "dispatch_supervisor";
 	if (selected.length === 0) throw new Error(`нет live pane; first spawn через ${firstSpawnHint}`);
-	if (!role && selected.length > 1) throw new Error("followup_visible_dispatch: неоднозначный role, укажите role: BLOCKED");
-	if (role && selected.length > 1) throw new Error(`followup_visible_dispatch: несколько live pane для ${beadId} role=${role}: BLOCKED`);
+	if (selected.length > 1) throw new Error(`followup_visible_dispatch: несколько live pane для ${beadId} role=${requestedRole}: BLOCKED`);
 	const found = selected[0];
 	if (!found) throw new Error(`нет live pane; first spawn через ${firstSpawnHint}`);
 	return found;

@@ -173,7 +173,7 @@ close_visible_dispatch({ beadId: <ID> })
 ```
 
 - Uses spawn-ack / `dispatch-registry.json` pane ids → `cmux close-surface --surface <pane>` + registry `tombstone` (not live for followup).
-- `NOT APPROVED` / pending-fix: **do not** close — keep the pane and use `followup_visible_dispatch` (`pendingFix: true` skips close).
+- `NOT APPROVED` / pending-fix: **do not** close — keep the pane and use `followup_visible_dispatch({ beadId, role: "<agentName>", task })` (`role` is the exact registry role; `pendingFix: true` skips close).
 - Do not sweep foreign/historical panes, HTML boards, or Haasbot surfaces.
 - Prefer `--focus false` paths; do not speculative `select-workspace` / `focus-pane` just to find the surface.
 

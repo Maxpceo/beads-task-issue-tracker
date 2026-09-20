@@ -7,7 +7,7 @@ Typed Pi dispatch wrappers for the beads workflow.
 - `dispatch_supervisor` — dispatches an in-progress bead to the selected or inferred supervisor.
 - `dispatch_reviewer` — dispatches an inreview bead to `code-reviewer` by default.
 - `complete_visible_dispatch` — after visible child ping, record DISPATCH RESULT / CODE REVIEW verdict.
-- `followup_visible_dispatch` — reuse a live supervisor/reviewer pane (NOT APPROVED / pending-fix).
+- `followup_visible_dispatch` — reuse a live supervisor, code-reviewer, or documentation-expert pane. `role` is required (exact registry role); omit/empty → BLOCKED even if only one pane exists. Typical hop: `followup_visible_dispatch({ beadId, role: "<agentName>", task })` (NOT APPROVED / pending-fix).
 - `close_visible_dispatch` — after terminal bead + no pending-fix: `cmux close-surface` this bead's live panes and tombstone registry entries. Optional `stopClose: true` allows the same close path on **non-terminal** `status=reviewed` only (grey-matrix STOP after CODE REVIEW APPROVED); tombstones without unlinking isolation/followup (later terminal close cleans leftovers). `pendingFix: true` still skips close and wins over `stopClose`. `in_progress` / `inreview` / `open` + `stopClose` → BLOCKED. `reviewed` is **not** in `CLOSE_VISIBLE_TERMINAL_STATUSES`.
 - `dispatch_docs_agent` — dispatches documentation review/update work to `documentation-expert` by default.
 
