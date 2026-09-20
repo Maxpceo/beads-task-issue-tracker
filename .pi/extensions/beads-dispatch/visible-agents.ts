@@ -26,6 +26,9 @@ import {
 export const DEFAULT_SYNC_VISIBLE_TIMEOUT_MS = 10 * 60 * 1000;
 export const DEFAULT_SYNC_VISIBLE_POLL_MS = 1000;
 export const DEFAULT_SYNC_VISIBLE_STARTUP_GRACE_MS = 30_000;
+/** Temporary bpaz observe-first poller log. Does not change fail-fast. */
+export const BPAZ_WATCHDOG_TRACE_RELATIVE_PATH = path.join(".pi", "orchestrator", "results", "bpaz-watchdog-trace.jsonl");
+const BPAZ_WATCHDOG_EXCERPT_CHARS = 200;
 
 export interface SyncVisibleAgentSpec {
 	role: string;
@@ -129,6 +132,16 @@ function readResultFile(resultFile: string): string | undefined {
 		return text.trim() ? text : undefined;
 	} catch {
 		return undefined;
+	}
+}
+
+function appendBpazWatchdogTrace(worktreePath: string, rec: Record<string, unknown>): void {
+	try {
+		const file = path.join(worktreePath, BPAZ_WATCHDOG_TRACE_RELATIVE_PATH);
+		fs.mkdirSync(path.dirname(file), { recursive: true });
+		fs.appendFileSync(file, `${JSON.stringify(rec)}\n`);
+	} catch {
+		/* observe-only: never change poller decision */
 	}
 }
 
@@ -237,8 +250,20 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				if (!pending.has(row.taskId)) continue;
 				const entry = spawned.find((item) => item.taskId === row.taskId);
 				if (!entry) continue;
+				const createdAtMs = Date.parse(entry.createdAt);
+				const ageMs = Number.isFinite(createdAtMs) ? now() - createdAtMs : startupGraceMs;
 				const output = readResultFile(entry.resultFile);
 				if (output) {
+					appendBpazWatchdogTrace(input.worktreePath, {
+						ts: now(),
+						pane: entry.pane,
+						role: entry.role,
+						taskId: row.taskId,
+						ageMs,
+						health: "result",
+						hasResultFile: true,
+						excerpt: "",
+					});
 					row.output = output;
 					pending.delete(row.taskId);
 					continue;
@@ -246,14 +271,44 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				let screen: string | undefined;
 				try {
 					screen = await adapter.readScreen(entry.pane);
-				} catch {
+				} catch (error) {
+					appendBpazWatchdogTrace(input.worktreePath, {
+						ts: now(),
+						pane: entry.pane,
+						role: entry.role,
+						taskId: row.taskId,
+						ageMs,
+						health: "read-error",
+						hasResultFile: false,
+						excerpt: String(error instanceof Error ? error.message : error).slice(0, BPAZ_WATCHDOG_EXCERPT_CHARS),
+					});
 					continue;
 				}
-				if (!screen.trim()) continue;
+				if (!screen.trim()) {
+					appendBpazWatchdogTrace(input.worktreePath, {
+						ts: now(),
+						pane: entry.pane,
+						role: entry.role,
+						taskId: row.taskId,
+						ageMs,
+						health: "empty",
+						hasResultFile: false,
+						excerpt: "",
+					});
+					continue;
+				}
 				const health = classify(screen);
+				appendBpazWatchdogTrace(input.worktreePath, {
+					ts: now(),
+					pane: entry.pane,
+					role: entry.role,
+					taskId: row.taskId,
+					ageMs,
+					health,
+					hasResultFile: false,
+					excerpt: screen.slice(0, BPAZ_WATCHDOG_EXCERPT_CHARS),
+				});
 				if (health === "dead" || health === "shell") {
-					const createdAtMs = Date.parse(entry.createdAt);
-					const ageMs = Number.isFinite(createdAtMs) ? now() - createdAtMs : startupGraceMs;
 					if (ageMs < startupGraceMs) continue;
 					row.error = `dead pane without result: ${entry.pane}`;
 					pending.delete(row.taskId);

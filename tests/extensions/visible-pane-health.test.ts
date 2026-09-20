@@ -38,6 +38,11 @@ const shellOnly = `maksim@studio kp4r-supervisor-panel-reuse %`
 const deadScreen = `surface closed
 no prompt here`
 
+/** Live frames from bpaz watchdog jsonl (false dead after grace); padding stripped for git diff --check. */
+const bpazStartupChrome = 'pi v0.85.1\nescape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ! bash · ctrl+o more'
+const bpazLiveAssistant = 'Сверю черновик с формулировкой bpaz и критериями приёмки, не меняя рабочие файлы.'
+const bpazLiveFindings = '    evidence: "1. Confirm this is an observe-only plan-review spawn. 2. Return PLAN REVIEW:\n  APPROVED." / "FAST_PATH_RATIONALE: one live trio to capture watchdog jsonl; no classify'
+
 describe('classifyVisiblePane', () => {
   it('treats session idle/implementing/inreview as waiting even with $ in the body', () => {
     expect(classifyVisiblePane(idleFooter)).toBe('waiting')
@@ -62,9 +67,15 @@ describe('classifyVisiblePane', () => {
     expect(classifyVisiblePane('❯ ')).toBe('shell')
   })
 
-  it('treats a successful read without session-line or shell as dead', () => {
-    expect(classifyVisiblePane(deadScreen)).toBe('dead')
+  it('treats empty screen as dead and non-shell live text as starting', () => {
     expect(classifyVisiblePane('')).toBe('dead')
+    expect(classifyVisiblePane(deadScreen)).toBe('starting')
+  })
+
+  it('classifies bpaz watchdog frames as starting, not dead', () => {
+    expect(classifyVisiblePane(bpazStartupChrome)).toBe('starting')
+    expect(classifyVisiblePane(bpazLiveAssistant)).toBe('starting')
+    expect(classifyVisiblePane(bpazLiveFindings)).toBe('starting')
   })
 })
 

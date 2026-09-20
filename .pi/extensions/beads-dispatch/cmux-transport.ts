@@ -46,7 +46,7 @@ export interface DispatchRegistry {
 	entries: DispatchRegistryEntry[];
 }
 
-export type VisiblePaneHealth = "waiting" | "busy" | "shell" | "dead";
+export type VisiblePaneHealth = "waiting" | "busy" | "shell" | "dead" | "starting";
 
 export type SplitDirection = "right" | "down";
 
@@ -246,7 +246,8 @@ export function classifyVisiblePane(text: string): VisiblePaneHealth {
 	if (BUSY_RE.test(screen)) return "busy";
 	if (SESSION_LINE_RE.test(screen)) return "waiting";
 	if (SHELL_PROMPT_RE.test(screen.trimEnd())) return "shell";
-	return "dead";
+	if (!screen.trim()) return "dead";
+	return "starting";
 }
 
 export function buildVisibleFollowupPayload(task: string): string {
