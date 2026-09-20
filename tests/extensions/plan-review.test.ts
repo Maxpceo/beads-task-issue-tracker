@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import planReviewExtension, {
   MAX_PLAN_REVIEW_CYCLES,
@@ -19,11 +22,64 @@ import {
   resetDashboardWidgetHost,
   setSharedDashboardState,
 } from '../../.pi/extensions/subagent/dashboard'
+import type { SpawnSyncVisibleAgentsInput } from '../../.pi/extensions/beads-dispatch/visible-agents'
+
+const tmpDirs: string[] = []
+
+function makeAgentModelsCwd(config: Record<string, unknown>): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-review-agent-models-'))
+  tmpDirs.push(root)
+  fs.mkdirSync(path.join(root, '.pi'), { recursive: true })
+  fs.writeFileSync(path.join(root, '.pi', 'agent-models.json'), `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  return root
+}
+
+const cheapPlanReviewConfig = {
+  classes: {
+    strong: 'xai/grok-4.6',
+    standard: 'xai/grok-4.6',
+    cheap: 'xai/grok-4.3',
+  },
+  roles: {},
+  agentClasses: {
+    'plan-edge-reviewer': 'cheap',
+    'plan-consistency-reviewer': 'cheap',
+    'plan-dead-zone-reviewer': 'cheap',
+  },
+  classThinking: {
+    cheap: 'medium',
+    strong: 'high',
+    standard: 'medium',
+  },
+}
+
+const approvedReviewText = 'PLAN REVIEW: APPROVED\nFindings:\n- severity: minor\n  issue: none\n  evidence: ok\n  suggested fix: none\nUnresolved blockers: none'
+
+function jsonAssistant(text: string) {
+  return {
+    code: 0,
+    stderr: '',
+    stdout: `${JSON.stringify({
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text }],
+      },
+    })}\n`,
+  }
+}
 
 beforeEach(() => {
   clearObservedDashboardCards()
   setSharedDashboardState(null)
   resetDashboardWidgetHost()
+})
+
+afterEach(() => {
+  while (tmpDirs.length > 0) {
+    const dir = tmpDirs.pop()
+    if (dir) fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 describe('plan-review gate helpers', () => {
@@ -289,5 +345,90 @@ Risks / rollback:
     expect(calls[0]?.command).toBe('pi')
     expect(results[0]?.verdict).toBe('APPROVED')
     expect(getSharedDashboardState()?.origin).toBe('auto')
+  })
+
+  it('visible spawn passes resolved cheap model/thinking from agent-models for each reviewer', async () => {
+    const cwd = makeAgentModelsCwd(cheapPlanReviewConfig)
+    const spawned: SpawnSyncVisibleAgentsInput['agents'] = []
+    const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
+    const results = await runPlanReviewers(pi, cwd, 'Plan:\n1. Test', [
+      'plan-edge-reviewer',
+      'plan-consistency-reviewer',
+      'plan-dead-zone-reviewer',
+    ], {
+      hasUI: true,
+      spawnVisible: async (input) => {
+        spawned.push(...input.agents)
+        return input.agents.map((agent) => ({
+          role: agent.role,
+          taskId: `sync-${agent.role}`,
+          pane: `surface:${agent.role}`,
+          output: approvedReviewText,
+        }))
+      },
+    })
+
+    expect(spawned).toHaveLength(3)
+    for (const agent of spawned) {
+      expect(agent).toMatchObject({ model: 'xai/grok-4.3', thinking: 'medium' })
+    }
+    expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
+  })
+
+  it('headless argv includes --model and --thinking from agent-models', async () => {
+    const cwd = makeAgentModelsCwd(cheapPlanReviewConfig)
+    const calls: Array<{ command: string, args: string[] }> = []
+    const pi = {
+      exec: async (command: string, args: string[]) => {
+        calls.push({ command, args })
+        return jsonAssistant(approvedReviewText)
+      },
+    }
+
+    const results = await runPlanReviewers(pi, cwd, 'Plan:\n1. Test', [
+      'plan-edge-reviewer',
+      'plan-consistency-reviewer',
+      'plan-dead-zone-reviewer',
+    ], { hasUI: false })
+
+    expect(calls).toHaveLength(3)
+    for (const call of calls) {
+      expect(call.command).toBe('pi')
+      expect(call.args).toEqual(expect.arrayContaining(['--model', 'xai/grok-4.3', '--thinking', 'medium']))
+    }
+    expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
+  })
+
+  it('inherit: reviewer without agent-models entry omits model/thinking flags', async () => {
+    const cwd = makeAgentModelsCwd(cheapPlanReviewConfig)
+    const spawned: SpawnSyncVisibleAgentsInput['agents'] = []
+    const calls: Array<{ command: string, args: string[] }> = []
+    const pi = {
+      exec: async (command: string, args: string[]) => {
+        calls.push({ command, args })
+        return jsonAssistant(approvedReviewText)
+      },
+    }
+
+    const visible = await runPlanReviewers(pi, cwd, 'Plan:\n1. Test', ['unknown-reviewer'], {
+      hasUI: true,
+      spawnVisible: async (input) => {
+        spawned.push(...input.agents)
+        return input.agents.map((agent) => ({
+          role: agent.role,
+          taskId: `sync-${agent.role}`,
+          pane: `surface:${agent.role}`,
+          output: approvedReviewText,
+        }))
+      },
+    })
+    expect(visible[0]?.verdict).toBe('APPROVED')
+    expect(spawned[0]?.model).toBeUndefined()
+    expect(spawned[0]?.thinking).toBeUndefined()
+
+    const headless = await runPlanReviewers(pi, cwd, 'Plan:\n1. Test', ['unknown-reviewer'], { hasUI: false })
+    expect(headless[0]?.verdict).toBe('APPROVED')
+    expect(calls.at(-1)?.args).not.toEqual(expect.arrayContaining(['--model']))
+    expect(calls.at(-1)?.args).not.toEqual(expect.arrayContaining(['--thinking']))
   })
 })

@@ -1,6 +1,11 @@
 import * as path from "node:path";
 import { publishDashboardCard } from "../subagent/dashboard.js";
 import {
+	pushModelArg,
+	pushThinkingArg,
+	resolveAgentModelFromCwd,
+} from "../agent-models/index";
+import {
 	resolveVisibleCmuxAdapter,
 	spawnSyncVisibleAgents,
 	type SpawnSyncVisibleAgentsInput,
@@ -271,12 +276,17 @@ export async function runPlanReviewers(
 				timeoutMs: options.timeoutMs,
 				pollMs: options.pollMs,
 				sleep: options.sleep,
-				agents: reviewers.map((reviewer) => ({
-					role: reviewer,
-					task,
-					systemPromptFile: path.join(cwd, ".pi", "agents", `${reviewer}.md`),
-					tools: PLAN_REVIEW_VISIBLE_TOOLS,
-				})),
+				agents: reviewers.map((reviewer) => {
+					const resolved = resolveAgentModelFromCwd(cwd, reviewer);
+					return {
+						role: reviewer,
+						task,
+						systemPromptFile: path.join(cwd, ".pi", "agents", `${reviewer}.md`),
+						tools: PLAN_REVIEW_VISIBLE_TOOLS,
+						model: resolved.model,
+						thinking: resolved.thinking,
+					};
+				}),
 			});
 			const byRole = new Map(visible.map((row) => [row.role, row]));
 			return reviewers.map((reviewer) => {
@@ -322,7 +332,8 @@ export async function runPlanReviewers(
 		let terminalStatus: "completed" | "failed" = "completed";
 		let reviewResult: PlanReviewResult | undefined;
 		try {
-			const result = await pi.exec("pi", [
+			const resolved = resolveAgentModelFromCwd(cwd, reviewer);
+			const args = [
 				"--mode", "json",
 				"-p",
 				"--no-session",
@@ -331,8 +342,11 @@ export async function runPlanReviewers(
 				"--no-prompt-templates",
 				"--tools", "read,grep,find,ls",
 				"--append-system-prompt", agentPath,
-				headlessTask,
-			]);
+			];
+			pushModelArg(args, resolved.model);
+			pushThinkingArg(args, resolved.thinking);
+			args.push(headlessTask);
+			const result = await pi.exec("pi", args);
 			if (result.code !== 0) {
 				terminalStatus = "failed";
 				reviewResult = {
