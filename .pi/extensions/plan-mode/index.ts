@@ -285,6 +285,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return createPlanDocumentComponent(content, getMarkdownTheme());
 	});
 
+	pi.registerEntryRenderer("plan-ready-choice", (entry) => {
+		const data = entry.data as { content?: unknown } | undefined;
+		const content = typeof data?.content === "string" ? data.content : "";
+		return createPlanDocumentComponent(content, getMarkdownTheme());
+	});
+
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
 		type: "boolean",
@@ -689,7 +695,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
-	function skipAlreadySpawnedContinuation(beadId: string): { skipped: true; reason: "alreadySpawned" } {
+	type ContinuationSkipReason = "fastPath" | "alreadySpawned";
+	type ContinuationNext = "fastPath" | "alreadySpawned" | "dispatched" | "continuation-blocked";
+	type ContinuationResult = {
+		skipped: boolean;
+		reason?: ContinuationSkipReason;
+		next: ContinuationNext;
+	};
+
+	function skipAlreadySpawnedContinuation(beadId: string): { skipped: true; reason: "alreadySpawned"; next: "alreadySpawned" } {
 		let live: ReturnType<typeof findLiveRegistryEntriesForBead> = [];
 		try {
 			live = findLiveRegistryEntriesForBead(beadId).filter((item) => isSupervisorRegistryRole(item.entry.role));
@@ -697,7 +711,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			live = [];
 		}
 		sendAlreadySpawnedSkip(beadId, live);
-		return { skipped: true, reason: "alreadySpawned" };
+		return { skipped: true, reason: "alreadySpawned", next: "alreadySpawned" };
 	}
 
 	async function recordRuntimeHookMissing(ctx: ExtensionContext, beadId: string, action: string, error: string): Promise<void> {
@@ -798,7 +812,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		beadId: string,
 		options: { approvedWorktreePath?: string; planEvidence?: string; triggerTurn?: boolean } = {},
-	): Promise<{ skipped: boolean; reason?: "fastPath" | "alreadySpawned" }> {
+	): Promise<ContinuationResult> {
 		// Fast Path: orchestrator implements; skip supervisor spawn before any pre-dispatch work.
 		if (hasNonemptyFastPathRationale(options.planEvidence ?? "") && !autopilotEnabled) {
 			const triggerTurn = options.triggerTurn === true;
@@ -813,14 +827,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				{ customType: "post-approval-fast-path-skip", content, display: true },
 				{ triggerTurn },
 			);
-			return { skipped: true, reason: "fastPath" };
+			return { skipped: true, reason: "fastPath", next: "fastPath" };
 		}
 
 		try {
 			const live = findLiveRegistryEntriesForBead(beadId).filter((item) => isSupervisorRegistryRole(item.entry.role));
 			if (live.length > 0) {
 				sendAlreadySpawnedSkip(beadId, live);
-				return { skipped: true, reason: "alreadySpawned" };
+				return { skipped: true, reason: "alreadySpawned", next: "alreadySpawned" };
 			}
 		} catch {
 			// Fail-open: unreadable/corrupt registry must not skip; follow the existing dispatch path.
@@ -829,7 +843,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const resolved = await resolveContinuationCwd(ctx, beadId, options.approvedWorktreePath);
 		if (resolved.error || !resolved.cwd) {
 			await recordContinuationScopeBlocked(ctx, beadId, resolved.error ?? "no readable task worktree for continuation");
-			return { skipped: false };
+			return { skipped: false, next: "continuation-blocked" };
 		}
 		const action = renderPlanExecutionAction(beadId, resolved.cwd);
 		sendPreDispatchProgress(ctx, beadId, action);
@@ -841,14 +855,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			if (isRuntimeHookUnavailable(error)) {
 				await recordRuntimeHookMissing(ctx, beadId, action, error);
-				return { skipped: false };
+				return { skipped: false, next: "continuation-blocked" };
 			}
 			if (isDispatchReadinessFailure(error)) {
 				await recordContinuationReadinessBlocked(ctx, beadId, error);
-				return { skipped: false };
+				return { skipped: false, next: "continuation-blocked" };
 			}
 			await recordContinuationScopeBlocked(ctx, beadId, error);
-			return { skipped: false };
+			return { skipped: false, next: "continuation-blocked" };
 		}
 		pi.sendMessage(
 			{
@@ -858,10 +872,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			},
 			{ triggerTurn: false },
 		);
-		return { skipped: false };
+		return { skipped: false, next: "dispatched" };
 	}
 
-	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<{ approved: boolean; beadId?: string; worktreePath?: string }> {
+	async function approvePlanForExecution(ctx: ExtensionContext, planEvidence: string): Promise<{ approved: boolean; beadId?: string; worktreePath?: string; next?: ContinuationNext }> {
 		const workflowState = latestWorkflowStateEntry(ctx);
 		const beadId = workflowState?.activeBead;
 		if (!beadId) {
@@ -892,7 +906,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			);
 			return { approved: false };
 		}
-		return { approved: true, beadId, worktreePath: result.details?.worktreePath as string | undefined };
+		const next: ContinuationNext =
+			result.details?.continuationNext === "fastPath"
+			|| result.details?.continuationNext === "alreadySpawned"
+			|| result.details?.continuationNext === "dispatched"
+			|| result.details?.continuationNext === "continuation-blocked"
+				? result.details.continuationNext
+				: "dispatched";
+		return { approved: true, beadId, worktreePath: result.details?.worktreePath as string | undefined, next };
 	}
 
 	function planReviewAutoCapReached(): boolean {
@@ -1125,6 +1146,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				autopilot: autopilotEnabled,
 				fastPathSkip: continuation.reason === "fastPath",
 				continuationSkipReason: continuation.reason,
+				continuationNext: continuation.next,
 			},
 		);
 	}
@@ -1232,6 +1254,23 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
+	function formatReadyChoiceLegend(): string {
+		const lines = READY_ACTIONS.map((item) => {
+			const description = item.description?.trim() ?? "";
+			return description ? `- **${item.label}**: ${description}` : `- **${item.label}**`;
+		});
+		return ["Выбор в ready-UI:", ...lines].join("\n");
+	}
+
+	/** Legend before overlay/select. Throw must not block the widget. */
+	function showImmediateReadyChoice(): void {
+		try {
+			pi.appendEntry("plan-ready-choice", { content: formatReadyChoiceLegend() });
+		} catch {
+			// appendEntry failure must not block ready-UI
+		}
+	}
+
 	function formatQuestionnaireTranscript(
 		questions: Array<{ label: string; prompt: string; options: Array<{ label: string }>; allowOther: boolean }>,
 	): string {
@@ -1255,8 +1294,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		planText: string,
 		source: ReadyUiSource,
+		options: { skipReadyChoice?: boolean } = {},
 	): Promise<ReadyAction | null> {
 		if (!ctx.hasUI) return null;
+
+		// Legend before overlay/select (jxna). RPC execute uses select without legend;
+		// leftover select still appends. Clean-reshow skip is caller-controlled.
+		const skipLegend = options.skipReadyChoice === true || (source === "execute" && !canUseCustomUi(ctx));
+		if (!skipLegend) {
+			showImmediateReadyChoice();
+		}
 
 		// Full plan goes into the chat immediately via appendEntry + entry renderer.
 		// sendMessage(plan-ready-document) is steered until the blocking widget returns,
@@ -1290,10 +1337,43 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	type StrictReadyUiOutcome =
+		| { kind: "executed"; next: ContinuationNext }
+		| { kind: "execute-blocked" }
+		| { kind: "stay" }
+		| { kind: "refine" }
+		| { kind: "cancelled" }
 		| { kind: "findings"; results: PlanReviewResult[]; gate: PlanReviewGateResult }
 		| { kind: "clean-reshow" }
-		| { kind: "cleared" }
 		| { kind: "error"; message: string };
+
+	function formatPlanModeCompleteToolText(outcome: StrictReadyUiOutcome): string {
+		switch (outcome.kind) {
+			case "executed":
+				if (outcome.next === "fastPath") {
+					return "Максим нажал Исполнить. PLAN APPROVED записан. Next: implement now. Не ping. Не dispatch_supervisor.";
+				}
+				if (outcome.next === "alreadySpawned") {
+					return "Максим нажал Исполнить. PLAN APPROVED записан. Супервизор already spawned. Next: ждать ping. Не dispatch_supervisor. Не ## Дальше про выбор плана. Не implement.";
+				}
+				if (outcome.next === "continuation-blocked") {
+					return "Максим нажал Исполнить. PLAN APPROVED мог записаться. Continuation blocked. Next: plan-approval-recovery / continuation-blocked. Чат-стоп на recovery разрешён. Не ping. Не Fast Path implement.";
+				}
+				return "Максим нажал Исполнить. PLAN APPROVED записан. Супервизор live/attempted. Next: ждать ping. Не dispatch_supervisor. Не ## Дальше про выбор плана. Не implement.";
+			case "execute-blocked":
+				return "Исполнить нажат. Durable PLAN APPROVED не записан. Pending kept. Plan mode ON. Next: plan-approval-recovery. Не ping. Не Fast Path.";
+			case "stay":
+			case "cancelled":
+				return "Pending снят. Plan mode ON. Продолжать планирование. Не утверждать что кнопка ready-UI ещё впереди.";
+			case "refine":
+				return "Pending снят. Next: ждать текст уточнения.";
+			case "error":
+				return `Ready-UI упал: ${outcome.message}. Pending cleared. Plan mode ON. Не утверждать что overlay ждёт. Снова plan_mode_complete или продолжить план.`;
+			case "clean-reshow":
+				return "plan_mode_complete: ready-UI clean-reshow; pending kept";
+			case "findings":
+				return formatReadyCritiqueFindingsText(outcome.results);
+		}
+	}
 
 	function countImportantOrCritical(results: PlanReviewResult[], gate: PlanReviewGateResult): number {
 		if (gate.importantFindings.length > 0) return gate.importantFindings.length;
@@ -1360,23 +1440,25 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function runStrictReadyUiLoop(ctx: ExtensionContext, source: ReadyUiSource): Promise<StrictReadyUiOutcome> {
-		let lastOutcome: StrictReadyUiOutcome = { kind: "cleared" };
+		let lastOutcome: StrictReadyUiOutcome = { kind: "cancelled" };
 		while (planModeEnabled && !autoExecuteEnabled && pendingReadyPlan) {
 			const planText = pendingReadyPlan;
-			const action = await promptReadyAction(ctx, planText, source);
+			const action = await promptReadyAction(ctx, planText, source, {
+				skipReadyChoice: lastOutcome.kind === "clean-reshow",
+			});
 
 			if (action === "execute") {
 				const approval = await approvePlanForExecution(ctx, planText);
 				if (!approval.approved) {
 					persistState();
-					return { kind: "cleared" };
+					return { kind: "execute-blocked" };
 				}
 				clearPendingReadyPlan();
 				executionMode = false;
 				todoItems = [];
 				updateStatus(ctx);
 				persistState();
-				return { kind: "cleared" };
+				return { kind: "executed", next: approval.next ?? "dispatched" };
 			}
 
 			if (action === "refine") {
@@ -1386,7 +1468,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (refinement?.trim()) {
 					pi.sendUserMessage(refinement.trim());
 				}
-				return { kind: "cleared" };
+				return { kind: "refine" };
 			}
 
 			if (action === "plan-review") {
@@ -1436,7 +1518,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			// stay / Esc / null → clear pending, remain in plan mode
 			clearPendingReadyPlan();
 			persistState();
-			return { kind: "cleared" };
+			return { kind: action === "stay" ? "stay" : "cancelled" };
 		}
 		return lastOutcome;
 	}
@@ -1610,15 +1692,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 							findings: true,
 							gate: outcome.gate,
 							results: outcome.results,
+							outcome: outcome.kind,
 						});
 					}
-					const stillPending = Boolean(pendingReadyPlan);
-					return toolText(
-						stillPending
-							? "plan_mode_complete: ready select opened; pending kept"
-							: "plan_mode_complete: ready select completed",
-						{ ok: true, pending: stillPending, outcome: outcome.kind },
-					);
+					const pending = outcome.kind === "execute-blocked" || outcome.kind === "clean-reshow" || Boolean(pendingReadyPlan);
+					const ok = outcome.kind !== "execute-blocked" && outcome.kind !== "error";
+					return toolText(formatPlanModeCompleteToolText(outcome), {
+						ok,
+						pending,
+						outcome: outcome.kind,
+						next: outcome.kind === "executed" ? outcome.next : undefined,
+					});
 				}
 				return toolText("plan_mode_complete: pending ready plan stored; ready select will open on agent_settled", { ok: true, pending: true });
 			},

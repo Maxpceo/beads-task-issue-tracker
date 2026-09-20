@@ -20,7 +20,7 @@ Approve-path fork for the supervisor handoff (same contract in `dispatch-supervi
 
 ## Reporting
 
-Chat for Maxim follows `AGENTS.md`. Do not announce normal plan-mode or bd-status values the footer already shows. After approval/auto gate, continue silently unless there is a real decision. When strict planning stops for approval, ambiguity, or a block: `##` + `## Дальше` with `1/2/3`.
+Chat for Maxim follows `AGENTS.md`. Do not announce normal plan-mode or bd-status values the footer already shows. After approval/auto gate, continue silently unless there is a real decision. After a successful TUI `plan_mode_complete` (overlay/select returned), do **not** write «жду решения» and do **not** require `## Дальше` 1/2/3 about choosing the plan — follow the exclusive next-action in the tool result (`fastPath` → implement now; `dispatched`/`alreadySpawned` → wait for ping, do not `dispatch_supervisor`; `execute-blocked`/`continuation-blocked` → `plan-approval-recovery`). `## Дальше` about the plan only if the widget did not open (`!hasUI` / RPC). For other stops (ambiguity, block, recovery unrelated to a successful TUI complete): `##` + `## Дальше` with `1/2/3`.
 
 ## Plan-review cycle cap (workflow_plan_review)
 
