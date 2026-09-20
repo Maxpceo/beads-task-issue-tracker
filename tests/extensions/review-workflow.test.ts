@@ -2676,7 +2676,7 @@ describe('review-bead visible code-reviewer hop', () => {
     expect(skill).toContain('Do not `close_visible_dispatch` while pending-fix reuse is needed')
     expect(dispatchSkill).toContain('NOT APPROVED / pending-fix → do **not** close; keep pane for `followup_visible_dispatch`')
     expect(agents).toContain('`NOT APPROVED` / pending-fix: **do not** close')
-    expect(agents).toContain('`followup_visible_dispatch` (`pendingFix: true` skips close)')
+    expect(agents).toContain('`followup_visible_dispatch({ beadId, role: "<agentName>", task })` (`role` is the exact registry role; `pendingFix: true` skips close)')
     expect(agents).toContain('`pendingFix: true` wins over `stopClose` (skip close)')
   })
 
