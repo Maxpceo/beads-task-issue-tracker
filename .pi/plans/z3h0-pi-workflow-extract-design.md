@@ -67,13 +67,13 @@ HEAD worktree: `docs/7fz7-pi-workflow-extract-design`.
 
 В README запрещён путь `/Users/maksimposudevskiy/...`.
 
-## 4zaz
+## Routing (4zaz / 1mj1)
 
-`beads-task-issue-tracker-4zaz` в bd **closed** (реализация в другой сессии). На этом checkout **нет** `.pi/supervisor-routing.json`; `chooseSupervisor` в `beads-dispatch/index.ts` ~L512 ещё hardcode vue/tauri/test.
-
-Extract **не** переписывает routing. После merge 4zaz в main: файл routing = overlay-template + чтение из пакета; агенты vue/tauri/test остаются overlay трекера.
-
-Не плодить второй bead на chooseSupervisor.
+- ADR: `beads-task-issue-tracker-4zaz` closed.
+- Реализация: `beads-task-issue-tracker-1mj1` **closed** и в `origin/main` (2026-09-18): `.pi/supervisor-routing.json`; `chooseSupervisor` реэкспорт из `./supervisor-routing`.
+- Overlay трекера сейчас: default `test-supervisor`; labels workflow/ci/dx → test; backend/tracker → tauri; frontend/ui/data → vue.
+- Extract **не** переписывает routing. В пакет уезжает **чтение** JSON; таблица и vue/tauri/test агенты — overlay потребителя. Generic fallback в новом пакете — `implementer` (не копировать default test-supervisor в шаблон фонда).
+- Не плодить второй bead на chooseSupervisor.
 
 ## Инварианты cutover (выполнять на этапах 2/4, не здесь)
 
@@ -194,7 +194,7 @@ Package-файл не импортирует overlay/tracker/delete.
 
 | ID | Семья | Где | До этапа 2? | Статус |
 |---|---|---|---|---|
-| 4zaz | routing агентов | beads-dispatch `chooseSupervisor`; dispatch-supervisor SKILL | да | **closed в bd; кода routing.json на этом main нет** — ждать merge, не дублировать |
+| 4zaz/1mj1 | routing агентов | `.pi/supervisor-routing.json` + `beads-dispatch/supervisor-routing` | сделано | **в origin/main**; не дублировать |
 | H2 | stack-checks | review-workflow `checksForFiles` vue-tsc/pnpm; land/merge-to-main/release SKILL `pnpm test && npx vue-tsc`; plan-bead/create-bead allowlist | да | нужна задача как 4zaz: project verification config |
 | H3 | locale | beads-policy `enforceBeadRussianLocale`; create-bead | да | флаг overlay; пакет default off; трекер ru |
 | H4 | labels в skills | create-bead «frontend, backend» как примеры | можно с H3 | docs overlay |
@@ -217,12 +217,12 @@ Package-файл не импортирует overlay/tracker/delete.
 
 Ждать ок Максима:
 
-1. Не трогать 4zaz — долить/проверить merge.
+1. Routing 1mj1 — в main, не трогать.
 2. H2 — verification config (pnpm/vue-tsc не default пакета).
 3. H3 — locale flag.
-4. H6 — agent-models без зашитых имён (можно вместе с 4zaz, если ещё открыто в коде).
+4. H6 — agent-models без зашитых имён vue/tauri (проверить, не закрыл ли это 1mj1).
 
-Рекомендуемый порядок до mkdir пакета: merge 4zaz → H2 → H3.
+Рекомендуемый порядок до mkdir пакета: H2 → H3 (H6 если имена ещё зашиты).
 
 ## Out of scope этого файла
 
