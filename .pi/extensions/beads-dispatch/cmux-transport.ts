@@ -528,8 +528,13 @@ export function findLiveFollowupEntry(
 			});
 		}
 	}
-	const selected = role ? matches.filter((item) => item.entry.role === role) : matches.filter((item) => isSupervisorRole(item.entry.role));
-	const firstSpawnHint = role === "code-reviewer" ? "dispatch_reviewer" : "dispatch_supervisor";
+	const selected = role ? matches.filter((item) => item.entry.role === role) : matches;
+	const firstSpawnHint =
+		role === "code-reviewer"
+			? "dispatch_reviewer"
+			: role === "documentation-expert"
+				? "dispatch_docs_agent"
+				: "dispatch_supervisor";
 	if (selected.length === 0) throw new Error(`нет live pane; first spawn через ${firstSpawnHint}`);
 	if (!role && selected.length > 1) throw new Error("followup_visible_dispatch: неоднозначный role, укажите role: BLOCKED");
 	if (role && selected.length > 1) throw new Error(`followup_visible_dispatch: несколько live pane для ${beadId} role=${role}: BLOCKED`);

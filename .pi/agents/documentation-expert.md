@@ -59,6 +59,15 @@ Commit: <sha or not committed with reason>
 Summary: <short summary>
 ```
 
+## Visible dispatch ping
+
+If the task file contains `WHEN YOU BELIEVE YOUR CONTRACT IS DONE` or a `ping.sh` command:
+
+1. Write the artifact to the result file and digest ≤10 lines to the digest file from the task.
+2. Run the exact task-body command `AGENT_NAME=… DIGEST_FILE=… bash …/ping.sh <taskId>` (`error` after BLOCKED/NEEDS_CONTEXT). Retry send once.
+3. чат-отчёт не заменяет ping. Do not print `Ping`/`[PING]` in this pane. Do not raw `cmux send`.
+4. Wrapper review-transition does not replace `ping.sh`.
+
 ## Delivery contract
 
 - Inputs must include `BEAD_ID`; if `BEAD_ID`, `BRANCH`, or `START_COMMIT` is missing, return `NEEDS_CONTEXT` instead of guessing.

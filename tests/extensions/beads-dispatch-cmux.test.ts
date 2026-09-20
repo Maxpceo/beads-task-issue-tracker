@@ -450,9 +450,11 @@ describe('dispatch_supervisor transport=cmux', () => {
       'vue-supervisor.md',
       'tauri-supervisor.md',
       'code-reviewer.md',
+      'documentation-expert.md',
     ]
     for (const name of agents) {
       const text = fs.readFileSync(path.join(process.cwd(), '.pi/agents', name), 'utf8')
+      expect(text, name).toContain('Visible dispatch ping')
       expect(text, name).toContain('ping.sh')
       expect(text, name).toContain('чат-отчёт не заменяет')
       expect(text, name).toContain('AGENT_NAME=')
@@ -847,6 +849,7 @@ describe('reviewer/docs transport', () => {
     expect(tools.dispatch_supervisor.parameters.properties.transport.description).toMatch(/Omit: cmux when interactive/)
     expect(tools.followup_visible_dispatch).toBeDefined()
     expect(tools.followup_visible_dispatch.description).toMatch(/Единственный typed hop/)
+    expect(tools.followup_visible_dispatch.description).toMatch(/documentation-expert/)
     expect(tools.dispatch_reviewer.parameters.additionalProperties).toBe(false)
   })
 })
@@ -913,6 +916,52 @@ describe('dispatch_docs_agent visible cmux', () => {
     expect(entry?.layoutColumn).toBe(0)
   })
 
+  it('visible docs taskBody has WHEN-DONE, ping.sh, and stdout is not delivery', async () => {
+    setCmuxAdapterForTests({
+      callerSurface: () => 'surface:orch',
+      async identify() { return { workspaceId: 'ws-docs-body' } },
+      async newSplit() { return { surface: 'surface:docs' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+      async renameSurface() {},
+    })
+    const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
+    const result = await tools.dispatch_docs_agent.execute(
+      'd1',
+      { beadId },
+      undefined,
+      undefined,
+      workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true }),
+    )
+    expect(result.details.status).toBe('spawned')
+    const body = fs.readFileSync(result.details.taskFile!, 'utf8')
+    const pingSh = path.join(cwd, '.pi/orchestrator/ping.sh')
+    expect(body).toContain('WHEN YOU BELIEVE YOUR CONTRACT IS DONE')
+    expect(body).toContain('Child stdout is not delivery')
+    expect(body).toContain(`bash '${pingSh}'`)
+    expect(body).toContain("AGENT_NAME='documentation-expert'")
+    expect(body).toContain('Chat DOCS REPORT is not delivery')
+    expect(body).toMatch(/Checklist: nonempty result file/)
+  })
+
+  it('duplicate live docs spawn hints followup with documentation-expert role', async () => {
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-docs-dup' } },
+      async newSplit() { return { surface: 'surface:docs' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return '' },
+    })
+    const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d' })
+    const ctx = workflowCtx(cwd, beadId, branch, head, cwd, { hasUI: true })
+    const first = await tools.dispatch_docs_agent.execute('d1', { beadId }, undefined, undefined, ctx)
+    expect(first.details.status).toBe('spawned')
+    const second = await tools.dispatch_docs_agent.execute('d2', { beadId }, undefined, undefined, ctx)
+    expect(second.content[0].text).toMatch(/BLOCKED/)
+    expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId, role: "documentation-expert" \}\)/)
+  })
+
   it('omitted transport without UI stays headless on dryRun', async () => {
     const execCalls: Array<{ command: string; args: string[] }> = []
     const { tools, cwd, branch, beadId, head } = makePi({ toolName: 'dispatch_docs_agent', beadId: 'bead-d', execCalls })
@@ -931,6 +980,8 @@ describe('dispatch_docs_agent visible cmux', () => {
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments).toEqual([])
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
+    expect(result.details.output).not.toMatch(/ping\.sh/)
+    expect(result.details.output).not.toContain('WHEN YOU BELIEVE YOUR CONTRACT IS DONE')
   })
 
   it('omitted transport without UI but CMUX_SOCKET_PATH fails closed', async () => {
@@ -1706,6 +1757,53 @@ describe('followup_visible_dispatch', () => {
     await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/нет live pane; first spawn через dispatch_supervisor/)
   })
 
+  it('unique documentation-expert pane without role + idle DOCS REPORT sends followup', async () => {
+    seed({ role: 'documentation-expert' })
+    const sent: string[] = []
+    const splits: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-follow' } },
+      async newSplit() { splits.push('surface:99'); return { surface: 'surface:99' } },
+      async send(_surface, text) { sent.push(text) },
+      async closeSurface() {},
+      async readScreen() {
+        return 'DOCS REPORT\nStatus: NOTHING_TO_UPDATE\nsession idle | bead=bead-a\n$\n'
+      },
+    })
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
+    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'запиши result/digest и пингань' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    expect(result.status).toBe('sent')
+    expect(sent).toEqual(['запиши result/digest и пингань\n'])
+    expect(splits).toEqual([])
+    expect(fs.existsSync(path.join(tmp, 'd.digest'))).toBe(false)
+  })
+
+  it('two live roles without role are BLOCKED until role is specified', async () => {
+    const files = seed()
+    const registry = loadRegistry(files.file)
+    registry.entries.push({
+      ...registry.entries[0]!,
+      taskId: 'task-docs',
+      pane: 'surface:docs',
+      role: 'documentation-expert',
+    })
+    saveRegistry(files.file, registry)
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-follow' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send() {},
+      async closeSurface() {},
+      async readScreen() { return 'session idle\n$\n' },
+    })
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
+    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/неоднозначный role, укажите role/)
+  })
+
+  it('missing documentation-expert pane hints dispatch_docs_agent', async () => {
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'documentation-expert', task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/нет live pane; first spawn через dispatch_docs_agent/)
+  })
+
   it('blocks a blank task', async () => {
     seed()
     setCmuxAdapterForTests({
@@ -2161,7 +2259,7 @@ describe('kgvd dual-agent layout wiring', () => {
       async readScreen() { return 'user@host ~/proj $\n' },
     })
     const { pi, cwd, branch } = makePi({ beadId: 'bead-kgvd-col0' })
-    const result = await followupVisibleDispatch(pi as any, { beadId: 'bead-kgvd-col0', task: 'respawn after col0 gone' }, workflowCtx(cwd, 'bead-kgvd-col0', branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId: 'bead-kgvd-col0', role: 'test-supervisor', task: 'respawn after col0 gone' }, workflowCtx(cwd, 'bead-kgvd-col0', branch, 'aaa1111'))
     expect(result.status).toBe('spawned')
     expect(findRegistryByTaskId('task-sup-col0')?.entry.pane).toBe('surface:sup-new')
     expect(findRegistryByTaskId('task-sup-col0')?.entry.layoutColumn).toBe(1)

@@ -1701,7 +1701,12 @@ async function dispatchVisibleCmux(input: {
 	const registryFile = path.join(dir, "dispatch-registry.json");
 	const existing = loadRegistry(registryFile);
 	if (liveEntriesForBead(existing, bead.id, agentName).length > 0) {
-		const followupHint = agentName === "code-reviewer" ? `{ beadId, role: "code-reviewer" }` : `{ beadId }`;
+		const followupHint =
+			agentName === "code-reviewer"
+				? `{ beadId, role: "code-reviewer" }`
+				: agentName === "documentation-expert"
+					? `{ beadId, role: "documentation-expert" }`
+					: `{ beadId }`;
 		throw new Error(`повторный spawn для ${bead.id}: BLOCKED (live pane already registered; supervisor already spawned — wait for ping; use followup_visible_dispatch(${followupHint}))`);
 	}
 	const resultsDir = path.join(worktreeOrchDir(worktreePath), "results");
@@ -1737,6 +1742,8 @@ WHEN YOU BELIEVE YOUR CONTRACT IS DONE:
 2. Write digest ≤10 lines to ${digestFile}
 ${pingContract}
 Do not call review yourself. Do not submit-for-review.
+Checklist: nonempty result file → nonempty digest ≤10 lines → exact ping command above.
+Child stdout is not delivery. Chat DOCS REPORT is not delivery.
 `
 			: `${prompt}
 
@@ -2371,7 +2378,7 @@ export default function beadsDispatchExtension(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "followup_visible_dispatch",
 		label: "Follow-up Visible Dispatch",
-		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора или code-reviewer. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
+		description: "Единственный typed hop для live/inreview reuse видимой панели супервизора, code-reviewer или documentation-expert. Не first-spawn. User-facing hop skills (5o03) этим tool не выполнен.",
 		parameters: FollowupVisibleDispatchParams,
 		async execute(_id: string, params: FollowupVisibleParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ToolContext) {
 			try {
