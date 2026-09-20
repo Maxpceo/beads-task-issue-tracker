@@ -20,6 +20,13 @@ afterEach(() => {
   setReviewRuntimeDelegateForTestOverride(null)
 })
 
+function rgCallHasPath(calls: Array<{ command: string; args: string[] }>, relativePath: string): boolean {
+  return calls.some((call) =>
+    call.command === 'rg'
+    && call.args.some((arg) => arg === relativePath || arg.endsWith(`/${relativePath}`)),
+  )
+}
+
 describe('review_workflow scoped review', () => {
   it('uses endCommit for stacked branch diff scope in dryRun', async () => {
     let registeredTool: any
@@ -1130,7 +1137,8 @@ describe('review_workflow reviewer verdict handling', () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription, changedFiles: '.pi/skills/merge-to-main/SKILL.md', supervisorComments: 'DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: __WORKTREE__\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222' })
     const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
 
-    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('Direct close bypass') && call.args.includes('.pi/skills/merge-to-main/SKILL.md'))).toBe(true)
+    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('Direct close bypass'))).toBe(true)
+    expect(rgCallHasPath(execCalls, '.pi/skills/merge-to-main/SKILL.md')).toBe(true)
     expect(matrix).toContain('command: rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md; exit code: 0')
     expect(matrix).toContain('| PASS |')
     expect(matrix).toContain('| Manual review confirms merge-to-main does not bypass accepted/close lifecycle. | N/A: not gate-executable verification; use Acceptance criteria or IMPLEMENTATION evidence | N/A |')
@@ -1196,7 +1204,8 @@ describe('review_workflow reviewer verdict handling', () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', { beadDescription, changedFiles: 'file.md', supervisorComments })
     const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
 
-    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('foo') && call.args.includes('file.md'))).toBe(true)
+    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('foo'))).toBe(true)
+    expect(rgCallHasPath(execCalls, 'file.md')).toBe(true)
     expect(matrix).toContain('command: rg foo file.md; exit code: 0')
     expect(matrix).toContain('| PASS |')
     expect(matrix).toContain('N/A: not gate-executable verification')
@@ -1307,12 +1316,226 @@ describe('review_workflow reviewer verdict handling', () => {
     })
     const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
     expect(execCalls.some((call) => call.command === 'cargo')).toBe(true)
-    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('Direct close bypass') && call.args.includes('src-tauri/src/lib.rs'))).toBe(true)
+    expect(execCalls.some((call) => call.command === 'rg' && call.args.includes('Direct close bypass'))).toBe(true)
+    expect(rgCallHasPath(execCalls, 'src-tauri/src/lib.rs')).toBe(true)
     expect(matrix).toContain('command: rg "Direct close bypass" src-tauri/src/lib.rs; exit code: 0')
     expect(matrix).toContain('| PASS |')
     expect(matrix).not.toMatch(/rg .*\| command: cargo/)
     expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close' && call.args[1] === 'bead-a')).toBe(true)
     expect(result.details.error).toBeUndefined()
+  })
+
+  it('alpn: rg without verified worktree cwd is NOT RUN and does not exec', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- `rg -n "resolveAgentModel" .pi/extensions/plan-review/index.ts`',
+        ].join('\n'),
+      },
+      automatedChecks: [],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/plan-review/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+      execAllowlist: async (command, args) => {
+        execCalls.push({ command, args })
+        return { stdout: 'should-not-run\n', stderr: '', code: 0 }
+      },
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('resolveAgentModel'))
+    expect(execCalls).toEqual([])
+    expect(row?.result).toBe('NOT RUN')
+    expect(row?.evidence).toContain('missing verified worktree cwd')
+    expect(row?.evidence).toContain('ctx.cwd/main checkout')
+    expect(matrix.blockingRows.some((entry) => entry.result === 'NOT RUN')).toBe(true)
+  })
+
+  it('alpn: empty reviewCwd does not exec rg in main', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- `rg -n "resolveAgentModel" .pi/extensions/plan-review/index.ts`',
+        ].join('\n'),
+      },
+      automatedChecks: [],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/plan-review/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+      reviewCwd: '   ',
+      execAllowlist: async (command, args) => {
+        execCalls.push({ command, args })
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('resolveAgentModel'))
+    expect(execCalls).toEqual([])
+    expect(row?.result).toBe('NOT RUN')
+    expect(row?.evidence).toContain('missing verified worktree cwd')
+  })
+
+  it('alpn: rg with verified worktreePath rebases relative paths for exec and PASSes', async () => {
+    const worktree = '/tmp/alpn-task-worktree'
+    const relativePath = '.pi/extensions/plan-review/index.ts'
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- `rg -n "resolveAgentModel" .pi/extensions/plan-review/index.ts`',
+        ].join('\n'),
+      },
+      automatedChecks: [],
+      frontendChecklist: [],
+      changedFiles: [relativePath],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+      reviewCwd: worktree,
+      execAllowlist: async (command, args) => {
+        execCalls.push({ command, args })
+        return { stdout: '6:export function resolveAgentModel\n', stderr: '', code: 0 }
+      },
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('resolveAgentModel'))
+    expect(execCalls).toEqual([
+      { command: 'rg', args: ['-n', 'resolveAgentModel', join(worktree, relativePath)] },
+    ])
+    expect(row?.result).toBe('PASS')
+    expect(row?.evidence).toContain('command: rg -n resolveAgentModel .pi/extensions/plan-review/index.ts')
+    expect(row?.evidence).not.toContain(worktree)
+    expect(row?.evidence).toContain('exit code: 0')
+  })
+
+  it('alpn: rg with verified worktreePath FAILs when the worktree file misses the pattern', async () => {
+    const worktree = '/tmp/alpn-task-worktree'
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- `rg -n "resolveAgentModel" .pi/extensions/plan-review/index.ts`',
+        ].join('\n'),
+      },
+      automatedChecks: [],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/plan-review/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+      reviewCwd: worktree,
+      execAllowlist: async (command, args) => {
+        execCalls.push({ command, args })
+        return { stdout: '', stderr: '', code: 1 }
+      },
+    })
+    const row = matrix.rows.find((entry) => entry.item.includes('resolveAgentModel'))
+    expect(execCalls).toHaveLength(1)
+    expect(execCalls[0]?.args).toContain(join(worktree, '.pi/extensions/plan-review/index.ts'))
+    expect(row?.result).toBe('FAIL')
+    expect(row?.evidence).toContain('command: rg -n resolveAgentModel .pi/extensions/plan-review/index.ts')
+    expect(row?.evidence).toContain('exit code: 1')
+  })
+
+  it('alpn: rebases multiple relative rg path operands under verified cwd', async () => {
+    const worktree = '/tmp/alpn-multi-paths'
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          '- `rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md file.md`',
+        ].join('\n'),
+      },
+      automatedChecks: [],
+      frontendChecklist: [],
+      changedFiles: ['.pi/skills/merge-to-main/SKILL.md', 'file.md'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+      reviewCwd: worktree,
+      execAllowlist: async (command, args) => {
+        execCalls.push({ command, args })
+        return { stdout: 'match\n', stderr: '', code: 0 }
+      },
+    })
+    expect(execCalls).toEqual([
+      {
+        command: 'rg',
+        args: [
+          'Direct close bypass',
+          join(worktree, '.pi/skills/merge-to-main/SKILL.md'),
+          join(worktree, 'file.md'),
+        ],
+      },
+    ])
+    const row = matrix.rows.find((entry) => entry.item.includes('Direct close bypass'))
+    expect(row?.result).toBe('PASS')
+    expect(row?.evidence).toContain('command: rg "Direct close bypass" .pi/skills/merge-to-main/SKILL.md file.md')
+  })
+
+  it('alpn: review_bead without worktree evidence does not exec rg against ctx.cwd/main', async () => {
+    const fixture = createFakeReviewerWorktree('VERDICT: APPROVED\nReady')
+    const oldPath = process.env.PATH
+    const oldArgv1 = process.argv[1] ?? ''
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const mainCwd = fixture.cwd
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status: 'inreview',
+              description: [
+                '### Verification / acceptance checks',
+                '- `rg -n "resolveAgentModel" .pi/extensions/plan-review/index.ts`',
+              ].join('\n'),
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') {
+          return {
+            stdout: `DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: ${mainCwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`,
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} rev-parse --show-toplevel`) return { stdout: `${mainCwd}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${mainCwd} diff --name-only aaa1111..bbb2222`) {
+          return { stdout: '.pi/extensions/plan-review/index.ts\n', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    try {
+      process.env.PATH = `${fixture.binDir}${delimiter}${oldPath ?? ''}`
+      process.argv[1] = join(fixture.cwd, 'missing-pi-entrypoint.js')
+      reviewWorkflowExtension(pi as any)
+      const result = await registeredTool.execute('call-1', { beadId: 'bead-a' }, undefined, undefined, { cwd: mainCwd })
+      const matrix = String(execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))?.args[3] ?? '')
+      expect(execCalls.some((call) => call.command === 'rg')).toBe(false)
+      expect(matrix).toContain('| NOT RUN |')
+      expect(matrix).toContain('missing verified worktree cwd')
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+      expect(result.details.error).toContain('ACCEPTANCE MATRIX contains blocking rows')
+    } finally {
+      process.env.PATH = oldPath
+      process.argv[1] = oldArgv1
+      fixture.cleanup()
+    }
   })
 
   it('does not treat docs/foo.ts as docs-only N/A for conditional test rows', async () => {

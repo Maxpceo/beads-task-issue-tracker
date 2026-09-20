@@ -763,6 +763,26 @@ function isNonExecutableVerification(item: string): boolean {
 	return !/^\s*[`$]?\s*(pnpm|npx|vitest|cargo|git|rg|grep|bd)\b/i.test(item);
 }
 
+function looksLikeRgPathOperand(op: string): boolean {
+	if (op.startsWith("-")) return false;
+	return op.includes("/") || op.includes(".") || op.endsWith(".ts") || op.endsWith(".md") || op.endsWith(".vue");
+}
+
+function rebaseRelativeRgPathOperands(args: string[], cwd: string): string[] {
+	return args.map((op) => {
+		if (op.startsWith("-") || path.isAbsolute(op)) return op;
+		if (!looksLikeRgPathOperand(op)) return op;
+		return path.normalize(path.join(cwd, op));
+	});
+}
+
+function isAllowlistVerificationCommand(commandText: string): boolean {
+	const trimmed = commandText.trim();
+	if (/^(rg|grep)\b/i.test(trimmed)) return true;
+	const normalized = normalizeVerificationText(trimmed);
+	return /\bgit\b/.test(normalized) && /\bdiff\b/.test(normalized) && /--check\b/.test(normalized);
+}
+
 function parseSafeRgOrGrep(command: string, cwd: string): { argv: string[] } | "unsafe" | null {
 	const trimmed = command.trim();
 	if (!/^(rg|grep)\b/i.test(trimmed)) return null;
@@ -776,10 +796,8 @@ function parseSafeRgOrGrep(command: string, cwd: string): { argv: string[] } | "
 	const pathOperands = operands.filter((op, index) => index > 0 || !op.startsWith("-"));
 	// Heuristic: last non-flag tokens that look like paths must stay inside cwd.
 	for (const op of operands) {
-		if (op.startsWith("-")) continue;
-		if (op.includes("/") || op.includes(".") || op.endsWith(".ts") || op.endsWith(".md") || op.endsWith(".vue")) {
-			if (!isPathInsideCwd(op, cwd)) return "unsafe";
-		}
+		if (!looksLikeRgPathOperand(op)) continue;
+		if (!isPathInsideCwd(op, cwd)) return "unsafe";
 	}
 	if (pathOperands.length === 0) return "unsafe";
 	return { argv };
@@ -825,15 +843,24 @@ async function executeAllowlistVerification(
 	if (UNSAFE_SHELL_META.test(commandText)) {
 		return { command: commandText, output: "unsafe verification command (shell metacharacters)", result: "NOT RUN" };
 	}
+	if (!isAllowlistVerificationCommand(commandText)) return "unresolved";
+	const verifiedCwd = params.cwd.trim();
+	if (!verifiedCwd) {
+		return {
+			command: commandText,
+			output: "NOT RUN: missing verified worktree cwd (params.worktreePath or matchingStateScope.worktreePath); path-relative verification was not executed in ctx.cwd/main checkout",
+			result: "NOT RUN",
+		};
+	}
 
-	const rg = parseSafeRgOrGrep(commandText, params.cwd);
+	const rg = parseSafeRgOrGrep(commandText, verifiedCwd);
 	if (rg === "unsafe") {
 		return { command: commandText, output: "unsafe rg/grep verification (paths or metachar)", result: "NOT RUN" };
 	}
 	if (rg) {
 		const binary = rg.argv[0] ?? "rg";
-		const args = rg.argv.slice(1);
-		const ran = await params.exec(binary, args);
+		const execArgs = rebaseRelativeRgPathOperands(rg.argv.slice(1), verifiedCwd);
+		const ran = await params.exec(binary, execArgs);
 		const output = `${ran.stdout}\n${ran.stderr}`.trim();
 		return {
 			command: formatCommandArgv(rg.argv),
@@ -843,7 +870,7 @@ async function executeAllowlistVerification(
 		};
 	}
 
-	const diffCheck = parseSafeGitDiffCheck(commandText, params.cwd, params.startCommit, params.endCommit);
+	const diffCheck = parseSafeGitDiffCheck(commandText, verifiedCwd, params.startCommit, params.endCommit);
 	if (diffCheck === "unsafe") {
 		return { command: commandText, output: "unsafe git diff --check verification", result: "NOT RUN" };
 	}
@@ -915,9 +942,10 @@ export async function buildAcceptanceMatrix(params: {
 
 		// Allowlist (rg/git diff --check) before single-check fallback so a lone cargo/pnpm PASS
 		// cannot silently map content-proof bullets to unrelated suite evidence.
-		if (!check && !conditionalEvidence && params.execAllowlist && params.reviewCwd) {
+		// Missing verified worktree cwd is fail-closed NOT RUN (no exec in ctx.cwd/main).
+		if (!check && !conditionalEvidence && params.execAllowlist) {
 			const allowlisted = await executeAllowlistVerification(item, {
-				cwd: params.reviewCwd,
+				cwd: params.reviewCwd ?? "",
 				startCommit: params.startCommit,
 				endCommit: params.endCommit,
 				exec: params.execAllowlist,
@@ -1057,7 +1085,7 @@ export async function finalizeVisibleReviewClose(
 		};
 	}
 
-	const reviewCwd = params.worktreePath;
+	const reviewCwd = params.worktreePath.trim();
 	const branchResult = params.branch
 		? { stdout: params.branch, code: 0 }
 		: await exec(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
@@ -1688,7 +1716,13 @@ export default function reviewWorkflowExtension(pi: ExtensionAPI): void {
 				const startCommit = params.startCommit || findStartCommit(comments) || matchingStateScope?.startCommit;
 				if (!startCommit) throw new Error("startCommit не передан и START_COMMIT не найден в comments.");
 				const endCommit = params.endCommit || findEndCommit(comments) || matchingStateScope?.endCommit || "HEAD";
-				const reviewCwd = params.worktreePath || matchingStateScope?.worktreePath || ctx.cwd;
+				// ctx.cwd is the orchestrator/main checkout fallback for git -C ownership only.
+				// Path-relative allowlist verification (rg/grep) must not use ctx.cwd: relative
+				// operands would resolve in main and produce a false FAIL (04o2). Allowlist exec
+				// requires verified worktree evidence: params.worktreePath or matchingStateScope.worktreePath.
+				const verifiedWorktreeCwd = (typeof params.worktreePath === "string" ? params.worktreePath.trim() : "")
+					|| (typeof matchingStateScope?.worktreePath === "string" ? matchingStateScope.worktreePath.trim() : "");
+				const reviewCwd = verifiedWorktreeCwd || ctx.cwd;
 				const branch = await execRequired(pi, "git", ["-C", reviewCwd, "branch", "--show-current"]);
 				const worktreePath = await execRequired(pi, "git", ["-C", reviewCwd, "rev-parse", "--show-toplevel"]);
 				if (!hasReviewOwnershipEvidence(comments, { branch, worktreePath, startCommit, endCommit })) {
@@ -1847,7 +1881,7 @@ Artifact evidence may be cited in acceptance matrix, but it is not acceptance by
 							changedFiles,
 							supervisorArtifact,
 							comments,
-							reviewCwd,
+							reviewCwd: verifiedWorktreeCwd || undefined,
 							startCommit,
 							endCommit,
 							execAllowlist: async (command, args) => {
