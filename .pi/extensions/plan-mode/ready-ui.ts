@@ -80,9 +80,73 @@ export function renderPlanTranscriptLines(planText: string, width: number): stri
 	return clampRenderLines(wrapPlanToWidth(planText, width), width);
 }
 
-/** Display-only: rewrite column-0 H3+ to `## ` so stock pi-tui does not print `###`. */
+/** Known plan field labels → Russian `##` for plan-ready display only. Gates still read English source. */
+const PLAN_HEADING_RU: ReadonlyMap<string, string> = new Map([
+	["Reviewer findings summary", "Сводка ревью"],
+	["Accepted findings", "Принято"],
+	["Rejected findings", "Отклонено"],
+	["Unresolved blockers", "Блокеры"],
+	["Revised plan", "План"],
+	["Plan", "План"],
+	["Problem", "Проблема"],
+	["Approach", "Подход"],
+	["Rejected alternatives", "Отклонённые варианты"],
+	["Edge-case review", "Крайние случаи"],
+	["Files to change", "Файлы"],
+	["Acceptance", "Приёмка"],
+	["Verification / acceptance checks", "Проверка"],
+	["Risks / rollback", "Риски / откат"],
+	["Worktree / cwd", "Worktree"],
+]);
+
+function isColumn0FenceLine(line: string): boolean {
+	return /^(```+|~~~+)/.test(line);
+}
+
+/** Strip optional ATX / bold wrappers and split `Label:` + remainder. */
+function column0HeadingParts(line: string): { label: string; remainder: string } | null {
+	if (!line || /^\s/.test(line)) return null;
+	const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+	let rest = headingMatch ? headingMatch[2] : line;
+	if (rest.startsWith("**")) {
+		rest = rest.slice(2);
+		if (rest.endsWith("**")) rest = rest.slice(0, -2);
+	}
+	const colonIdx = rest.indexOf(":");
+	const rawLabel = (colonIdx === -1 ? rest : rest.slice(0, colonIdx)).replace(/^\*\*/, "").replace(/\*\*$/, "").trim();
+	const remainder = colonIdx === -1 ? "" : rest.slice(colonIdx + 1).replace(/^\*\*/, "").replace(/\*\*$/, "").trim();
+	return { label: rawLabel, remainder };
+}
+
+/**
+ * Display-only: known column-0 field labels → `## <ru>`; leftover column-0 H3+ → `## `.
+ * Does not mutate stored plan / PLAN APPROVED. Skips fences and indented lines.
+ */
 export function planMarkdownTransform(markdown: string, _availableWidth?: number): string {
-	return markdown.replace(/^(#{3,})\s+/gm, "## ");
+	const lines = markdown.split("\n");
+	let inFence = false;
+	const out: string[] = [];
+	for (const raw of lines) {
+		const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+		if (isColumn0FenceLine(line)) {
+			inFence = !inFence;
+			out.push(line);
+			continue;
+		}
+		if (inFence) {
+			out.push(line);
+			continue;
+		}
+		const parts = column0HeadingParts(line);
+		const ru = parts ? PLAN_HEADING_RU.get(parts.label) : undefined;
+		if (ru) {
+			out.push(`## ${ru}`);
+			if (parts && parts.remainder) out.push(parts.remainder);
+			continue;
+		}
+		out.push(line.replace(/^(#{3,})\s+/, "## "));
+	}
+	return out.join("\n");
 }
 
 type MarkdownThemeFn = (text: string) => string;

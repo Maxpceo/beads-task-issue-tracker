@@ -2384,7 +2384,7 @@ Ask clarifying questions using the questionnaire tool (one question tool only �
 When the plan is fully ready for human decision, call plan_mode_complete({ plan }) as the last tool in the turn. Do NOT call plan_mode_complete after a clarifying question. Ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review) appears only after plan_mode_complete; the plan-review button runs critique without approving or starting a supervisor. If the button returns findings, they arrive in the plan_mode_complete tool result — adjudicate Accepted/Rejected findings and call plan_mode_complete again with the revised plan.
 Use brave-search skill via bash for web research.
 
-Create a detailed numbered draft plan under a "Plan:" header.
+Create a detailed numbered draft plan under a "Plan:" header. Do not write English ## section headings; keep canonical English field-lines (Acceptance:, Files to change:) for gates — ready-UI display rewrites known labels to Russian ##, and dual-write of Russian+English keys is forbidden.
 
 ${shouldInjectPlanReviewStopPrompt()
 	? planReviewTotalCapReached()
