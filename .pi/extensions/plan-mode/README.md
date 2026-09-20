@@ -109,6 +109,8 @@ Each hop return sends **exactly one** visible message (`customType` `autopilot-h
 
 `/plan-auto` and `/plan-autopilot` share the multi-agent gate. They are only for cases where the user explicitly requested automatic plan execution. They do not execute the first draft plan. Instead:
 
+Plan-review trio `cwd` is the **recorded task worktree** from workflow-state (`latestRecordedWorkflowScope` + `validatedWorktreeScope`) for `/plan` (ready-UI / `/plan-review`), `/plan-auto`, and `/plan-autopilot`. There is **no** fallback to `ctx.cwd`. Missing path, main checkout, or protected branch (`main`/`master`) HARD_BLOCKs the trio **without spawn** — need a task worktree, not a dead pane. Do not announce the waiting-trio caption when spawn is skipped.
+
 1. The main agent produces a draft plan in read-only plan mode.
 2. Pi runs required project-local plan reviewers:
    - `plan-edge-reviewer`
