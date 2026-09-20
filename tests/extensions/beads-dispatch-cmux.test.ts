@@ -543,10 +543,10 @@ describe('dispatch_supervisor transport=cmux', () => {
     const first = await registered.execute('call-1', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
     expect(first.details.status).toBe('spawned')
     const second = await registered.execute('call-2', { beadId, transport: 'cmux', agent: 'test-supervisor' }, undefined, undefined, ctx)
-    expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId \}\)/)
+    expect(second.content[0].text).toMatch(/followup_visible_dispatch\(\{ beadId, role: "test-supervisor" \}\)/)
     expect(second.content[0].text).toMatch(/BLOCKED/)
     expect(second.content[0].text).toMatch(/live pane already registered/)
-    expect(second.content[0].text).toMatch(/supervisor already spawned/)
+    expect(second.content[0].text).toMatch(/test-supervisor already spawned/)
   })
 
   it('renames child and orchestrator tabs after visible spawn', async () => {
@@ -850,6 +850,7 @@ describe('reviewer/docs transport', () => {
     expect(tools.followup_visible_dispatch).toBeDefined()
     expect(tools.followup_visible_dispatch.description).toMatch(/Единственный typed hop/)
     expect(tools.followup_visible_dispatch.description).toMatch(/documentation-expert/)
+    expect(tools.followup_visible_dispatch.parameters.required).toEqual(['beadId', 'task', 'role'])
     expect(tools.dispatch_reviewer.parameters.additionalProperties).toBe(false)
   })
 })
@@ -1538,7 +1539,7 @@ describe('followup_visible_dispatch', () => {
       async renameSurface(surface, title) { renames.push({ surface, title }) },
     })
     const { pi, cwd, branch, beadId, emitted } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'Fix the pane' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'Fix the pane' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('sent')
     expect(sent).toEqual(['Fix the pane\n'])
     expect(splits).toEqual([])
@@ -1576,7 +1577,7 @@ describe('followup_visible_dispatch', () => {
       async renameSurface(surface, title) { renames.push({ surface, title }) },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'Fix the pane' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'Fix the pane' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('spawned')
     expect(splits).toEqual(['surface:2'])
     expect(sent).toHaveLength(1)
@@ -1611,7 +1612,7 @@ describe('followup_visible_dispatch', () => {
     const controller = new AbortController()
     const result = await tools.followup_visible_dispatch.execute(
       'call-followup-signal',
-      { beadId, task: 'Fix via registered tool' },
+      { beadId, role: 'test-supervisor', task: 'Fix via registered tool' },
       controller.signal,
       undefined,
       workflowCtx(cwd, beadId, branch, 'aaa1111'),
@@ -1636,7 +1637,7 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { return 'session idle' },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
-    await followupVisibleDispatch(pi as any, { beadId, task: 'second hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'second hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(fs.existsSync(files.digestFile)).toBe(false)
     expect(fs.existsSync(files.resultFile)).toBe(false)
     expect(findRegistryByTaskId('task-1')?.entry.submitStatus).toBe('none')
@@ -1661,7 +1662,7 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { return 'session inreview\n$\n' },
     })
     const { pi, cwd, branch, beadId, execCalls } = makePi({ beadId: 'bead-a', head: 'bbb2222', status: 'inreview' })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'address review' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'address review' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('sent')
     expect(sent).toEqual(['address review\n'])
     expect(splits).toEqual([])
@@ -1679,7 +1680,7 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { return '❯ ' },
     })
     const { pi, cwd, branch, beadId, execCalls } = makePi({ beadId: 'bead-a', head: 'bbb2222', status: 'inreview' })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'respawn please' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'respawn please' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('spawned')
     expect(splits).toEqual(['surface:3'])
     expect(execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments')).toEqual([])
@@ -1698,7 +1699,7 @@ describe('followup_visible_dispatch', () => {
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
     const ctx = workflowCtx(cwd, beadId, branch, 'aaa1111')
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' }, ctx)).rejects.toThrow(/hung cap-2/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'hop' }, ctx)).rejects.toThrow(/hung cap-2/)
     expect(sends).toBe(2)
     expect(splits).toEqual([])
     const hungEntry = findRegistryByTaskId('task-1')?.entry
@@ -1706,7 +1707,7 @@ describe('followup_visible_dispatch', () => {
     expect(hungEntry?.status).toBe('spawned')
     expect(hungEntry?.sendFailCount).toBe(2)
     sends = 0
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop again' }, ctx)).rejects.toThrow(/hung pane/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'hop again' }, ctx)).rejects.toThrow(/hung pane/)
     expect(sends).toBe(0)
     expect(splits).toEqual([])
   })
@@ -1725,7 +1726,7 @@ describe('followup_visible_dispatch', () => {
       async renameSurface(surface, title) { renames.push({ surface, title }) },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'wait' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'wait' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('busy')
     expect(sent).toEqual([])
     expect(splits).toEqual([])
@@ -1746,7 +1747,7 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { throw new Error('transient') },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/read-screen failed/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/read-screen failed/)
     expect(splits).toEqual([])
     expect(findRegistryByTaskId('task-1')?.entry.status).toBe('spawned')
     expect(findRegistryByTaskId('task-1')?.entry.hung).not.toBe(true)
@@ -1754,10 +1755,33 @@ describe('followup_visible_dispatch', () => {
 
   it('blocks when there is no live pane', async () => {
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/нет live pane; first spawn через dispatch_supervisor/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/нет live pane; first spawn через dispatch_supervisor/)
   })
 
-  it('unique documentation-expert pane without role + idle DOCS REPORT sends followup', async () => {
+  it('unique documentation-expert pane without role is BLOCKED', async () => {
+    seed({ role: 'documentation-expert' })
+    const sent: string[] = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-follow' } },
+      async newSplit() { return { surface: 'surface:99' } },
+      async send(_surface, text) { sent.push(text) },
+      async closeSurface() {},
+      async readScreen() {
+        return 'DOCS REPORT\nStatus: NOTHING_TO_UPDATE\nsession idle | bead=bead-a\n$\n'
+      },
+    })
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
+    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'запиши result/digest и пингань' } as any, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/укажите role/)
+    expect(sent).toEqual([])
+  })
+
+  it('empty role on unique documentation-expert pane is BLOCKED', async () => {
+    seed({ role: 'documentation-expert' })
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: '  ', task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/укажите role/)
+  })
+
+  it('unique documentation-expert pane with role + idle DOCS REPORT sends followup', async () => {
     seed({ role: 'documentation-expert' })
     const sent: string[] = []
     const splits: string[] = []
@@ -1771,7 +1795,7 @@ describe('followup_visible_dispatch', () => {
       },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a', head: 'bbb2222' })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'запиши result/digest и пингань' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'documentation-expert', task: 'запиши result/digest и пингань' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('sent')
     expect(sent).toEqual(['запиши result/digest и пингань\n'])
     expect(splits).toEqual([])
@@ -1796,7 +1820,45 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { return 'session idle\n$\n' },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/неоднозначный role, укажите role/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'hop' } as any, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/укажите role/)
+  })
+
+  it('two live roles with documentation-expert hops to the docs pane', async () => {
+    const files = seed()
+    const registry = loadRegistry(files.file)
+    registry.entries.push({
+      ...registry.entries[0]!,
+      taskId: 'task-docs',
+      pane: 'surface:docs',
+      role: 'documentation-expert',
+    })
+    saveRegistry(files.file, registry)
+    const sent: Array<{ surface: string; text: string }> = []
+    setCmuxAdapterForTests({
+      async identify() { return { workspaceId: 'ws-follow' } },
+      async newSplit() { return { surface: 'surface:x' } },
+      async send(surface, text) { sent.push({ surface, text }) },
+      async closeSurface() {},
+      async readScreen() { return 'session idle\n$\n' },
+    })
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'documentation-expert', task: 'hop docs' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    expect(result.status).toBe('sent')
+    expect(sent).toEqual([{ surface: 'surface:docs', text: 'hop docs\n' }])
+  })
+
+  it('two live roles with unknown role have no live pane', async () => {
+    const files = seed()
+    const registry = loadRegistry(files.file)
+    registry.entries.push({
+      ...registry.entries[0]!,
+      taskId: 'task-docs',
+      pane: 'surface:docs',
+      role: 'documentation-expert',
+    })
+    saveRegistry(files.file, registry)
+    const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'code-reviewer', task: 'hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/нет live pane; first spawn через dispatch_reviewer/)
   })
 
   it('missing documentation-expert pane hints dispatch_docs_agent', async () => {
@@ -1814,7 +1876,7 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { return 'session idle' },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: '  \n' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/пустой task/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: '  \n' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/пустой task/)
   })
 
   it('live adapter read-screen uses --lines 20', async () => {
@@ -1830,7 +1892,7 @@ describe('followup_visible_dispatch', () => {
         return { stdout: '', stderr: '', code: 1 }
       },
     })
-    const result = await followupVisibleDispatch(pi as any, { beadId, task: 'live hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
+    const result = await followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'live hop' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))
     expect(result.status).toBe('sent')
     const read = cmuxCalls.find((args) => args[0] === 'read-screen')
     expect(read).toEqual(['read-screen', '--surface', 'surface:1', '--lines', '20'])
@@ -1853,7 +1915,7 @@ describe('followup_visible_dispatch', () => {
       async readScreen() { return 'dead screen' },
     })
     const { pi, cwd, branch, beadId } = makePi({ beadId: 'bead-a' })
-    await expect(followupVisibleDispatch(pi as any, { beadId, task: 'respawn' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/spawn send failed/)
+    await expect(followupVisibleDispatch(pi as any, { beadId, role: 'test-supervisor', task: 'respawn' }, workflowCtx(cwd, beadId, branch, 'aaa1111'))).rejects.toThrow(/spawn send failed/)
     expect(closed).toEqual(['surface:new'])
     expect(findRegistryByTaskId('task-1')?.entry.status).toBe('spawned')
     expect(findRegistryByTaskId('task-1')?.entry.pane).toBe('surface:1')
@@ -2131,7 +2193,7 @@ describe('kgvd dual-agent layout wiring', () => {
       async readScreen() { return 'user@host ~/proj $\n' },
     })
     const { pi, cwd, branch } = makePi({ beadId: 'bead-kgvd' })
-    const solo = await followupVisibleDispatch(pi as any, { beadId: 'bead-kgvd', task: 'respawn solo' }, workflowCtx(cwd, 'bead-kgvd', branch, 'aaa1111'))
+    const solo = await followupVisibleDispatch(pi as any, { beadId: 'bead-kgvd', role: 'test-supervisor', task: 'respawn solo' }, workflowCtx(cwd, 'bead-kgvd', branch, 'aaa1111'))
     expect(solo.status).toBe('spawned')
     expect(soloAnchors).toEqual(['surface:orch'])
 

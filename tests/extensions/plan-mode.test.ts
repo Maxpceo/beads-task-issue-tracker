@@ -2777,7 +2777,7 @@ describe('Pi plan-mode typed workflow tools', () => {
       it('dispatch live pane already registered skips instead of scope BLOCKED',
         async () => {
           const harness = makeHarness({ taskScopeGit: true })
-          mockSupervisorDispatchError = 'повторный spawn для bead-plan: BLOCKED (live pane already registered; use followup_visible_dispatch({ beadId }))'
+          mockSupervisorDispatchError = 'повторный spawn для bead-plan: BLOCKED (live pane already registered; test-supervisor already spawned — wait for ping; use followup_visible_dispatch({ beadId, role: "test-supervisor" }))'
 
           const approved = await harness.toolHandlers.get('workflow_plan_approved')?.execute('call-live-pane-error', {
             beadId: 'bead-plan',
