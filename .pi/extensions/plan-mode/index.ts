@@ -41,6 +41,7 @@ import {
 	MAX_PLAN_REVIEW_TOTAL_SPAWNS,
 	PLAN_REVIEW_WAITING_TRIO_ENTRY,
 	PLAN_REVIEW_WAITING_TRIO_NOTICE,
+	REQUIRED_PLAN_REVIEWERS,
 	announceVisiblePlanReviewWait,
 	classifyPlanReviewRisk,
 	evaluatePlanReviewGate,
@@ -1866,8 +1867,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
+	function planReviewWorktreeHardBlock(detail: string): PlanReviewResult[] {
+		const reason = `HARD_BLOCK: plan-review needs a recorded task worktree, not a dead pane. ${detail}`;
+		return REQUIRED_PLAN_REVIEWERS.map((reviewer) => ({
+			reviewer,
+			verdict: "BLOCKED" as const,
+			findings: [],
+			unresolvedBlockers: [reason],
+			raw: "",
+			error: reason,
+		}));
+	}
+
 	async function runReviewGateForPlan(ctx: ExtensionContext, draftPlan: string): Promise<PlanReviewResult[]> {
-		const cwd = ctx.cwd || process.cwd();
 		const entries = ctx.sessionManager?.getEntries?.() ?? [];
 		let beadId: string | undefined;
 		for (const entry of [...entries].reverse()) {
@@ -1879,6 +1891,26 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				break;
 			}
 		}
+		if (!beadId) {
+			return planReviewWorktreeHardBlock("No active bead is recorded in workflow-state.");
+		}
+
+		const recorded = latestRecordedWorkflowScope(ctx, beadId);
+		if (!recorded?.worktreePath) {
+			return planReviewWorktreeHardBlock("No recorded task worktree path for the active bead (sessionKey mismatch, first /plan without bind, or missing worktree). Do not spawn on ctx.cwd.");
+		}
+		if (recorded.branch && PROTECTED_BRANCHES.has(recorded.branch)) {
+			return planReviewWorktreeHardBlock(`Recorded branch ${recorded.branch} is protected; need a canonical task worktree.`);
+		}
+
+		const scoped = await validatedWorktreeScope("recorded workflow-state", recorded.worktreePath, recorded.branch, recorded.startCommit, "approval");
+		if (scoped.error || !scoped.worktreePath) {
+			return planReviewWorktreeHardBlock(scoped.error ?? `Recorded worktree is not usable: ${recorded.worktreePath}`);
+		}
+		if (scoped.branch && PROTECTED_BRANCHES.has(scoped.branch)) {
+			return planReviewWorktreeHardBlock(`Worktree branch ${scoped.branch} is protected; need a canonical task worktree.`);
+		}
+
 		// One caption at visible spawn start (всех троих / после одного); sendMessage would be steered until the tool returns.
 		if (ctx.hasUI) {
 			announceVisiblePlanReviewWait({
@@ -1886,9 +1918,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				appendEntry: (customType, data) => pi.appendEntry(customType, data),
 			});
 		}
-		return runPlanReviewers(pi, cwd, draftPlan, undefined, {
+		return runPlanReviewers(pi, scoped.worktreePath, draftPlan, undefined, {
 			hasUI: Boolean(ctx.hasUI),
 			beadId,
+			branch: scoped.branch,
 		});
 	}
 

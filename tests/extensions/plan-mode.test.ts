@@ -13,6 +13,7 @@ import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
 import {
   PLAN_REVIEW_WAITING_TRIO_ENTRY,
   PLAN_REVIEW_WAITING_TRIO_NOTICE,
+  REQUIRED_PLAN_REVIEWERS,
   announceVisiblePlanReviewWait,
   classifyPlanReviewRisk,
   evaluatePlanReviewGate as realEvaluatePlanReviewGate,
@@ -49,6 +50,7 @@ let mockPlanReviewReasons: string[] = []
 let mockPlanReviewImportantFindings: PlanReviewFinding[] = []
 let mockPlanReviewResults: PlanReviewResult[] | undefined
 let mockPlanReviewSpawnCount = 0
+let mockPlanReviewSpawnCalls: Array<{ cwd: string; beadId?: string; branch?: string; hasUI?: boolean }> = []
 let mockPlanReviewDrafts: string[] = []
 let mockPlanReviewSpawnError: Error | undefined
 let mockPlanReviewSpawnGate: Promise<void> | undefined
@@ -130,6 +132,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         MAX_PLAN_REVIEW_TOTAL_SPAWNS: 4,
         PLAN_REVIEW_WAITING_TRIO_ENTRY,
         PLAN_REVIEW_WAITING_TRIO_NOTICE,
+        REQUIRED_PLAN_REVIEWERS,
         announceVisiblePlanReviewWait,
         classifyPlanReviewRisk,
         planReviewStopAdvice,
@@ -169,8 +172,9 @@ function loadPlanModeExtension(): (pi: unknown) => void {
           }
           return mockRenderedPlanReviewResults
         },
-        runPlanReviewers: async (_pi: unknown, _cwd: string, draftPlan?: string) => {
+        runPlanReviewers: async (_pi: unknown, cwd: string, draftPlan?: string, _reviewers?: unknown, options?: { hasUI?: boolean; beadId?: string; branch?: string }) => {
           mockPlanReviewSpawnCount += 1
+          mockPlanReviewSpawnCalls.push({ cwd, beadId: options?.beadId, branch: options?.branch, hasUI: options?.hasUI })
           if (typeof draftPlan === 'string') mockPlanReviewDrafts.push(draftPlan)
           if (mockPlanReviewSpawnGate) await mockPlanReviewSpawnGate
           if (mockPlanReviewSpawnError) throw mockPlanReviewSpawnError
@@ -266,6 +270,7 @@ function makeHarness(options: {
   mockPlanReviewImportantFindings = []
   mockPlanReviewResults = undefined
   mockPlanReviewSpawnCount = 0
+  mockPlanReviewSpawnCalls = []
   mockPlanReviewDrafts = []
   mockPlanReviewSpawnError = undefined
   mockPlanReviewSpawnGate = undefined
@@ -853,7 +858,9 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(blocked.content[0].text).toContain('blocked reviewer: plan-consistency-reviewer')
     expect(blocked.details).toMatchObject({ ok: false, cycle: 2, stopAdvice: 'HARD_BLOCK' })
     expect(workflowUpdates).toHaveLength(beforeWorkflowUpdates)
-    expect(execCalls).toHaveLength(beforeExecCalls)
+    const newExec = execCalls.slice(beforeExecCalls)
+    expect(newExec.every((call) => call.command === 'git' && call.args[0] === '-C')).toBe(true)
+    expect(newExec.some((call) => call.command === 'bd')).toBe(false)
     expect(source).toEqual(expect.stringContaining('MUST call workflow_plan_review'))
     expect(source).toEqual(expect.stringContaining('extraCycle'))
     expect(source).toEqual(expect.stringContaining('MAX_PLAN_REVIEW_TOTAL_SPAWNS'))
@@ -3127,6 +3134,100 @@ describe('Pi plan-mode plan-review anti-respawn (cm5b)', () => {
     }, harness.ctx)
     expect(mockPlanReviewSpawnCount).toBe(0)
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+  })
+})
+
+describe('Pi plan-mode plan-review recorded worktree gate (ifqu)', () => {
+  const draftPlan = 'Plan:\n1. Implement recorded worktree spawn.'
+
+  function expectRecordedSpawn() {
+    expect(mockPlanReviewSpawnCount).toBe(1)
+    expect(mockPlanReviewSpawnCalls.at(-1)).toMatchObject({
+      cwd: '/tmp/task',
+      branch: 'task/plan-approved',
+      beadId: 'bead-plan',
+    })
+    expect(mockPlanReviewSpawnCalls.at(-1)?.cwd).not.toBe('/tmp/project')
+  }
+
+  it('/plan-review recorded non-protected worktree passes cwd+branch to spawn', async () => {
+    const harness = makeHarness()
+    harness.sessionEntries.push({
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text: draftPlan }] },
+    } as never)
+    await harness.commandHandlers.get('plan-review')?.handler('', harness.ctx)
+    expectRecordedSpawn()
+    expect(waitingTrioNotices(harness).notifies.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('/plan-auto recorded non-protected worktree passes cwd+branch to spawn', async () => {
+    const { commandHandlers, agentEndHandlers, ctx } = makeHarness()
+    await commandHandlers.get('plan-auto')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: draftPlan }] }] }, ctx)
+    expectRecordedSpawn()
+  })
+
+  it('/plan-autopilot recorded non-protected worktree passes cwd+branch to spawn', async () => {
+    const { commandHandlers, agentEndHandlers, ctx } = makeHarness()
+    await commandHandlers.get('plan-autopilot')?.handler('', ctx)
+    await agentEndHandlers[0]?.({ messages: [{ role: 'assistant', content: [{ type: 'text', text: draftPlan }] }] }, ctx)
+    expectRecordedSpawn()
+  })
+
+  it('missing recorded worktree HARD_BLOCKs without spawn for /plan-auto and /plan-autopilot', async () => {
+    for (const command of ['plan-auto', 'plan-autopilot'] as const) {
+      const harness = makeHarness({
+        entries: [{ type: 'custom', customType: 'workflow-state', data: { activeBead: 'bead-plan', sessionKey: 'id:session-current' } }],
+      })
+      await harness.commandHandlers.get(command)?.handler('', harness.ctx)
+      await harness.agentEndHandlers[0]?.({
+        messages: [{ role: 'assistant', content: [{ type: 'text', text: draftPlan }] }],
+      }, harness.ctx)
+      expect(mockPlanReviewSpawnCount).toBe(0)
+      expect(mockPlanReviewSpawnCalls).toEqual([])
+      expect(waitingTrioNotices(harness).notifies).toEqual([])
+      expect(waitingTrioNotices(harness).entries).toEqual([])
+      expect(harness.sendMessages.at(-1)?.message.customType).toBe('plan-review-gate-blocked')
+      expect(harness.sendMessages.at(-1)?.message.content).toContain('recorded task worktree')
+      expect(harness.sendMessages.at(-1)?.message.content).not.toContain('dead pane without result')
+    }
+  })
+
+  it('protected recorded branch HARD_BLOCKs without spawn', async () => {
+    const harness = makeHarness({
+      entries: [{
+        type: 'custom',
+        customType: 'workflow-state',
+        data: {
+          activeBead: 'bead-plan',
+          branch: 'main',
+          worktreePath: '/tmp/project',
+          startCommit: 'abc123',
+          sessionKey: 'id:session-current',
+        },
+      }],
+    })
+    harness.sessionEntries.push({
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text: draftPlan }] },
+    } as never)
+    await harness.commandHandlers.get('plan-review')?.handler('', harness.ctx)
+    expect(mockPlanReviewSpawnCount).toBe(0)
+    expect(mockPlanReviewSpawnCalls).toEqual([])
+    expect(waitingTrioNotices(harness).notifies).toEqual([])
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { lastPlanReviewResults?: Array<{ error?: string }> } } | undefined
+    expect(persisted?.data?.lastPlanReviewResults?.[0]?.error).toContain('protected')
+    expect(persisted?.data?.lastPlanReviewResults?.[0]?.error).toContain('task worktree')
+    expect(harness.sendMessages.at(-1)?.message.content).toContain('PLAN REVIEW: BLOCKED')
+    expect(harness.sendMessages.at(-1)?.message.content).not.toContain('dead pane without result')
+  })
+
+  it('README documents trio cwd as recorded task worktree for /plan, /plan-auto, and /plan-autopilot', () => {
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/README.md'), 'utf8')
+    expect(readme).toContain('recorded task worktree')
+    expect(readme).toMatch(/\/plan[\s\S]*\/plan-auto[\s\S]*\/plan-autopilot/)
+    expect(readme).toContain('ctx.cwd')
   })
 })
 
