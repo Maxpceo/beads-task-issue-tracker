@@ -4092,10 +4092,31 @@ describe('Pi plan-mode display markdown helpers (yxn0)', () => {
     expect(readyUi.planMarkdownTransform('### A\ntext\n### B')).toBe('## A\ntext\n## B')
     expect(readyUi.planMarkdownTransform('# H1\n## H2\n### H3\n#### H4')).toBe('# H1\n## H2\n## H3\n## H4')
     expect(readyUi.planMarkdownTransform('  ### indented')).toBe('  ### indented')
+    expect(readyUi.planMarkdownTransform('text ### A')).toBe('text ### A')
   })
 
-  it('documents the column-0 ###-inside-fence rewrite limit', () => {
-    expect(readyUi.planMarkdownTransform('```\n### inside\n```')).toBe('```\n## inside\n```')
+  it('planMarkdownTransform leaves fences unchanged', () => {
+    expect(readyUi.planMarkdownTransform('```\n### inside\n```')).toBe('```\n### inside\n```')
+    expect(readyUi.planMarkdownTransform('```\nAcceptance:\n```')).toBe('```\nAcceptance:\n```')
+    expect(readyUi.planMarkdownTransform('```\nAcceptance:\n```')).not.toContain('## Приёмка')
+  })
+
+  it('planMarkdownTransform rewrites known English labels to Russian ## headings', () => {
+    expect(readyUi.planMarkdownTransform('Acceptance:\n- x')).toBe('## Приёмка\n- x')
+    expect(readyUi.planMarkdownTransform('## Files to change')).toBe('## Файлы')
+    expect(readyUi.planMarkdownTransform('**Files to change:**')).toBe('## Файлы')
+    expect(readyUi.planMarkdownTransform('Worktree / cwd: foo')).toBe('## Worktree\nfoo')
+    expect(readyUi.planMarkdownTransform('## Приёмка')).toBe('## Приёмка')
+    expect(readyUi.planMarkdownTransform(readyUi.planMarkdownTransform('Acceptance:'))).toBe('## Приёмка')
+  })
+
+  it('planMarkdownTransform leaves machine field-lines with values intact', () => {
+    expect(readyUi.planMarkdownTransform('Supervisor: test-supervisor')).toBe('Supervisor: test-supervisor')
+    expect(readyUi.planMarkdownTransform('AUTO_EXECUTE_ALLOWED: true')).toBe('AUTO_EXECUTE_ALLOWED: true')
+    expect(readyUi.planMarkdownTransform('WORKTREE_LOCK: keep')).toBe('WORKTREE_LOCK: keep')
+    expect(readyUi.planMarkdownTransform('BRANCH: fix/eoep-plan-ready-ru-headings')).toBe('BRANCH: fix/eoep-plan-ready-ru-headings')
+    expect(readyUi.planMarkdownTransform('START_COMMIT: abc')).toBe('START_COMMIT: abc')
+    expect(readyUi.planMarkdownTransform('FAST_PATH_RATIONALE: none')).toBe('FAST_PATH_RATIONALE: none')
   })
 
   it('wrapPlanMarkdownTheme rewrites listBullet before the base theme and hides fence backticks', () => {
