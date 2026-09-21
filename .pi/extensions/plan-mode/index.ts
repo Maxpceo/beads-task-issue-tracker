@@ -17,9 +17,16 @@ import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
 import { type ExtensionAPI, type ExtensionContext, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Key, Text } from "@earendil-works/pi-tui";
 import {
+	AUTOPILOT_CLOSE_HOP_SUMMARY,
+	describeAutopilotGitState,
+	extractAcceptanceCheckLines,
+	extractPlanApprovedFiles,
+	extractPlanApprovedSummary,
 	extractTodoItems,
+	formatAutopilotCloseReport,
 	isSafeCommand,
 	markCompletedSteps,
+	type AutopilotCloseReportFacts,
 	type TodoItem,
 } from "./utils.js";
 import {
@@ -87,6 +94,104 @@ const MANDATORY_WORKFLOW_TOOLS = [
 	"close_visible_dispatch",
 	"spawn_task_workspace",
 ];
+
+type ExecResult = { stdout?: string; stderr?: string; code?: number };
+type ExecApi = { exec: (command: string, args: string[]) => Promise<ExecResult> };
+
+async function readExecJson(pi: ExecApi, command: string, args: string[]): Promise<unknown | undefined> {
+	try {
+		const result = await pi.exec(command, args);
+		if (result.code !== 0) return undefined;
+		const stdout = String(result.stdout ?? "").trim();
+		if (!stdout) return undefined;
+		return JSON.parse(stdout);
+	} catch {
+		return undefined;
+	}
+}
+
+function commentTextsFromJson(json: unknown): string[] {
+	if (!Array.isArray(json)) return [];
+	return json
+		.map((item) => {
+			if (typeof item === "string") return item;
+			if (item && typeof item === "object" && "text" in item) return String((item as { text?: unknown }).text ?? "");
+			return "";
+		})
+		.filter((text) => text.trim().length > 0);
+}
+
+async function probeAutopilotGitNote(pi: ExecApi, worktree: string): Promise<string | undefined> {
+	let upstream: string | null | undefined;
+	try {
+		const result = await pi.exec("git", ["-C", worktree, "rev-parse", "--abbrev-ref", "@{u}"]);
+		const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+		if (result.code === 0) {
+			const value = String(result.stdout ?? "").trim();
+			upstream = value || undefined;
+		} else if (/no upstream/i.test(combined)) {
+			upstream = null;
+		}
+	} catch {
+		/* unknown */
+	}
+
+	let ancestorOfMain: boolean | undefined;
+	for (const ref of ["origin/main", "main", "origin/master", "master"]) {
+		try {
+			const result = await pi.exec("git", ["-C", worktree, "merge-base", "--is-ancestor", "HEAD", ref]);
+			if (result.code === 0) {
+				ancestorOfMain = true;
+				break;
+			}
+			if (result.code === 1) {
+				ancestorOfMain = false;
+				break;
+			}
+		} catch {
+			/* try next ref */
+		}
+	}
+	return describeAutopilotGitState({ upstream, ancestorOfMain });
+}
+
+async function collectAutopilotCloseReportFacts(
+	pi: ExecApi,
+	input: { beadId: string; worktree?: string },
+): Promise<AutopilotCloseReportFacts> {
+	const facts: AutopilotCloseReportFacts = { beadId: input.beadId, summary: AUTOPILOT_CLOSE_HOP_SUMMARY };
+	try {
+		const shown = await readExecJson(pi, "bd", ["show", input.beadId, "--json"]);
+		const bead = Array.isArray(shown) ? shown[0] : shown;
+		const title = bead && typeof bead === "object" && "title" in bead ? String((bead as { title?: unknown }).title ?? "").trim() : "";
+		if (title) facts.title = title;
+	} catch {
+		/* omit title */
+	}
+
+	try {
+		const commentsJson = await readExecJson(pi, "bd", ["comments", input.beadId, "--json"]);
+		const blob = commentTextsFromJson(commentsJson).join("\n\n").slice(0, 80_000);
+		const planSummary = extractPlanApprovedSummary(blob);
+		if (planSummary) facts.summary = `${planSummary}\n\n${AUTOPILOT_CLOSE_HOP_SUMMARY}`;
+		const files = extractPlanApprovedFiles(blob);
+		if (files.length > 0) facts.files = files;
+		const checks = extractAcceptanceCheckLines(blob);
+		if (checks.length > 0) facts.checks = checks;
+	} catch {
+		/* omit optional sections */
+	}
+
+	if (input.worktree) {
+		try {
+			const gitNote = await probeAutopilotGitNote(pi, input.worktree);
+			if (gitNote) facts.gitNote = gitNote;
+		} catch {
+			/* omit git note */
+		}
+	}
+	return facts;
+}
 
 const WorkflowPlanModeParams = {
 	type: "object",
@@ -2274,8 +2379,21 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				);
 				return;
 			}
+			let closeReport: string;
+			try {
+				const facts = await collectAutopilotCloseReportFacts(pi, {
+					beadId: entry.beadId,
+					worktree: entry.worktree,
+				});
+				closeReport = formatAutopilotCloseReport(facts);
+			} catch {
+				closeReport = formatAutopilotCloseReport({
+					beadId: entry.beadId,
+					summary: AUTOPILOT_CLOSE_HOP_SUMMARY,
+				});
+			}
 			sendAutopilotHopMessage(
-				`Ревью APPROVED, bead закрыт без «закрывай?». Панели закрыты или уже не live. Autopilot сброшен.\nЖдать [PING] не нужно. Действие Максима: не требуется.${formatAutopilotHopFooter(taskId, entry.beadId)}`,
+				`${closeReport}${formatAutopilotHopFooter(taskId, entry.beadId)}`,
 			);
 		}
 	}
