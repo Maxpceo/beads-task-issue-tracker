@@ -91,9 +91,9 @@ While `autopilotEnabled===true` and `plan=off`, plan-mode is the **единст�
 
 Each hop return sends **exactly one** visible message (`customType` `autopilot-hop`, `autopilot-hop-stop`, or `autopilot-hop-wake-orch` for the APPROVED + missing-evidence wake-orchestrator branch, which uses `triggerTurn: true` so the orchestrator LLM gets a turn). No dump+human pairs.
 
-- Body: 2–5 Russian sentences — what happened, that hop already consumed the ping (Maxim must **not** wait for another `[PING]`), named next action, Maxim action (`не требуется` / wait / choose).
-- Forbidden as the main body: `complete_visible_dispatch status=`, `close_visible_dispatch status=`, raw SUPERVISOR ARTIFACT / full `finalize.text` / ACCEPTANCE MATRIX dump, orchestrator phrase `Жду [PING]`.
-- Footer (optional, technical only): `Bead:` / `taskId:` lines. Registry lookup for footer is best-effort and never changes control flow; without an entry, footer may carry `taskId` only.
+- Intermediate hops: 2–5 Russian sentences — what happened, that hop already consumed the ping (Maxim must **not** wait for another `[PING]`), named next action, Maxim action (wait / choose / fix). Success close is **not** this 2–5 sentence template.
+- Forbidden as the main body: `complete_visible_dispatch status=`, `close_visible_dispatch status=`, raw SUPERVISOR ARTIFACT / full `finalize.text` / ACCEPTANCE MATRIX dump, orchestrator phrase `Жду [PING]`, and on success close «Действие Максима: не требуется».
+- Footer (optional, technical only): `Bead:` / `taskId:` lines. Registry lookup for footer is best-effort and never changes control flow; without an entry, footer may carry `taskId` only. Footer never replaces the human stop-report.
 - Branch copy:
   - `incomplete` — ping consumed, result not ready yet, next ping from child; not a final step.
   - `result-only` — ping consumed, artifact not review-ready, reviewer not started, panes live, next ping from child after rewrite; **not** «шаг закрыт» / «работа закончена».
@@ -102,7 +102,7 @@ Each hop return sends **exactly one** visible message (`customType` `autopilot-h
   - `NOT APPROVED` (verdict text), finalize `not-approved`, unknown non-blocked `!ok`, `[PING-ERROR]`, BLOCKED artifact — human STOP without matrix body; **panes live**; close not called.
   - APPROVED + finalize `missing-evidence` — `autopilot-hop-wake-orch` with `triggerTurn: true`: no «Действие Максима», reason from `finalize.text`, orchestrator closes the gap itself (matrix + ladder) or fail-stops with autopilot cleared; **panes live**.
   - Grey-matrix `finalize.status==="blocked"` — STOP close: `stopClose:true`, panes closed/not live, bead not closed, autopilot cleared, durable `STOP CLOSE:` (no `UNIQUE_MATRIX`/matrix body dump); Maxim a/b/c. Close throw on blocked → separate STOP (panes may remain; no «bead уже closed»; no a/b/c).
-  - APPROVED close `closed` or `noop` — one RU success (panes closed or already not live); autopilot cleared.
+  - APPROVED close `closed` or `noop` — AGENTS stop-report (`## Задача выполнена` + title + (`id`) + «на автопилоте»; было→сделали; optional `## Проверка` / `## Файлы` from best-effort bd/PLAN APPROVED/ACCEPTANCE/git; omit empty sections, never invent checks). One phrase if no upstream / not in main; `land` not called; `triggerTurn` stays false; autopilot cleared. Same template when `closeVisibleDispatch` is `noop`.
   - `closeVisibleDispatch` throw after bd closed — still clear autopilot + persist + status, then **one** STOP (no success trailer).
 
 ## Multi-agent auto-execute gate

@@ -8,7 +8,15 @@ import * as piTuiMock from '../mocks/pi-tui'
 import { findLiveRegistryEntriesForBead } from '../../.pi/extensions/beads-dispatch/index'
 import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
 import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
-import { isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
+import {
+  AUTOPILOT_CLOSE_HOP_SUMMARY,
+  describeAutopilotGitState,
+  extractAcceptanceCheckLines,
+  extractPlanApprovedFiles,
+  extractPlanApprovedSummary,
+  formatAutopilotCloseReport,
+  isSafeCommand,
+} from '../../.pi/extensions/plan-mode/utils'
 import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
 import {
   PLAN_REVIEW_WAITING_TRIO_ENTRY,
@@ -118,6 +126,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
     if (id === './ready-ui.js') return transpileSibling('ready-ui.ts')
     if (id === './utils.js') {
       return {
+        ...transpileSibling('utils.ts'),
         extractTodoItems: () => [],
         isSafeCommand: (command: string) => !command.includes('rm -rf'),
         markCompletedSteps: (items: unknown[]) => items,
@@ -363,17 +372,48 @@ function makeHarness(options: {
     },
     exec: async (command: string, args: string[]) => {
       execCalls.push({ command, args })
-      if (command === 'bd' && args[0] === 'show') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"open"}]', stderr: '', code: 0 }
+      if (command === 'bd' && args[0] === 'show') {
+        if (args.includes('bead-plan')) {
+          return {
+            stdout: JSON.stringify([{ id: 'bead-plan', title: 'После автопилотного close тот же стоп-отчёт', status: 'closed' }]),
+            stderr: '',
+            code: 0,
+          }
+        }
+        return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"open"}]', stderr: '', code: 0 }
+      }
       if (command === 'bd' && args[0] === 'update') return { stdout: '[{"id":"beads-task-issue-tracker-zzkb","status":"in_progress"}]', stderr: '', code: 0 }
       if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
         trace.push('bd-comments-add')
         if (options.commentAddFails) return { stdout: '', stderr: 'comment write failed', code: 1 }
         return { stdout: '{"ok":true}', stderr: '', code: 0 }
       }
+      if (command === 'bd' && args[0] === 'comments') {
+        if (args.includes('bead-plan')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                text: 'PLAN APPROVED\nProblem:\nHop писал служебную строку после close.\n\nApproach:\nСобрать стоп-отчёт из известных полей.\n\nFiles to change:\n- .pi/extensions/plan-mode/index.ts\n- .pi/extensions/plan-mode/utils.ts',
+              },
+              {
+                text: 'ACCEPTANCE MATRIX:\n- pnpm exec vitest run tests/extensions/plan-mode.test.ts --reporter dot: PASS (exit 0)',
+              },
+            ]),
+            stderr: '',
+            code: 0,
+          }
+        }
+      }
       if (command === 'git') {
         const cwd = args[0] === '-C' ? args[1] : undefined
         if (taskScopeGit) {
           if (cwd === '/tmp/task') {
+            if (args.some((arg) => arg === '@{u}' || arg === '@{upstream}')) {
+              return { stdout: '', stderr: "fatal: no upstream configured for branch 'task/plan-approved'", code: 128 }
+            }
+            if (args.includes('merge-base')) {
+              return { stdout: '', stderr: '', code: 1 }
+            }
             if (args.includes('branch')) return { stdout: 'task/plan-approved\n', stderr: '', code: 0 }
             if (args.includes('--show-toplevel')) return { stdout: '/tmp/task\n', stderr: '', code: 0 }
             if (args.includes('HEAD')) return { stdout: 'task123\n', stderr: '', code: 0 }
@@ -579,6 +619,85 @@ function expectExecuteReadyOverlay(customCalls: Array<{ options?: unknown }>) {
     expect(call.options).toMatchObject({ overlay: true })
   }
 }
+
+describe('Pi plan-mode autopilot close report', () => {
+  it('prints stop heading with title, id, and autopilot marker', () => {
+    const report = formatAutopilotCloseReport({
+      beadId: 'beads-task-issue-tracker-cieq',
+      title: 'После автопилотного close тот же стоп-отчёт',
+      summary: AUTOPILOT_CLOSE_HOP_SUMMARY,
+    })
+    expect(report).toContain('## Задача выполнена После автопилотного close тот же стоп-отчёт (beads-task-issue-tracker-cieq) на автопилоте')
+    expect(report).toContain(AUTOPILOT_CLOSE_HOP_SUMMARY)
+    expect(report).not.toContain('## Проверка')
+    expect(report).not.toContain('## Файлы')
+    expect(report).not.toContain('Действие Максима: не требуется')
+  })
+
+  it('omits empty optional sections and does not invent checks', () => {
+    const report = formatAutopilotCloseReport({
+      beadId: 'bead-plan',
+      checks: ['', '   '],
+      files: [],
+    })
+    expect(report).toBe('## Задача выполнена (bead-plan) на автопилоте')
+    expect(report).not.toContain('vitest')
+    expect(report).not.toContain('## Проверка')
+    expect(report).not.toContain('## Файлы')
+  })
+
+  it('prints files, PASS checks, and git note when provided', () => {
+    const report = formatAutopilotCloseReport({
+      beadId: 'bead-plan',
+      title: 'Пример',
+      summary: 'Служебная строка → стоп-отчёт.',
+      checks: ['pnpm exec vitest run tests/extensions/plan-mode.test.ts --reporter dot: PASS (exit 0)'],
+      files: ['.pi/extensions/plan-mode/index.ts'],
+      gitNote: describeAutopilotGitState({ upstream: null, ancestorOfMain: false }),
+    })
+    expect(report).toContain('## Проверка')
+    expect(report).toContain('exit 0')
+    expect(report).toContain('## Файлы')
+    expect(report).toContain('.pi/extensions/plan-mode/index.ts')
+    expect(report).toContain('без upstream')
+    expect(report).toContain('не в main')
+    expect(report).toContain('land отдельно')
+  })
+
+  it('extracts plan files/summary and only PASS checks with evidence', () => {
+    const plan = [
+      'PLAN APPROVED',
+      'Problem:',
+      'Hop писал служебную строку.',
+      '',
+      'Approach:',
+      'Собрать стоп-отчёт из известных полей.',
+      '',
+      'Files to change:',
+      '- .pi/extensions/plan-mode/index.ts',
+      '- .pi/extensions/plan-mode/utils.ts',
+    ].join('\n')
+    expect(extractPlanApprovedSummary(plan)).toContain('Hop писал служебную строку.')
+    expect(extractPlanApprovedFiles(plan)).toEqual([
+      '.pi/extensions/plan-mode/index.ts',
+      '.pi/extensions/plan-mode/utils.ts',
+    ])
+    expect(extractAcceptanceCheckLines([
+      'ACCEPTANCE MATRIX:',
+      '- pnpm exec vitest run tests/foo.test.ts: PASS (exit 0)',
+      '- criterion B: FAIL',
+      '- criterion C: NOT RUN',
+      '- undocumented PASS without evidence',
+    ].join('\n'))).toEqual([
+      'pnpm exec vitest run tests/foo.test.ts: PASS (exit 0)',
+    ])
+  })
+
+  it('omits git note when upstream and main ancestry are unknown', () => {
+    expect(describeAutopilotGitState({})).toBeUndefined()
+    expect(describeAutopilotGitState({ upstream: 'origin/fix/x', ancestorOfMain: true })).toBeUndefined()
+  })
+})
 
 describe('Pi plan-mode bash allowlist', () => {
   it('allows read-only bd comments inspection commands', () => {
@@ -2474,13 +2593,26 @@ describe('Pi plan-mode typed workflow tools', () => {
     const hops = hopMessages(harness)
     expect(hops).toHaveLength(1)
     expect(hops[0]?.message.customType).toBe('autopilot-hop')
+    expect(hops[0]?.options?.triggerTurn).not.toBe(true)
     const content = String(hops[0]?.message.content)
-    expect(content).toContain('закрыт без «закрывай?»')
-    expect(content).toContain('Autopilot сброшен')
-    expect(content).toContain('Действие Максима: не требуется')
+    expect(content).toContain('## Задача выполнена')
+    expect(content).toContain('После автопилотного close тот же стоп-отчёт')
+    expect(content).toContain('(bead-plan)')
+    expect(content).toContain('на автопилоте')
+    expect(content).toContain('Hop писал служебную строку после close.')
+    expect(content).toContain('Собрать стоп-отчёт из известных полей.')
+    expect(content).toContain('## Проверка')
+    expect(content).toContain('pnpm exec vitest run tests/extensions/plan-mode.test.ts')
+    expect(content).toContain('## Файлы')
+    expect(content).toContain('.pi/extensions/plan-mode/index.ts')
+    expect(content).toContain('без upstream')
+    expect(content).toContain('не в main')
+    expect(content).not.toContain('Действие Максима: не требуется')
+    expect(content).not.toContain('закрыт без «закрывай?»')
     expect(content).not.toContain('complete_visible_dispatch')
     expect(content).not.toContain('close_visible_dispatch')
     expect(content).not.toContain('status=')
+    expect(content).not.toContain('ACCEPTANCE MATRIX')
   })
 
   it('APPROVED close with closeVisibleDispatch noop still one success RU', async () => {
@@ -2500,8 +2632,13 @@ describe('Pi plan-mode typed workflow tools', () => {
     const hops = hopMessages(harness)
     expect(hops).toHaveLength(1)
     expect(hops[0]?.message.customType).toBe('autopilot-hop')
-    expect(String(hops[0]?.message.content)).toContain('Панели закрыты или уже не live')
-    expect(String(hops[0]?.message.content)).not.toContain('close_visible_dispatch')
+    expect(hops[0]?.options?.triggerTurn).not.toBe(true)
+    const noopContent = String(hops[0]?.message.content)
+    expect(noopContent).toContain('## Задача выполнена')
+    expect(noopContent).toContain('на автопилоте')
+    expect(noopContent).toContain('Панели закрыты или уже не live')
+    expect(noopContent).not.toContain('Действие Максима: не требуется')
+    expect(noopContent).not.toContain('close_visible_dispatch')
   })
 
   it('close-blocked stopClose clears autopilot, durable STOP CLOSE, no matrix dump', async () => {
@@ -2656,6 +2793,7 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(content).toContain('Autopilot сброшен')
     expect(content).not.toContain('Действие Максима: не требуется')
     expect(content).not.toContain('закрыт без «закрывай?»')
+    expect(content).not.toContain('Задача выполнена')
     expect(hopContents(harness).filter((c) => c.includes('STOP:'))).toHaveLength(1)
   })
 
@@ -2722,6 +2860,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(readme).toContain('result-only')
     expect(readme).toContain('Жду [PING]')
     expect(readme).toContain('finalize.text')
+    expect(readme).toContain('## Задача выполнена')
+    expect(readme).toContain('на автопилоте')
   })
 
   it('/plan-auto does not consume ping after approve', async () => {

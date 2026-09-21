@@ -237,3 +237,142 @@ export function validateAutoExecutePlan(message: string): PlanQualityResult {
 	);
 	return { ok: missing.length === 0, missing };
 }
+
+/** Hop-known close sentence. Never invents tests, files, or git facts. */
+export const AUTOPILOT_CLOSE_HOP_SUMMARY =
+	"После code review APPROVED hop закрыл bead без вопроса «закрывай?». Панели закрыты или уже не live.";
+
+export interface AutopilotCloseReportFacts {
+	beadId: string;
+	title?: string;
+	summary?: string;
+	checks?: string[];
+	files?: string[];
+	gitNote?: string;
+}
+
+function truncateText(value: string, max: number): string {
+	const trimmed = value.replace(/\s+/g, " ").trim();
+	if (trimmed.length <= max) return trimmed;
+	return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+function isSectionHeading(line: string): boolean {
+	return (
+		/^\s*#{1,3}\s/.test(line)
+		|| /^\s*[A-Za-z][\w /-]{0,40}:\s*$/.test(line)
+	);
+}
+
+function extractLabeledParagraph(text: string, label: string): string | undefined {
+	const header = new RegExp(`^\\s*${label}:\\s*(.*)$`, "i");
+	const lines = text.split(/\r?\n/);
+	for (let index = 0; index < lines.length; index += 1) {
+		const match = lines[index]?.match(header);
+		if (!match) continue;
+		const body: string[] = [];
+		const sameLine = match[1]?.trim();
+		if (sameLine) body.push(sameLine);
+		for (let next = index + 1; next < lines.length; next += 1) {
+			const line = lines[next] ?? "";
+			if (/^\s*$/.test(line)) {
+				if (body.length > 0) break;
+				continue;
+			}
+			if (isSectionHeading(line)) break;
+			body.push(line.trim());
+		}
+		const joined = body.join(" ").trim();
+		return joined ? truncateText(joined, 280) : undefined;
+	}
+	return undefined;
+}
+
+export function extractPlanApprovedSummary(text: string): string | undefined {
+	const problem = extractLabeledParagraph(text, "Problem");
+	const approach = extractLabeledParagraph(text, "Approach");
+	if (problem && approach) return `${problem} → ${approach}`;
+	return problem ?? approach;
+}
+
+export function extractPlanApprovedFiles(text: string): string[] {
+	const header = /(?:^|\n)\s*Files to change:\s*\n/i;
+	const start = text.search(header);
+	if (start < 0) return [];
+	const after = text.slice(start).replace(header, "");
+	const files: string[] = [];
+	for (const line of after.split("\n")) {
+		if (/^\s*$/.test(line)) {
+			if (files.length > 0) break;
+			continue;
+		}
+		if (/^\s*#{1,3}\s/.test(line) || /^\s*[A-Za-zА-Яа-я][^\n]{0,60}:\s*$/.test(line)) break;
+		const bullet = line.match(/^\s*[-*]\s+(.+?)\s*$/);
+		if (!bullet?.[1]) {
+			if (files.length > 0) break;
+			continue;
+		}
+		const file = bullet[1].replace(/^[`']+|[`']+$/g, "").trim();
+		if (!file || /^(n\/a|none|-)$/i.test(file)) continue;
+		files.push(truncateText(file, 160));
+		if (files.length >= 12) break;
+	}
+	return files;
+}
+
+export function extractAcceptanceCheckLines(text: string): string[] {
+	const checks: string[] = [];
+	for (const raw of text.split("\n")) {
+		if (!/\bPASS\b/.test(raw)) continue;
+		if (/\b(FAIL|NOT RUN|BLOCKED|SCOPE GAP)\b/.test(raw)) continue;
+		const cleaned = raw.replace(/^\s*[-*]\s*/, "").trim();
+		if (!cleaned) continue;
+		if (!/\b(exit\s+\d+|vitest|pnpm|cargo|pytest|passed)\b/i.test(cleaned)) continue;
+		checks.push(truncateText(cleaned, 200));
+		if (checks.length >= 8) break;
+	}
+	return checks;
+}
+
+export function describeAutopilotGitState(state: {
+	upstream?: string | null;
+	ancestorOfMain?: boolean | null;
+}): string | undefined {
+	const noUpstream = state.upstream === null;
+	const notInMain = state.ancestorOfMain === false;
+	if (!noUpstream && !notInMain) return undefined;
+	if (noUpstream && notInMain) {
+		return "Ветка без upstream и не в main. Сессию можно закрывать; land отдельно — hop его не вызывал.";
+	}
+	if (noUpstream) {
+		return "Ветка без upstream. Сессию можно закрывать; land отдельно — hop его не вызывал.";
+	}
+	return "Ветка не в main. Сессию можно закрывать; land отдельно — hop его не вызывал.";
+}
+
+export function formatAutopilotCloseReport(facts: AutopilotCloseReportFacts): string {
+	const beadId = facts.beadId.trim();
+	const title = facts.title?.trim();
+	const heading = title
+		? `## Задача выполнена ${title} (${beadId}) на автопилоте`
+		: `## Задача выполнена (${beadId}) на автопилоте`;
+	const sections: string[] = [heading];
+
+	const summary = facts.summary?.trim();
+	if (summary) sections.push(summary);
+
+	const checks = (facts.checks ?? []).map((line) => line.trim()).filter(Boolean);
+	if (checks.length > 0) {
+		sections.push(`## Проверка\n${checks.map((line) => `- ${line}`).join("\n")}`);
+	}
+
+	const files = (facts.files ?? []).map((line) => line.trim()).filter(Boolean);
+	if (files.length > 0) {
+		sections.push(`## Файлы\n${files.map((line) => `- ${line}`).join("\n")}`);
+	}
+
+	const gitNote = facts.gitNote?.trim();
+	if (gitNote) sections.push(gitNote);
+
+	return sections.join("\n\n");
+}
