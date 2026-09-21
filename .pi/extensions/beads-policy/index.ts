@@ -279,8 +279,21 @@ function segmentHasGitCBeforePush(tokens: string[]): boolean {
 }
 
 /**
+ * Strip only `cd <absolute POSIX path> &&` (one path token, optional quotes, no cd flags).
+ * Path must start with `/` and contain no `$` `` ` `` `;` `|` `&`. Does not reuse leadingCdMatch.
+ */
+function stripExactAbsoluteCdAndPrefix(command: string): string {
+	const matched = command.match(/^\s*cd\s+(?:"(\/[^"$`;&|]+)"|'(\/[^'$`;&|]+)'|(\/[^"$`;&|\s]+))\s*&&\s+/);
+	if (!matched) return command;
+	const pathToken = matched[1] ?? matched[2] ?? matched[3] ?? "";
+	if (!pathToken.startsWith("/") || /[$`;|&]/.test(pathToken)) return command;
+	return command.slice(matched[0].length);
+}
+
+/**
  * Allow only when the entire command is one segment with tokens exactly:
  * git push --force-with-lease=refs/heads/<canonical>:<40hex> origin :refs/heads/<canonical>
+ * Optional exact prefix: cd <absolute POSIX path> && (one path token, quoted or unquoted, no cd flags).
  * Quotes are OK via raw token strip; path-qualified git, git -C, wrappers, extra flags are not.
  */
 function parseExactSafeRemoteDeletionCommand(command: string): RemoteDeletionParseResult {
@@ -291,7 +304,8 @@ function parseExactSafeRemoteDeletionCommand(command: string): RemoteDeletionPar
 		};
 	}
 
-	const segments = splitShellSegments(command);
+	const commandWithoutCd = stripExactAbsoluteCdAndPrefix(command);
+	const segments = splitShellSegments(commandWithoutCd);
 	if (segments.length !== 1) {
 		return {
 			ok: false,

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import beadsPolicyExtension, {
@@ -1152,6 +1152,369 @@ describe('Pi safe merged remote branch cleanup policy', () => {
       rmSync(shallow, { recursive: true, force: true })
       cleanupFixture(fixture)
     }
+  })
+
+  describe('fjtn cd-prefix exact-shape remote deletion (parseExactSafeRemoteDeletionCommand)', () => {
+    function exactLeaseDelete(
+      fixture: ReturnType<typeof createMergedRemoteFixture>,
+      branch = fixture.branch,
+      oid = fixture.branchOid,
+    ) {
+      return `git push --force-with-lease=refs/heads/${branch}:${oid} origin :refs/heads/${branch}`
+    }
+
+    function expectAllow(decision: ReturnType<typeof evaluateBashPolicy>) {
+      expect(decision?.policy).not.toBe('blockDestructiveCommand')
+      expect(decision?.policy).not.toBe('requireMergeSlotForPush')
+    }
+
+    function expectDeny(decision: ReturnType<typeof evaluateBashPolicy>, frozenToken: string | string[]) {
+      expect(decision?.policy).toBe('blockDestructiveCommand')
+      expect(decision?.block).toBe(true)
+      const tokens = Array.isArray(frozenToken) ? frozenToken : [frozenToken]
+      expect(tokens.some((token) => String(decision?.reason).includes(token))).toBe(true)
+    }
+
+    it('1 allows bare five-token lease-delete (ec87 regression)', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectAllow(
+          evaluateBashPolicy(exactLeaseDelete(fixture), { branch: fixture.branch, mergeSlotHeld: true }, { cwd: fixture.repo }),
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('2 allows cd absolute-worktree && five-token lease-delete when process cwd is tmpdir', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectAllow(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('3 allows quoted cd absolute-worktree && five-token lease-delete when process cwd is tmpdir', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectAllow(
+          evaluateBashPolicy(
+            `cd "${fixture.repo}" && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('4 allows bare five-token lease-delete when workflow branch is main', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectAllow(
+          evaluateBashPolicy(exactLeaseDelete(fixture), { branch: 'main', mergeSlotHeld: true }, { cwd: fixture.repo }),
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('5 denies git -C before push with parse:git-C-unsafe', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `git -C ${fixture.repo} push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: fixture.repo },
+          ),
+          'parse:git-C-unsafe',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('6 denies cd && git -C push', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && git -C ${fixture.repo} push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          ['parse:git-C-unsafe', 'parse:non-exact-shape'],
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('7 denies cd with $(basename) substitution', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd $(basename ${fixture.repo}) && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          ['parse:shell-substitution', 'parse:non-exact-shape'],
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('8 denies relative cd from parent of repo with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${basename(fixture.repo)} && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: dirname(fixture.repo) },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('9 denies cd semicolon separator with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo}; ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('10 denies cd || separator with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} || ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('11 denies cd && five-token && echo done with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && ${exactLeaseDelete(fixture)} && echo done`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('12 denies cd && five-token piped to cat with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && ${exactLeaseDelete(fixture)} | cat`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('13 denies bash -c wrapper with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `bash -c '${exactLeaseDelete(fixture)}'`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: fixture.repo },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('14 denies path-qualified git with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `/usr/bin/git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: fixture.repo },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('15 denies extra --verbose flag with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `git push --verbose --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: fixture.repo },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('16 denies shell substitution oid with parse:shell-substitution', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `git push --force-with-lease=refs/heads/${fixture.branch}:$(git rev-parse HEAD) origin :refs/heads/${fixture.branch}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: fixture.repo },
+          ),
+          'parse:shell-substitution',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('17 denies env -C wrapper with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `env -C ${fixture.repo} git push --force-with-lease=refs/heads/${fixture.branch}:${fixture.branchOid} origin :refs/heads/${fixture.branch}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('18 denies cd && git fetch && five-token with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && git fetch origin main && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('19 denies cd -P flag with parse:non-exact-shape', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd -P ${fixture.repo} && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'parse:non-exact-shape',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('20 denies cd && five-token on hotfix/safe-cleanup as non-canonical prefix', () => {
+      const fixture = createMergedRemoteFixture()
+      const branch = 'hotfix/safe-cleanup'
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && ${exactLeaseDelete(fixture, branch)}`,
+            { branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'canonical Pi branch prefix',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('21 denies cd && five-token without merge-slot evidence', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && ${exactLeaseDelete(fixture)}`,
+            { branch: fixture.branch, mergeSlotHeld: false },
+            { cwd: tmpdir(), bdMergeSlotIssue: null },
+          ),
+          'merge-slot evidence',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
+
+    it('22 denies cd && five-token with stale lease oid', () => {
+      const fixture = createMergedRemoteFixture()
+      try {
+        expectDeny(
+          evaluateBashPolicy(
+            `cd ${fixture.repo} && ${exactLeaseDelete(fixture, fixture.branch, fixture.mainOid)}`,
+            { branch: fixture.branch, mergeSlotHeld: true },
+            { cwd: tmpdir() },
+          ),
+          'lease stale/mismatched',
+        )
+      } finally {
+        cleanupFixture(fixture)
+      }
+    })
   })
 })
 
