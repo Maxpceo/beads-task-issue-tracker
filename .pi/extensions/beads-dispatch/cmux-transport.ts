@@ -226,7 +226,7 @@ export function buildVisibleChildArgv(input: VisibleChildArgvInput): string[] {
 	const thinking = typeof input.thinking === "string" ? input.thinking.trim() : "";
 	if (thinking) args.push("--thinking", thinking);
 	if (input.session.kind === "no-session") args.push("--no-session");
-	else args.push("--session", input.session.dir);
+	else args.push("--session-dir", input.session.dir);
 	args.push("--append-system-prompt", input.systemPromptFile, "--tools", tools, `Task: read ${input.taskFile} and execute it.`);
 	return args;
 }
@@ -277,10 +277,13 @@ export function validateVisibleChildArgv(args: string[]): string[] {
 	const hasAppend = args.includes("--append-system-prompt");
 	const hasTools = args.includes("--tools");
 	const hasNoSession = args.includes("--no-session");
-	const hasSessionDir = args.includes("--session");
+	const hasSessionDir = args.includes("--session-dir");
+	const hasSessionFile = args.includes("--session");
 	if (!hasAppend) errors.push("missing --append-system-prompt");
 	if (!hasTools) errors.push("missing --tools");
-	if (!hasNoSession && !hasSessionDir) errors.push("missing --no-session or throwaway --session dir");
+	if (!hasNoSession && !hasSessionDir && !hasSessionFile) {
+		errors.push("missing --no-session, throwaway --session-dir, or --session file");
+	}
 	return errors;
 }
 

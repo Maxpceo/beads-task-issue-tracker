@@ -64,12 +64,19 @@ export interface SyncVisibleAgentResult {
 	error?: string;
 }
 
-export function buildSyncVisibleTaskBody(task: string, resultFile: string): string {
-	return `${task}
+export function isPlanReviewSyncRole(role: string): boolean {
+	return /^plan-.+-reviewer$/.test(role.trim());
+}
 
-WHEN DONE: write your final report to ${resultFile}
-Do not ping. Child stdout is not delivery.
+export function buildSyncVisibleTaskBody(task: string, resultFile?: string, planReview = false): string {
+	if (planReview) {
+		return `${task}
+
+Do not ping. Do not write files. Print the final report in this session.
 `;
+	}
+	const writeLine = resultFile ? `WHEN DONE: write your final report to ${resultFile}\n` : "";
+	return `${task}\n\n${writeLine}Do not ping. Child stdout is not delivery.\n`;
 }
 
 export function resolveVisibleCmuxAdapter(exec?: CmuxExec): CmuxAdapter {
@@ -135,6 +142,104 @@ function readResultFile(resultFile: string): string | undefined {
 	}
 }
 
+const PLAN_REVIEW_VERDICT_RE = /PLAN REVIEW:\s*(APPROVED|NEEDS_CHANGES|BLOCKED)\b/i;
+
+function assistantTextFromEvent(event: unknown, options?: { requireTextOnly?: boolean }): string | undefined {
+	if (!event || typeof event !== "object") return undefined;
+	const rec = event as {
+		type?: string;
+		message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
+	};
+	if (rec.type !== "message_end" && rec.type !== "message") return undefined;
+	if (rec.message?.role !== "assistant") return undefined;
+	const parts = rec.message.content ?? [];
+	if (options?.requireTextOnly && parts.some((part) => part.type === "toolCall" || part.type === "tool_call")) {
+		return undefined;
+	}
+	const text = parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
+	return text || undefined;
+}
+
+/** Last complete assistant text from headless JSONL stdout or a session journal. */
+export function extractLastCompleteAssistantText(source: string, options?: { requireTextOnly?: boolean }): string | undefined {
+	let finalText: string | undefined;
+	for (const line of source.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const text = assistantTextFromEvent(JSON.parse(line), options);
+			if (text) finalText = text;
+		} catch {
+			// Incomplete jsonl is ignored.
+		}
+	}
+	return finalText;
+}
+
+export function extractFinalAssistantText(source: string): string {
+	return extractLastCompleteAssistantText(source) || source;
+}
+
+/** Last complete assistant message that contains a real PLAN REVIEW verdict. */
+export function extractPlanReviewFromJournal(source: string): string | undefined {
+	let found: string | undefined;
+	for (const line of source.split("\n")) {
+		if (!line.trim()) continue;
+		try {
+			const text = assistantTextFromEvent(JSON.parse(line));
+			if (text && PLAN_REVIEW_VERDICT_RE.test(text)) found = text;
+		} catch {
+			// Truncated jsonl is not delivery.
+		}
+	}
+	return found;
+}
+
+export function extractSyncJournalOutput(source: string, role: string): string | undefined {
+	const planReview = extractPlanReviewFromJournal(source);
+	if (planReview) return planReview;
+	if (isPlanReviewSyncRole(role)) return undefined;
+	return extractLastCompleteAssistantText(source, { requireTextOnly: true });
+}
+
+function readJournalSource(sessionDir: string): string | undefined {
+	try {
+		if (!fs.existsSync(sessionDir)) return undefined;
+		const stat = fs.statSync(sessionDir);
+		if (stat.isFile()) {
+			const text = fs.readFileSync(sessionDir, "utf8");
+			return text.trim() ? text : undefined;
+		}
+		const chunks: string[] = [];
+		const walk = (dir: string) => {
+			for (const name of fs.readdirSync(dir)) {
+				const nested = path.join(dir, name);
+				const nestedStat = fs.statSync(nested);
+				if (nestedStat.isDirectory()) {
+					walk(nested);
+					continue;
+				}
+				if (!name.endsWith(".jsonl") && !name.endsWith(".json")) continue;
+				const text = fs.readFileSync(nested, "utf8");
+				if (text.trim()) chunks.push(text);
+			}
+		};
+		walk(sessionDir);
+		return chunks.length > 0 ? chunks.join("\n") : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+function persistThrowawaySessionDir(nsRoot: string, taskId: string): string {
+	const sessionDir = path.join(nsRoot, "sessions", taskId);
+	fs.mkdirSync(sessionDir, { recursive: true });
+	return sessionDir;
+}
+
+function isTimeoutMissingReport(error?: string): boolean {
+	return Boolean(error && /timed out after/.test(error));
+}
+
 function appendBpazWatchdogTrace(worktreePath: string, rec: Record<string, unknown>): void {
 	try {
 		const file = path.join(worktreePath, BPAZ_WATCHDOG_TRACE_RELATIVE_PATH);
@@ -160,9 +265,10 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 	const callerSurface =
 		(typeof adapter.callerSurface === "function" ? adapter.callerSurface() : "") || "";
 	const spawned: DispatchRegistryEntry[] = [];
+	const sessionDirs = new Map<string, string>();
 	const results: SyncVisibleAgentResult[] = [];
 
-	const cleanup = async () => closeAndTombstone(adapter, registryFile, registry, spawned);
+	const cleanup = async (entries: DispatchRegistryEntry[]) => closeAndTombstone(adapter, registryFile, registry, entries);
 
 	try {
 		for (let index = 0; index < input.agents.length; index += 1) {
@@ -175,14 +281,16 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				systemPrompt = fs.readFileSync(spec.systemPromptFile, "utf8");
 			}
 			const files = persistIsolationFiles(dir, taskId, systemPrompt, "pending");
-			const taskBody = buildSyncVisibleTaskBody(spec.task, files.resultFile);
+			const sessionDir = persistThrowawaySessionDir(dir, taskId);
+			const planReview = isPlanReviewSyncRole(spec.role);
+			const taskBody = buildSyncVisibleTaskBody(spec.task, planReview ? undefined : files.resultFile, planReview);
 			fs.writeFileSync(files.taskFile, taskBody);
 			const argv = buildVisibleChildArgv({
 				model: spec.model,
 				thinking: spec.thinking,
 				systemPromptFile: files.promptFile,
 				tools: spec.tools,
-				session: { kind: "no-session" },
+				session: { kind: "session-dir", dir: sessionDir },
 				taskFile: files.taskFile,
 			});
 			const argvErrors = validateVisibleChildArgv(argv);
@@ -236,6 +344,7 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 			registry.entries.push(entry);
 			saveRegistry(registryFile, registry);
 			spawned.push(entry);
+			sessionDirs.set(taskId, sessionDir);
 			results.push({ role: spec.role, taskId, pane: surface, output: "" });
 		}
 
@@ -244,7 +353,12 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 		while (pending.size > 0) {
 			if (input.signal?.aborted) throw new Error("aborted");
 			if (now() - startedAt > timeoutMs) {
-				throw new Error(`sync visible agents timed out after ${timeoutMs}ms`);
+				for (const row of results) {
+					if (!pending.has(row.taskId)) continue;
+					row.error = `sync visible agents timed out after ${timeoutMs}ms: missing report`;
+					pending.delete(row.taskId);
+				}
+				break;
 			}
 			for (const row of results) {
 				if (!pending.has(row.taskId)) continue;
@@ -252,6 +366,25 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				if (!entry) continue;
 				const createdAtMs = Date.parse(entry.createdAt);
 				const ageMs = Number.isFinite(createdAtMs) ? now() - createdAtMs : startupGraceMs;
+				const sessionDir = sessionDirs.get(row.taskId);
+				const journal = sessionDir ? readJournalSource(sessionDir) : undefined;
+				const extracted = journal ? extractSyncJournalOutput(journal, row.role) : undefined;
+				if (extracted) {
+					appendBpazWatchdogTrace(input.worktreePath, {
+						ts: now(),
+						pane: entry.pane,
+						role: entry.role,
+						taskId: row.taskId,
+						ageMs,
+						health: "journal",
+						hasResultFile: false,
+						hasJournal: true,
+						excerpt: "",
+					});
+					row.output = extracted;
+					pending.delete(row.taskId);
+					continue;
+				}
 				const output = readResultFile(entry.resultFile);
 				if (output) {
 					appendBpazWatchdogTrace(input.worktreePath, {
@@ -318,10 +451,17 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 			await sleep(pollMs, input.signal);
 		}
 	} catch (error) {
-		await cleanup();
+		await cleanup(spawned);
 		throw error;
 	}
 
-	await cleanup();
+	const closable = spawned.filter((entry) => {
+		const row = results.find((item) => item.taskId === entry.taskId);
+		if (!row) return false;
+		if (row.output.trim()) return true;
+		if (row.error && !isTimeoutMissingReport(row.error)) return true;
+		return false;
+	});
+	await cleanup(closable);
 	return results;
 }

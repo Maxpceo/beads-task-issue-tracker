@@ -307,11 +307,13 @@ Risks / rollback:
 
   it('hasUI uses visible panes, parses result files, and does not publish dashboard cards', async () => {
     const spawned: string[] = []
+    const tools: Array<string | undefined> = []
     const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
     const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', ['plan-edge-reviewer', 'plan-consistency-reviewer'], {
       hasUI: true,
       spawnVisible: async (input) => {
         spawned.push(...input.agents.map((agent) => agent.role))
+        tools.push(...input.agents.map((agent) => agent.tools))
         return input.agents.map((agent) => ({
           role: agent.role,
           taskId: `sync-${agent.role}`,
@@ -322,6 +324,8 @@ Risks / rollback:
     })
 
     expect(spawned).toEqual(['plan-edge-reviewer', 'plan-consistency-reviewer'])
+    expect(tools.every((value) => value === 'read,grep,find,ls')).toBe(true)
+    expect(tools.every((value) => !value?.includes('write'))).toBe(true)
     expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
     expect(getSharedDashboardState()).toBeNull()
   })
@@ -499,5 +503,53 @@ Risks / rollback:
       notify: (text) => notifies.push(text),
     })
     expect(notifies).toEqual([])
+  })
+
+  it('visible partial timeout keeps extracted APPROVED and blocks only the missing reviewer', async () => {
+    const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', [
+      'plan-edge-reviewer',
+      'plan-consistency-reviewer',
+      'plan-dead-zone-reviewer',
+    ], {
+      hasUI: true,
+      spawnVisible: async (input) => input.agents.map((agent, index) => ({
+        role: agent.role,
+        taskId: `sync-${agent.role}`,
+        pane: `surface:${agent.role}`,
+        output: index < 2 ? approvedReviewText : '',
+        error: index < 2 ? undefined : 'sync visible agents timed out after 10ms: missing report',
+      })),
+    })
+    expect(results.map((result) => result.verdict)).toEqual(['APPROVED', 'APPROVED', 'BLOCKED'])
+    expect(results[0]?.error).toBeUndefined()
+    expect(results[1]?.error).toBeUndefined()
+    expect(results[2]?.error).toMatch(/timed out after/)
+    expect(results[2]?.unresolvedBlockers.join(' ')).toMatch(/missing report/)
+    expect(results.filter((result) => result.error?.includes('timed out after'))).toHaveLength(1)
+  })
+
+  it('visible spawn throw still maps every reviewer to BLOCKED', async () => {
+    const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
+    const results = await runPlanReviewers(pi, '/repo', 'Plan:\n1. Test', [
+      'plan-edge-reviewer',
+      'plan-consistency-reviewer',
+      'plan-dead-zone-reviewer',
+    ], {
+      hasUI: true,
+      spawnVisible: async () => {
+        throw new Error('aborted')
+      },
+    })
+    expect(results).toHaveLength(3)
+    expect(results.every((result) => result.verdict === 'BLOCKED')).toBe(true)
+    expect(results.every((result) => result.error === 'aborted')).toBe(true)
+  })
+
+  it('does not loosen You do not edit files on plan reviewers', () => {
+    for (const name of ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer']) {
+      const body = fs.readFileSync(path.join(process.cwd(), '.pi', 'agents', `${name}.md`), 'utf8')
+      expect(body).toContain('You do not edit files')
+    }
   })
 })

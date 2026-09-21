@@ -11,8 +11,56 @@ import {
 } from '../../.pi/extensions/beads-dispatch/cmux-transport'
 import {
   BPAZ_WATCHDOG_TRACE_RELATIVE_PATH,
+  extractPlanReviewFromJournal,
+  extractSyncJournalOutput,
   spawnSyncVisibleAgents,
 } from '../../.pi/extensions/beads-dispatch/visible-agents'
+
+const approvedReport = `PLAN REVIEW: APPROVED
+Findings:
+- severity: minor
+  issue: none
+  evidence: fixture journal
+  suggested fix: none
+Unresolved blockers: none`
+
+function taskFileFromPayload(text: string): string | undefined {
+  return text.match(/Task: read ([^'\s]+) and execute/)?.[1]
+}
+
+function resultFileFromTaskFile(taskFile: string): string {
+  return taskFile.replace(`${path.sep}tasks${path.sep}`, `${path.sep}results${path.sep}`)
+}
+
+function sessionDirFromPayload(text: string): string | undefined {
+  return text.match(/'--session-dir'\s+'([^']+)'/)?.[1]
+}
+
+function writePlanReviewJournal(sessionDir: string, report: string, thinking = 'secret draft thinking must not leak'): string {
+  fs.mkdirSync(sessionDir, { recursive: true })
+  const journal = [
+    { type: 'session', version: 3, id: 'fixture' },
+    {
+      type: 'message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Return PLAN REVIEW: APPROVED | NEEDS_CHANGES | BLOCKED. Template PLAN REVIEW: A | B | C is not a verdict.' }],
+      },
+    },
+    {
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking },
+          { type: 'text', text: report },
+        ],
+      },
+    },
+  ].map((line) => JSON.stringify(line)).join('\n') + '\n'
+  fs.writeFileSync(path.join(sessionDir, 'session.jsonl'), journal)
+  return journal
+}
 
 describe('spawnSyncVisibleAgents', () => {
   let tmp: string
@@ -61,12 +109,12 @@ describe('spawnSyncVisibleAgents', () => {
       splits,
       async closeSurface(surface) { closed.push(surface) },
       async send(_surface, text) {
-        const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
-        const taskFile = taskMatch?.[1]
+        expect(text).toContain('--session-dir')
+        expect(text).not.toMatch(/'--session'/)
+        expect(text).not.toContain('--no-session')
+        const taskFile = taskFileFromPayload(text)
         if (!taskFile || !fs.existsSync(taskFile)) return
-        const body = fs.readFileSync(taskFile, 'utf8')
-        const resultMatch = body.match(/write your final report to ([^\n]+)/)
-        if (resultMatch?.[1]) fs.writeFileSync(resultMatch[1], 'PLAN REVIEW: APPROVED\nUnresolved blockers: none\n')
+        fs.writeFileSync(resultFileFromTaskFile(taskFile), 'PLAN REVIEW: APPROVED\nUnresolved blockers: none\n')
       },
     })
     const results = await spawnSyncVisibleAgents({
@@ -100,12 +148,9 @@ describe('spawnSyncVisibleAgents', () => {
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async send(_surface, text) {
-          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
-          const taskPath = taskMatch?.[1]
+          const taskPath = taskFileFromPayload(text)
           if (!taskPath || !fs.existsSync(taskPath)) return
-          const body = fs.readFileSync(taskPath, 'utf8')
-          const resultMatch = body.match(/write your final report to ([^\n]+)/)
-          if (resultMatch?.[1]) resultFile = resultMatch[1]
+          resultFile = resultFileFromTaskFile(taskPath)
         },
         async readScreen() { return 'user@host ~/proj $\n' },
       }),
@@ -198,12 +243,9 @@ describe('spawnSyncVisibleAgents', () => {
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async send(_surface, text) {
-          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
-          const taskPath = taskMatch?.[1]
+          const taskPath = taskFileFromPayload(text)
           if (!taskPath || !fs.existsSync(taskPath)) return
-          const body = fs.readFileSync(taskPath, 'utf8')
-          const resultMatch = body.match(/write your final report to ([^\n]+)/)
-          if (resultMatch?.[1]) resultFile = resultMatch[1]
+          resultFile = resultFileFromTaskFile(taskPath)
         },
         async readScreen() { return '' },
       }),
@@ -228,12 +270,9 @@ describe('spawnSyncVisibleAgents', () => {
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async send(_surface, text) {
-          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
-          const taskPath = taskMatch?.[1]
+          const taskPath = taskFileFromPayload(text)
           if (!taskPath || !fs.existsSync(taskPath)) return
-          const body = fs.readFileSync(taskPath, 'utf8')
-          const resultMatch = body.match(/write your final report to ([^\n]+)/)
-          if (resultMatch?.[1]) resultFile = resultMatch[1]
+          resultFile = resultFileFromTaskFile(taskPath)
         },
         async readScreen() { throw new Error('transient read-screen') },
       }),
@@ -261,12 +300,9 @@ describe('spawnSyncVisibleAgents', () => {
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async send(_surface, text) {
-          const taskMatch = text.match(/Task: read ([^'\s]+) and execute/)
-          const taskPath = taskMatch?.[1]
+          const taskPath = taskFileFromPayload(text)
           if (!taskPath || !fs.existsSync(taskPath)) return
-          const body = fs.readFileSync(taskPath, 'utf8')
-          const resultMatch = body.match(/write your final report to ([^\n]+)/)
-          if (resultMatch?.[1]) resultFile = resultMatch[1]
+          resultFile = resultFileFromTaskFile(taskPath)
         },
         async readScreen() { return liveFrame },
       }),
@@ -324,10 +360,10 @@ describe('spawnSyncVisibleAgents', () => {
     expect(samples.some((sample) => sample.ageMs >= 30)).toBe(true)
   })
 
-  it('timeout closes spawned panes', async () => {
+  it('timeout without a report does not throw and does not close the pane', async () => {
     const closed: string[] = []
     let now = 0
-    await expect(spawnSyncVisibleAgents({
+    const results = await spawnSyncVisibleAgents({
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async readScreen() { return 'thinking busy' },
@@ -339,7 +375,178 @@ describe('spawnSyncVisibleAgents', () => {
       now: () => now,
       sleep: async () => { now += 20 },
       agents: [{ role: 'architect', task: 'Design', systemPrompt: '# a', tools: 'read' }],
-    })).rejects.toThrow(/timed out/)
+    })
+    expect(results[0]?.error).toMatch(/timed out after/)
+    expect(results[0]?.error).toMatch(/missing report/)
+    expect(results[0]?.output).toBe('')
+    expect(closed).toEqual([])
+    expect(findRegistryByTaskId(results[0]!.taskId)?.entry.status).toBe('spawned')
+  })
+
+  it('extracts PLAN REVIEW from a journal with thinking and ignores the prompt template', () => {
+    const journal = writePlanReviewJournal(path.join(tmp, 'journal-fixture'), approvedReport)
+    const extracted = extractPlanReviewFromJournal(journal)
+    expect(extracted).toBe(approvedReport)
+    expect(extracted).toContain('PLAN REVIEW: APPROVED')
+    expect(extracted).toContain('Findings:')
+    expect(extracted).not.toContain('secret draft thinking')
+    expect(extracted).not.toMatch(/PLAN REVIEW:\s*A\s*\|\s*B\s*\|\s*C/)
+    expect(journal).toContain('secret draft thinking must not leak')
+    expect(journal.length).toBeGreaterThan((extracted ?? '').length)
+  })
+
+  it('does not treat incomplete jsonl or template-only assistant text as delivery', () => {
+    const incomplete = '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"PLAN REVIEW: APPROVED'
+    expect(extractPlanReviewFromJournal(incomplete)).toBeUndefined()
+    const templateOnly = `${JSON.stringify({
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Use PLAN REVIEW: A | B | C' }] },
+    })}\n`
+    expect(extractPlanReviewFromJournal(templateOnly)).toBeUndefined()
+    expect(extractPlanReviewFromJournal('')).toBeUndefined()
+  })
+
+  it('delivers three journal extracts on time and closes those panes', async () => {
+    const closed: string[] = []
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const sessionDir = sessionDirFromPayload(text)
+          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [
+        { role: 'plan-edge-reviewer', task: 'Review plan', systemPrompt: '# e', tools: 'read,grep,find,ls' },
+        { role: 'plan-consistency-reviewer', task: 'Review plan', systemPrompt: '# c', tools: 'read,grep,find,ls' },
+        { role: 'plan-dead-zone-reviewer', task: 'Review plan', systemPrompt: '# d', tools: 'read,grep,find,ls' },
+      ],
+    })
+    expect(results).toHaveLength(3)
+    expect(results.every((row) => row.output.includes('PLAN REVIEW: APPROVED'))).toBe(true)
+    expect(results.every((row) => !row.output.includes('secret draft thinking'))).toBe(true)
+    expect(results.every((row) => !row.error)).toBe(true)
+    expect(closed.sort()).toEqual(['surface:a1', 'surface:a2', 'surface:a3'].sort())
+  })
+
+  it('returns two journal extracts plus one timeout without throwing or closing the missing pane', async () => {
+    const closed: string[] = []
+    let now = 0
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const sessionDir = sessionDirFromPayload(text)
+          if (!sessionDir) return
+          if (text.includes('plan-edge-reviewer') || text.includes('plan-consistency-reviewer')) {
+            writePlanReviewJournal(sessionDir, approvedReport)
+          }
+        },
+        async readScreen() { return 'thinking busy' },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 10,
+      now: () => now,
+      sleep: async () => { now += 20 },
+      agents: [
+        { role: 'plan-edge-reviewer', task: 'Review plan', systemPrompt: '# e', tools: 'read' },
+        { role: 'plan-consistency-reviewer', task: 'Review plan', systemPrompt: '# c', tools: 'read' },
+        { role: 'plan-dead-zone-reviewer', task: 'Review plan', systemPrompt: '# d', tools: 'read' },
+      ],
+    })
+    expect(results).toHaveLength(3)
+    expect(results.filter((row) => row.output.includes('PLAN REVIEW: APPROVED'))).toHaveLength(2)
+    expect(results.filter((row) => row.error?.includes('timed out after'))).toHaveLength(1)
+    expect(results.filter((row) => row.error?.includes('timed out after'))[0]?.role).toBe('plan-dead-zone-reviewer')
+    expect(closed.sort()).toEqual(['surface:a1', 'surface:a2'].sort())
+    expect(findRegistryByTaskId(results[2]!.taskId)?.entry.status).toBe('spawned')
+  })
+
+  it('spawns with --session-dir and never passes a directory to --session', async () => {
+    const payloads: string[] = []
+    await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async send(_surface, text) {
+          payloads.push(text)
+          const sessionDir = sessionDirFromPayload(text)
+          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [{ role: 'plan-edge-reviewer', task: 'Review plan', systemPrompt: '# e', tools: 'read,grep,find,ls' }],
+    })
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0]).toContain('--session-dir')
+    expect(payloads[0]).not.toMatch(/'--session'/)
+    const sessionDir = sessionDirFromPayload(payloads[0]!)
+    expect(sessionDir).toBeTruthy()
+    expect(fs.statSync(sessionDir!).isDirectory()).toBe(true)
+  })
+
+  it('generic sync delivers last complete assistant text without PLAN REVIEW', async () => {
+    const report = 'Investigation complete.\nNo PLAN REVIEW header here.'
+    const journal = [
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'draft' }, { type: 'toolCall', name: 'read' }] } },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'draft' }, { type: 'text', text: report }] } },
+    ].map((line) => JSON.stringify(line)).join('\n') + '\n'
+    expect(extractSyncJournalOutput(journal, 'detective')).toBe(report)
+    expect(extractSyncJournalOutput(journal, 'plan-edge-reviewer')).toBeUndefined()
+    const closed: string[] = []
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const sessionDir = sessionDirFromPayload(text)
+          if (!sessionDir) return
+          fs.mkdirSync(sessionDir, { recursive: true })
+          fs.writeFileSync(path.join(sessionDir, 'session.jsonl'), journal)
+          const taskFile = taskFileFromPayload(text)
+          expect(taskFile && fs.readFileSync(taskFile, 'utf8')).toMatch(/WHEN DONE: write your final report to /)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
+    })
+    expect(results[0]?.error).toBeUndefined()
+    expect(results[0]?.output).toBe(report)
+    expect(results[0]?.output).not.toContain('draft')
     expect(closed).toEqual(['surface:a1'])
+  })
+
+  it('plan-review task body has no WHEN DONE write', async () => {
+    let taskBody = ''
+    await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async send(_surface, text) {
+          const taskFile = taskFileFromPayload(text)
+          if (taskFile && fs.existsSync(taskFile)) taskBody = fs.readFileSync(taskFile, 'utf8')
+          const sessionDir = sessionDirFromPayload(text)
+          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [{ role: 'plan-consistency-reviewer', task: 'Review plan', systemPrompt: '# c', tools: 'read,grep,find,ls' }],
+    })
+    expect(taskBody).not.toContain('WHEN DONE')
+    expect(taskBody).toContain('Do not write files')
   })
 })
