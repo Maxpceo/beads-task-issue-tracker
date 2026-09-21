@@ -12,6 +12,7 @@ import {
 import {
   BPAZ_WATCHDOG_TRACE_RELATIVE_PATH,
   extractPlanReviewFromJournal,
+  extractSyncJournalOutput,
   spawnSyncVisibleAgents,
 } from '../../.pi/extensions/beads-dispatch/visible-agents'
 
@@ -32,7 +33,7 @@ function resultFileFromTaskFile(taskFile: string): string {
 }
 
 function sessionDirFromPayload(text: string): string | undefined {
-  return text.match(/'--session'\s+'([^']+)'/)?.[1]
+  return text.match(/'--session-dir'\s+'([^']+)'/)?.[1]
 }
 
 function writePlanReviewJournal(sessionDir: string, report: string, thinking = 'secret draft thinking must not leak'): string {
@@ -108,7 +109,8 @@ describe('spawnSyncVisibleAgents', () => {
       splits,
       async closeSurface(surface) { closed.push(surface) },
       async send(_surface, text) {
-        expect(text).toContain('--session')
+        expect(text).toContain('--session-dir')
+        expect(text).not.toMatch(/'--session'/)
         expect(text).not.toContain('--no-session')
         const taskFile = taskFileFromPayload(text)
         if (!taskFile || !fs.existsSync(taskFile)) return
@@ -465,5 +467,86 @@ describe('spawnSyncVisibleAgents', () => {
     expect(results.filter((row) => row.error?.includes('timed out after'))[0]?.role).toBe('plan-dead-zone-reviewer')
     expect(closed.sort()).toEqual(['surface:a1', 'surface:a2'].sort())
     expect(findRegistryByTaskId(results[2]!.taskId)?.entry.status).toBe('spawned')
+  })
+
+  it('spawns with --session-dir and never passes a directory to --session', async () => {
+    const payloads: string[] = []
+    await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async send(_surface, text) {
+          payloads.push(text)
+          const sessionDir = sessionDirFromPayload(text)
+          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [{ role: 'plan-edge-reviewer', task: 'Review plan', systemPrompt: '# e', tools: 'read,grep,find,ls' }],
+    })
+    expect(payloads).toHaveLength(1)
+    expect(payloads[0]).toContain('--session-dir')
+    expect(payloads[0]).not.toMatch(/'--session'/)
+    const sessionDir = sessionDirFromPayload(payloads[0]!)
+    expect(sessionDir).toBeTruthy()
+    expect(fs.statSync(sessionDir!).isDirectory()).toBe(true)
+  })
+
+  it('generic sync delivers last complete assistant text without PLAN REVIEW', async () => {
+    const report = 'Investigation complete.\nNo PLAN REVIEW header here.'
+    const journal = [
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'draft' }, { type: 'toolCall', name: 'read' }] } },
+      { type: 'message', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'draft' }, { type: 'text', text: report }] } },
+    ].map((line) => JSON.stringify(line)).join('\n') + '\n'
+    expect(extractSyncJournalOutput(journal, 'detective')).toBe(report)
+    expect(extractSyncJournalOutput(journal, 'plan-edge-reviewer')).toBeUndefined()
+    const closed: string[] = []
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async closeSurface(surface) { closed.push(surface) },
+        async send(_surface, text) {
+          const sessionDir = sessionDirFromPayload(text)
+          if (!sessionDir) return
+          fs.mkdirSync(sessionDir, { recursive: true })
+          fs.writeFileSync(path.join(sessionDir, 'session.jsonl'), journal)
+          const taskFile = taskFileFromPayload(text)
+          expect(taskFile && fs.readFileSync(taskFile, 'utf8')).toMatch(/WHEN DONE: write your final report to /)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [{ role: 'detective', task: 'Investigate', systemPrompt: '# d', tools: 'read' }],
+    })
+    expect(results[0]?.error).toBeUndefined()
+    expect(results[0]?.output).toBe(report)
+    expect(results[0]?.output).not.toContain('draft')
+    expect(closed).toEqual(['surface:a1'])
+  })
+
+  it('plan-review task body has no WHEN DONE write', async () => {
+    let taskBody = ''
+    await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async send(_surface, text) {
+          const taskFile = taskFileFromPayload(text)
+          if (taskFile && fs.existsSync(taskFile)) taskBody = fs.readFileSync(taskFile, 'utf8')
+          const sessionDir = sessionDirFromPayload(text)
+          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+        },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 2000,
+      sleep: async () => {},
+      agents: [{ role: 'plan-consistency-reviewer', task: 'Review plan', systemPrompt: '# c', tools: 'read,grep,find,ls' }],
+    })
+    expect(taskBody).not.toContain('WHEN DONE')
+    expect(taskBody).toContain('Do not write files')
   })
 })

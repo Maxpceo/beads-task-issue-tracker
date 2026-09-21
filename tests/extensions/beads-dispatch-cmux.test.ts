@@ -173,8 +173,8 @@ describe('visible child argv', () => {
     expect(validateVisibleChildArgv(['pi', '--no-session'])).toEqual(expect.arrayContaining(['missing --append-system-prompt', 'missing --tools']))
   })
 
-  it('fail-closes when neither --no-session nor --session is present', () => {
-    expect(validateVisibleChildArgv(['pi', '--append-system-prompt', 'a.md', '--tools', 'read'])).toEqual(['missing --no-session or throwaway --session dir'])
+  it('fail-closes when neither --no-session nor --session-dir/--session is present', () => {
+    expect(validateVisibleChildArgv(['pi', '--append-system-prompt', 'a.md', '--tools', 'read'])).toEqual(['missing --no-session, throwaway --session-dir, or --session file'])
   })
 
   it('accepts --no-session mode', () => {
@@ -184,10 +184,11 @@ describe('visible child argv', () => {
     expect(argv).toContain('--tools')
   })
 
-  it('accepts throwaway --session dir', () => {
+  it('accepts throwaway --session-dir', () => {
     const argv = buildVisibleChildArgv({ systemPromptFile: 'a.md', taskFile: 't.md', session: { kind: 'session-dir', dir: '/tmp/sess' } })
     expect(validateVisibleChildArgv(argv)).toEqual([])
-    expect(argv).toContain('--session')
+    expect(argv).toContain('--session-dir')
+    expect(argv).not.toContain('--session')
     expect(argv).toContain('/tmp/sess')
   })
 

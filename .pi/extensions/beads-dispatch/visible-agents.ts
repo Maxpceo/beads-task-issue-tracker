@@ -64,11 +64,19 @@ export interface SyncVisibleAgentResult {
 	error?: string;
 }
 
-export function buildSyncVisibleTaskBody(task: string): string {
-	return `${task}
+export function isPlanReviewSyncRole(role: string): boolean {
+	return /^plan-.+-reviewer$/.test(role.trim());
+}
+
+export function buildSyncVisibleTaskBody(task: string, resultFile?: string, planReview = false): string {
+	if (planReview) {
+		return `${task}
 
 Do not ping. Do not write files. Print the final report in this session.
 `;
+	}
+	const writeLine = resultFile ? `WHEN DONE: write your final report to ${resultFile}\n` : "";
+	return `${task}\n\n${writeLine}Do not ping. Child stdout is not delivery.\n`;
 }
 
 export function resolveVisibleCmuxAdapter(exec?: CmuxExec): CmuxAdapter {
@@ -136,7 +144,7 @@ function readResultFile(resultFile: string): string | undefined {
 
 const PLAN_REVIEW_VERDICT_RE = /PLAN REVIEW:\s*(APPROVED|NEEDS_CHANGES|BLOCKED)\b/i;
 
-function assistantTextFromEvent(event: unknown): string | undefined {
+function assistantTextFromEvent(event: unknown, options?: { requireTextOnly?: boolean }): string | undefined {
 	if (!event || typeof event !== "object") return undefined;
 	const rec = event as {
 		type?: string;
@@ -144,27 +152,31 @@ function assistantTextFromEvent(event: unknown): string | undefined {
 	};
 	if (rec.type !== "message_end" && rec.type !== "message") return undefined;
 	if (rec.message?.role !== "assistant") return undefined;
-	const text = rec.message.content
-		?.filter((part) => part.type === "text")
-		.map((part) => part.text ?? "")
-		.join("\n")
-		.trim();
+	const parts = rec.message.content ?? [];
+	if (options?.requireTextOnly && parts.some((part) => part.type === "toolCall" || part.type === "tool_call")) {
+		return undefined;
+	}
+	const text = parts.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n").trim();
 	return text || undefined;
 }
 
 /** Last complete assistant text from headless JSONL stdout or a session journal. */
-export function extractFinalAssistantText(source: string): string {
-	let finalText = "";
+export function extractLastCompleteAssistantText(source: string, options?: { requireTextOnly?: boolean }): string | undefined {
+	let finalText: string | undefined;
 	for (const line of source.split("\n")) {
 		if (!line.trim()) continue;
 		try {
-			const text = assistantTextFromEvent(JSON.parse(line));
+			const text = assistantTextFromEvent(JSON.parse(line), options);
 			if (text) finalText = text;
 		} catch {
-			// Incomplete jsonl is ignored until fallback below.
+			// Incomplete jsonl is ignored.
 		}
 	}
-	return finalText || source;
+	return finalText;
+}
+
+export function extractFinalAssistantText(source: string): string {
+	return extractLastCompleteAssistantText(source) || source;
 }
 
 /** Last complete assistant message that contains a real PLAN REVIEW verdict. */
@@ -180,6 +192,13 @@ export function extractPlanReviewFromJournal(source: string): string | undefined
 		}
 	}
 	return found;
+}
+
+export function extractSyncJournalOutput(source: string, role: string): string | undefined {
+	const planReview = extractPlanReviewFromJournal(source);
+	if (planReview) return planReview;
+	if (isPlanReviewSyncRole(role)) return undefined;
+	return extractLastCompleteAssistantText(source, { requireTextOnly: true });
 }
 
 function readJournalSource(sessionDir: string): string | undefined {
@@ -263,7 +282,8 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 			}
 			const files = persistIsolationFiles(dir, taskId, systemPrompt, "pending");
 			const sessionDir = persistThrowawaySessionDir(dir, taskId);
-			const taskBody = buildSyncVisibleTaskBody(spec.task);
+			const planReview = isPlanReviewSyncRole(spec.role);
+			const taskBody = buildSyncVisibleTaskBody(spec.task, planReview ? undefined : files.resultFile, planReview);
 			fs.writeFileSync(files.taskFile, taskBody);
 			const argv = buildVisibleChildArgv({
 				model: spec.model,
@@ -348,7 +368,7 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				const ageMs = Number.isFinite(createdAtMs) ? now() - createdAtMs : startupGraceMs;
 				const sessionDir = sessionDirs.get(row.taskId);
 				const journal = sessionDir ? readJournalSource(sessionDir) : undefined;
-				const extracted = journal ? extractPlanReviewFromJournal(journal) : undefined;
+				const extracted = journal ? extractSyncJournalOutput(journal, row.role) : undefined;
 				if (extracted) {
 					appendBpazWatchdogTrace(input.worktreePath, {
 						ts: now(),
