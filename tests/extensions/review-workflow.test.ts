@@ -10,6 +10,7 @@ import reviewWorkflowExtension, {
   buildAcceptanceMatrix,
   checksForFiles,
   extractSupervisorArtifact,
+  extractVerificationCommand,
   finalizeVisibleReviewClose,
   isReviewApproved,
   setReviewRuntimeDelegateForTestOverride,
@@ -2994,3 +2995,199 @@ describe('review_bead agent model routing', () => {
     rmSync(cwd, { recursive: true, force: true })
   })
 })
+
+function splitVerificationArgv(command: string): string[] {
+  return command.trim().split(/\s+/).filter(Boolean)
+}
+
+async function execAllowlistFile(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+  try {
+    const stdout = execFileSync(command, args, { encoding: 'utf8' })
+    return { stdout, stderr: '', code: 0 }
+  }
+  catch (error) {
+    const err = error as { stdout?: string; stderr?: string; status?: number | null; message?: string }
+    return {
+      stdout: String(err.stdout ?? ''),
+      stderr: String(err.stderr ?? err.message ?? ''),
+      code: typeof err.status === 'number' ? err.status : 1,
+    }
+  }
+}
+
+describe('s4wj: hop extract keeps .pi path operands',
+  () => {
+    const fixtures: string[] = []
+
+    afterEach(() => {
+      for (const dir of fixtures.splice(0)) {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('1. extracts fjtn-shaped rg with three path operands including both .pi paths',
+      () => {
+        const item = 'rg -n parseExactSafeRemoteDeletionCommand .pi/extensions/beads-policy/index.ts tests/extensions/beads-policy.test.ts .pi/skills/merge-to-main/SKILL.md'
+        const command = extractVerificationCommand(item)
+        expect(command).toBe(item)
+        const argv = splitVerificationArgv(command ?? '')
+        expect(argv).toEqual([
+          'rg',
+          '-n',
+          'parseExactSafeRemoteDeletionCommand',
+          '.pi/extensions/beads-policy/index.ts',
+          'tests/extensions/beads-policy.test.ts',
+          '.pi/skills/merge-to-main/SKILL.md',
+        ])
+        const pathOperands = argv.filter((arg) => arg.includes('/') || arg.startsWith('.'))
+        expect(pathOperands).toEqual([
+          '.pi/extensions/beads-policy/index.ts',
+          'tests/extensions/beads-policy.test.ts',
+          '.pi/skills/merge-to-main/SKILL.md',
+        ])
+      })
+
+    it('2. extracts backtick command with .pi/foo.ts path intact',
+      () => {
+        const command = extractVerificationCommand('proof: `rg -n Foo .pi/foo.ts`')
+        expect(command).toBe('rg -n Foo .pi/foo.ts')
+        expect(splitVerificationArgv(command ?? '')).toContain('.pi/foo.ts')
+      })
+
+    it('3. extracts git diff --check without path operands',
+      () => {
+        expect(extractVerificationCommand('git diff --check')).toBe('git diff --check')
+      })
+
+    it('4. allowlist exec rg against fixture file that contains the symbol PASSes with exit 0',
+      async () => {
+        const fixture = mkdtempSync(join(tmpdir(), 's4wj-rg-pass-'))
+        fixtures.push(fixture)
+        const relativePath = '.pi/extensions/review-workflow/index.ts'
+        const filePath = join(fixture, relativePath)
+        mkdirSync(dirname(filePath), { recursive: true })
+        const symbol = `S4WJ_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        writeFileSync(filePath, `export const marker = '${symbol}'\n`)
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              `- rg -n ${symbol} .pi/extensions/review-workflow/index.ts`,
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: [relativePath],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: fixture,
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return execAllowlistFile(command, args)
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes(symbol))
+        expect(execCalls).toHaveLength(1)
+        expect(execCalls[0]?.command).toBe('rg')
+        expect(execCalls[0]?.args).toContain(join(fixture, relativePath))
+        expect(row?.result).toBe('PASS')
+        expect(row?.evidence).toContain('exit code: 0')
+      })
+
+    it('5. allowlist exec rg against fixture file missing the symbol FAILs with exit !== 0, not NOT RUN',
+      async () => {
+        const fixture = mkdtempSync(join(tmpdir(), 's4wj-rg-fail-'))
+        fixtures.push(fixture)
+        const relativePath = '.pi/extensions/review-workflow/index.ts'
+        const filePath = join(fixture, relativePath)
+        mkdirSync(dirname(filePath), { recursive: true })
+        const symbol = `S4WJ_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        writeFileSync(filePath, 'export const marker = "no-match"\n')
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              `- rg -n ${symbol} .pi/extensions/review-workflow/index.ts`,
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: [relativePath],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: fixture,
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return execAllowlistFile(command, args)
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes(symbol))
+        expect(execCalls).toHaveLength(1)
+        expect(execCalls[0]?.args).toContain(join(fixture, relativePath))
+        expect(row?.result).toBe('FAIL')
+        expect(row?.result).not.toBe('NOT RUN')
+        expect(row?.evidence).toMatch(/exit code: [1-9]/)
+      })
+
+    it('6. rg with shell metacharacters is NOT RUN/unsafe and does not exec',
+      async () => {
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              '- rg -n foo; rm -rf /',
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: '/tmp/s4wj-unsafe-meta',
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return { stdout: 'should-not-run', stderr: '', code: 0 }
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes('rm -rf'))
+        expect(execCalls).toEqual([])
+        expect(row?.result).toBe('NOT RUN')
+        expect(row?.evidence).toMatch(/unsafe/i)
+      })
+
+    it('7. rg with absolute path outside cwd is unsafe/NOT RUN',
+      async () => {
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              '- rg -n foo /etc/passwd',
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: '/tmp/s4wj-unsafe-abs',
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return { stdout: 'should-not-run', stderr: '', code: 0 }
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes('/etc/passwd'))
+        expect(execCalls).toEqual([])
+        expect(row?.result).toBe('NOT RUN')
+        expect(row?.evidence).toMatch(/unsafe/i)
+      })
+
+    it('8. extracts pnpm exec vitest path with dots intact',
+      () => {
+        const item = 'pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot'
+        expect(extractVerificationCommand(item)).toBe(item)
+      })
+  })

@@ -743,10 +743,11 @@ const NON_EXECUTABLE_VERIFICATION_REASON = "N/A: not gate-executable verificatio
 
 type AllowlistExec = (command: string, args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
 
-function extractVerificationCommand(item: string): string | undefined {
+/** Extract a verification command from a bullet: first backtick body, else a leading allowlisted binary through the rest of the item. */
+export function extractVerificationCommand(item: string): string | undefined {
 	const backtick = item.match(/`([^`]+)`/)?.[1]?.trim();
 	if (backtick) return backtick;
-	const leading = item.match(/^\s*((?:pnpm|npx|vitest|cargo|git|rg|grep|bd)\b[^.]*)/i)?.[1]?.trim();
+	const leading = item.match(/^\s*((?:pnpm|npx|vitest|cargo|git|rg|grep|bd)\b.*)/i)?.[1]?.trim();
 	return leading || undefined;
 }
 
