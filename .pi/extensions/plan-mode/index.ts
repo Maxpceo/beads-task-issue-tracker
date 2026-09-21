@@ -24,6 +24,7 @@ import {
 	extractPlanApprovedSummary,
 	extractTodoItems,
 	formatAutopilotCloseReport,
+	isPlanWidgetConfirmMessage,
 	isSafeCommand,
 	markCompletedSteps,
 	type AutopilotCloseReportFacts,
@@ -217,7 +218,7 @@ const WorkflowPlanApprovedParams = {
 const PlanModeCompleteParams = {
 	type: "object",
 	properties: {
-		plan: { type: "string", description: "Final plan text ready for human ready-UI (execute/stay/refine/plan-review). Call only when the plan is complete; do not call after a clarifying question." },
+		plan: { type: "string", description: "Final plan text ready for human ready-UI (execute/stay/refine/plan-review/ask). First complete after entering plan mode opens the widget. Do not call after a clarifying question or while discussionOpen until Maxim confirms." },
 	},
 	required: ["plan"],
 	additionalProperties: false,
@@ -439,6 +440,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let prePlanActiveToolNames: string[] | undefined;
 	/** Set only by plan_mode_complete; gates ready-UI in strict agent_end. */
 	let pendingReadyPlan: string | undefined;
+	/** True after ask/refine/dirty plan-review until a whole-message confirm. */
+	let discussionOpen = false;
 
 	pi.registerEntryRenderer("plan-ready-document", (entry) => {
 		const data = entry.data as { content?: unknown } | undefined;
@@ -1358,9 +1361,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		lastPlanReviewDraftPlan = undefined;
 		todoItems = [];
 		// Auto/autopilot never uses ready-UI; clear any leftover strict pending.
-		if (autoExecute || autopilot) clearPendingReadyPlan();
-		// Reset cycle only on plan-mode off→on (new /plan or first enable). Repeated workflow_plan_mode while already on does not reset.
-		if (!wasEnabled) resetPlanReviewCycleState();
+		if (autoExecute || autopilot) {
+			clearPendingReadyPlan();
+			discussionOpen = false;
+		}
+		// Reset cycle and discussionOpen only on plan-mode off→on (new /plan or first enable).
+		// Repeated workflow_plan_mode while already on does not reset.
+		if (!wasEnabled) {
+			resetPlanReviewCycleState();
+			discussionOpen = false;
+		}
 		pi.setActiveTools(PLAN_MODE_TOOLS);
 		const modeLabel = autopilot ? "Autopilot " : autoExecute ? "Auto " : "";
 		if (ctx.hasUI) ctx.ui.notify(`${modeLabel}Plan mode enabled. Tools: ${PLAN_MODE_TOOLS.join(", ")}`);
@@ -1380,6 +1390,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		lastPlanReviewDraftPlan = undefined;
 		todoItems = [];
 		clearPendingReadyPlan();
+		discussionOpen = false;
 		resetPlanReviewCycleState();
 		const restoredTools = restoreNormalToolSurface();
 		if (ctx.hasUI) ctx.ui.notify(`Plan mode disabled. Full access restored: ${restoredTools.join(", ")}`);
@@ -1410,6 +1421,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			lastPlanReviewResults,
 			lastPlanReviewDraftPlan,
 			pendingReadyPlan,
+			discussionOpen,
 		});
 	}
 
@@ -1529,6 +1541,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		| { kind: "execute-blocked" }
 		| { kind: "stay" }
 		| { kind: "refine" }
+		| { kind: "ask" }
 		| { kind: "cancelled" }
 		| { kind: "findings"; results: PlanReviewResult[]; gate: PlanReviewGateResult }
 		| { kind: "clean-reshow" }
@@ -1553,7 +1566,9 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			case "cancelled":
 				return "Pending снят. Plan mode ON. Продолжать планирование. Не утверждать что кнопка ready-UI ещё впереди.";
 			case "refine":
-				return "Pending снят. Next: ждать текст уточнения.";
+				return "Pending снят. Next: ждать текст уточнения. Не вызывать plan_mode_complete, пока Максим не подтвердит, что вопросы закрыты.";
+			case "ask":
+				return "Pending снят. Next: ждать вопрос в обычном чате. Не вызывать plan_mode_complete, пока Максим не подтвердит, что вопросы закрыты.";
 			case "error":
 				return `Ready-UI упал: ${outcome.message}. Pending cleared. Plan mode ON. Не утверждать что overlay ждёт. Снова plan_mode_complete или продолжить план.`;
 			case "clean-reshow":
@@ -1585,7 +1600,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			"",
 			renderPlanReviewResults(results),
 			"",
-			"Revise the plan. Adjudicate each finding (Accepted findings / Rejected findings), keep Unresolved blockers: none when clear, then call plan_mode_complete({ plan }) again with the revised plan.",
+			"Revise the plan. Adjudicate each finding (Accepted findings / Rejected findings), keep Unresolved blockers: none when clear. Do not call plan_mode_complete until Maxim confirms discussion is closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
 		].join("\n");
 	}
 
@@ -1669,12 +1684,20 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 			if (action === "refine") {
 				clearPendingReadyPlan();
+				discussionOpen = true;
 				persistState();
 				const refinement = await ctx.ui.editor("Уточните план:", "");
 				if (refinement?.trim()) {
 					pi.sendUserMessage(refinement.trim());
 				}
 				return { kind: "refine" };
+			}
+
+			if (action === "ask") {
+				clearPendingReadyPlan();
+				discussionOpen = true;
+				persistState();
+				return { kind: "ask" };
 			}
 
 			if (action === "plan-review") {
@@ -1696,6 +1719,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 				// Dirty: deliver findings to the agent turn; no second select (prevents double run).
 				clearPendingReadyPlan();
+				discussionOpen = true;
 				persistState();
 				const importantCount = countImportantOrCritical(results, gate);
 				const dirtyText = gate.ok
@@ -1848,7 +1872,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		workflowPi.registerTool({
 			name: "plan_mode_complete",
 			label: "Plan Mode Complete",
-			description: "Mark the draft plan as ready for the human ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review). Call only when the plan is complete — never after a clarifying question. Empty/whitespace plan is rejected.",
+			description: "Mark the draft plan as ready for the human ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос). First complete after entering plan mode opens the widget. Never after a clarifying question or while discussionOpen until Maxim confirms. Empty/whitespace plan is rejected.",
 			parameters: PlanModeCompleteParams,
 			renderCall(_args: { plan?: string }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, _context: unknown) {
 				return new Text(
@@ -1887,6 +1911,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					clearPendingReadyPlan();
 					persistState();
 					return toolText("plan_mode_complete noted (auto/autopilot: ready-UI skipped)", { ok: true, pending: false, auto: true });
+				}
+				if (discussionOpen) {
+					persistState();
+					return toolText(
+						"plan_mode_complete blocked: discussion is open. Answer in chat. Call complete only after Maxim confirms questions are closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
+						{ ok: false, error: "discussion is open", pending: false, discussionOpen: true },
+					);
 				}
 				pendingReadyPlan = plan;
 				persistState();
@@ -2412,6 +2443,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 		}
 
+		if (planModeEnabled && discussionOpen && isPlanWidgetConfirmMessage(event.text)) {
+			discussionOpen = false;
+			persistState();
+			// Consume-once flag only; do not swallow the message so the agent can call complete.
+		}
+
 		const workflowIntent = parseWorkflowIntent(event.text);
 		if (shouldAutoClaimAndPlan(workflowIntent)) {
 			const claimed = await claimWorkflowBead(workflowIntent.beadId, ctx);
@@ -2498,8 +2535,8 @@ Restrictions:
 - One recovery exception in plan=strict: a single bd worktree create <absolute-path> --branch <type>/<basename> (canonical task branch; not main/master; not remove/prune/git worktree add). After create, retry workflow_plan_approved with WORKTREE+BRANCH — no second human approval and no workflow_plan_mode off.
 - Other bd mutating commands remain blocked: bd create/update/close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull. workflow_update and setup-worktree stay outside PLAN_MODE_TOOLS.
 
-Ask clarifying questions using the questionnaire tool (one question tool only — do not invent a second question tool).
-When the plan is fully ready for human decision, call plan_mode_complete({ plan }) as the last tool in the turn. Do NOT call plan_mode_complete after a clarifying question. Ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review) appears only after plan_mode_complete; the plan-review button runs critique without approving or starting a supervisor. If the button returns findings, they arrive in the plan_mode_complete tool result — adjudicate Accepted/Rejected findings and call plan_mode_complete again with the revised plan.
+Questions and «объясни» belong in chat. questionnaire is only for a real A/B choice that cannot continue without a pick — never instead of a paragraph.
+The first plan_mode_complete after entering plan mode / «делай план» opens ready-UI immediately. Do not dump the draft plan in chat instead of the widget. Ready-UI: Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос. «Задать вопрос» closes the widget without an editor; wait for the question in normal chat. After ask, refine, or dirty plan-review, discussionOpen is true: do NOT call plan_mode_complete until Maxim confirms with a whole-message allowlist (да / ок / ok / покажи план / вопросы закрыты / можно показывать план). discussionOpen resets when plan mode goes off→on (same moment as the plan-review cycle reset). The plan-review button runs critique without approving or starting a supervisor. If the button returns findings, they arrive in the plan_mode_complete tool result — adjudicate in chat; call plan_mode_complete only after Maxim confirms.
 Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header. Do not write English ## section headings; keep canonical English field-lines (Acceptance:, Files to change:) for gates — ready-UI display rewrites known labels to Russian ##, and dual-write of Russian+English keys is forbidden.
@@ -2700,6 +2737,7 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				lastPlanReviewResults?: PlanReviewResult[];
 				lastPlanReviewDraftPlan?: string;
 				pendingReadyPlan?: string;
+				discussionOpen?: boolean;
 			} }
 			| undefined;
 
@@ -2716,8 +2754,12 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			lastPlanReviewResults = planModeEntry.data.lastPlanReviewResults ?? lastPlanReviewResults;
 			lastPlanReviewDraftPlan = planModeEntry.data.lastPlanReviewDraftPlan ?? lastPlanReviewDraftPlan;
 			pendingReadyPlan = planModeEntry.data.pendingReadyPlan ?? pendingReadyPlan;
+			discussionOpen = planModeEntry.data.discussionOpen ?? discussionOpen;
 			// Auto/autopilot never keeps ready pending across restore.
-			if (autoExecuteEnabled) clearPendingReadyPlan();
+			if (autoExecuteEnabled) {
+				clearPendingReadyPlan();
+				discussionOpen = false;
+			}
 		}
 
 		// On resume: re-scan messages to rebuild completion state
