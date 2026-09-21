@@ -262,9 +262,16 @@ function hasReviewOwnershipEvidence(comments: string, scope: { branch?: string; 
 	return hasScopedDispatchEvidence || legacyStartMatches;
 }
 
-function checksForFiles(files: string[], cwd: string): string[][] {
+function needsAppFrontendSuite(files: string[]): boolean {
+	return files.some((file) => {
+		if (file.startsWith(".pi/") || file.startsWith("tests/extensions/")) return false;
+		return /^(app|tests|i18n)\//.test(file) || /\.(vue|ts)$/.test(file);
+	});
+}
+
+export function checksForFiles(files: string[], cwd: string): string[][] {
 	const checks: string[][] = [];
-	if (files.some((file) => /^(app|tests|i18n)\/|\.(vue|ts)$/.test(file))) {
+	if (needsAppFrontendSuite(files)) {
 		checks.push(["pnpm", "--dir", cwd, "test"]);
 		checks.push(["npx", "--prefix", cwd, "vue-tsc", "--noEmit"]);
 	}
@@ -530,6 +537,16 @@ function normalizeVerificationText(value: string): string {
 		.replace(/--(?:dir|prefix)\s+\S+/g, "")
 		.replace(/\s+/g, " ")
 		.trim();
+}
+
+function isBareFullAppPnpmTest(command: string): boolean {
+	return /^pnpm\s+test$/.test(normalizeVerificationText(command));
+}
+
+function isFocusedVitestOrPnpmCheck(command: string): boolean {
+	const normalized = normalizeVerificationText(command);
+	if (isBareFullAppPnpmTest(command)) return false;
+	return /\bvitest\b/.test(normalized) || /^pnpm\s+test\s+\S/.test(normalized);
 }
 
 function findPassingCheck(checkResults: Array<ReturnType<typeof parseCheckResult>>, predicate: (normalizedCommand: string) => boolean) {
@@ -911,9 +928,13 @@ export async function buildAcceptanceMatrix(params: {
 	const artifactMatrixRows = parseSupervisorArtifactMatrix(evidenceBlock);
 	const hasFailedCheck = checkResults.some((check) => check.result === "FAIL");
 	const hasNotRunCheck = checkResults.some((check) => check.result === "NOT RUN");
+	const focusedVitestPass = checkResults.some((check) => check.result === "PASS" && isFocusedVitestOrPnpmCheck(check.command));
+	const failedChecks = checkResults.filter((check) => check.result === "FAIL");
+	const onlyBareFullSuiteFails = failedChecks.length > 0 && failedChecks.every((check) => isBareFullAppPnpmTest(check.command));
+	const packageFailPaintsAcceptance = hasFailedCheck && !(focusedVitestPass && onlyBareFullSuiteFails);
 	const rows: AcceptanceMatrixRow[] = [];
 	for (const item of acceptanceItems) {
-		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "PASS";
+		const result: AcceptanceMatrixResult = packageFailPaintsAcceptance ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "PASS";
 		const failEvidence = checkResults.find((check) => check.result === "FAIL")?.output ?? "";
 		rows.push({
 			item,
@@ -993,7 +1014,7 @@ export async function buildAcceptanceMatrix(params: {
 		});
 	}
 	if (acceptanceItems.length === 0 && verificationItems.length === 0) {
-		const result: AcceptanceMatrixResult = hasFailedCheck ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "N/A";
+		const result: AcceptanceMatrixResult = packageFailPaintsAcceptance ? "FAIL" : hasNotRunCheck ? "NOT RUN" : "N/A";
 		rows.push({ item: "review_bead approved-path acceptance", evidence: `N/A: no explicit acceptance/verification bullets found and no required verification is applicable; CODE REVIEW: APPROVED; automated check summary: ${evidenceExcerpt(params.automatedChecks.join(" | "))}`, result });
 	}
 	if (params.frontendChecklist.length === 0) {

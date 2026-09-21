@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import reviewWorkflowExtension, {
   buildAcceptanceMatrix,
+  checksForFiles,
   extractSupervisorArtifact,
   finalizeVisibleReviewClose,
   isReviewApproved,
@@ -432,7 +433,7 @@ describe('review_workflow scoped review', () => {
         }
         if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a branch --show-current') return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a rev-parse --show-toplevel') return { stdout: '/repo/worktrees/bead-a\n', stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a diff --name-only aaa1111..bbb2222') return { stdout: 'tests/extensions/review-workflow.test.ts\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a diff --name-only aaa1111..bbb2222') return { stdout: 'tests/utils/issue-helpers.test.ts\n', stderr: '', code: 0 }
         if (command === 'pnpm' && args.join(' ') === '--dir /repo/worktrees/bead-a test') return { stdout: 'tests passed\n', stderr: '', code: 0 }
         if (command === 'npx' && args.join(' ') === '--prefix /repo/worktrees/bead-a vue-tsc --noEmit') return { stdout: '', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
@@ -574,7 +575,7 @@ describe('review_workflow reviewer verdict handling', () => {
         }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} rev-parse --show-toplevel`) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: `${options.changedFiles ?? (options.skipChecks ? 'README.md' : 'tests/extensions/review-workflow.test.ts')}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: `${options.changedFiles ?? (options.skipChecks ? 'README.md' : 'tests/utils/issue-helpers.test.ts')}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.includes('--check')) {
           return options.failGitDiffCheck
             ? { stdout: '', stderr: 'file.md:1: trailing whitespace.\n', code: 2 }
@@ -851,7 +852,7 @@ describe('review_workflow reviewer verdict handling', () => {
     const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
     const matrix = String(matrixCall?.args[3] ?? '')
 
-    expect(matrix).toContain('| Frontend review checklist | N/A: changed files (tests/extensions/review-workflow.test.ts) do not include app/*.vue UI changes. | N/A |')
+    expect(matrix).toContain('| Frontend review checklist | N/A: changed files (tests/utils/issue-helpers.test.ts) do not include app/*.vue UI changes. | N/A |')
     expect(matrix).toContain('| pnpm --dir <worktree> test | command: pnpm --dir')
     expect(matrix).toContain('| PASS |')
   })
@@ -2352,6 +2353,12 @@ describe('review_workflow reviewer verdict handling', () => {
       const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
         changedFiles: '.pi/extensions/review-workflow/index.ts',
         reviewWorkflowRuntimeSource: loadedRuntimeSource,
+        beadDescription: [
+          '### Acceptance criteria',
+          '- Approved review closes only after durable matrix.',
+          '### Verification / acceptance checks',
+          '- Manual review confirms runtime hash matched.',
+        ].join('\n'),
       })
       const comments = execCalls
         .filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
@@ -2376,6 +2383,12 @@ describe('review_workflow reviewer verdict handling', () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
       changedFiles: '.pi/extensions/review-workflow/index.ts',
       reviewWorkflowRuntimeSource: loadedRuntimeSource,
+      beadDescription: [
+        '### Acceptance criteria',
+        '- Approved review closes only after durable matrix.',
+        '### Verification / acceptance checks',
+        '- Manual review confirms runtime hash matched.',
+      ].join('\n'),
     })
     const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add').map((call) => call.args.join(' '))
@@ -2642,6 +2655,135 @@ describe('finalizeVisibleReviewClose', () => {
     expect(result).toMatchObject({ ok: false, status: 'not-approved' })
   })
 })
+
+describe('w5bk hop full-suite matrix', () => {
+  const piExtensionFiles = [
+    '.pi/extensions/review-workflow/index.ts',
+    'tests/extensions/review-workflow.test.ts',
+  ]
+
+  function isBarePnpmDirTest(argv: string[]): boolean {
+    return argv[0] === 'pnpm' && argv.includes('--dir') && argv.at(-1) === 'test' && argv.filter((arg) => arg === 'test').length === 1 && !argv.includes('vitest')
+  }
+
+  function isVueTscCheck(argv: string[]): boolean {
+    return argv.includes('vue-tsc')
+  }
+
+  it('1. checksForFiles for .pi extension + tests/extensions does not require bare pnpm --dir test', () => {
+    const checks = checksForFiles(piExtensionFiles, '/tmp/wt')
+    expect(checks.some(isBarePnpmDirTest)).toBe(false)
+  })
+
+  it('2. the same files do not require vue-tsc as a blocker', () => {
+    const checks = checksForFiles(piExtensionFiles, '/tmp/wt')
+    expect(checks.some(isVueTscCheck)).toBe(false)
+  })
+
+  it('3. checksForFiles for app/pages/*.vue still includes pnpm test + vue-tsc', () => {
+    const checks = checksForFiles(['app/pages/foo.vue'], '/tmp/wt')
+    expect(checks.some(isBarePnpmDirTest)).toBe(true)
+    expect(checks.some(isVueTscCheck)).toBe(true)
+  })
+
+  it('4. prose acceptance is not package FAIL from a full pnpm test when focused vitest PASS', async () => {
+    const comments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: /tmp/worktree',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Verification:',
+      '- `pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot` exit 0',
+      '97 passed',
+      'Artifact status: complete',
+    ].join('\n')
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Acceptance criteria',
+          '- ситуации 1–5 в vitest зелёные после фикса',
+          '- Hop на write-zone только .pi/extensions не делает полный pnpm test обязательным FAIL',
+          '### Verification / acceptance checks',
+          '- pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot',
+        ].join('\n'),
+      },
+      automatedChecks: ['pnpm --dir /tmp/worktree test -> exit 1\nfull suite failed'],
+      frontendChecklist: [],
+      changedFiles: piExtensionFiles,
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: comments },
+      comments,
+    })
+    const prose = matrix.rows.filter((row) => {
+      return row.item.includes('ситуации 1–5') || row.item.includes('Hop на write-zone')
+    })
+    expect(prose.length).toBe(2)
+    expect(prose.every((row) => row.result === 'FAIL')).toBe(false)
+    expect(prose.some((row) => row.result === 'PASS')).toBe(true)
+    const focused = matrix.rows.find((row) => row.item.includes('vitest'))
+    expect(focused?.result).toBe('PASS')
+  })
+
+  it('5. blockingRows still do not write ACCEPTANCE MATRIX in bd', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let status = 'inreview'
+    const comments = [
+      'CODE REVIEW: APPROVED',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      'SUPERVISOR ARTIFACT:',
+      'Artifact status: complete',
+      'Status: DONE',
+    ].join('\n')
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status,
+              description: '### Acceptance criteria\n- hop works\n### Verification / acceptance checks\n- `rg "foo"; rm -rf /` file.md exits 0.',
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: comments, stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') {
+          status = String(args[args.indexOf('--status') + 1] ?? status)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: 'file.md\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/a\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    const result = await finalizeVisibleReviewClose(pi as any, {
+      beadId: 'bead-a',
+      worktreePath: '/tmp/task',
+      startCommit: 'aaa1111',
+      endCommit: 'bbb2222',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe('blocked')
+    expect(result.blockingRows?.length).toBeGreaterThan(0)
+    expect(execCalls.some((call) => call.command === 'bd' && argsIncludesAcceptanceMatrix(call.args))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+  })
+})
+
+function argsIncludesAcceptanceMatrix(args: string[]): boolean {
+  return args[0] === 'comments' && args[1] === 'add' && String(args[3] ?? '').startsWith('ACCEPTANCE MATRIX:')
+}
 
 describe('review-bead visible code-reviewer hop', () => {
   const skill = readFileSync(join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
