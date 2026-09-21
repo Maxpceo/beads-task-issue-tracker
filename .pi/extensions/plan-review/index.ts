@@ -6,6 +6,7 @@ import {
 	resolveAgentModelFromCwd,
 } from "../agent-models/index";
 import {
+	extractFinalAssistantText,
 	resolveVisibleCmuxAdapter,
 	spawnSyncVisibleAgents,
 	type SpawnSyncVisibleAgentsInput,
@@ -197,22 +198,6 @@ export function parsePlanReviewOutput(reviewer: string, raw: string): PlanReview
 	return { reviewer, verdict, findings, unresolvedBlockers, raw };
 }
 
-function extractFinalAssistantText(stdout: string): string {
-	let finalText = "";
-	for (const line of stdout.split("\n")) {
-		if (!line.trim()) continue;
-		try {
-			const event = JSON.parse(line) as { type?: string; message?: { role?: string; content?: Array<{ type?: string; text?: string }> } };
-			if (event.type === "message_end" && event.message?.role === "assistant") {
-				finalText = event.message.content?.filter((part) => part.type === "text").map((part) => part.text ?? "").join("\n") ?? finalText;
-			}
-		} catch {
-			// Non-json output is ignored until fallback below.
-		}
-	}
-	return finalText || stdout;
-}
-
 export function buildPlanReviewTask(draftPlan: string): string {
 	return [
 		"Review this draft plan. Return only the required structured verdict format.",
@@ -261,7 +246,7 @@ export interface RunPlanReviewersOptions {
 	appendEntry?: (customType: string, data: unknown) => void;
 }
 
-const PLAN_REVIEW_VISIBLE_TOOLS = "read,grep,find,ls,write";
+const PLAN_REVIEW_VISIBLE_TOOLS = "read,grep,find,ls";
 
 function planReviewResultFromVisible(reviewer: string, row: SyncVisibleAgentResult): PlanReviewResult {
 	if (row.error && !row.output.trim()) {
