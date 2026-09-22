@@ -11,6 +11,7 @@ import {
 } from '../../.pi/extensions/beads-dispatch/cmux-transport'
 import {
   BPAZ_WATCHDOG_TRACE_RELATIVE_PATH,
+  buildSyncVisibleTaskBody,
   extractPlanReviewFromJournal,
   extractSyncJournalOutput,
   spawnSyncVisibleAgents,
@@ -406,14 +407,14 @@ describe('spawnSyncVisibleAgents', () => {
     expect(extractPlanReviewFromJournal('')).toBeUndefined()
   })
 
-  it('delivers three journal extracts on time and closes those panes', async () => {
+  it('delivers three result files on time and closes those panes', async () => {
     const closed: string[] = []
     const results = await spawnSyncVisibleAgents({
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async send(_surface, text) {
-          const sessionDir = sessionDirFromPayload(text)
-          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+          const taskFile = taskFileFromPayload(text)
+          if (taskFile) fs.writeFileSync(resultFileFromTaskFile(taskFile), approvedReport)
         },
       }),
       worktreePath: tmp,
@@ -434,17 +435,17 @@ describe('spawnSyncVisibleAgents', () => {
     expect(closed.sort()).toEqual(['surface:a1', 'surface:a2', 'surface:a3'].sort())
   })
 
-  it('returns two journal extracts plus one timeout without throwing or closing the missing pane', async () => {
+  it('returns two result files plus one timeout without throwing or closing the missing pane', async () => {
     const closed: string[] = []
     let now = 0
     const results = await spawnSyncVisibleAgents({
       adapter: adapter({
         async closeSurface(surface) { closed.push(surface) },
         async send(_surface, text) {
-          const sessionDir = sessionDirFromPayload(text)
-          if (!sessionDir) return
+          const taskFile = taskFileFromPayload(text)
+          if (!taskFile) return
           if (text.includes('plan-edge-reviewer') || text.includes('plan-consistency-reviewer')) {
-            writePlanReviewJournal(sessionDir, approvedReport)
+            fs.writeFileSync(resultFileFromTaskFile(taskFile), approvedReport)
           }
         },
         async readScreen() { return 'thinking busy' },
@@ -475,8 +476,8 @@ describe('spawnSyncVisibleAgents', () => {
       adapter: adapter({
         async send(_surface, text) {
           payloads.push(text)
-          const sessionDir = sessionDirFromPayload(text)
-          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+          const taskFile = taskFileFromPayload(text)
+          if (taskFile) fs.writeFileSync(resultFileFromTaskFile(taskFile), approvedReport)
         },
       }),
       worktreePath: tmp,
@@ -528,15 +529,18 @@ describe('spawnSyncVisibleAgents', () => {
     expect(closed).toEqual(['surface:a1'])
   })
 
-  it('plan-review task body has no WHEN DONE write', async () => {
+  it('plan-review task body asks to write the full report and does not forbid files', async () => {
     let taskBody = ''
+    let resultPath = ''
     await spawnSyncVisibleAgents({
       adapter: adapter({
         async send(_surface, text) {
           const taskFile = taskFileFromPayload(text)
-          if (taskFile && fs.existsSync(taskFile)) taskBody = fs.readFileSync(taskFile, 'utf8')
-          const sessionDir = sessionDirFromPayload(text)
-          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+          if (taskFile && fs.existsSync(taskFile)) {
+            taskBody = fs.readFileSync(taskFile, 'utf8')
+            resultPath = resultFileFromTaskFile(taskFile)
+            fs.writeFileSync(resultPath, approvedReport)
+          }
         },
       }),
       worktreePath: tmp,
@@ -546,7 +550,32 @@ describe('spawnSyncVisibleAgents', () => {
       sleep: async () => {},
       agents: [{ role: 'plan-consistency-reviewer', task: 'Review plan', systemPrompt: '# c', tools: 'read,grep,find,ls' }],
     })
-    expect(taskBody).not.toContain('WHEN DONE')
-    expect(taskBody).toContain('Do not write files')
+    expect(taskBody).toContain(`WHEN DONE: write your full final report to ${resultPath}`)
+    expect(taskBody).not.toContain('Do not write files')
+    expect(buildSyncVisibleTaskBody('Review plan', '/tmp/out.md', true)).toContain('write your full final report to /tmp/out.md')
+    expect(buildSyncVisibleTaskBody('Investigate', '/tmp/out.md', false)).toContain('write your final report to /tmp/out.md')
+    expect(buildSyncVisibleTaskBody('Investigate', '/tmp/out.md', false)).not.toContain('full final report')
+  })
+
+  it('does not complete plan-review from a journal PLAN REVIEW without a result file', async () => {
+    let now = 0
+    const results = await spawnSyncVisibleAgents({
+      adapter: adapter({
+        async send(_surface, text) {
+          const sessionDir = sessionDirFromPayload(text)
+          if (sessionDir) writePlanReviewJournal(sessionDir, approvedReport)
+        },
+        async readScreen() { return 'thinking busy' },
+      }),
+      worktreePath: tmp,
+      branch: 'feat/x',
+      pollMs: 1,
+      timeoutMs: 10,
+      now: () => now,
+      sleep: async () => { now += 20 },
+      agents: [{ role: 'plan-edge-reviewer', task: 'Review plan', systemPrompt: '# e', tools: 'read' }],
+    })
+    expect(results[0]?.error).toMatch(/timed out after/)
+    expect(results[0]?.output).toBe('')
   })
 })

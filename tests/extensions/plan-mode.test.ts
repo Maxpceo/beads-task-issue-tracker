@@ -1000,6 +1000,8 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(ok.content[0].text).toContain('STOP_SHOW_USER')
     expect(ok.content[0].text).toContain('PLAN REVIEW: APPROVED')
     expect(ok.details).toMatchObject({ ok: true, cycle: 1, stopAdvice: 'STOP_SHOW_USER' })
+    expect(ok.details.results[0]).not.toHaveProperty('raw')
+    expect(ok.details.gate.results[0]).not.toHaveProperty('raw')
     expect(blocked.content[0].text).toContain('HARD_BLOCK')
     expect(blocked.content[0].text).toContain('missing reviewer: plan-dead-zone-reviewer')
     expect(blocked.content[0].text).toContain('blocked reviewer: plan-consistency-reviewer')
@@ -1015,6 +1017,26 @@ describe('Pi plan-mode typed workflow tools', () => {
     expect(source).toEqual(expect.stringContaining('Rejected findings'))
     // Absolute "MUST NOT call" removed; stop prompt documents extraCycle path instead.
     expect(source).not.toMatch(/MUST NOT call workflow_plan_review again this planning session\. Present the current plan.*do not start a third review cycle/s)
+  })
+
+  it('workflow_plan_review details omit raw and keep the report file path', async () => {
+    const tail = 'SECRET FILE TAIL that must not reach the orchestrator context'
+    const { toolHandlers, ctx } = makeHarness()
+    mockPlanReviewResults = ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer'].map((reviewer) => ({
+      reviewer,
+      verdict: 'APPROVED' as const,
+      findings: [{ severity: 'minor' as const, issue: 'none', evidence: 'ok', suggestedFix: 'none' }],
+      unresolvedBlockers: [],
+      raw: `PLAN REVIEW: APPROVED\n${tail}`,
+      resultFile: `/tmp/plan-review-${reviewer}.md`,
+    }))
+    await toolHandlers.get('workflow_plan_mode')?.execute('call-setup', { mode: 'strict' }, undefined, undefined, ctx)
+    const ok = await toolHandlers.get('workflow_plan_review')?.execute('call-review-ok', { draftPlan: 'Plan:\n1. Cut payload.' }, undefined, undefined, ctx)
+    expect(JSON.stringify(ok.details)).not.toContain(tail)
+    expect(ok.content[0].text).not.toContain(tail)
+    expect(ok.details.results[0]).not.toHaveProperty('raw')
+    expect(ok.details.results[0].resultFile).toBe('/tmp/plan-review-plan-edge-reviewer.md')
+    expect(ok.details.gate.results[0]).not.toHaveProperty('raw')
   })
 
   it('workflow_plan_review caps at 2 spawns: clean APPROVED stops without second spawn; important CONTINUE then STOP; empty no increment; third skips spawn', async () => {

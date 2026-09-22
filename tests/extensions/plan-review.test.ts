@@ -15,7 +15,9 @@ import planReviewExtension, {
   hasImportantOrCriticalFindings,
   missingRevisedPlanSections,
   parsePlanReviewOutput,
+  parsePlanReviewFile,
   planReviewStopAdvice,
+  renderPlanReviewResults,
   runPlanReviewers,
   type PlanReviewResult,
 } from '../../.pi/extensions/plan-review/index'
@@ -242,10 +244,10 @@ Risks / rollback:
       '--no-extensions',
       '--no-skills',
       '--no-prompt-templates',
-      '--tools', 'read,grep,find,ls',
+      '--tools', 'read,grep,find,ls,write',
       '--append-system-prompt', '/repo/.pi/agents/plan-edge-reviewer.md',
     ]))
-    expect(calls[0]?.args).not.toEqual(expect.arrayContaining(['edit', 'write', 'bash']))
+    expect(calls[0]?.args).not.toEqual(expect.arrayContaining(['edit', 'bash']))
     expect(results[0]).toMatchObject({ reviewer: 'plan-edge-reviewer', verdict: 'APPROVED' })
   })
 
@@ -324,8 +326,8 @@ Risks / rollback:
     })
 
     expect(spawned).toEqual(['plan-edge-reviewer', 'plan-consistency-reviewer'])
-    expect(tools.every((value) => value === 'read,grep,find,ls')).toBe(true)
-    expect(tools.every((value) => !value?.includes('write'))).toBe(true)
+    expect(tools.every((value) => value === 'read,grep,find,ls,write')).toBe(true)
+    expect(tools.every((value) => value?.includes('write'))).toBe(true)
     expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
     expect(getSharedDashboardState()).toBeNull()
   })
@@ -551,5 +553,108 @@ Risks / rollback:
       const body = fs.readFileSync(path.join(process.cwd(), '.pi', 'agents', `${name}.md`), 'utf8')
       expect(body).toContain('You do not edit files')
     }
+  })
+})
+
+const fixtureHarmlessTail = `PLAN REVIEW: APPROVED
+Findings:
+- severity: minor
+  issue: none
+  evidence: reviewed plan
+  suggested fix: none
+Unresolved blockers: none
+
+Additionally I spent time thinking about naming conventions and whitespace in comments.`
+
+const fixtureProseBlocker = `PLAN REVIEW: APPROVED
+Findings:
+- severity: minor
+  issue: none
+  evidence: reviewed plan
+  suggested fix: none
+Unresolved blockers: none
+
+This plan cannot proceed: нельзя исполнять until Maxim confirms the rollback path.`
+
+const fixtureMultilineEvidence = `PLAN REVIEW: NEEDS_CHANGES
+Findings:
+- severity: important
+  issue: Missing delivery path
+  evidence: The plan says:
+  write to journal only
+  and never persist the report file
+  suggested fix: write the full report to the result file
+Unresolved blockers: none`
+
+const fixtureHeaderVsBody = `PLAN REVIEW: APPROVED
+Findings:
+- severity: minor
+  issue: none
+  evidence: reviewed plan
+  suggested fix: none
+Unresolved blockers: none
+
+The implementation must not execute until the worktree lock is recorded.`
+
+describe('plan-review cutter', () => {
+  it('keeps multiline evidence instead of cutting at the first newline', () => {
+    const result = parsePlanReviewOutput('plan-edge-reviewer', fixtureMultilineEvidence)
+    expect(result.findings[0]?.evidence).toContain('The plan says:')
+    expect(result.findings[0]?.evidence).toContain('write to journal only')
+    expect(result.findings[0]?.evidence).toContain('and never persist the report file')
+    expect(result.verdict).toBe('NEEDS_CHANGES')
+  })
+
+  it('turns a prose нельзя исполнять paragraph into a blocker when Unresolved blockers is none', () => {
+    const result = parsePlanReviewOutput('plan-consistency-reviewer', fixtureProseBlocker)
+    expect(result.unresolvedBlockers.join('\n')).toMatch(/нельзя исполнять/)
+    expect(evaluatePlanReviewGate([
+      result,
+      { reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
+      { reviewer: 'plan-dead-zone-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
+    ]).ok).toBe(false)
+  })
+
+  it('does not give a green gate when the header is APPROVED and the body says must not execute', () => {
+    const result = parsePlanReviewOutput('plan-dead-zone-reviewer', fixtureHeaderVsBody)
+    const gate = evaluatePlanReviewGate([
+      { reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
+      { reviewer: 'plan-consistency-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
+      result,
+    ])
+    expect(result.unresolvedBlockers.join('\n')).toMatch(/must not execute/)
+    expect(gate.ok).toBe(false)
+    expect(planReviewStopAdvice({ cycle: 1, gateOk: gate.ok, hasImportantOrCritical: false })).toBe('HARD_BLOCK')
+  })
+
+  it('does not copy a harmless extra paragraph into the orchestrator summary', () => {
+    const result = parsePlanReviewOutput('plan-edge-reviewer', fixtureHarmlessTail, '/tmp/plan-review-harmless.md')
+    const rendered = renderPlanReviewResults([result])
+    expect(rendered).not.toContain('naming conventions')
+    expect(rendered).toContain('Report file: /tmp/plan-review-harmless.md')
+    expect(result.unresolvedBlockers).toEqual([])
+    expect(result.verdict).toBe('APPROVED')
+    expect(result).not.toHaveProperty('raw')
+  })
+
+  it('blocks empty files, missing PLAN REVIEW, and reports with no parsed findings', () => {
+    expect(parsePlanReviewOutput('plan-edge-reviewer', '').verdict).toBe('BLOCKED')
+    expect(parsePlanReviewOutput('plan-edge-reviewer', 'just prose without a verdict').verdict).toBe('BLOCKED')
+    expect(parsePlanReviewOutput('plan-edge-reviewer', 'PLAN REVIEW: APPROVED\nUnresolved blockers: none').verdict).toBe('BLOCKED')
+  })
+
+  it('parses a result file and does not put the file tail into the rendered summary', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-review-cutter-'))
+    tmpDirs.push(dir)
+    const file = path.join(dir, 'edge.md')
+    const tail = 'SECRET FILE TAIL that must not reach the orchestrator context'
+    fs.writeFileSync(file, `${fixtureMultilineEvidence}\n\n${tail}\n`)
+    const result = parsePlanReviewFile('plan-edge-reviewer', file)
+    const rendered = renderPlanReviewResults([result])
+    expect(result.resultFile).toBe(file)
+    expect(result.findings[0]?.evidence).toContain('never persist the report file')
+    expect(rendered).toContain(`Report file: ${file}`)
+    expect(rendered).not.toContain('SECRET FILE TAIL')
+    expect(result).not.toHaveProperty('raw')
   })
 })
