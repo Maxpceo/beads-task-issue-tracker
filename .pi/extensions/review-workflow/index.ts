@@ -1119,6 +1119,14 @@ export async function finalizeVisibleReviewClose(
 	const endCommit = params.endCommit || findEndCommit(comments) || "HEAD";
 	const changedRaw = (await exec(pi, "git", ["-C", reviewCwd, "diff", "--name-only", `${startCommit}..${endCommit}`])).stdout;
 	const changedFiles = changedRaw.split("\n").map((line) => line.trim()).filter(Boolean);
+	const runtimeHashEvidence = evaluateReviewWorkflowRuntimeHash(changedFiles, reviewCwd);
+	if (runtimeHashEvidence.status === "mismatch" || runtimeHashEvidence.status === "missing") {
+		return {
+			ok: false,
+			status: "missing-evidence",
+			text: runtimeHashEvidence.message,
+		};
+	}
 	const supervisorArtifact = extractSupervisorArtifact(comments);
 	if (supervisorArtifact.status === "insufficient" || supervisorArtifact.status === "missing") {
 		return {

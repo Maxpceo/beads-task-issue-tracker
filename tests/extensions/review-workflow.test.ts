@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -2654,6 +2655,247 @@ describe('finalizeVisibleReviewClose', () => {
     }
     const result = await finalizeVisibleReviewClose(pi as any, { beadId: 'bead-a', worktreePath: '/tmp/task' })
     expect(result).toMatchObject({ ok: false, status: 'not-approved' })
+  })
+})
+
+describe('32an hop stale runtime close', () => {
+  const hopComments = [
+    'CODE REVIEW: APPROVED',
+    'START_COMMIT: aaa1111',
+    'END_COMMIT: bbb2222',
+    'SUPERVISOR ARTIFACT:',
+    'Artifact status: complete',
+    'Verification: exit code 0 observed result pass',
+    'Status: DONE',
+  ].join('\n')
+  const hopDescription = [
+    '### Acceptance criteria',
+    '- hop works',
+    '- focused vitest PASS is enough',
+    '### Verification / acceptance checks',
+    '- pnpm --dir <worktree> test',
+    '- Manual check: hop closed',
+  ].join('\n')
+
+  function writeMismatchWorktree(): { cwd: string; worktreeSha: string; loadedSha: string; cleanup: () => void } {
+    const cwd = mkdtempSync(join(tmpdir(), '32an-hop-mismatch-'))
+    mkdirSync(join(cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
+    writeFileSync(join(cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'), 'stale worktree runtime for 32an hop')
+    const worktreeSha = createHash('sha256').update(readFileSync(join(cwd, '.pi/extensions/review-workflow/index.ts'))).digest('hex')
+    const loadedSha = createHash('sha256').update(readFileSync(join(process.cwd(), '.pi/extensions/review-workflow/index.ts'))).digest('hex')
+    return {
+      cwd,
+      worktreeSha,
+      loadedSha,
+      cleanup: () => rmSync(cwd, { recursive: true, force: true }),
+    }
+  }
+
+  function makeHopPi(options: {
+    worktreePath: string
+    diffStdout: string
+    comments?: string
+    description?: string
+    initialStatus?: string
+  }) {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let status = options.initialStatus ?? 'inreview'
+    const comments = options.comments ?? hopComments
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status,
+              description: options.description ?? hopDescription,
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: comments, stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') {
+          status = String(args[args.indexOf('--status') + 1] ?? status)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'close') {
+          status = 'closed'
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: options.diffStdout, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'fix/32an-hop-stale-runtime-close\n', stderr: '', code: 0 }
+        if (command === 'pnpm') return { stdout: '', stderr: 'stale full suite failed', code: 1 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    return { pi, execCalls, getStatus: () => status }
+  }
+
+  it('situation 1: runtime hash mismatch does not return blocked or stale pnpm FAIL matrix', async () => {
+    const fixture = writeMismatchWorktree()
+    try {
+      const { pi, execCalls, getStatus } = makeHopPi({
+        worktreePath: fixture.cwd,
+        diffStdout: '.pi/extensions/review-workflow/index.ts\napp/pages/foo.vue\n',
+      })
+      const result = await finalizeVisibleReviewClose(pi as any, {
+        beadId: 'bead-a',
+        worktreePath: fixture.cwd,
+        startCommit: 'aaa1111',
+        endCommit: 'bbb2222',
+      })
+      expect(result.ok).toBe(false)
+      expect(result.status).not.toBe('blocked')
+      expect(result.status).not.toBe('closed')
+      expect(result.text).not.toContain('ACCEPTANCE MATRIX would contain')
+      expect(result.text).not.toMatch(/FAIL.*FAIL.*FAIL/s)
+      expect(result.text).not.toContain('stale full suite failed')
+      expect(result.text).toContain('mismatch')
+      expect(result.text).toContain(`loadedRuntimeSha256=${fixture.loadedSha}`)
+      expect(result.text).toContain(`reviewWorktreeSha256=${fixture.worktreeSha}`)
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.includes('--status'))).toBe(false)
+      expect(execCalls.some((call) => call.command === 'pnpm')).toBe(false)
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))).toBe(false)
+      expect(getStatus()).toBe('inreview')
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('situation 2: same mismatch returns missing-evidence, not blocked', async () => {
+    const fixture = writeMismatchWorktree()
+    try {
+      const { pi } = makeHopPi({
+        worktreePath: fixture.cwd,
+        diffStdout: '.pi/extensions/review-workflow/index.ts\n',
+      })
+      const result = await finalizeVisibleReviewClose(pi as any, {
+        beadId: 'bead-a',
+        worktreePath: fixture.cwd,
+        startCommit: 'aaa1111',
+        endCommit: 'bbb2222',
+      })
+      expect(result.status).toBe('missing-evidence')
+      expect(result.status).not.toBe('blocked')
+      expect(result.text).toContain('review-workflow runtime hash guard: mismatch')
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('situation 4: review_bead hash mismatch still does not close on stale parent path', async () => {
+    const fixture = writeMismatchWorktree()
+    const delegateCalls: Array<Record<string, unknown>> = []
+    let registeredTool: any
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let beadStatus = 'inreview'
+    const commentLog: string[] = [
+      `DISPATCH RESULT (test-supervisor)\n\nBRANCH: task/bead-a\nWORKTREE: ${fixture.cwd}\nSTART_COMMIT: aaa1111\nEND_COMMIT: bbb2222`,
+    ]
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'review_bead') registeredTool = tool
+      },
+      registerCommand() {},
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: beadStatus }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: commentLog.join('\n\n'), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') {
+          commentLog.push(String(args[3] ?? ''))
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'update' && args.includes('--status')) {
+          beadStatus = String(args[args.indexOf('--status') + 1] ?? beadStatus)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'close') {
+          beadStatus = 'closed'
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: '.pi/extensions/review-workflow/index.ts\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    try {
+      setReviewRuntimeDelegateForTestOverride(async (params) => {
+        delegateCalls.push({ beadId: params.beadId, worktreePath: params.worktreePath })
+        commentLog.push(`REVIEW RUNTIME: worktree-fresh, sha256=${fixture.worktreeSha}`)
+        beadStatus = 'closed'
+        return { code: 0, stdout: 'child closed', stderr: '', method: 'test-override' }
+      })
+      reviewWorkflowExtension(pi as any)
+      const result = await registeredTool.execute(
+        'call-1',
+        { beadId: 'bead-a', worktreePath: fixture.cwd, startCommit: 'aaa1111', endCommit: 'bbb2222' },
+        undefined,
+        undefined,
+        { cwd: '/repo/main' },
+      )
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update' && call.args.includes('simplified'))).toBe(false)
+      expect(delegateCalls).toHaveLength(1)
+      expect(result.content[0].text).toContain('Parent delegated full review path')
+    } finally {
+      setReviewRuntimeDelegateForTestOverride(null)
+      fixture.cleanup()
+    }
+  })
+
+  it('situation 5: latest NOT APPROVED stays not-approved without hop close', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') return { stdout: JSON.stringify({ id: 'bead-a', status: 'inreview' }), stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'comments') {
+          return { stdout: 'CODE REVIEW: APPROVED\nCODE REVIEW: NOT APPROVED\nSTART_COMMIT: aaa1111', stderr: '', code: 0 }
+        }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    const result = await finalizeVisibleReviewClose(pi as any, { beadId: 'bead-a', worktreePath: '/tmp/task' })
+    expect(result).toMatchObject({ ok: false, status: 'not-approved' })
+    expect(result.text).toContain('NOT APPROVED')
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'update')).toBe(false)
+    expect(execCalls.some((call) => call.command === 'pnpm')).toBe(false)
+  })
+
+  it('matched review-workflow hash still closes the green hop path', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), '32an-hop-matched-'))
+    mkdirSync(join(cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'),
+      readFileSync(join(process.cwd(), '.pi/extensions/review-workflow/index.ts')),
+    )
+    try {
+      const { pi, execCalls, getStatus } = makeHopPi({
+        worktreePath: cwd,
+        diffStdout: '.pi/extensions/review-workflow/index.ts\n',
+        description: '### Acceptance criteria\n- hop works\n### Verification / acceptance checks\n- Manual check: hop closed',
+      })
+      const result = await finalizeVisibleReviewClose(pi as any, {
+        beadId: 'bead-a',
+        worktreePath: cwd,
+        startCommit: 'aaa1111',
+        endCommit: 'bbb2222',
+      })
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe('closed')
+      expect(getStatus()).toBe('closed')
+      expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(true)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })
 
