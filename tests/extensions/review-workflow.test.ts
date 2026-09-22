@@ -3000,18 +3000,17 @@ function splitVerificationArgv(command: string): string[] {
   return command.trim().split(/\s+/).filter(Boolean)
 }
 
-async function execAllowlistFile(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+async function execAllowlistRgFileSearch(_command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+  const pathArg = args.find((arg) => arg.includes('/') || arg.endsWith('.ts') || arg.endsWith('.md'))
+  const pattern = args.find((arg) => !arg.startsWith('-') && arg !== pathArg)
+  if (!pathArg || !pattern) return { stdout: '', stderr: 'missing path or pattern', code: 1 }
   try {
-    const stdout = execFileSync(command, args, { encoding: 'utf8' })
-    return { stdout, stderr: '', code: 0 }
+    const content = readFileSync(pathArg, 'utf8')
+    const ok = content.includes(pattern)
+    return { stdout: ok ? pattern : '', stderr: '', code: ok ? 0 : 1 }
   }
   catch (error) {
-    const err = error as { stdout?: string; stderr?: string; status?: number | null; message?: string }
-    return {
-      stdout: String(err.stdout ?? ''),
-      stderr: String(err.stderr ?? err.message ?? ''),
-      code: typeof err.status === 'number' ? err.status : 1,
-    }
+    return { stdout: '', stderr: String((error as Error).message ?? error), code: 1 }
   }
 }
 
@@ -3084,7 +3083,7 @@ describe('s4wj: hop extract keeps .pi path operands',
           reviewCwd: fixture,
           execAllowlist: async (command, args) => {
             execCalls.push({ command, args })
-            return execAllowlistFile(command, args)
+            return execAllowlistRgFileSearch(command, args)
           },
         })
         const row = matrix.rows.find((entry) => entry.item.includes(symbol))
@@ -3120,7 +3119,7 @@ describe('s4wj: hop extract keeps .pi path operands',
           reviewCwd: fixture,
           execAllowlist: async (command, args) => {
             execCalls.push({ command, args })
-            return execAllowlistFile(command, args)
+            return execAllowlistRgFileSearch(command, args)
           },
         })
         const row = matrix.rows.find((entry) => entry.item.includes(symbol))
