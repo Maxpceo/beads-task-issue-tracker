@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import reviewWorkflowExtension, {
   buildAcceptanceMatrix,
+  checksForFiles,
   extractSupervisorArtifact,
+  extractVerificationCommand,
   finalizeVisibleReviewClose,
   isReviewApproved,
   setReviewRuntimeDelegateForTestOverride,
@@ -432,7 +434,7 @@ describe('review_workflow scoped review', () => {
         }
         if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a branch --show-current') return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a rev-parse --show-toplevel') return { stdout: '/repo/worktrees/bead-a\n', stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a diff --name-only aaa1111..bbb2222') return { stdout: 'tests/extensions/review-workflow.test.ts\n', stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === '-C /repo/worktrees/bead-a diff --name-only aaa1111..bbb2222') return { stdout: 'tests/utils/issue-helpers.test.ts\n', stderr: '', code: 0 }
         if (command === 'pnpm' && args.join(' ') === '--dir /repo/worktrees/bead-a test') return { stdout: 'tests passed\n', stderr: '', code: 0 }
         if (command === 'npx' && args.join(' ') === '--prefix /repo/worktrees/bead-a vue-tsc --noEmit') return { stdout: '', stderr: '', code: 0 }
         return { stdout: '', stderr: '', code: 0 }
@@ -574,7 +576,7 @@ describe('review_workflow reviewer verdict handling', () => {
         }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} branch --show-current`) return { stdout: 'task/bead-a\n', stderr: '', code: 0 }
         if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} rev-parse --show-toplevel`) return { stdout: `${fixture.cwd}\n`, stderr: '', code: 0 }
-        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: `${options.changedFiles ?? (options.skipChecks ? 'README.md' : 'tests/extensions/review-workflow.test.ts')}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.join(' ') === `-C ${fixture.cwd} diff --name-only aaa1111..bbb2222`) return { stdout: `${options.changedFiles ?? (options.skipChecks ? 'README.md' : 'tests/utils/issue-helpers.test.ts')}\n`, stderr: '', code: 0 }
         if (command === 'git' && args.includes('--check')) {
           return options.failGitDiffCheck
             ? { stdout: '', stderr: 'file.md:1: trailing whitespace.\n', code: 2 }
@@ -851,7 +853,7 @@ describe('review_workflow reviewer verdict handling', () => {
     const matrixCall = execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add' && String(call.args[3] ?? '').startsWith('ACCEPTANCE MATRIX:'))
     const matrix = String(matrixCall?.args[3] ?? '')
 
-    expect(matrix).toContain('| Frontend review checklist | N/A: changed files (tests/extensions/review-workflow.test.ts) do not include app/*.vue UI changes. | N/A |')
+    expect(matrix).toContain('| Frontend review checklist | N/A: changed files (tests/utils/issue-helpers.test.ts) do not include app/*.vue UI changes. | N/A |')
     expect(matrix).toContain('| pnpm --dir <worktree> test | command: pnpm --dir')
     expect(matrix).toContain('| PASS |')
   })
@@ -2352,6 +2354,12 @@ describe('review_workflow reviewer verdict handling', () => {
       const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
         changedFiles: '.pi/extensions/review-workflow/index.ts',
         reviewWorkflowRuntimeSource: loadedRuntimeSource,
+        beadDescription: [
+          '### Acceptance criteria',
+          '- Approved review closes only after durable matrix.',
+          '### Verification / acceptance checks',
+          '- Manual review confirms runtime hash matched.',
+        ].join('\n'),
       })
       const comments = execCalls
         .filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
@@ -2376,6 +2384,12 @@ describe('review_workflow reviewer verdict handling', () => {
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
       changedFiles: '.pi/extensions/review-workflow/index.ts',
       reviewWorkflowRuntimeSource: loadedRuntimeSource,
+      beadDescription: [
+        '### Acceptance criteria',
+        '- Approved review closes only after durable matrix.',
+        '### Verification / acceptance checks',
+        '- Manual review confirms runtime hash matched.',
+      ].join('\n'),
     })
     const statusUpdates = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'update').map((call) => call.args.join(' '))
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add').map((call) => call.args.join(' '))
@@ -2643,6 +2657,135 @@ describe('finalizeVisibleReviewClose', () => {
   })
 })
 
+describe('w5bk hop full-suite matrix', () => {
+  const piExtensionFiles = [
+    '.pi/extensions/review-workflow/index.ts',
+    'tests/extensions/review-workflow.test.ts',
+  ]
+
+  function isBarePnpmDirTest(argv: string[]): boolean {
+    return argv[0] === 'pnpm' && argv.includes('--dir') && argv.at(-1) === 'test' && argv.filter((arg) => arg === 'test').length === 1 && !argv.includes('vitest')
+  }
+
+  function isVueTscCheck(argv: string[]): boolean {
+    return argv.includes('vue-tsc')
+  }
+
+  it('1. checksForFiles for .pi extension + tests/extensions does not require bare pnpm --dir test', () => {
+    const checks = checksForFiles(piExtensionFiles, '/tmp/wt')
+    expect(checks.some(isBarePnpmDirTest)).toBe(false)
+  })
+
+  it('2. the same files do not require vue-tsc as a blocker', () => {
+    const checks = checksForFiles(piExtensionFiles, '/tmp/wt')
+    expect(checks.some(isVueTscCheck)).toBe(false)
+  })
+
+  it('3. checksForFiles for app/pages/*.vue still includes pnpm test + vue-tsc', () => {
+    const checks = checksForFiles(['app/pages/foo.vue'], '/tmp/wt')
+    expect(checks.some(isBarePnpmDirTest)).toBe(true)
+    expect(checks.some(isVueTscCheck)).toBe(true)
+  })
+
+  it('4. prose acceptance is not package FAIL from a full pnpm test when focused vitest PASS', async () => {
+    const comments = [
+      'DISPATCH RESULT (test-supervisor)',
+      '',
+      'BRANCH: task/bead-a',
+      'WORKTREE: /tmp/worktree',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      '',
+      'SUPERVISOR ARTIFACT',
+      'Status: DONE',
+      'Verification:',
+      '- `pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot` exit 0',
+      '97 passed',
+      'Artifact status: complete',
+    ].join('\n')
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Acceptance criteria',
+          '- ситуации 1–5 в vitest зелёные после фикса',
+          '- Hop на write-zone только .pi/extensions не делает полный pnpm test обязательным FAIL',
+          '### Verification / acceptance checks',
+          '- pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot',
+        ].join('\n'),
+      },
+      automatedChecks: ['pnpm --dir /tmp/worktree test -> exit 1\nfull suite failed'],
+      frontendChecklist: [],
+      changedFiles: piExtensionFiles,
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: comments },
+      comments,
+    })
+    const prose = matrix.rows.filter((row) => {
+      return row.item.includes('ситуации 1–5') || row.item.includes('Hop на write-zone')
+    })
+    expect(prose.length).toBe(2)
+    expect(prose.every((row) => row.result === 'FAIL')).toBe(false)
+    expect(prose.some((row) => row.result === 'PASS')).toBe(true)
+    const focused = matrix.rows.find((row) => row.item.includes('vitest'))
+    expect(focused?.result).toBe('PASS')
+  })
+
+  it('5. blockingRows still do not write ACCEPTANCE MATRIX in bd', async () => {
+    const execCalls: Array<{ command: string; args: string[] }> = []
+    let status = 'inreview'
+    const comments = [
+      'CODE REVIEW: APPROVED',
+      'START_COMMIT: aaa1111',
+      'END_COMMIT: bbb2222',
+      'SUPERVISOR ARTIFACT:',
+      'Artifact status: complete',
+      'Status: DONE',
+    ].join('\n')
+    const pi = {
+      events: { emit() {} },
+      exec: async (command: string, args: string[]) => {
+        execCalls.push({ command, args })
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: 'bead-a',
+              status,
+              description: '### Acceptance criteria\n- hop works\n### Verification / acceptance checks\n- `rg "foo"; rm -rf /` file.md exits 0.',
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') return { stdout: comments, stderr: '', code: 0 }
+        if (command === 'bd' && args[0] === 'update') {
+          status = String(args[args.indexOf('--status') + 1] ?? status)
+          return { stdout: '', stderr: '', code: 0 }
+        }
+        if (command === 'bd') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('diff')) return { stdout: 'file.md\n', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: 'task/a\n', stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+
+    const result = await finalizeVisibleReviewClose(pi as any, {
+      beadId: 'bead-a',
+      worktreePath: '/tmp/task',
+      startCommit: 'aaa1111',
+      endCommit: 'bbb2222',
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.status).toBe('blocked')
+    expect(result.blockingRows?.length).toBeGreaterThan(0)
+    expect(execCalls.some((call) => call.command === 'bd' && argsIncludesAcceptanceMatrix(call.args))).toBe(false)
+    expect(execCalls.some((call) => call.command === 'bd' && call.args[0] === 'close')).toBe(false)
+  })
+})
+
+function argsIncludesAcceptanceMatrix(args: string[]): boolean {
+  return args[0] === 'comments' && args[1] === 'add' && String(args[3] ?? '').startsWith('ACCEPTANCE MATRIX:')
+}
+
 describe('review-bead visible code-reviewer hop', () => {
   const skill = readFileSync(join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
   const dispatchSkill = readFileSync(join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
@@ -2852,3 +2995,198 @@ describe('review_bead agent model routing', () => {
     rmSync(cwd, { recursive: true, force: true })
   })
 })
+
+function splitVerificationArgv(command: string): string[] {
+  return command.trim().split(/\s+/).filter(Boolean)
+}
+
+async function execAllowlistRgFileSearch(_command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+  const pathArg = args.find((arg) => arg.includes('/') || arg.endsWith('.ts') || arg.endsWith('.md'))
+  const pattern = args.find((arg) => !arg.startsWith('-') && arg !== pathArg)
+  if (!pathArg || !pattern) return { stdout: '', stderr: 'missing path or pattern', code: 1 }
+  try {
+    const content = readFileSync(pathArg, 'utf8')
+    const ok = content.includes(pattern)
+    return { stdout: ok ? pattern : '', stderr: '', code: ok ? 0 : 1 }
+  }
+  catch (error) {
+    return { stdout: '', stderr: String((error as Error).message ?? error), code: 1 }
+  }
+}
+
+describe('s4wj: hop extract keeps .pi path operands',
+  () => {
+    const fixtures: string[] = []
+
+    afterEach(() => {
+      for (const dir of fixtures.splice(0)) {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    it('1. extracts fjtn-shaped rg with three path operands including both .pi paths',
+      () => {
+        const item = 'rg -n parseExactSafeRemoteDeletionCommand .pi/extensions/beads-policy/index.ts tests/extensions/beads-policy.test.ts .pi/skills/merge-to-main/SKILL.md'
+        const command = extractVerificationCommand(item)
+        expect(command).toBe(item)
+        const argv = splitVerificationArgv(command ?? '')
+        expect(argv).toEqual([
+          'rg',
+          '-n',
+          'parseExactSafeRemoteDeletionCommand',
+          '.pi/extensions/beads-policy/index.ts',
+          'tests/extensions/beads-policy.test.ts',
+          '.pi/skills/merge-to-main/SKILL.md',
+        ])
+        const pathOperands = argv.filter((arg) => arg.includes('/') || arg.startsWith('.'))
+        expect(pathOperands).toEqual([
+          '.pi/extensions/beads-policy/index.ts',
+          'tests/extensions/beads-policy.test.ts',
+          '.pi/skills/merge-to-main/SKILL.md',
+        ])
+      })
+
+    it('2. extracts backtick command with .pi/foo.ts path intact',
+      () => {
+        const command = extractVerificationCommand('proof: `rg -n Foo .pi/foo.ts`')
+        expect(command).toBe('rg -n Foo .pi/foo.ts')
+        expect(splitVerificationArgv(command ?? '')).toContain('.pi/foo.ts')
+      })
+
+    it('3. extracts git diff --check without path operands',
+      () => {
+        expect(extractVerificationCommand('git diff --check')).toBe('git diff --check')
+      })
+
+    it('4. allowlist exec rg against fixture file that contains the symbol PASSes with exit 0',
+      async () => {
+        const fixture = mkdtempSync(join(tmpdir(), 's4wj-rg-pass-'))
+        fixtures.push(fixture)
+        const relativePath = '.pi/extensions/review-workflow/index.ts'
+        const filePath = join(fixture, relativePath)
+        mkdirSync(dirname(filePath), { recursive: true })
+        const symbol = `S4WJ_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        writeFileSync(filePath, `export const marker = '${symbol}'\n`)
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              `- rg -n ${symbol} .pi/extensions/review-workflow/index.ts`,
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: [relativePath],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: fixture,
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return execAllowlistRgFileSearch(command, args)
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes(symbol))
+        expect(execCalls).toHaveLength(1)
+        expect(execCalls[0]?.command).toBe('rg')
+        expect(execCalls[0]?.args).toContain(join(fixture, relativePath))
+        expect(row?.result).toBe('PASS')
+        expect(row?.evidence).toContain('exit code: 0')
+      })
+
+    it('5. allowlist exec rg against fixture file missing the symbol FAILs with exit !== 0, not NOT RUN',
+      async () => {
+        const fixture = mkdtempSync(join(tmpdir(), 's4wj-rg-fail-'))
+        fixtures.push(fixture)
+        const relativePath = '.pi/extensions/review-workflow/index.ts'
+        const filePath = join(fixture, relativePath)
+        mkdirSync(dirname(filePath), { recursive: true })
+        const symbol = `S4WJ_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        writeFileSync(filePath, 'export const marker = "no-match"\n')
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              `- rg -n ${symbol} .pi/extensions/review-workflow/index.ts`,
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: [relativePath],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: fixture,
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return execAllowlistRgFileSearch(command, args)
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes(symbol))
+        expect(execCalls).toHaveLength(1)
+        expect(execCalls[0]?.args).toContain(join(fixture, relativePath))
+        expect(row?.result).toBe('FAIL')
+        expect(row?.result).not.toBe('NOT RUN')
+        expect(row?.evidence).toMatch(/exit code: [1-9]/)
+      })
+
+    it('6. rg with shell metacharacters is NOT RUN/unsafe and does not exec',
+      async () => {
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              '- rg -n foo; rm -rf /',
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: '/tmp/s4wj-unsafe-meta',
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return { stdout: 'should-not-run', stderr: '', code: 0 }
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes('rm -rf'))
+        expect(execCalls).toEqual([])
+        expect(row?.result).toBe('NOT RUN')
+        expect(row?.evidence).toMatch(/unsafe/i)
+      })
+
+    it('7. rg with absolute path outside cwd is unsafe/NOT RUN',
+      async () => {
+        const execCalls: Array<{ command: string; args: string[] }> = []
+        const matrix = await buildAcceptanceMatrix({
+          bead: {
+            description: [
+              '### Verification / acceptance checks',
+              '- rg -n foo /etc/passwd',
+            ].join('\n'),
+          },
+          automatedChecks: [],
+          frontendChecklist: [],
+          changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+          supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+          comments: '',
+          reviewCwd: '/tmp/s4wj-unsafe-abs',
+          execAllowlist: async (command, args) => {
+            execCalls.push({ command, args })
+            return { stdout: 'should-not-run', stderr: '', code: 0 }
+          },
+        })
+        const row = matrix.rows.find((entry) => entry.item.includes('/etc/passwd'))
+        expect(execCalls).toEqual([])
+        expect(row?.result).toBe('NOT RUN')
+        expect(row?.evidence).toMatch(/unsafe/i)
+      })
+
+    it('8. extracts pnpm exec vitest path with dots intact',
+      () => {
+        const item = 'pnpm exec vitest run tests/extensions/review-workflow.test.ts --reporter dot'
+        expect(extractVerificationCommand(item)).toBe(item)
+      })
+  })

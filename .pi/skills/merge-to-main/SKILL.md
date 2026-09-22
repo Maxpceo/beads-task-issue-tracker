@@ -136,6 +136,11 @@ EOF
       # Final deletion with literal observed values only; do not use $BRANCH or $BRANCH_OID in this git push.
       git push --force-with-lease=refs/heads/fix/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/fix/example-branch
       ```
+      The documented example remains the bare five-token `git push --force-with-lease=… origin :refs/heads/…` form. If the process cwd is not already the feature worktree (Pi bash does not keep cwd across tool calls), the only allowed wrapper is this exact prefix plus the same five-token deletion — one unquoted or quoted absolute POSIX path, no `cd` flags:
+      ```bash
+      cd /absolute/path/to/feature-worktree && git push --force-with-lease=refs/heads/fix/example-branch:0123456789abcdef0123456789abcdef01234567 origin :refs/heads/fix/example-branch
+      ```
+      Do **not** use `git -C`, `env -C`, path-qualified git, extra flags, relative `cd`, `cd -P`, `;` / `||` / extra `&&` / pipes, `bash -c`, or `$BRANCH` / `$BRANCH_OID` in the final push.
       Replace `fix/example-branch` and `0123456789abcdef0123456789abcdef01234567` in the final `git push` with the exact branch name and branch OID observed above. Stop instead of deletion if any condition is false: `BRANCH` is not the active session branch, branch does not use a canonical Pi branch prefix (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`, or `task`), branch is missing on `origin`, `origin/main` is missing, local objects missing (fetch-first), branch OID is not an ancestor of main OID, lease OID does not match fresh `git ls-remote` output, merge-slot evidence is not currently held/observable, more than one deletion target would be pushed, wrappers/chdir-style git/path-qualified git/extra flags would be required, or the target is protected/unsafe (`main`, `master`, or non-canonical prefix).
 
     **Immediately after remote delete success or already-gone empty ls-remote**, from the still-existing feature worktree:
