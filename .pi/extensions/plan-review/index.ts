@@ -178,24 +178,125 @@ function normalizeListValue(value: string): string[] {
 		.filter(Boolean);
 }
 
-export function parsePlanReviewOutput(reviewer: string, raw: string): PlanReviewResult {
-	const verdictMatch = raw.match(/PLAN REVIEW:\s*(APPROVED|NEEDS_CHANGES|BLOCKED)/i);
-	const verdict = (verdictMatch?.[1]?.toUpperCase() ?? "BLOCKED") as PlanReviewVerdict;
-	const unresolvedMatch = raw.match(/Unresolved blockers:\s*([^\n]*(?:\n\s*[-*]\s+[^\n]+)*)/i);
-	const unresolvedBlockers = normalizeListValue(unresolvedMatch?.[1] ?? "none");
+const LEFTOVER_DECISION_RE = /PLAN REVIEW:\s*(APPROVED|NEEDS_CHANGES|BLOCKED)|нельзя исполнять|не исполнять|must not execute|do not execute|cannot execute|should not execute|\bBLOCKED\b|unresolved blocker|\bcritical\b|\bimportant\b/i;
+
+function parseFindingsBlock(block: string): PlanReviewFinding[] {
 	const findings: PlanReviewFinding[] = [];
-	const findingPattern = /severity:\s*(critical|important|minor)[\s\S]*?issue:\s*([^\n]+)[\s\S]*?evidence:\s*([^\n]+)[\s\S]*?suggested fix:\s*([^\n]+)/gi;
-	for (const match of raw.matchAll(findingPattern)) {
-		const [, severity, issue, evidence, suggestedFix] = match;
-		if (!severity || !issue || !evidence || !suggestedFix) continue;
-		findings.push({
-			severity: severity.toLowerCase() as PlanReviewSeverity,
-			issue: issue.trim(),
-			evidence: evidence.trim(),
-			suggestedFix: suggestedFix.trim(),
-		});
+	let current: Partial<PlanReviewFinding> & { severity?: PlanReviewSeverity } | undefined;
+	let currentField: "issue" | "evidence" | "suggestedFix" | undefined;
+
+	const flush = () => {
+		if (!current) return;
+		const severity = current.severity;
+		if (
+			(severity === "critical" || severity === "important" || severity === "minor")
+			&& current.issue
+			&& current.evidence
+			&& current.suggestedFix
+		) {
+			findings.push({
+				severity,
+				issue: current.issue.trim(),
+				evidence: current.evidence.trim(),
+				suggestedFix: current.suggestedFix.trim(),
+			});
+		}
+		current = undefined;
+		currentField = undefined;
+	};
+
+	for (const line of block.replace(/\r\n/g, "\n").split("\n")) {
+		const severityLine = line.match(/^\s*-?\s*severity:\s*(critical|important|minor)\s*$/i);
+		if (severityLine) {
+			flush();
+			current = { severity: severityLine[1]!.toLowerCase() as PlanReviewSeverity };
+			continue;
+		}
+		const field = line.match(/^\s*(issue|evidence|suggested fix):\s*(.*)$/i);
+		if (field && current) {
+			const name = field[1]!.toLowerCase();
+			currentField = name === "suggested fix" ? "suggestedFix" : name === "issue" ? "issue" : "evidence";
+			current[currentField] = field[2] ?? "";
+			continue;
+		}
+		if (current && currentField) {
+			current[currentField] = `${current[currentField] ?? ""}\n${line.replace(/^\s{0,2}/, "")}`;
+		}
 	}
-	return { reviewer, verdict, findings, unresolvedBlockers, raw };
+	flush();
+	return findings;
+}
+
+function leftoverOutsideTemplate(raw: string): string {
+	const text = raw.replace(/\r\n/g, "\n");
+	const spans: Array<[number, number]> = [];
+	const verdict = /PLAN REVIEW:\s*(APPROVED|NEEDS_CHANGES|BLOCKED)\b/i.exec(text);
+	if (verdict && verdict.index !== undefined) {
+		spans.push([verdict.index, verdict.index + verdict[0].length]);
+	}
+	const findingsHeader = /^\s*Findings:\s*$/im.exec(text);
+	const blockersHeader = /^\s*Unresolved blockers:/im.exec(text);
+	if (
+		findingsHeader && findingsHeader.index !== undefined
+		&& blockersHeader && blockersHeader.index !== undefined
+		&& blockersHeader.index > findingsHeader.index
+	) {
+		spans.push([findingsHeader.index, blockersHeader.index]);
+	}
+	if (blockersHeader && blockersHeader.index !== undefined) {
+		const rest = text.slice(blockersHeader.index);
+		const block = rest.match(/^\s*Unresolved blockers:\s*([^\n]*(?:\n\s*[-*]\s+[^\n]+)*)/i);
+		if (block) spans.push([blockersHeader.index, blockersHeader.index + block[0].length]);
+	}
+	spans.sort((a, b) => a[0] - b[0]);
+	let out = "";
+	let pos = 0;
+	for (const [start, end] of spans) {
+		if (start > pos) out += text.slice(pos, start);
+		pos = Math.max(pos, end);
+	}
+	out += text.slice(pos);
+	return out.trim();
+}
+
+function leftoverDecisionQuote(leftover: string): string | undefined {
+	const match = leftover.match(LEFTOVER_DECISION_RE);
+	if (!match || match.index === undefined) return undefined;
+	const line = leftover.split("\n").find((row) => LEFTOVER_DECISION_RE.test(row)) ?? leftover;
+	const quote = line.trim();
+	return quote.length > 240 ? `${quote.slice(0, 240)}…` : quote;
+}
+
+export function parsePlanReviewOutput(reviewer: string, raw: string): PlanReviewResult {
+	const text = raw ?? "";
+	if (!text.trim()) {
+		return {
+			reviewer,
+			verdict: "BLOCKED",
+			findings: [],
+			unresolvedBlockers: ["empty report"],
+			raw: text,
+		};
+	}
+	const verdictMatch = text.match(/PLAN REVIEW:\s*(APPROVED|NEEDS_CHANGES|BLOCKED)\b/i);
+	let verdict = (verdictMatch?.[1]?.toUpperCase() ?? "BLOCKED") as PlanReviewVerdict;
+	const unresolvedMatch = text.match(/Unresolved blockers:\s*([^\n]*(?:\n\s*[-*]\s+[^\n]+)*)/i);
+	const unresolvedBlockers = normalizeListValue(unresolvedMatch?.[1] ?? "none");
+	const findingsHeader = /^\s*Findings:\s*$/im.exec(text);
+	const blockersHeader = /^\s*Unresolved blockers:/im.exec(text);
+	const findingsBlock = findingsHeader && findingsHeader.index !== undefined
+		? text.slice(findingsHeader.index, blockersHeader && blockersHeader.index !== undefined ? blockersHeader.index : undefined)
+		: text;
+	const findings = parseFindingsBlock(findingsBlock);
+	const leftover = leftoverOutsideTemplate(text);
+	const leftoverQuote = leftoverDecisionQuote(leftover);
+	if (leftoverQuote) unresolvedBlockers.push(`leftover decision: ${leftoverQuote}`);
+	if (!verdictMatch || findings.length === 0) {
+		verdict = "BLOCKED";
+		if (!verdictMatch) unresolvedBlockers.push("missing PLAN REVIEW verdict");
+		if (findings.length === 0) unresolvedBlockers.push("no parsed findings");
+	}
+	return { reviewer, verdict, findings, unresolvedBlockers, raw: text };
 }
 
 export function buildPlanReviewTask(draftPlan: string): string {
