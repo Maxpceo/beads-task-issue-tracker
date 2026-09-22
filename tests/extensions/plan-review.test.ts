@@ -609,16 +609,16 @@ describe('plan-review cutter', () => {
     expect(result.unresolvedBlockers.join('\n')).toMatch(/нельзя исполнять/)
     expect(evaluatePlanReviewGate([
       result,
-      { reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
-      { reviewer: 'plan-dead-zone-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
+      { reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [], raw: 'ok' },
+      { reviewer: 'plan-dead-zone-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [], raw: 'ok' },
     ]).ok).toBe(false)
   })
 
   it('does not give a green gate when the header is APPROVED and the body says must not execute', () => {
     const result = parsePlanReviewOutput('plan-dead-zone-reviewer', fixtureHeaderVsBody)
     const gate = evaluatePlanReviewGate([
-      { reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
-      { reviewer: 'plan-consistency-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [] },
+      { reviewer: 'plan-edge-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [], raw: 'ok' },
+      { reviewer: 'plan-consistency-reviewer', verdict: 'APPROVED', findings: [{ severity: 'minor', issue: 'none', evidence: 'ok', suggestedFix: 'none' }], unresolvedBlockers: [], raw: 'ok' },
       result,
     ])
     expect(result.unresolvedBlockers.join('\n')).toMatch(/must not execute/)
