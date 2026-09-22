@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Pi hop close no longer paints a stale grey acceptance matrix** (`beads-task-issue-tracker-32an`): `finalizeVisibleReviewClose` compares the loaded review-workflow runtime hash with the task worktree file before status changes or checks. A mismatch or unreadable file returns `missing-evidence` (orchestrator wake) instead of running the stale suite and marking every acceptance item FAIL. Real grey matrices still stop without a wake. Focused vitest under `tests/extensions/review-workflow.test.ts` and `tests/extensions/plan-mode.test.ts`.
+
 - **Pi ready-UI no longer hides the plan decision behind a post-click «жду решения» message** (`beads-task-issue-tracker-jxna`): `plan_mode_complete` appends a `plan-ready-choice` legend (`READY_ACTIONS` labels) before overlay/select, returns exclusive execute next-actions (`fastPath` vs `dispatched`/`alreadySpawned` vs `continuation-blocked` vs `execute-blocked`) instead of a generic cleared result, and the orchestrator contract forbids `## Дальше` «жду решения» after a successful TUI complete. Clean re-show does not duplicate the legend; leftover restart still appends. Focused vitest under `tests/extensions/plan-mode.test.ts`.
 
 - **Pi post-approve continuation classifies dispatch readiness separately from worktree scope** (`beads-task-issue-tracker-r7yw`): `dispatch_supervisor readiness не пройдена` now writes `BLOCKED: dispatch readiness` with the original error as Reason (canonical `Acceptance:` recovery when fields are missing; otherwise retry dispatch without a new approval comment) instead of a false `BLOCKED: task worktree scope`. Live-pane alreadySpawned-skip and real worktree-scope BLOCKED stay unchanged. Focused vitest under `tests/extensions/plan-mode.test.ts`.
