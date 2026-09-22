@@ -157,4 +157,4 @@ Recoverable continue: one `Recovery:` line, then keep going.
 
 ## Final report
 
-`##` что случилось + название задачи + (`id`). `## Проверка` — only tests/commands that actually ran (files + passed/exit). NOT APPROVED keeps `## Дальше`. Do not dump Guard/Simplify/ACCEPTANCE MATRIX rows into chat.
+`##` что случилось + название задачи + (`id`). Если финальный коммит не предок `main`, до `## Проверка` обязательна секция `## Не в main`: worktree basename, коммит, в `main` файлов нет, pull request нет или номер невлитого PR. Не объяснять, что такое worktree. Если уже в `main`: одна строка «В `main` есть, pull request #N, коммит `<sha>`.» Затем `## Проверка` — only tests/commands that actually ran (files + passed/exit). Если не в `main`, после проверки обязателен `## Дальше`: 1. Смержить worktree в `main`. 2. Оставить worktree как есть. 3. Только отправить ветку на GitHub, без merge. Без «нужна фраза» / «сам не начну». NOT APPROVED keeps `## Дальше`. Do not dump Guard/Simplify/ACCEPTANCE MATRIX rows into chat.
