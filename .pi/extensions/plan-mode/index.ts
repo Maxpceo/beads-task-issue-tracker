@@ -264,17 +264,6 @@ function toolText(text: string, details: Record<string, unknown> = {}) {
 	return { content: [{ type: "text", text }], details };
 }
 
-function omitPlanReviewRaw(results: PlanReviewResult[]): PlanReviewResult[] {
-	return results.map((result) => {
-		const { raw: _raw, ...rest } = result;
-		return rest;
-	});
-}
-
-function publicPlanReviewGate(gate: PlanReviewGateResult): PlanReviewGateResult {
-	return { ...gate, results: omitPlanReviewRaw(gate.results) };
-}
-
 function normalizedToolCallName(toolName: string | undefined): string {
 	return (toolName ?? "").split(".").at(-1)?.trim() ?? "";
 }
@@ -1186,8 +1175,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const skipForTotal = planReviewTotalCapReached() && !(extraCycle && requestedBy === "maxim");
 		const skipForAuto = planReviewAutoCapReached() && !extraCycle;
 		if (skipForTotal || skipForAuto) {
-			const results = omitPlanReviewRaw(lastPlanReviewResults);
-			const gate = publicPlanReviewGate(evaluatePlanReviewGate(results));
+			const results = lastPlanReviewResults;
+			const gate = evaluatePlanReviewGate(results);
 			const advice: PlanReviewStopAdvice = "STOP_SHOW_USER";
 			lastPlanReviewStopAdvice = advice;
 			applyPlanReviewAdvice(advice);
@@ -1257,14 +1246,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			advice = "STOP_SHOW_USER";
 		}
 		lastPlanReviewStopAdvice = advice;
-		lastPlanReviewResults = omitPlanReviewRaw(results);
+		lastPlanReviewResults = results;
 		lastPlanReviewDraftPlan = draftPlan;
 		applyPlanReviewAdvice(advice);
 		persistState();
 
-		const publicResults = lastPlanReviewResults;
-		const publicGate = publicPlanReviewGate(gate);
-		const renderedResults = renderPlanReviewResults(publicResults);
+		const renderedResults = renderPlanReviewResults(results);
 		return toolText(
 			buildPlanReviewToolText({
 				advice,
@@ -1273,14 +1260,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				gateOk: gate.ok,
 				renderedResults,
 				reasons: gate.ok ? undefined : gate.reasons,
-				results: publicResults,
+				results,
 				extraCycle: usedExtra,
 				requestedBy,
 			}),
 			{
 				ok: gate.ok,
-				gate: publicGate,
-				results: publicResults,
+				gate,
+				results,
 				cycle,
 				risk,
 				stopAdvice: advice,
@@ -1640,8 +1627,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 		const gate = evaluatePlanReviewGate(results);
 		lastPlanReviewDraftPlan = draftPlan;
-		lastPlanReviewResults = omitPlanReviewRaw(results);
-		autoPlanReviewResults = lastPlanReviewResults;
+		lastPlanReviewResults = results;
+		autoPlanReviewResults = results;
 		const advice = planReviewStopAdvice({
 			cycle: Math.max(planReviewCycleCount, 1),
 			gateOk: gate.ok,
@@ -1916,7 +1903,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 						pending: false,
 						cachedHardBlock: true,
 						stopAdvice: "HARD_BLOCK",
-						results: omitPlanReviewRaw(lastPlanReviewResults),
+						results: lastPlanReviewResults,
 					});
 				}
 				if (autoExecuteEnabled) {
@@ -1944,8 +1931,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 							ok: false,
 							pending: false,
 							findings: true,
-							gate: publicPlanReviewGate(outcome.gate),
-							results: omitPlanReviewRaw(outcome.results),
+							gate: outcome.gate,
+							results: outcome.results,
 							outcome: outcome.kind,
 						});
 					}
@@ -2077,8 +2064,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	async function requestRevisionAfterPlanReview(ctx: ExtensionContext, draftPlan: string): Promise<void> {
 		const results = await runReviewGateForPlan(ctx, draftPlan);
 		const gate = evaluatePlanReviewGate(results);
-		autoPlanReviewResults = omitPlanReviewRaw(results);
-		lastPlanReviewResults = autoPlanReviewResults;
+		autoPlanReviewResults = results;
+		lastPlanReviewResults = results;
 		lastPlanReviewDraftPlan = draftPlan;
 		if (!gate.ok) {
 			autoPlanReviewState = "blocked";
@@ -2123,8 +2110,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		const results = await runReviewGateForPlan(ctx, draftPlan);
 		const gate = evaluatePlanReviewGate(results);
 		lastPlanReviewDraftPlan = draftPlan;
-		lastPlanReviewResults = omitPlanReviewRaw(results);
-		autoPlanReviewResults = lastPlanReviewResults;
+		lastPlanReviewResults = results;
+		autoPlanReviewResults = results;
 		const advice = planReviewStopAdvice({
 			cycle: Math.max(planReviewCycleCount, 1),
 			gateOk: gate.ok,

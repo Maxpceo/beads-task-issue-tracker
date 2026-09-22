@@ -61,7 +61,6 @@ export interface SyncVisibleAgentResult {
 	taskId: string;
 	pane: string;
 	output: string;
-	resultFile?: string;
 	error?: string;
 }
 
@@ -70,11 +69,13 @@ export function isPlanReviewSyncRole(role: string): boolean {
 }
 
 export function buildSyncVisibleTaskBody(task: string, resultFile?: string, planReview = false): string {
-	const writeLine = resultFile
-		? (planReview
-			? `WHEN DONE: write your full final report to ${resultFile}\n`
-			: `WHEN DONE: write your final report to ${resultFile}\n`)
-		: "";
+	if (planReview) {
+		return `${task}
+
+Do not ping. Do not write files. Print the final report in this session.
+`;
+	}
+	const writeLine = resultFile ? `WHEN DONE: write your final report to ${resultFile}\n` : "";
 	return `${task}\n\n${writeLine}Do not ping. Child stdout is not delivery.\n`;
 }
 
@@ -282,7 +283,7 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 			const files = persistIsolationFiles(dir, taskId, systemPrompt, "pending");
 			const sessionDir = persistThrowawaySessionDir(dir, taskId);
 			const planReview = isPlanReviewSyncRole(spec.role);
-			const taskBody = buildSyncVisibleTaskBody(spec.task, files.resultFile, planReview);
+			const taskBody = buildSyncVisibleTaskBody(spec.task, planReview ? undefined : files.resultFile, planReview);
 			fs.writeFileSync(files.taskFile, taskBody);
 			const argv = buildVisibleChildArgv({
 				model: spec.model,
@@ -344,7 +345,7 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 			saveRegistry(registryFile, registry);
 			spawned.push(entry);
 			sessionDirs.set(taskId, sessionDir);
-			results.push({ role: spec.role, taskId, pane: surface, output: "", resultFile: files.resultFile });
+			results.push({ role: spec.role, taskId, pane: surface, output: "" });
 		}
 
 		const startedAt = now();
@@ -366,26 +367,23 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 				const createdAtMs = Date.parse(entry.createdAt);
 				const ageMs = Number.isFinite(createdAtMs) ? now() - createdAtMs : startupGraceMs;
 				const sessionDir = sessionDirs.get(row.taskId);
-				const planReviewRole = isPlanReviewSyncRole(row.role);
-				if (!planReviewRole) {
-					const journal = sessionDir ? readJournalSource(sessionDir) : undefined;
-					const extracted = journal ? extractSyncJournalOutput(journal, row.role) : undefined;
-					if (extracted) {
-						appendBpazWatchdogTrace(input.worktreePath, {
-							ts: now(),
-							pane: entry.pane,
-							role: entry.role,
-							taskId: row.taskId,
-							ageMs,
-							health: "journal",
-							hasResultFile: false,
-							hasJournal: true,
-							excerpt: "",
-						});
-						row.output = extracted;
-						pending.delete(row.taskId);
-						continue;
-					}
+				const journal = sessionDir ? readJournalSource(sessionDir) : undefined;
+				const extracted = journal ? extractSyncJournalOutput(journal, row.role) : undefined;
+				if (extracted) {
+					appendBpazWatchdogTrace(input.worktreePath, {
+						ts: now(),
+						pane: entry.pane,
+						role: entry.role,
+						taskId: row.taskId,
+						ageMs,
+						health: "journal",
+						hasResultFile: false,
+						hasJournal: true,
+						excerpt: "",
+					});
+					row.output = extracted;
+					pending.delete(row.taskId);
+					continue;
 				}
 				const output = readResultFile(entry.resultFile);
 				if (output) {
@@ -400,7 +398,6 @@ export async function spawnSyncVisibleAgents(input: SpawnSyncVisibleAgentsInput)
 						excerpt: "",
 					});
 					row.output = output;
-					row.resultFile = entry.resultFile;
 					pending.delete(row.taskId);
 					continue;
 				}

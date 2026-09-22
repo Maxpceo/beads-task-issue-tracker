@@ -15,7 +15,6 @@ import planReviewExtension, {
   hasImportantOrCriticalFindings,
   missingRevisedPlanSections,
   parsePlanReviewOutput,
-  parsePlanReviewFile,
   planReviewStopAdvice,
   renderPlanReviewResults,
   runPlanReviewers,
@@ -244,7 +243,7 @@ Risks / rollback:
       '--no-extensions',
       '--no-skills',
       '--no-prompt-templates',
-      '--tools', 'read,grep,find,ls,write',
+      '--tools', 'read,grep,find,ls',
       '--append-system-prompt', '/repo/.pi/agents/plan-edge-reviewer.md',
     ]))
     expect(calls[0]?.args).not.toEqual(expect.arrayContaining(['edit', 'bash']))
@@ -307,7 +306,7 @@ Risks / rollback:
     expect(getSharedDashboardState()?.cards.get('plan-edge-reviewer')?.errorMessage).toBe('spawn failed')
   })
 
-  it('hasUI uses visible panes, parses result files, and does not publish dashboard cards', async () => {
+  it('hasUI uses visible panes, parses printed reports, and does not publish dashboard cards', async () => {
     const spawned: string[] = []
     const tools: Array<string | undefined> = []
     const pi = { exec: async () => ({ code: 0, stdout: '', stderr: '' }) }
@@ -326,8 +325,8 @@ Risks / rollback:
     })
 
     expect(spawned).toEqual(['plan-edge-reviewer', 'plan-consistency-reviewer'])
-    expect(tools.every((value) => value === 'read,grep,find,ls,write')).toBe(true)
-    expect(tools.every((value) => value?.includes('write'))).toBe(true)
+    expect(tools.every((value) => value === 'read,grep,find,ls')).toBe(true)
+    expect(tools.every((value) => value?.includes('write'))).toBe(false)
     expect(results.every((result) => result.verdict === 'APPROVED')).toBe(true)
     expect(getSharedDashboardState()).toBeNull()
   })
@@ -628,13 +627,13 @@ describe('plan-review cutter', () => {
   })
 
   it('does not copy a harmless extra paragraph into the orchestrator summary', () => {
-    const result = parsePlanReviewOutput('plan-edge-reviewer', fixtureHarmlessTail, '/tmp/plan-review-harmless.md')
+    const result = parsePlanReviewOutput('plan-edge-reviewer', fixtureHarmlessTail)
     const rendered = renderPlanReviewResults([result])
     expect(rendered).not.toContain('naming conventions')
-    expect(rendered).toContain('Report file: /tmp/plan-review-harmless.md')
+    expect(rendered).not.toContain('Report file:')
     expect(result.unresolvedBlockers).toEqual([])
     expect(result.verdict).toBe('APPROVED')
-    expect(result).not.toHaveProperty('raw')
+    expect(result.raw).toContain('naming conventions')
   })
 
   it('blocks empty files, missing PLAN REVIEW, and reports with no parsed findings', () => {
@@ -643,18 +642,13 @@ describe('plan-review cutter', () => {
     expect(parsePlanReviewOutput('plan-edge-reviewer', 'PLAN REVIEW: APPROVED\nUnresolved blockers: none').verdict).toBe('BLOCKED')
   })
 
-  it('parses a result file and does not put the file tail into the rendered summary', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-review-cutter-'))
-    tmpDirs.push(dir)
-    const file = path.join(dir, 'edge.md')
+  it('keeps the full printed report beside a summary that omits a harmless tail', () => {
     const tail = 'SECRET FILE TAIL that must not reach the orchestrator context'
-    fs.writeFileSync(file, `${fixtureMultilineEvidence}\n\n${tail}\n`)
-    const result = parsePlanReviewFile('plan-edge-reviewer', file)
+    const result = parsePlanReviewOutput('plan-edge-reviewer', `${fixtureMultilineEvidence}\n\n${tail}\n`)
     const rendered = renderPlanReviewResults([result])
-    expect(result.resultFile).toBe(file)
     expect(result.findings[0]?.evidence).toContain('never persist the report file')
-    expect(rendered).toContain(`Report file: ${file}`)
+    expect(rendered).not.toContain('Report file:')
     expect(rendered).not.toContain('SECRET FILE TAIL')
-    expect(result).not.toHaveProperty('raw')
+    expect(result.raw).toContain('SECRET FILE TAIL')
   })
 })
