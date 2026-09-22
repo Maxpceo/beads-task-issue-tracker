@@ -15,7 +15,9 @@ import {
   extractPlanApprovedFiles,
   extractPlanApprovedSummary,
   formatAutopilotCloseReport,
+  isPlanWidgetConfirmMessage,
   isSafeCommand,
+  PLAN_WIDGET_CONFIRM_MESSAGES,
 } from '../../.pi/extensions/plan-mode/utils'
 import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
 import {
@@ -128,6 +130,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
       return {
         ...transpileSibling('utils.ts'),
         extractTodoItems: () => [],
+        isPlanWidgetConfirmMessage,
         isSafeCommand: (command: string) => !command.includes('rm -rf'),
         markCompletedSteps: (items: unknown[]) => items,
         validateAutoExecutePlan: () => ({ valid: true, reason: '' }),
@@ -271,7 +274,7 @@ function makeHarness(options: {
   /** Disable ui.custom entirely (simulate RPC). */
   noCustom?: boolean
   hasUI?: boolean
-  readyActionQueue?: Array<'execute' | 'stay' | 'refine' | 'plan-review' | null>
+  readyActionQueue?: Array<'execute' | 'stay' | 'refine' | 'plan-review' | 'ask' | null>
 } = {}) {
   const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
@@ -475,6 +478,7 @@ function makeHarness(options: {
             stay: 'Остаться в plan mode',
             refine: 'Уточнить',
             'plan-review': 'Отправить на plan-review',
+            ask: 'Задать вопрос',
           }
           return labels[next] ?? next
         }
@@ -610,6 +614,7 @@ function expectReadyChoiceLegend(content: string) {
   expect(content).toContain('Остаться в plan mode')
   expect(content).toContain('Уточнить')
   expect(content).toContain('Отправить на plan-review')
+  expect(content).toContain('Задать вопрос')
   expect(content).not.toMatch(/Исполнить = супервизор/i)
 }
 
@@ -738,6 +743,29 @@ describe('Pi plan-mode bash allowlist', () => {
     ]) {
       expect(isSafeCommand(command)).toBe(false)
     }
+  })
+})
+
+describe('Pi plan-mode widget confirm allowlist', () => {
+  it('matches only whole-message allowlist after trim/lowercase', () => {
+    expect([...PLAN_WIDGET_CONFIRM_MESSAGES]).toEqual([
+      'да',
+      'ок',
+      'ok',
+      'покажи план',
+      'вопросы закрыты',
+      'можно показывать план',
+    ])
+    for (const phrase of PLAN_WIDGET_CONFIRM_MESSAGES) {
+      expect(isPlanWidgetConfirmMessage(phrase)).toBe(true)
+      expect(isPlanWidgetConfirmMessage(`  ${phrase.toUpperCase()}  `)).toBe(true)
+    }
+    expect(isPlanWidgetConfirmMessage('да, но ещё вопрос')).toBe(false)
+    expect(isPlanWidgetConfirmMessage('покажи план пожалуйста')).toBe(false)
+    expect(isPlanWidgetConfirmMessage('можно показывать план?')).toBe(false)
+    expect(isPlanWidgetConfirmMessage('')).toBe(false)
+    expect(isPlanWidgetConfirmMessage(undefined)).toBe(false)
+    expect(isPlanWidgetConfirmMessage(null)).toBe(false)
   })
 })
 
@@ -3543,6 +3571,126 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expectNoStalePlanWait(String(complete.content[0].text))
     expect(harness.sendUserMessages.at(-1)).toBe('please refine the plan')
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    const refinePersisted = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { discussionOpen?: boolean; pendingReadyPlan?: string } } | undefined
+    expect(refinePersisted?.data?.discussionOpen).toBe(true)
+    expect(refinePersisted?.data?.pendingReadyPlan).toBeUndefined()
+  })
+
+  it('ask closes widget without editor; complete stays BLOCKED until confirm', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['ask'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const asked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(asked.details.outcome).toBe('ask')
+    expect(asked.details.pending).toBe(false)
+    expect(asked.details.ok).toBe(true)
+    expect(String(asked.content[0].text)).toContain('вопрос в обычном чате')
+    expect(harness.sendUserMessages).toHaveLength(0)
+    expectExecuteReadyOverlay(harness.customCalls)
+    const askedPersisted = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { discussionOpen?: boolean; pendingReadyPlan?: string } } | undefined
+    expect(askedPersisted?.data?.discussionOpen).toBe(true)
+    expect(askedPersisted?.data?.pendingReadyPlan).toBeUndefined()
+
+    const blocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(blocked.details.ok).toBe(false)
+    expect(blocked.details.pending).toBe(false)
+    expect(blocked.details.error).toBe('discussion is open')
+    expect(String(blocked.content[0].text)).toContain('discussion is open')
+    expect(harness.customCalls.length).toBe(1)
+
+    await harness.inputHandlers[0]?.({ text: 'да, но ещё вопрос' }, harness.ctx)
+    const stillBlocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(stillBlocked.details.error).toBe('discussion is open')
+
+    await harness.inputHandlers[0]?.({ text: '  Покажи план  ' }, harness.ctx)
+    const confirmed = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(confirmed.details.outcome).toBe('executed')
+    expect(confirmed.details.ok).toBe(true)
+    expect(harness.customCalls.length).toBe(2)
+  })
+
+  it('refine then complete is BLOCKED until confirm; stay does not set discussionOpen', async () => {
+    const refineHarness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['refine'],
+    })
+    await refineHarness.commandHandlers.get('plan')?.handler('', refineHarness.ctx)
+    await markPlanReady(refineHarness.toolHandlers, refineHarness.ctx)
+    const blocked = await markPlanReady(refineHarness.toolHandlers, refineHarness.ctx)
+    expect(blocked.details.error).toBe('discussion is open')
+    expect(blocked.details.pending).toBe(false)
+
+    await refineHarness.inputHandlers[0]?.({ text: 'ок' }, refineHarness.ctx)
+    const opened = await markPlanReady(refineHarness.toolHandlers, refineHarness.ctx)
+    expect(opened.details.outcome).toBe('executed')
+
+    const stayHarness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['stay'],
+    })
+    await stayHarness.commandHandlers.get('plan')?.handler('', stayHarness.ctx)
+    await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
+    const again = await markPlanReady(stayHarness.toolHandlers, stayHarness.ctx)
+    expect(again.details.outcome).toBe('executed')
+  })
+
+  it('discussionOpen resets on plan-mode off→on so first complete opens again', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['ask'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+    const blocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(blocked.details.error).toBe('discussion is open')
+
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx) // off
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx) // on
+    const opened = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(opened.details.outcome).toBe('executed')
+  })
+
+  it('RPC/!hasUI complete while discussionOpen is BLOCKED and does not write pending', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      hasUI: false,
+      noCustom: true,
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-ui', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' },
+        },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            discussionOpen: true,
+            todos: [],
+            executing: false,
+          },
+        },
+      ],
+    })
+    await harness.sessionStartHandlers[0]?.({}, harness.ctx)
+    const blocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(blocked.details.ok).toBe(false)
+    expect(blocked.details.pending).toBe(false)
+    expect(blocked.details.error).toBe('discussion is open')
+    const persisted = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { pendingReadyPlan?: string; discussionOpen?: boolean } } | undefined
+    expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
+    expect(persisted?.data?.discussionOpen).toBe(true)
+    expect(harness.selectCalls).toHaveLength(0)
   })
 
   it('ready execute continuation-blocked after PLAN APPROVED uses recovery tool text', async () => {
@@ -3660,6 +3808,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
     expect(afterEntries.at(-1)?.data?.pendingReadyPlan).toBeUndefined()
     expect(afterEntries.at(-1)?.data?.enabled).toBe(true)
+    expect((afterEntries.at(-1)?.data as { discussionOpen?: boolean } | undefined)?.discussionOpen).toBe(true)
     expect(afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0).toBe(cycleBefore)
 
     expect(waitingTrioNotices(harness).notifies.length).toBeGreaterThanOrEqual(1)
@@ -3739,6 +3888,10 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(findingsMsgs[0]?.options?.triggerTurn).toBe(true)
     expect(String(findingsMsgs[0]?.message.content)).toContain('Strict plan critique complete')
     expect(String(findingsMsgs[0]?.message.content)).toContain('call plan_mode_complete')
+    const leftoverPersisted = harness.sessionEntries
+      .filter((entry) => entry.customType === 'plan-mode')
+      .at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(leftoverPersisted?.data?.discussionOpen).toBe(true)
 
     const leftoverPlan = planReadyDocuments(harness).at(-1)
     expect(leftoverPlan).toBeTruthy()
@@ -3776,6 +3929,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов'))).toHaveLength(0)
     expect(liveRender).toContain('Исполнить')
     expect(liveRender).toContain('Отправить на plan-review')
+    expect(liveRender).toContain('Задать вопрос')
     expect(liveRender).not.toContain('Превью:')
     expect(liveRender).not.toContain('Записать PLAN APPROVED')
     expect(liveRender).not.toContain('UNIQUE_PLAN_LINE_000')
@@ -4058,17 +4212,35 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(doneValue?.answers?.[0]?.value).toBe('wide')
 
     const readyUi = transpileSibling('ready-ui.ts') as any
+    expect(readyUi.READY_ACTIONS.map((item: { value: string }) => item.value)).toEqual([
+      'execute',
+      'stay',
+      'refine',
+      'plan-review',
+      'ask',
+    ])
     let readyDone: any
     const readyComp = readyUi.createReadyUiFactory()(tui, theme, {}, (value: any) => { readyDone = value })
-    const readyRender = readyComp.render(80).join('\n')
-    expect(readyRender).toContain('Исполнить')
-    expect(readyRender).toContain('Отправить на plan-review')
+    const readyLines = readyComp.render(80)
+    const readyRender = readyLines.join('\n')
+    const numberedActions = readyLines.filter((line: string) => /\d+\. /.test(line))
+    expect(numberedActions.length).toBe(5)
+    expect(readyRender).toContain('1. Исполнить')
+    expect(readyRender).toContain('2. Остаться в plan mode')
+    expect(readyRender).toContain('3. Уточнить')
+    expect(readyRender).toContain('4. Отправить на plan-review')
+    expect(readyRender).toContain('5. Задать вопрос')
+    expect(readyRender).toContain('1-5')
     expect(readyRender).not.toContain('Превью:')
     expect(readyRender).not.toContain('Записать PLAN APPROVED')
     expect(readyRender).not.toContain('Plan preview line')
     expect(readyRender).not.toMatch(/PgUp|PgDn/)
     readyComp.handleInput('4')
     expect(readyDone).toEqual({ action: 'plan-review' })
+    let askDone: any
+    const askComp = readyUi.createReadyUiFactory()(tui, theme, {}, (value: any) => { askDone = value })
+    askComp.handleInput('5')
+    expect(askDone).toEqual({ action: 'ask' })
 
     let arrowDone: any
     const arrowComp = readyUi.createReadyUiFactory()(tui, theme, {}, (value: any) => { arrowDone = value })

@@ -1,15 +1,15 @@
 /**
- * Plan-ready UI: four action labels only (no plan text, no pager).
+ * Plan-ready UI: five action labels only (no plan text, no pager).
  * Execute-path uses this as a bottom overlay so the chat stays scrollable.
  *
  * Crash-safe: no SelectList (live HA 2026-09-18: SelectList.render inside
- * custom killed Pi / TUI.stop(); questionnaire-style hand-rolled 1–4 / ↑↓ / Enter lives).
+ * custom killed Pi / TUI.stop(); questionnaire-style hand-rolled 1–5 / ↑↓ / Enter lives).
  */
 
 import { Key, Markdown, matchesKey, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 /** Stable ready-action ids used by plan-mode agent_end loop. */
-export type ReadyAction = "execute" | "stay" | "refine" | "plan-review";
+export type ReadyAction = "execute" | "stay" | "refine" | "plan-review" | "ask";
 
 export interface ReadyActionItem {
 	value: ReadyAction;
@@ -23,6 +23,7 @@ export const READY_ACTIONS: readonly ReadyActionItem[] = [
 	{ value: "stay", label: "Остаться в plan mode", description: "Очистить pending ready, остаться в plan mode без approve" },
 	{ value: "refine", label: "Уточнить", description: "Очистить pending и открыть редактор уточнения" },
 	{ value: "plan-review", label: "Отправить на plan-review", description: "Критика без approve; findings → tool result; cycle не увеличивается; dirty очищает pending" },
+	{ value: "ask", label: "Задать вопрос", description: "Закрыть виджет без editor; ждать вопрос в обычном чате" },
 ] as const;
 
 export interface ReadyUiTheme {
@@ -197,7 +198,7 @@ export function createPlanDocumentComponent(content: string, mdTheme: unknown): 
 
 /**
  * Sync factory for ctx.ui.custom — overlay buttons only, no plan, no SelectList.
- * Digits 1-4 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
+ * Digits 1-5 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
  * Unhandled keys (including paging) are ignored so this is not a widget pager.
  */
 export function createReadyUiFactory() {
@@ -271,7 +272,7 @@ export function createReadyUiFactory() {
 			}
 
 			lines.push("");
-			addWrappedWithPrefix(lines, " ", theme.fg("dim", "1-4 / ↑↓ • Enter • Esc отмена"), w);
+			addWrappedWithPrefix(lines, " ", theme.fg("dim", "1-5 / ↑↓ • Enter • Esc отмена"), w);
 			lines.push(divider);
 
 			// Pi TUI aborts the process if any line exceeds terminal width.

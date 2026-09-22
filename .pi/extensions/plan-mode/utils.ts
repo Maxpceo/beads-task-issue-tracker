@@ -376,3 +376,20 @@ export function formatAutopilotCloseReport(facts: AutopilotCloseReportFacts): st
 
 	return sections.join("\n\n");
 }
+/** Whole-message confirm phrases that close discussionOpen (trim + lowercase). */
+export const PLAN_WIDGET_CONFIRM_MESSAGES = [
+	"да",
+	"ок",
+	"ok",
+	"покажи план",
+	"вопросы закрыты",
+	"можно показывать план",
+] as const;
+
+const PLAN_WIDGET_CONFIRM_SET = new Set<string>(PLAN_WIDGET_CONFIRM_MESSAGES);
+
+/** True only when the entire message matches the confirm allowlist after trim/lowercase. */
+export function isPlanWidgetConfirmMessage(text: string | undefined | null): boolean {
+	if (typeof text !== "string") return false;
+	return PLAN_WIDGET_CONFIRM_SET.has(text.trim().toLowerCase());
+}
