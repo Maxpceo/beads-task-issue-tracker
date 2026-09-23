@@ -107,7 +107,7 @@
 - ADR: `beads-task-issue-tracker-4zaz` closed.
 - Реализация: `beads-task-issue-tracker-1mj1` **closed** и в `origin/main` (2026-09-18): `.pi/supervisor-routing.json`; `chooseSupervisor` реэкспорт из `./supervisor-routing`.
 - Overlay трекера сейчас: default `test-supervisor`; labels workflow/ci/dx → test; backend/tracker → tauri; frontend/ui/data → vue.
-- Extract **не** переписывает routing. В пакет уезжает **чтение** JSON; таблица и vue/tauri/test агенты — overlay потребителя. Generic fallback в новом пакете — `implementer` (не копировать default test-supervisor в шаблон фонда).
+- Extract **не** переписывает routing. В пакет уезжает чтение JSON. Таблица и агенты vue/tauri/test остаются overlay трекера. В другом проекте default не копировать из трекера. Общий implementer — только черновик, не готовая среда.
 - Не плодить второй bead на chooseSupervisor.
 
 ## Инварианты cutover (выполнять на этапах 2/4, не здесь)
@@ -127,7 +127,9 @@
 | git | hard fail |
 | `bd` / `.beads` | **hard fail** |
 | пакет в settings | hard fail |
-| `implementer.md` + `supervisor-routing.json` | hard fail (не optional) |
+| нет агента под стек и нет явного «пока хватит общего» | hard fail |
+| `supervisor-routing.json` | hard fail |
+| общий implementer без подтверждения человека | не готово, не зелёный doctor |
 | `domain.md` пустой | TODO |
 | locale flag | TODO (трекер: ru) |
 | cmux | TODO optional |
@@ -233,7 +235,7 @@ Package-файл не импортирует overlay/tracker/delete.
 | H2 | stack-checks | review-workflow `checksForFiles` vue-tsc/pnpm; land/merge-to-main/release SKILL `pnpm test && npx vue-tsc`; plan-bead/create-bead allowlist | да | нужна задача как 4zaz: project verification config |
 | H3 | locale | beads-policy `enforceBeadRussianLocale`; create-bead | да | флаг overlay; пакет default off; трекер ru |
 | H4 | labels в skills | create-bead «frontend, backend» как примеры | можно с H3 | docs overlay |
-| H5 | default agent | chooseSupervisor else `test-supervisor` | закрывается 4zaz | overlay routing default; generic fallback `implementer` |
+| H5 | default agent | routing json на main | сделано 1mj1 | не копировать default трекера в другой проект; общий implementer не финал |
 | H6 | agent-models defaults | agent-models/index.ts ключи vue-supervisor/tauri-supervisor | после 4zaz | сканировать `.pi/agents/*.md`, не хардкод имён |
 
 `domain.md` / vue-агенты — overlay, не JSON-конфиг.
@@ -242,7 +244,7 @@ Package-файл не импортирует overlay/tracker/delete.
 
 1. **7fz7 (этот файл)** — карта + аудит.
 2. **b18h** — репо + copy package-меток + vitest + **private** GitHub + tag. Acceptance: `pi list` в песочнице. **Не** «без vue-supervisor».
-3. **z6dd** — implementer+routing обязательный SETUP; stack overlay (H2); locale flag (H3); doctor; онбординг UX как в секции выше (detect / install / reload / discovery overlay).
+3. **z6dd** — онбординг: агенты под стек, routing, doctor. Общий implementer не считается готовой средой. Пустой проект и запрет угадывать — jhux.
 4. **pv7r** — трекер consumer; overlay копирует **текущую** матрицу vue/tauri/test (не только frontend→vue).
 5. **ajex** — sharks той же git@tag командой.
 
