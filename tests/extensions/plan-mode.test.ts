@@ -3770,6 +3770,29 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(comment).toContain('PLAN APPROVED')
   })
 
+  it('plan-review human block is appendEntry before plan-ready-document, not sendMessage', async () => {
+    expect(source).toContain('function showImmediateReviewBlock')
+    expect(source).toContain('pi.appendEntry(customType, { content })')
+    expect(source).not.toMatch(/showVisibleTranscript\(\s*["']plan-review-human/)
+    expect(source).not.toMatch(/showVisibleTranscript\(\s*["']plan-review-adjudication/)
+
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'stay'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const types = harness.sessionEntries.map((entry) => entry.customType)
+    const humanIndex = types.indexOf('plan-review-human')
+    const planIndexes = types.flatMap((customType, index) => customType === 'plan-ready-document' ? [index] : [])
+    expect(humanIndex).toBeGreaterThanOrEqual(0)
+    expect(planIndexes[1]).toBeGreaterThan(humanIndex)
+    expect(harness.sessionEntries[humanIndex]?.type).toBe('custom')
+  })
+
   it('plan-review clean: three verdicts and unchanged banner in transcript, toast is not the only proof', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
