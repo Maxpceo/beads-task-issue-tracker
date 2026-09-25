@@ -4973,6 +4973,19 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
     expect(persisted?.data?.discussionOpen).toBe(true)
+
+    const blocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(blocked.details.error).toBe('discussion is open')
+    expect(blocked.details.discussionOpen).toBe(true)
+    expect(harness.customCalls).toHaveLength(1)
+
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план пожалуйста' }, harness.ctx)
+    const stillBlocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(stillBlocked.details.error).toBe('discussion is open')
+
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, harness.ctx)
+    const afterConfirm = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(afterConfirm?.data?.discussionOpen).toBe(false)
   })
 
   it('does not open ready-UI on the answer turn after a chat question', async () => {
