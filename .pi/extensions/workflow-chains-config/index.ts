@@ -19,6 +19,7 @@ export interface WorkflowChains {
 	copyRootRaw: string;
 	handoffFromCopy: boolean;
 	reviewRequired: boolean;
+	matrixRequired: boolean;
 	naming: WorkflowChainsNaming;
 	configPath?: string;
 	readError: string;
@@ -37,6 +38,7 @@ export const TRACKER_DEFAULTS = {
 	copyRootRaw: "~/Projects/worktrees/beads-task-issue-tracker",
 	handoffFromCopy: true as const,
 	reviewRequired: true as const,
+	matrixRequired: true as const,
 	naming: TRACKER_DEFAULT_NAMING,
 };
 
@@ -55,6 +57,7 @@ export function trackerDefaultChains(readError = "", configPath?: string): Workf
 		copyRootRaw: TRACKER_DEFAULTS.copyRootRaw,
 		handoffFromCopy: true,
 		reviewRequired: true,
+		matrixRequired: true,
 		naming: { ...TRACKER_DEFAULT_NAMING, types: [...TRACKER_DEFAULT_NAMING.types] },
 		configPath,
 		readError,
@@ -175,6 +178,7 @@ function parseWorkflowChainsFile(configPath: string, rawText: string): WorkflowC
 		copyRootRaw,
 		handoffFromCopy: record.handoffFromCopy,
 		reviewRequired: record.reviewRequired === false ? false : true,
+		matrixRequired: record.matrixRequired === false ? false : true,
 		naming: namingResult.naming,
 		configPath,
 		readError: "",

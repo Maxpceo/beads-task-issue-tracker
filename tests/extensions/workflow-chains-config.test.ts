@@ -39,6 +39,7 @@ describe('workflow-chains-config', () => {
       expect(chains.copyRequired).toBe(true)
       expect(chains.handoffFromCopy).toBe(true)
       expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
       expect(chains.readError).toBe('')
       expect(chains.copyRootRaw).toBe(TRACKER_DEFAULTS.copyRootRaw)
       expect(chains.copyRoot).toBe(join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker'))
@@ -55,6 +56,7 @@ describe('workflow-chains-config', () => {
       const chains = loadWorkflowChains(dir)
       expect(chains.copyRequired).toBe(true)
       expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -112,6 +114,7 @@ describe('workflow-chains-config', () => {
       expect(chains.copyRequired).toBe(false)
       expect(chains.handoffFromCopy).toBe(false)
       expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
       expect(chains.copyRoot).toBe('')
       expect(chains.readError).toBe('')
       expect(chains.configPath).toBe(join(repo, WORKFLOW_CHAINS_CONFIG_RELATIVE))
@@ -135,6 +138,7 @@ describe('workflow-chains-config', () => {
         expect(chains.copyRequired, item.label).toBe(true)
         expect(chains.handoffFromCopy, item.label).toBe(true)
         expect(chains.reviewRequired, item.label).toBe(true)
+        expect(chains.matrixRequired, item.label).toBe(true)
         expect(chains.readError, item.label).toContain(join(repo, WORKFLOW_CHAINS_CONFIG_RELATIVE))
         expect(chains.readError, item.label).not.toBe('')
         expect(chains.copyRoot, item.label).toBe(join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker'))
@@ -152,6 +156,7 @@ describe('workflow-chains-config', () => {
       expect(chains.copyRequired).toBe(false)
       expect(chains.handoffFromCopy).toBe(false)
       expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
       expect(chains.copyRoot).toBe('')
       expect(chains.readError).toBe('')
     } finally {
@@ -166,6 +171,7 @@ describe('workflow-chains-config', () => {
       const chains = loadWorkflowChains(repo)
       expect(chains.copyRequired).toBe(false)
       expect(chains.reviewRequired).toBe(false)
+      expect(chains.matrixRequired).toBe(true)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(repo, { recursive: true, force: true })
@@ -185,6 +191,7 @@ describe('workflow-chains-config', () => {
         const chains = loadWorkflowChains(repo)
         expect(chains.copyRequired, item.label).toBe(false)
         expect(chains.reviewRequired, item.label).toBe(true)
+        expect(chains.matrixRequired, item.label).toBe(true)
         expect(chains.readError, item.label).toBe('')
       } finally {
         rmSync(repo, { recursive: true, force: true })
@@ -205,6 +212,62 @@ describe('workflow-chains-config', () => {
       const chains = loadWorkflowChains(repo)
       expect(chains.copyRequired).toBe(true)
       expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('reads exact matrixRequired false without resetting reviewRequired', () => {
+    const repo = initRepo()
+    try {
+      writeConfig(repo, { copyRequired: false, handoffFromCopy: false, reviewRequired: true, matrixRequired: false, naming: NAMING })
+      const chains = loadWorkflowChains(repo)
+      expect(chains.copyRequired).toBe(false)
+      expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(false)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('fail-closes matrixRequired when the field is missing or not boolean', () => {
+    const cases: Array<{ label: string; body: Record<string, unknown> }> = [
+      { label: 'missing', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, naming: NAMING } },
+      { label: 'string-false', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: 'false', naming: NAMING } },
+      { label: 'null', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: null, naming: NAMING } },
+    ]
+    for (const item of cases) {
+      const repo = initRepo()
+      try {
+        writeConfig(repo, item.body)
+        const chains = loadWorkflowChains(repo)
+        expect(chains.reviewRequired, item.label).toBe(false)
+        expect(chains.matrixRequired, item.label).toBe(true)
+        expect(chains.readError, item.label).toBe('')
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('reads committed matrixRequired true with tracker copy ritual', () => {
+    const repo = initRepo()
+    try {
+      writeConfig(repo, {
+        copyRequired: true,
+        copyRoot: '~/Projects/worktrees/beads-task-issue-tracker',
+        handoffFromCopy: true,
+        reviewRequired: true,
+        matrixRequired: true,
+        naming: NAMING,
+      })
+      const chains = loadWorkflowChains(repo)
+      expect(chains.copyRequired).toBe(true)
+      expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(repo, { recursive: true, force: true })
