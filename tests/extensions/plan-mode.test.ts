@@ -5066,4 +5066,22 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     expect(String(executed.content[0].text)).not.toContain('PLAN APPROVED записан')
     expect(executeHarness.trace).not.toContain('workflow-plan-approved')
   })
+
+  it('handleInput question text resolves the blocking overlay without a ReadyAction', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true, readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.readyUiComponents.length === 0; i++) await Promise.resolve()
+    expect(harness.readyUiComponents.length).toBeGreaterThan(0)
+    harness.readyUiComponents[0]?.handleInput?.('у')
+    const complete = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: Array<{ text?: string }>; details: { outcome?: string; discussionOpen?: boolean } }
+    expect(complete.details.outcome).toBe('question')
+    expect(complete.details.outcome).not.toBe('executed')
+    expect(complete.details.discussionOpen).toBe(true)
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+  })
 })

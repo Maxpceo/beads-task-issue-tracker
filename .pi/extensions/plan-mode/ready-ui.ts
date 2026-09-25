@@ -36,7 +36,20 @@ export interface ReadyUiTui {
 	requestRender: () => void;
 }
 
-type ReadyDone = (value: { action: ReadyAction } | null) => void;
+type ReadyDone = (value: { action: ReadyAction } | { dismissed: "question" } | null) => void;
+
+const OVERLAY_CONFIRM = new Set(["да", "ок", "ok", "покажи план", "вопросы закрыты", "можно показывать план"]);
+
+/** Printable chat text, not a menu key and not a whole-message confirm. */
+function isOverlayQuestionText(data: string): boolean {
+	if (!data || data.startsWith("\x1b") || data === "\r" || data === "\n") return false;
+	if (data.length === 1) {
+		const code = data.charCodeAt(0);
+		return code >= 32 && code !== 127;
+	}
+	const trimmed = data.trim().toLowerCase();
+	return trimmed.length > 0 && !OVERLAY_CONFIRM.has(trimmed);
+}
 
 function clampRenderLines(lines: string[], width: number): string[] {
 	const w = Math.max(1, width);
@@ -199,7 +212,8 @@ export function createPlanDocumentComponent(content: string, mdTheme: unknown): 
 /**
  * Sync factory for ctx.ui.custom — overlay buttons only, no plan, no SelectList.
  * Digits 1-5 select actions; ↑↓ + Enter; Esc cancels (stay-equivalent null).
- * Unhandled keys (including paging) are ignored so this is not a widget pager.
+ * A printable question closes the overlay as dismissed:"question", not a ReadyAction.
+ * Paging keys stay ignored so this is not a widget pager.
  */
 export function createReadyUiFactory() {
 	return (tui: ReadyUiTui, theme: ReadyUiTheme, _keybindings: unknown, done: ReadyDone) => {
@@ -249,7 +263,12 @@ export function createReadyUiFactory() {
 			}
 			if (matchesKey(data, Key.enter) || data === "\r" || data === "\n") {
 				finish(selectedItem().value);
+				return;
 			}
+			if (data.startsWith("\x1b")) return;
+			if (!isOverlayQuestionText(data)) return;
+			settled = true;
+			done({ dismissed: "question" });
 		}
 
 		function render(width: number): string[] {
