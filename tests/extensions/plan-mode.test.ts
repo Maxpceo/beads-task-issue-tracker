@@ -5040,4 +5040,30 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     expect(mockSupervisorDispatchCalls).toEqual([])
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
   })
+
+  it('fails if an ordinary non-confirm question leaves the overlay blocking or pre-answer Execute is approval', async () => {
+    expect(isPlanWidgetConfirmMessage('уточни срок')).toBe(false)
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true })
+    await enterStrict(harness)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.customCalls.length === 0; i++) await Promise.resolve()
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'уточни срок' }, harness.ctx)
+    const closed = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: Array<{ text?: string }>; details: { outcome?: string } }
+    expect(closed.details.outcome).toBe('question')
+    expect(closed.details.outcome).not.toBe('executed')
+    expect(String(closed.content[0].text)).not.toContain('PLAN APPROVED записан')
+
+    const executeHarness = makeHarness({ activeBead: 'bead-ui', readyActionQueue: ['execute'] })
+    await enterStrict(executeHarness)
+    await executeHarness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, executeHarness.ctx)
+    await executeHarness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, executeHarness.ctx)
+    const executed = await markPlanReady(executeHarness.toolHandlers, executeHarness.ctx)
+    expect(executed.details.outcome).toBe('pre-answer-execute')
+    expect(executed.details.outcome).not.toBe('executed')
+    expect(String(executed.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(executeHarness.trace).not.toContain('workflow-plan-approved')
+  })
 })
