@@ -1909,6 +1909,113 @@ reason: runtime smoke accepted manually outside this agent session
     })
   })
 
+  it('blocks close without accepted/reviewed when reviewRequired is true in the git-root config', () => {
+    const issue = { id: 'bead-a', status: 'in_progress', issue_type: 'task', description: 'No acceptance section' }
+    withFakeBd(issue, '', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: true,
+        naming: workflowChainsNaming,
+      })
+      const otherCwd = mkdtempSync(join(tmpdir(), 'beads-policy-review-cwd-'))
+      try {
+        const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+          activeBead: 'bead-a',
+          bdStatus: 'in_progress',
+          worktreePath: cwd,
+        }, { cwd: otherCwd })
+        expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+        expect(decision?.reason).toContain('accepted')
+      } finally {
+        rmSync(otherCwd, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it.each([
+    { label: 'missing-field', reviewRequired: undefined },
+    { label: 'non-boolean', reviewRequired: 'false' },
+    { label: 'broken-json', body: '{ not json' },
+  ])('does not allow close without review when config is $label', ({ reviewRequired, body }) => {
+    const issue = { id: 'bead-a', status: 'in_progress', issue_type: 'task', description: 'No acceptance section' }
+    withFakeBd(issue, '', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, body ?? {
+        copyRequired: false,
+        handoffFromCopy: false,
+        ...(reviewRequired === undefined ? {} : { reviewRequired }),
+        naming: workflowChainsNaming,
+      })
+      const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('accepted')
+    })
+  })
+
+  it('does not allow close without review when the git root has no workflow-chains file', () => {
+    const issue = { id: 'bead-a', status: 'in_progress', issue_type: 'task', description: 'No acceptance section' }
+    withFakeBd(issue, '', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('accepted')
+    })
+  })
+
+  it('allows close without accepted/reviewed when reviewRequired false is in the git root that chainsForPolicy prefers via worktreePath', () => {
+    const issue = { id: 'bead-a', status: 'in_progress', issue_type: 'task', description: 'No acceptance section' }
+    withFakeBd(issue, '', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: false,
+        naming: workflowChainsNaming,
+      })
+      const otherCwd = mkdtempSync(join(tmpdir(), 'beads-policy-review-other-'))
+      try {
+        const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+          activeBead: 'bead-a',
+          bdStatus: 'in_progress',
+          worktreePath: cwd,
+        }, { cwd: otherCwd })
+        expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+      } finally {
+        rmSync(otherCwd, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it('does not skip ACCEPTANCE MATRIX when reviewRequired is false and the bead has criteria', () => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: false,
+        naming: workflowChainsNaming,
+      })
+      const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('требует ACCEPTANCE MATRIX')
+      expect(decision?.reason).not.toContain('accepted, либо')
+    })
+  })
+
   it('blocks gdgf-style epic close when children are closed but runtime smoke criterion is not covered by matrix', () => {
     const epic = {
       id: 'epic-a',
