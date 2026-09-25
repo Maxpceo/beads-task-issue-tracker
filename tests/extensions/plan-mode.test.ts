@@ -289,6 +289,8 @@ function makeHarness(options: {
   noCustom?: boolean
   hasUI?: boolean
   readyActionQueue?: Array<'execute' | 'stay' | 'refine' | 'plan-review' | 'ask' | null>
+  /** Call the ready-UI factory and resolve only when it calls done (question dismiss). */
+  deferReadyUi?: boolean
 } = {}) {
   const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
@@ -471,6 +473,7 @@ function makeHarness(options: {
     },
   }
   const customCalls: Array<{ options?: unknown; ranFactory: boolean; factory?: unknown }> = []
+  const readyUiComponents: Array<{ handleInput?: (data: string) => void }> = []
   const selectCalls: Array<{ title: string; options: string[] }> = []
   const readyActionQueue = [...(options.readyActionQueue ?? [])]
   const ctx: any = {
@@ -514,6 +517,12 @@ function makeHarness(options: {
         : {
             custom: async (factory: (tui: any, theme: any, kb: any, done: (value: any) => void) => any, customOptions?: unknown) => {
               customCalls.push({ options: customOptions, ranFactory: true, factory })
+              if (options.deferReadyUi) {
+                return new Promise((resolve) => {
+                  const component = factory({ requestRender() {} }, ctx.ui.theme, {}, (value: unknown) => resolve(value))
+                  readyUiComponents.push(component)
+                })
+              }
               if (options.customResult !== undefined) return options.customResult
               if (readyActionQueue.length > 0) {
                 const next = readyActionQueue.shift()
@@ -562,6 +571,7 @@ function makeHarness(options: {
     sessionEntries,
     entryRenderers,
     customCalls,
+    readyUiComponents,
     selectCalls,
     ctx,
   }
@@ -4857,5 +4867,221 @@ describe('plan-review human block and honest banner', () => {
       importantFindings: [],
       reasons: [],
     })).toBe(true)
+  })
+})
+
+describe('plan-review widget contract docs (1jbs)', () => {
+  const agents = readFileSync(resolve(__dirname, '../../AGENTS.md'), 'utf8')
+  const skill = readFileSync(resolve(__dirname, '../../.pi/skills/plan-bead/SKILL.md'), 'utf8')
+  const dirtyPlanReview = '(?:грязн[а-яё]*|dirty)\\s+plan-review'
+  const forbiddenDirtyLinkage = [
+    new RegExp(`${dirtyPlanReview}[\\s\\S]{0,160}discussionOpen\\s*=\\s*true`, 'i'),
+    new RegExp(`discussionOpen\\s*=\\s*true[\\s\\S]{0,160}${dirtyPlanReview}`, 'i'),
+    new RegExp(`${dirtyPlanReview}[\\s\\S]{0,120}(?:also sets|sets|ставит)\\s+\\x60?discussionOpen`, 'i'),
+    new RegExp(`${dirtyPlanReview}[\\s\\S]{0,220}(?:only after Maxim confirms|только (?:целой )?фраз|открывается только)`, 'i'),
+    /call `plan_mode_complete` only after Maxim confirms \(dirty plan-review/i,
+  ]
+
+  function dirtyWindows(text: string): string[] {
+    return [...text.matchAll(new RegExp(dirtyPlanReview, 'gi'))].map((match) => {
+      const index = match.index ?? 0
+      return text.slice(Math.max(0, index - 40), Math.min(text.length, index + match[0].length + 180))
+    })
+  }
+
+  it('AGENTS.md and plan-bead do not tie dirty plan-review to discussionOpen or a confirm-only widget', () => {
+    for (const text of [agents, skill]) {
+      for (const pattern of forbiddenDirtyLinkage) {
+        expect(text).not.toMatch(pattern)
+      }
+      const windows = dirtyWindows(text)
+      expect(windows.length).toBeGreaterThan(0)
+      for (const window of windows) {
+        if (/discussionOpen/i.test(window)) {
+          expect(window).toMatch(/не ставит|does not set/i)
+        }
+        if (/покажи план|confirm/i.test(window)) {
+          expect(window).toMatch(/не жд|не прос|does not wait|do not ask/i)
+        }
+      }
+    }
+
+    expect(agents).toContain('после trim/lowercase: «да», «ок», «ok», «покажи план», «вопросы закрыты», «можно показывать план»')
+    expect(agents).toContain('оркестратор сам сразу вызывает `record_plan_review_adjudication`')
+    expect(agents).toContain('человек findings не выбирает')
+    expect(agents).toContain('«покажи план» не просят')
+    expect(agents).toContain('кнопки открывает этот tool, не `plan_mode_complete`, пока разбор не записан')
+
+    expect(skill).toContain('«да», «ок», «ok», «покажи план», «вопросы закрыты», «можно показывать план»')
+    expect(skill).toContain('immediately calls `record_plan_review_adjudication`')
+    expect(skill).toContain('the human does not pick findings')
+    expect(skill).toContain('do not ask for «покажи план»')
+    expect(skill).toContain('ready-UI is opened by that tool, not by `plan_mode_complete`, until the adjudication is recorded')
+    expect(skill).not.toContain('dirty plan-review also sets `discussionOpen`')
+  })
+
+  it('adjudication request and injected plan-mode prompt name the tool and omit the confirm tail', () => {
+    const requestStart = source.indexOf('function formatPlanReviewAdjudicationRequest')
+    const requestEnd = source.indexOf('\n\tfunction ', requestStart + 1)
+    const request = source.slice(requestStart, requestEnd)
+    const promptStart = source.indexOf('pi.on("before_agent_start"')
+    const promptEnd = source.indexOf('pi.on(', promptStart + 10)
+    const prompt = source.slice(promptStart, promptEnd)
+
+    expect(request).toContain('record_plan_review_adjudication')
+    expect(request).toContain('plan_mode_complete')
+    expect(request).not.toContain('until Maxim confirms discussion is closed')
+    expect(prompt).toContain('plan_mode_complete, record_plan_review_adjudication')
+    expect(prompt).toContain('immediately call record_plan_review_adjudication')
+    expect(prompt).toContain('Dirty plan-review does not set discussionOpen')
+    expect(prompt).not.toContain('until Maxim confirms discussion is closed')
+    expect(source).toContain('"plan_mode_complete", "record_plan_review_adjudication"')
+    expect(source).not.toContain('until Maxim confirms discussion is closed')
+    expect(agents).toContain('Вопрос в чат при открытом ready-UI закрывает виджет до ответа')
+    expect(agents).toContain('Ход с ответом не вызывает `plan_mode_complete` и не ждёт кнопку')
+    expect(agents).toContain('«Исполнить», который вернулся из блокирующего overlay до видимого ответа, не пишет PLAN APPROVED и не диспатчит супервизора')
+    expect(skill).toContain('The answer turn must not call `plan_mode_complete` and must not wait for a button')
+    expect(skill).toContain('returns from the blocking overlay before the answer is visible does not write `PLAN APPROVED` and does not dispatch a supervisor')
+    expect(prompt).toContain('The answer turn must not call plan_mode_complete and must not wait for a button')
+    expect(prompt).toContain('Execute before the answer is visible does not write PLAN APPROVED')
+  })
+})
+
+describe('plan-review question closes widget before the answer (1jbs)', () => {
+  async function enterStrict(harness: ReturnType<typeof makeHarness>) {
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+  }
+
+  it('a non-confirm chat question closes an open ready-UI instead of leaving it blocking', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true, readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.customCalls.length === 0; i++) {
+      await Promise.resolve()
+    }
+    expect(harness.customCalls.length).toBeGreaterThan(0)
+
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло' }, harness.ctx)
+    const complete = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: [{ text?: string }]; details: { outcome?: string; discussionOpen?: boolean; ok?: boolean } }
+
+    expect(complete.details.outcome).toBe('question')
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.discussionOpen).toBe(true)
+    expect(String(complete.content[0].text)).toContain('не Исполнить, не Остаться и не plan-review')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(persisted?.data?.discussionOpen).toBe(true)
+
+    const blocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(blocked.details.error).toBe('discussion is open')
+    expect(blocked.details.discussionOpen).toBe(true)
+    expect(harness.customCalls).toHaveLength(1)
+
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план пожалуйста' }, harness.ctx)
+    const stillBlocked = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(stillBlocked.details.error).toBe('discussion is open')
+
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, harness.ctx)
+    const afterConfirm = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(afterConfirm?.data?.discussionOpen).toBe(false)
+  })
+
+  it('does not open ready-UI on the answer turn after a chat question', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.discussionOpen).toBe(true)
+    expect(complete.details.error).toBe('discussion is open')
+    expect(harness.customCalls).toHaveLength(0)
+    expect(String(complete.content[0].text)).toContain('Не жди кнопку')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+  })
+
+  it('does not treat Execute before the visible answer as approval', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, harness.ctx)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.outcome).toBe('pre-answer-execute')
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.preAnswerExecute).toBe(true)
+    expect(String(complete.content[0].text)).toContain('не считается согласием')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(mockSupervisorDispatchCalls).toEqual([])
+  })
+
+  it('Execute returned from the blocking overlay before the answer does not approve or dispatch', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true })
+    await enterStrict(harness)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, harness.ctx)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, harness.ctx)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.readyUiComponents.length === 0; i++) await Promise.resolve()
+    expect(harness.readyUiComponents.length).toBeGreaterThan(0)
+    harness.readyUiComponents[0]?.handleInput?.('1')
+    const complete = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: [{ text?: string }]; details: { outcome?: string } }
+    expect(complete.details.outcome).toBe('pre-answer-execute')
+    expect(String(complete.content[0].text)).toContain('Супервизор не запущен')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(mockSupervisorDispatchCalls).toEqual([])
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+  })
+
+  it('fails if an ordinary non-confirm question leaves the overlay blocking or pre-answer Execute is approval', async () => {
+    expect(isPlanWidgetConfirmMessage('уточни срок')).toBe(false)
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true })
+    await enterStrict(harness)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.customCalls.length === 0; i++) await Promise.resolve()
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'уточни срок' }, harness.ctx)
+    const closed = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: [{ text?: string }]; details: { outcome?: string } }
+    expect(closed.details.outcome).toBe('question')
+    expect(closed.details.outcome).not.toBe('executed')
+    expect(String(closed.content[0].text)).not.toContain('PLAN APPROVED записан')
+
+    const executeHarness = makeHarness({ activeBead: 'bead-ui', readyActionQueue: ['execute'] })
+    await enterStrict(executeHarness)
+    await executeHarness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, executeHarness.ctx)
+    await executeHarness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, executeHarness.ctx)
+    const executed = await markPlanReady(executeHarness.toolHandlers, executeHarness.ctx)
+    expect(executed.details.outcome).toBe('pre-answer-execute')
+    expect(executed.details.outcome).not.toBe('executed')
+    expect(String(executed.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(executeHarness.trace).not.toContain('workflow-plan-approved')
+  })
+
+  it('handleInput question text resolves the blocking overlay without a ReadyAction', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true, readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.readyUiComponents.length === 0; i++) await Promise.resolve()
+    expect(harness.readyUiComponents.length).toBeGreaterThan(0)
+    harness.readyUiComponents[0]?.handleInput?.('у')
+    const complete = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: [{ text?: string }]; details: { outcome?: string; discussionOpen?: boolean } }
+    expect(complete.details.outcome).toBe('question')
+    expect(complete.details.outcome).not.toBe('executed')
+    expect(complete.details.discussionOpen).toBe(true)
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
   })
 })

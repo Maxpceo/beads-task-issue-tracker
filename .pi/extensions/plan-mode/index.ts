@@ -405,6 +405,28 @@ function isExplicitPlanReviewRequest(text: string): boolean {
 		|| /(?:review|critique)\s+(?:the\s+)?plan\s+(?:with\s+)?(?:agents|reviewers)/u.test(normalized);
 }
 
+function isPlanDraftRequest(text: string): boolean {
+	const normalized = normalizePlanModeActivationText(text);
+	return /^(?:делай|сделай|напиши|подготовь|составь)\s+план\b/u.test(normalized)
+		|| /^(?:make|write|draft|prepare)\s+(?:a\s+)?plan\b/u.test(normalized);
+}
+
+function isChatQuestionText(text: string | undefined | null): boolean {
+	if (typeof text !== "string") return false;
+	const trimmed = text.trim();
+	if (!trimmed || isPlanWidgetConfirmMessage(trimmed)) return false;
+	if (isNaturalLanguagePlanModeActivation(trimmed) || isNaturalLanguageAutopilotActivation(trimmed)) return false;
+	if (isExplicitPlanReviewRequest(trimmed) || isPlanDraftRequest(trimmed)) return false;
+	if (/[?？]/u.test(trimmed)) return true;
+	const normalized = normalizePlanModeActivationText(trimmed);
+	return /^(?:что|почему|зачем|как|где|когда|какой|какая|какие|кто|чего|объясни|расскажи)\b/u.test(normalized)
+		|| /^(?:what|why|how|where|when|who|which|explain)\b/u.test(normalized);
+}
+
+function isFreeformChatWhileReadyUi(text: string | undefined | null): boolean {
+	return typeof text === "string" && text.trim().length > 0 && !isPlanWidgetConfirmMessage(text);
+}
+
 function latestAssistantTextFromEntries(entries: Array<{ type?: string; message?: AgentMessage }>): string {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const message = entries[i].message;
@@ -488,6 +510,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let pendingReadyPlan: string | undefined;
 	/** True after ask/refine until a whole-message confirm. Dirty plan-review does not set this. */
 	let discussionOpen = false;
+	let pendingChatQuestion = false;
+	let dismissOpenReadyUi: (() => void) | undefined;
 	/** Plan text that was reviewed; banner diff uses this, not adjudication prose. */
 	let planReviewSnapshot: string | undefined;
 	let planReviewPendingFindings: PendingPlanReviewFinding[] = [];
@@ -1616,7 +1640,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		planText: string,
 		source: ReadyUiSource,
 		options: { skipReadyChoice?: boolean } = {},
-	): Promise<ReadyAction | null> {
+	): Promise<ReadyAction | "question" | null> {
 		if (!ctx.hasUI) return null;
 
 		// Legend before overlay/select (jxna). RPC execute uses select without legend;
@@ -1641,14 +1665,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		// built-in select (gauq/m6ho TUI abort). RPC / missing custom → select.
 		// Custom throw must NOT fall back to select; runStrictReadyUiLoopSafe degrades.
 		if (source === "execute" && canUseCustomUi(ctx)) {
-			const result = await ctx.ui.custom<{ action: ReadyAction } | null>(createReadyUiFactory(), {
-				overlay: true,
-				overlayOptions: {
-					anchor: "bottom-center",
-					width: "100%",
-				},
-			});
-			return result?.action ?? null;
+			try {
+				const result = await ctx.ui.custom<{ action?: ReadyAction; dismissed?: "question" } | null>((tui, theme, keybindings, done) => {
+					dismissOpenReadyUi = () => { dismissOpenReadyUi = undefined; done({ dismissed: "question" }); };
+					return createReadyUiFactory()(tui, theme, keybindings, (value) => { dismissOpenReadyUi = undefined; done(value); });
+				}, { overlay: true, overlayOptions: { anchor: "bottom-center", width: "100%" } });
+				if (result?.dismissed === "question") return "question";
+				return result?.action ?? null;
+			} finally {
+				dismissOpenReadyUi = undefined;
+			}
 		}
 
 		const choice = await ctx.ui.select("План готов — что дальше?", labels);
@@ -1667,6 +1693,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		| { kind: "findings"; results: PlanReviewResult[]; gate: PlanReviewGateResult }
 		| { kind: "clean-reshow" }
 		| { kind: "transcript-failed"; message: string }
+		| { kind: "question" }
+		| { kind: "pre-answer-execute" }
 		| { kind: "error"; message: string };
 
 	function formatPlanModeCompleteToolText(outcome: StrictReadyUiOutcome): string {
@@ -1691,6 +1719,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				return "Pending снят. Next: ждать текст уточнения. Не вызывать plan_mode_complete, пока Максим не подтвердит, что вопросы закрыты.";
 			case "ask":
 				return "Pending снят. Next: ждать вопрос в обычном чате. Не вызывать plan_mode_complete, пока Максим не подтвердит, что вопросы закрыты.";
+			case "question":
+				return "Вопрос в чат закрыл ready-UI до ответа. Это не Исполнить, не Остаться и не plan-review. discussionOpen=true. Ответь в чат. Не вызывай plan_mode_complete и не жди кнопку. Следующий виджет только после отдельного confirm.";
+			case "pre-answer-execute":
+				return "Исполнить до видимого ответа не считается согласием. PLAN APPROVED не записан. Супервизор не запущен. Ответь в чат. Не вызывай plan_mode_complete и не жди кнопку, пока ответ не виден.";
 			case "error":
 				return `Ready-UI упал: ${outcome.message}. Pending cleared. Plan mode ON. Не утверждать что overlay ждёт. Снова plan_mode_complete или продолжить план.`;
 			case "clean-reshow":
@@ -1841,6 +1873,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const action = await promptReadyAction(ctx, planText, source, {
 				skipReadyChoice: lastOutcome.kind === "clean-reshow",
 			});
+
+			if (action === "question" || (action === "execute" && pendingChatQuestion)) {
+				if (action === "question") pendingChatQuestion = true;
+				clearPendingReadyPlan();
+				discussionOpen = true;
+				persistState();
+				return { kind: action === "question" ? "question" : "pre-answer-execute" };
+			}
 
 			if (action === "execute") {
 				const approval = await approvePlanForExecution(ctx, planText);
@@ -2211,7 +2251,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (discussionOpen) {
 					persistState();
 					return toolText(
-						"plan_mode_complete blocked: discussion is open. Answer in chat. Call complete only after Maxim confirms questions are closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
+						"plan_mode_complete blocked: discussion is open. Answer in chat. Не жди кнопку. Call complete only after Maxim confirms questions are closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
 						{ ok: false, error: "discussion is open", pending: false, discussionOpen: true },
 					);
 				}
@@ -2241,11 +2281,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 							outcome: outcome.kind,
 						});
 					}
-					const pending = outcome.kind === "execute-blocked" || outcome.kind === "clean-reshow" || Boolean(pendingReadyPlan);
-					const ok = outcome.kind !== "execute-blocked" && outcome.kind !== "error";
+					const closedByQuestion = outcome.kind === "question" || outcome.kind === "pre-answer-execute";
+					const pending = !closedByQuestion && (outcome.kind === "execute-blocked" || outcome.kind === "clean-reshow" || Boolean(pendingReadyPlan));
+					const ok = !closedByQuestion && outcome.kind !== "execute-blocked" && outcome.kind !== "error";
 					return toolText(formatPlanModeCompleteToolText(outcome), {
 						ok,
 						pending,
+						discussionOpen: closedByQuestion ? true : undefined,
+						preAnswerExecute: outcome.kind === "pre-answer-execute",
 						outcome: outcome.kind,
 						next: outcome.kind === "executed" ? outcome.next : undefined,
 					});
@@ -2739,6 +2782,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	pi.on("input", async (event, ctx) => {
 		if (event.source === "extension") return;
 
+		// Chat text while the overlay is open closes it. Not execute, stay, or plan-review.
+		if (planModeEnabled && dismissOpenReadyUi && isFreeformChatWhileReadyUi(event.text)) {
+			pendingChatQuestion = true;
+			discussionOpen = true;
+			persistState();
+			const dismiss = dismissOpenReadyUi;
+			dismissOpenReadyUi = undefined;
+			dismiss();
+		}
+
 		// Runtime hop before NL plan activation: /plan-auto does not set durable autopilot and does not consume ping.
 		if (autopilotEnabled && !planModeEnabled) {
 			const ping = parseVisiblePing(event.text ?? "");
@@ -2751,7 +2804,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (planModeEnabled && discussionOpen && isPlanWidgetConfirmMessage(event.text)) {
 			discussionOpen = false;
 			persistState();
-			// Consume-once flag only; do not swallow the message so the agent can call complete.
+			// Consume-once. Confirm does not clear pendingChatQuestion: Execute before the answer is not consent.
+		}
+
+		if (planModeEnabled && isChatQuestionText(event.text)) {
+			pendingChatQuestion = true;
+			discussionOpen = true;
+			persistState();
 		}
 
 		const workflowIntent = parseWorkflowIntent(event.text);
@@ -2841,7 +2900,7 @@ Restrictions:
 - Other bd mutating commands remain blocked: bd create/update/close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull. workflow_update and setup-worktree stay outside PLAN_MODE_TOOLS.
 
 Questions and «объясни» belong in chat. questionnaire is only for a real A/B choice that cannot continue without a pick — never instead of a paragraph.
-The first plan_mode_complete after entering plan mode / «делай план» opens ready-UI immediately. Do not dump the draft plan in chat instead of the widget. Ready-UI: Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос. «Задать вопрос» closes the widget without an editor; wait for the question in normal chat. After ask or refine, discussionOpen is true: do NOT call plan_mode_complete until Maxim confirms with a whole-message allowlist (да / ок / ok / покажи план / вопросы закрыты / можно показывать план). Dirty plan-review does not set discussionOpen and does not wait for that phrase. discussionOpen resets when plan mode goes off→on (same moment as the plan-review cycle reset). The plan-review button runs critique without approving or starting a supervisor. Reviewer facts are written to the chat before any repeat plan. If there is a live finding or the gate is not ok, immediately call record_plan_review_adjudication; that tool writes the adjudication and re-opens the plan. Do not call plan_mode_complete while that adjudication is pending. Do not ask Maxim to write «покажи план».
+The first plan_mode_complete after entering plan mode / «делай план» opens ready-UI immediately. Do not dump the draft plan in chat instead of the widget. Ready-UI: Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос. «Задать вопрос» closes the widget without an editor; wait for the question in normal chat. After ask or refine, discussionOpen is true: do NOT call plan_mode_complete until Maxim confirms with a whole-message allowlist (да / ок / ok / покажи план / вопросы закрыты / можно показывать план). Dirty plan-review does not set discussionOpen and does not wait for that phrase. discussionOpen resets when plan mode goes off→on (same moment as the plan-review cycle reset). The plan-review button runs critique without approving or starting a supervisor. Reviewer facts are written to the chat before any repeat plan. If there is a live finding or the gate is not ok, immediately call record_plan_review_adjudication; that tool writes the adjudication and re-opens the plan. Do not call plan_mode_complete while that adjudication is pending. Do not ask Maxim to write «покажи план». A chat question while ready-UI is open closes the widget and sets discussionOpen; it is not Execute, stay, or plan-review. The answer turn must not call plan_mode_complete and must not wait for a button. Execute before the answer is visible does not write PLAN APPROVED and does not dispatch.
 Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header. Do not write English ## section headings; keep canonical English field-lines (Acceptance:, Files to change:) for gates — ready-UI display rewrites known labels to Russian ##, and dual-write of Russian+English keys is forbidden.
@@ -2946,6 +3005,9 @@ After completing a step, include a [DONE:n] tag in your response.`,
 		// Extract todos from last assistant message
 		const lastAssistant = [...event.messages].reverse().find(isAssistantMessage);
 		const lastAssistantText = lastAssistant ? getTextContent(lastAssistant) : "";
+		if (pendingChatQuestion && lastAssistantText.trim()) {
+			pendingChatQuestion = false;
+		}
 		if (lastAssistant) {
 			const extracted = extractTodoItems(lastAssistantText);
 			if (extracted.length > 0) {
