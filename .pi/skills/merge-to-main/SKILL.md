@@ -104,6 +104,14 @@ EOF
    ```text
    dispatch_docs_agent(beadId=<ID>, transport=cmux, cwd=<feature-worktree-path>)
    ```
+   `dispatch_docs_agent` берёт recorded START_COMMIT этой bead: сначала workflow-state, если start есть и он не равен HEAD; иначе последний `START_COMMIT`/`Start-commit` из комментариев, не равный HEAD. Не подставлять текущий HEAD после close/unbind.
+
+   Ошибка до spawn `dispatch_docs_agent preflight заблокирован: пустой diff, beadId=<id>, recorded START_COMMIT отсутствует или равен HEAD` — стоп. Blocker в чат с beadId и этой причиной. Панель не ждать: spawn не было, taskId нет.
+
+   Если spawned — сразу в чат taskId и диапазон `start..HEAD`. Не писать «жду эксперта» без taskId. Merge не продолжать без ping или записанного docs skip.
+
+   Если следующий шаг merge без ping — ровно один существующий `bash <worktree>/.pi/orchestrator/poll.sh <taskId>`. Не создавать новый таймер, `scheduler_create`, цикл или автополлинг панелей. `poll.sh` exit 1 — BLOCKED с taskId и «нет digest». Liveness панели не проверять. Успешный ping до digest не требовать.
+
    The docs agent must inspect the branch diff and handle CHANGELOG/README/docs coverage during this merge workflow, not during `land`:
    - for code changes, update `CHANGELOG.md` under `[Unreleased]` or record an explicit skip reason;
    - for user-facing behavior/setup/API changes, update `README.md` or `docs/` as needed;
