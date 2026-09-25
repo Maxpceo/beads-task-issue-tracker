@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { requireTaskToolTarget, taskScopeErrorToPolicyReason } from "../worktree-scope/index";
 import { findLiveSupervisorSpawnsForWorktree } from "../beads-dispatch/cmux-transport";
+import { loadWorkflowChains, type WorkflowChains } from "../workflow-chains-config/index"; // `.pi/config/workflow-chains.json`
 interface ExtensionAPI {
 	on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: any): void;
@@ -89,8 +90,21 @@ const SENSITIVE_PATH_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 	{ pattern: PRIVATE_KEY_OR_CERT_PATTERN, reason: "private key/cert файлы защищены" },
 ];
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
-const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
+const notifiedWorkflowChainsErrors = new Set<string>();
+
+function chainsForPolicy(cwd?: string, worktreePath?: string): WorkflowChains {
+	const existingWorktree = worktreePath && fs.existsSync(worktreePath) ? worktreePath : undefined;
+	return loadWorkflowChains(existingWorktree ?? cwd ?? process.cwd());
+}
+
+function notifyWorkflowChainsReadError(ctx: ExtensionContext, chains: WorkflowChains): void {
+	if (!chains.readError) return;
+	const key = chains.configPath ?? chains.readError;
+	if (notifiedWorkflowChainsErrors.has(key)) return;
+	notifiedWorkflowChainsErrors.add(key);
+	ctx.ui.notify(chains.readError, "error");
+}
 const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/agents|\.pi\/skills|scripts)\/|\.(ts|tsx|vue|rs|js|mjs|cjs|css|scss|sh)$/;
 const FAST_PATH_FILE_THRESHOLD = 3;
 const FAST_PATH_ADDED_LINE_THRESHOLD = 80;
@@ -765,17 +779,19 @@ function hasWorktreeLockOwnershipEvidence(workflowState: WorkflowStateSnapshot):
 	return false;
 }
 
-function hasActiveWorktreeLockRequirement(workflowState: WorkflowStateSnapshot): boolean {
-	return Boolean(
-		workflowState.activeBead &&
-		isWorkflowStateNonTerminal(workflowState) &&
-		hasWorktreeLockOwnershipEvidence(workflowState) &&
-		(workflowState.worktreePath || workflowState.branch),
-	);
+function hasActiveWorktreeLockRequirement(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
+	if (!(workflowState.activeBead && isWorkflowStateNonTerminal(workflowState) && hasWorktreeLockOwnershipEvidence(workflowState))) {
+		return false;
+	}
+	const recorded = workflowState.worktreePath;
+	if (recorded && fs.existsSync(recorded)) return true;
+	const chains = chainsForPolicy(cwd, recorded);
+	if (!chains.copyRequired) return false;
+	return Boolean(recorded || workflowState.branch);
 }
 
-function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot): boolean {
-	return Boolean(workflowState.worktreePath && hasActiveWorktreeLockRequirement(workflowState));
+function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
+	return Boolean(workflowState.worktreePath && hasActiveWorktreeLockRequirement(workflowState, cwd));
 }
 
 function commandHasTestOrGateOperation(command: string): boolean {
@@ -801,7 +817,7 @@ function commandRequiresActiveWorktreeCwd(command: string, processCwd: string): 
 }
 
 function activeWorktreeCwdDecision(command: string, processCwd: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
+	if (!hasActiveWorktreeLockRequirement(workflowState, processCwd)) return undefined;
 	if (!commandRequiresActiveWorktreeCwd(command, processCwd)) return undefined;
 	const required = workflowState.worktreePath;
 	if (!required) {
@@ -864,7 +880,7 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 }
 
 function activeWorktreePathDecision(toolName: string, targetPath: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLockRequirement(workflowState)) return undefined;
+	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLockRequirement(workflowState, workflowState.worktreePath)) return undefined;
 	const required = workflowState.worktreePath;
 	if (!required) {
 		return {
@@ -901,7 +917,7 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 }
 
 function requiredToolCwdDecision(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
+	if (!hasActiveWorktreeLockRequirement(workflowState, typeof input.cwd === "string" ? input.cwd : workflowState.worktreePath)) return undefined;
 	const canonicalToolName = ["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].find((name) => matchesToolName(toolName, name));
 	if (!canonicalToolName) return undefined;
 	const target = requireTaskToolTarget(canonicalToolName, input, workflowState);
@@ -2540,7 +2556,10 @@ function extractWorktreePathFromSegment(segment: string): string | undefined {
 	return parseWorktreeCreateSegment(segment)?.path;
 }
 
-function invalidWorktreePath(command: string, cwd?: string): string | undefined {
+function invalidWorktreePath(command: string, cwd?: string, chains: WorkflowChains = chainsForPolicy(cwd)): string | undefined {
+	if (!chains.copyRequired) return undefined;
+	const copyRoot = chains.copyRoot;
+	if (!copyRoot) return undefined;
 	for (const segment of splitShellSegments(command)) {
 		if (!/\b(?:bd\s+worktree\s+create|git\s+worktree\s+add)\b/.test(segment)) continue;
 		const rawPath = extractWorktreePathFromSegment(segment);
@@ -2549,29 +2568,36 @@ function invalidWorktreePath(command: string, cwd?: string): string | undefined 
 		if (!unquoted.startsWith("/") && !unquoted.startsWith("~/") && !unquoted.startsWith("$HOME/")) return unquoted;
 		if (unquoted.includes("..")) return unquoted;
 		const resolved = realpathExistingOrParent(normalizeFsPath(unquoted, cwd));
-		const allowedRoot = realpathExistingOrParent(WORKTREE_ROOT);
+		const allowedRoot = realpathExistingOrParent(copyRoot);
 		if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) return unquoted;
 	}
 	return undefined;
 }
 
 
-function worktreeNamingBlockReason(command: string, cwd?: string, workflowState: WorkflowStateSnapshot = {}): string | undefined {
+function worktreeNamingBlockReason(command: string, cwd?: string, workflowState: WorkflowStateSnapshot = {}, chains: WorkflowChains = chainsForPolicy(cwd)): string | undefined {
+	const typeSet = new Set(chains.naming.types);
+	const copyRoot = chains.copyRoot;
 	for (const segment of splitShellSegments(command)) {
 		const parsed = parseWorktreeCreateSegment(segment);
 		if (!parsed?.path || !parsed.branch) continue;
 		const [rawPrefix, ...suffixParts] = parsed.branch.split("/");
 		const prefix = rawPrefix ?? "";
 		const suffix = suffixParts.join("/");
-		if (!TASK_WORKTREE_BRANCH_PREFIXES.has(prefix) || !suffix) continue;
+		if (!typeSet.has(prefix) || !suffix) continue;
 		const resolvedPath = realpathExistingOrParent(normalizeFsPath(parsed.path, cwd));
-		if (!isPathInsideOrEqual(resolvedPath, WORKTREE_ROOT)) continue;
+		if (copyRoot && !isPathInsideOrEqual(resolvedPath, copyRoot)) continue;
+		if (!copyRoot) continue;
 		const basename = path.basename(resolvedPath);
 		const expectedFormat = "<type>/<bead-suffix>-<domain-or-component>-<purpose> with worktree basename equal to branch suffix";
-		if (basename !== suffix) return `Заблокировано: canonical worktree naming требует, чтобы worktree basename (${basename}) точно совпадал с branch suffix (${suffix}) для ${parsed.branch}. Формат: ${expectedFormat}.`;
-		if (/^beads-task-issue-tracker-[a-z0-9]+(?:-|$)/i.test(suffix)) return `Заблокировано: branch/worktree suffix не должен использовать полный project bead id (${suffix}); используй короткий bead suffix, например lgok-branch-worktree-naming.`;
-		if (!/^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$/.test(suffix)) return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
-		if (workflowState.activeBead) {
+		if (chains.naming.basenameEqualsBranchSuffix && basename !== suffix) return `Заблокировано: canonical worktree naming требует, чтобы worktree basename (${basename}) точно совпадал с branch suffix (${suffix}) для ${parsed.branch}. Формат: ${expectedFormat}.`;
+		if (chains.naming.suffixMustNotStartWith && suffix.startsWith(chains.naming.suffixMustNotStartWith)) return `Заблокировано: branch/worktree suffix не должен использовать полный project bead id (${suffix}); используй короткий bead suffix, например lgok-branch-worktree-naming.`;
+		try {
+			if (!new RegExp(chains.naming.suffixPattern).test(suffix)) return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
+		} catch {
+			return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
+		}
+		if (chains.naming.requireActiveBeadSuffixPrefix && workflowState.activeBead) {
 			const activeSuffix = workflowState.activeBead.split("-").pop() ?? "";
 			if (activeSuffix && !suffix.startsWith(`${activeSuffix}-`)) return `Заблокировано: active bead ${workflowState.activeBead} требует branch/worktree suffix с префиксом ${activeSuffix}-; получен ${suffix}.`;
 		}
@@ -3197,8 +3223,9 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 		const currentSessionState = hasCurrentSessionOwnership(state, ctx);
 		const currentScopeState = workflowStateHasCurrentScopeEvidence(state, scope);
 		const recordedTaskScopeState = workflowStateHasValidRecordedTaskScope(state);
-		const missingWorktreeLock = currentSessionState && hasActiveWorktreeLockRequirement(state) && !state.worktreePath;
-		const isCurrentSessionState = currentSessionState && (currentScopeState || recordedTaskScopeState || missingWorktreeLock);
+		const missingWorktreeLock = currentSessionState && hasActiveWorktreeLockRequirement(state, ctx.cwd) && !state.worktreePath;
+		const copyOptionalWithoutWorktree = currentSessionState && !chainsForPolicy(ctx.cwd, state.worktreePath).copyRequired && !state.worktreePath;
+		const isCurrentSessionState = currentSessionState && (currentScopeState || recordedTaskScopeState || missingWorktreeLock || copyOptionalWithoutWorktree);
 		if (!isCurrentSessionState) {
 			return withRuntimeMergeSlotSessionKey(
 				{ ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit },
@@ -3299,16 +3326,17 @@ export function evaluateBashPolicy(
 		};
 	}
 
-	const invalidWorktree = invalidWorktreePath(command, commandCwd);
+	const chains = chainsForPolicy(commandCwd ?? options.cwd, workflowState.worktreePath);
+	const invalidWorktree = invalidWorktreePath(command, commandCwd, chains);
 	if (invalidWorktree) {
 		return {
 			policy: "blockWorktreeInsideRepo",
 			block: true,
-			reason: `Заблокировано: worktree path должен находиться внутри ${WORKTREE_ROOT}; получен ${invalidWorktree}.`,
+			reason: `Заблокировано: worktree path должен находиться внутри ${chains.copyRoot}; получен ${invalidWorktree}.`,
 		};
 	}
 
-	const worktreeNamingReason = worktreeNamingBlockReason(command, commandCwd, workflowState);
+	const worktreeNamingReason = worktreeNamingBlockReason(command, commandCwd, workflowState, chains);
 	if (worktreeNamingReason) {
 		return {
 			policy: "blockWorktreeInsideRepo",
@@ -3513,6 +3541,7 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
 		const runtimeSessionKey = currentSessionKey(ctx);
 		const workflowState = latestWorkflowState(ctx);
+		notifyWorkflowChainsReadError(ctx, chainsForPolicy(ctx.cwd, workflowState.worktreePath));
 
 		if (matchesToolName(event.toolName, "bash")) {
 			const command = String(event.input.command ?? "");

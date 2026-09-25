@@ -20,6 +20,7 @@ import {
   PLAN_WIDGET_CONFIRM_MESSAGES,
 } from '../../.pi/extensions/plan-mode/utils'
 import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
+import * as workflowChainsConfig from '../../.pi/extensions/workflow-chains-config/index'
 import {
   PLAN_REVIEW_WAITING_TRIO_ENTRY,
   PLAN_REVIEW_WAITING_TRIO_NOTICE,
@@ -195,6 +196,7 @@ function loadPlanModeExtension(): (pi: unknown) => void {
       }
     }
     if (id === '../worktree-scope/index') return worktreeScope
+    if (id === '../workflow-chains-config/index') return workflowChainsConfig
     if (id === '../beads-dispatch/index') {
       return {
         requestSupervisorDispatch: async (_pi: unknown, params: { beadId: string; cwd?: string; transport?: string }) => {
@@ -1753,6 +1755,45 @@ describe('Pi plan-mode typed workflow tools', () => {
     ]))
     expect(workflowUpdates).toHaveLength(0)
     expect(mockSupervisorDispatchCalls).toHaveLength(0)
+  })
+
+  it('workflow_plan_approved does not require bd worktree create when copyRequired is false', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'plan-mode-chains-'))
+    const { execFileSync } = await import('node:child_process')
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' })
+    mkdirSync(join(repo, '.pi', 'config'), { recursive: true })
+    writeFileSync(join(repo, '.pi', 'config', 'workflow-chains.json'), `${JSON.stringify({
+      copyRequired: false,
+      handoffFromCopy: false,
+      naming: {
+        types: ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'ci', 'task'],
+        basenameEqualsBranchSuffix: true,
+        suffixMustNotStartWith: 'beads-task-issue-tracker-',
+        suffixPattern: '^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$',
+        requireActiveBeadSuffixPrefix: true,
+      },
+    }, null, 2)}\n`)
+    try {
+      const { toolHandlers, workflowUpdates, execCalls, ctx } = makeHarness({ entries: [] })
+      ctx.cwd = repo
+      const approved = await toolHandlers.get('workflow_plan_approved')?.execute('call-copy-optional', {
+        beadId: 'bead-plan',
+        planEvidence: [
+          'Plan: approve without a task copy.',
+          'Files: .pi/extensions/plan-mode/index.ts.',
+          'Acceptance: copyRequired false does not require bd worktree create.',
+        ].join('\n'),
+      }, undefined, undefined, ctx)
+
+      expect(approved.content[0].text).toContain('workflow_plan_approved recorded')
+      expect(approved.content[0].text).not.toContain('bd worktree create')
+      expect(execCalls).toEqual(expect.arrayContaining([
+        expect.objectContaining({ command: 'bd', args: expect.arrayContaining(['comments', 'add', 'bead-plan']) }),
+      ]))
+      expect(workflowUpdates.at(-1)).toMatchObject({ state: 'implementing', activeBead: 'bead-plan', planApproved: true })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 
   it('workflow_plan_approved blocks recorded branch scope without worktree before bd comment', async () => {

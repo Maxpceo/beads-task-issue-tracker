@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
@@ -2225,5 +2227,62 @@ describe('Pi workflow-state typed tools', () => {
     expect(result.content[0].text).toContain('state=idle')
     expect(appended.at(-1)?.data).toMatchObject({ state: 'idle' })
     expect((appended.at(-1)?.data as any).activeBead).toBeUndefined()
+  })
+
+  it('does not auto-bind tracker copies when copyRequired is false and copyRoot is omitted', async () => {
+    const repo = mkdtempSync(path.join(os.tmpdir(), 'wf-state-chains-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' })
+    mkdirSync(path.join(repo, '.pi', 'config'), { recursive: true })
+    writeFileSync(path.join(repo, '.pi', 'config', 'workflow-chains.json'), `${JSON.stringify({
+      copyRequired: false,
+      handoffFromCopy: false,
+      naming: {
+        types: ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'ci', 'task'],
+        basenameEqualsBranchSuffix: true,
+        suffixMustNotStartWith: 'beads-task-issue-tracker-',
+        suffixPattern: '^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$',
+        requireActiveBeadSuffixPrefix: true,
+      },
+    }, null, 2)}\n`)
+    const taskPath = path.join(WORKTREE_ROOT, 'xy73-claim-existing-worktree-deadlock')
+    const taskBranch = 'fix/xy73-claim-existing-worktree-deadlock'
+    try {
+      const { toolHandlers, ctx, appended } = makeHarness({
+        branch: 'main',
+        worktreePath: repo,
+        startCommit: 'main-head',
+        ctxCwd: repo,
+        issues: { 'beads-task-issue-tracker-xy73': { status: 'open', comments: '' } },
+        worktreePorcelain: {
+          code: 0,
+          stdout: [
+            `worktree ${repo}`,
+            'HEAD main-head',
+            'branch refs/heads/main',
+            '',
+            `worktree ${taskPath}`,
+            'HEAD task-head',
+            `branch refs/heads/${taskBranch}`,
+            '',
+          ].join('\n'),
+        },
+        gitScopes: {
+          [repo]: { branch: 'main', worktreePath: repo, startCommit: 'main-head' },
+          [taskPath]: { branch: taskBranch, worktreePath: taskPath, startCommit: 'task-head' },
+        },
+      })
+
+      const result = await toolHandlers.get('workflow_claim')?.execute('call-1', { beadId: 'beads-task-issue-tracker-xy73' }, undefined, undefined, ctx)
+
+      expect(result.content[0].text).toContain('workflow_claim выполнен')
+      expect(result.content[0].text).not.toContain(`worktree=${taskPath}`)
+      expect(appended.at(-1)?.data).toMatchObject({
+        activeBead: 'beads-task-issue-tracker-xy73',
+        state: 'claimed',
+      })
+      expect((appended.at(-1)?.data as any).worktreePath).not.toBe(taskPath)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
   })
 })
