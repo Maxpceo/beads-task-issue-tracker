@@ -553,10 +553,182 @@ function findPassingCheck(checkResults: Array<ReturnType<typeof parseCheckResult
 	return checkResults.find((check) => check.result === "PASS" && predicate(normalizeVerificationText(check.command)));
 }
 
+const VITEST_NARROWING_FLAGS = new Set([
+	"-t",
+	"--testnamepattern",
+	"--testpathpattern",
+	"--exclude",
+	"--changed",
+	"--related",
+	"--shard",
+]);
+
+const VITEST_FLAGS_WITH_VALUE = new Set([
+	"--reporter",
+	"-r",
+	"--config",
+	"-c",
+	"--project",
+	"--exclude",
+	"--shard",
+	"--testnamepattern",
+	"-t",
+	"--testpathpattern",
+	"--dir",
+	"--root",
+	"--environment",
+	"--pool",
+	"--mode",
+	"--outputfile",
+	"--prefix",
+]);
+
+function expandFlagEquals(args: string[]): string[] {
+	const expanded: string[] = [];
+	for (const arg of args) {
+		const match = arg.match(/^(--?[^=]+)=(.*)$/);
+		if (match) {
+			expanded.push(match[1] ?? "", match[2] ?? "");
+			continue;
+		}
+		expanded.push(arg);
+	}
+	return expanded.filter((arg) => arg.length > 0);
+}
+
+function vitestArgv(command: string): string[] {
+	const extracted = extractVerificationCommand(command) ?? command;
+	return expandFlagEquals(splitCommandArgs(extracted));
+}
+
+function isFocusedVitestRunCommand(command: string): boolean {
+	const args = vitestArgv(command).map((arg) => arg.toLowerCase());
+	const vitestIndex = args.indexOf("vitest");
+	return vitestIndex >= 0 && args[vitestIndex + 1] === "run";
+}
+
+function focusedVitestRunKind(command: string): "pnpm-exec-vitest-run" | "vitest-run" | undefined {
+	const args = vitestArgv(command).map((arg) => arg.toLowerCase());
+	const vitestIndex = args.indexOf("vitest");
+	if (vitestIndex < 0 || args[vitestIndex + 1] !== "run") return undefined;
+	if (args[0] === "pnpm" && args.includes("exec")) return "pnpm-exec-vitest-run";
+	if (args[0] === "vitest") return "vitest-run";
+	return undefined;
+}
+
+function normalizeVitestPathToken(token: string): string {
+	return token.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "").toLowerCase();
+}
+
+function vitestPathTokens(command: string): string[] {
+	const args = vitestArgv(command);
+	const paths: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index] ?? "";
+		const flag = arg.toLowerCase();
+		if (flag.startsWith("-")) {
+			if (VITEST_FLAGS_WITH_VALUE.has(flag) && index + 1 < args.length && !(args[index + 1] ?? "").startsWith("-")) {
+				index += 1;
+			}
+			continue;
+		}
+		if (["pnpm", "npx", "exec", "vitest", "run", "node"].includes(flag)) continue;
+		const normalized = normalizeVitestPathToken(arg);
+		if (!normalized) continue;
+		if (normalized.includes("/") || /\.(?:[cm]?[jt]sx?|vue)$/.test(normalized)) paths.push(normalized);
+	}
+	return paths;
+}
+
+function vitestFlagValues(command: string, flags: string[]): Set<string> {
+	const args = vitestArgv(command);
+	const wanted = new Set(flags.map((flag) => flag.toLowerCase()));
+	const values = new Set<string>();
+	for (let index = 0; index < args.length; index += 1) {
+		const flag = (args[index] ?? "").toLowerCase();
+		if (!wanted.has(flag)) continue;
+		const value = args[index + 1];
+		if (value && !value.startsWith("-")) values.add(value.toLowerCase());
+	}
+	return values;
+}
+
+function vitestNarrowingSignature(command: string): string[] {
+	const args = vitestArgv(command).map((arg) => arg.toLowerCase());
+	const signature: string[] = [];
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index] ?? "";
+		if (!VITEST_NARROWING_FLAGS.has(arg)) continue;
+		if (VITEST_FLAGS_WITH_VALUE.has(arg) && args[index + 1] && !args[index + 1]!.startsWith("-")) {
+			signature.push(`${arg}=${args[index + 1]}`);
+			index += 1;
+			continue;
+		}
+		signature.push(arg);
+	}
+	return signature;
+}
+
+function hasMismatchedVitestConfigOrProject(itemCommand: string, runCommand: string): boolean {
+	for (const flags of [["--config", "-c"], ["--project"]]) {
+		const itemValues = vitestFlagValues(itemCommand, flags);
+		const runValues = vitestFlagValues(runCommand, flags);
+		for (const value of runValues) {
+			if (!itemValues.has(value)) return true;
+		}
+	}
+	return false;
+}
+
+function hasExtraVitestNarrowing(itemCommand: string, runCommand: string): boolean {
+	if (hasMismatchedVitestConfigOrProject(itemCommand, runCommand)) return true;
+	const itemSignature = new Set(vitestNarrowingSignature(itemCommand));
+	return vitestNarrowingSignature(runCommand).some((part) => !itemSignature.has(part));
+}
+
+function coversVitestPaths(itemCommand: string, runCommand: string): boolean {
+	const itemPaths = vitestPathTokens(itemCommand);
+	if (itemPaths.length === 0) return false;
+	const runPaths = new Set(vitestPathTokens(runCommand));
+	return itemPaths.every((pathToken) => runPaths.has(pathToken));
+}
+
+function isCoveringFocusedVitestRun(itemCommand: string, runCommand: string): boolean {
+	const itemKind = focusedVitestRunKind(itemCommand);
+	const runKind = focusedVitestRunKind(runCommand);
+	if (!itemKind || itemKind !== runKind) return false;
+	if (hasExtraVitestNarrowing(itemCommand, runCommand)) return false;
+	return coversVitestPaths(itemCommand, runCommand);
+}
+
+function matchingFocusedVitestSuperset(itemCommand: string, checkResults: Array<ReturnType<typeof parseCheckResult>>) {
+	if (!isFocusedVitestRunCommand(itemCommand)) return undefined;
+	if (!focusedVitestRunKind(itemCommand)) return undefined;
+	if (vitestPathTokens(itemCommand).length === 0) return undefined;
+
+	return checkResults.find((check) => {
+		if (check.result !== "PASS") return false;
+		if (!isFocusedVitestRunCommand(check.command)) return false;
+		return isCoveringFocusedVitestRun(itemCommand, check.command);
+	});
+}
+
 function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<typeof parseCheckResult>>) {
 	const normalizedItem = normalizeVerificationText(item);
+	const itemCommand = extractVerificationCommand(item) ?? item;
+	const itemIsFocusedVitest = isFocusedVitestRunCommand(itemCommand);
 	const exact = checkResults.find((check) => check.command && check.result !== "N/A" && (normalizedItem.includes(normalizeVerificationText(check.command)) || normalizeVerificationText(check.command).includes(normalizedItem)));
-	if (exact) return exact;
+	const skipExact = Boolean(
+		exact
+		&& itemIsFocusedVitest
+		&& isFocusedVitestRunCommand(exact.command)
+		&& exact.result === "PASS"
+		&& !isCoveringFocusedVitestRun(itemCommand, exact.command),
+	);
+	if (exact && !skipExact) return exact;
+
+	const vitestSuperset = matchingFocusedVitestSuperset(itemCommand, checkResults);
+	if (vitestSuperset) return vitestSuperset;
 
 	const manual = checkResults.find((check) => check.result !== "N/A" && /^manual review$/i.test(check.command));
 	if (manual && /\bmanual\b|ручн/i.test(normalizedItem)) return manual;
@@ -568,6 +740,21 @@ function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<
 	if (vueTsc && /\b(npx\b.*)?\bvue-tsc\b.*--no-?emit\b/i.test(normalizedItem)) return vueTsc;
 
 	if (fullTest && /\b(test assertions?|regression|matrix|execcalls|accepted\/close|write failure|order|fail|not run)\b/i.test(item)) return fullTest;
+
+	if (itemIsFocusedVitest) {
+		const focused = checkResults.filter((check) => check.command && isFocusedVitestRunCommand(check.command) && check.result !== "N/A");
+		const failed = focused.find((check) => check.result === "FAIL");
+		if (failed) return failed;
+		const uncovered = focused[0];
+		if (uncovered) {
+			return {
+				command: uncovered.command,
+				exitCode: uncovered.exitCode,
+				output: uncovered.output,
+				result: "NOT RUN",
+			};
+		}
+	}
 	return undefined;
 }
 

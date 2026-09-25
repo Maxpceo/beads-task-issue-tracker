@@ -3432,3 +3432,121 @@ describe('s4wj: hop extract keeps .pi path operands',
         expect(extractVerificationCommand(item)).toBe(item)
       })
   })
+
+describe('e4vt focused vitest superset matching', () => {
+  const narrow = 'pnpm exec vitest run tests/extensions/beads-policy.test.ts --reporter dot'
+  const extraFile = 'tests/extensions/workflow-chains-config.test.ts'
+
+  async function matrixForVitest(item: string, command: string, exitCode: number) {
+    return buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          `- ${item}`,
+        ].join('\n'),
+      },
+      automatedChecks: [`${command} -> exit ${exitCode}\nvitest output`],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+    })
+  }
+
+  function vitestRow(matrix: Awaited<ReturnType<typeof buildAcceptanceMatrix>>) {
+    return matrix.rows.find((entry) => entry.item.includes('beads-policy.test.ts') || entry.item.includes('vitest'))
+  }
+
+  it('PASS when extra file is inserted before --reporter', async () => {
+    const command = `pnpm exec vitest run tests/extensions/beads-policy.test.ts ${extraFile} --reporter dot`
+    const matrix = await matrixForVitest(narrow, command, 0)
+    const row = vitestRow(matrix)
+    expect(row?.result).toBe('PASS')
+    expect(matrix.blockingRows).toEqual([])
+  })
+
+  it('PASS when the same files are in another order', async () => {
+    const command = `pnpm exec vitest run ${extraFile} tests/extensions/beads-policy.test.ts --reporter dot`
+    const matrix = await matrixForVitest(narrow, command, 0)
+    expect(vitestRow(matrix)?.result).toBe('PASS')
+    expect(matrix.blockingRows).toEqual([])
+  })
+
+  it('PASS for --reporter=dot, ./ prefix, or quoted path', async () => {
+    const commands = [
+      'pnpm exec vitest run tests/extensions/beads-policy.test.ts --reporter=dot',
+      'pnpm exec vitest run ./tests/extensions/beads-policy.test.ts --reporter dot',
+      'pnpm exec vitest run "tests/extensions/beads-policy.test.ts" --reporter dot',
+    ]
+    for (const command of commands) {
+      const matrix = await matrixForVitest(narrow, command, 0)
+      expect(vitestRow(matrix)?.result, command).toBe('PASS')
+      expect(matrix.blockingRows, command).toEqual([])
+    }
+  })
+
+  it('does not PASS without the required path', async () => {
+    const command = `pnpm exec vitest run ${extraFile} --reporter dot`
+    const matrix = await matrixForVitest(narrow, command, 0)
+    const row = vitestRow(matrix)
+    expect(row?.result).not.toBe('PASS')
+    expect(matrix.blockingRows.some((entry) => entry.item.includes('beads-policy.test.ts'))).toBe(true)
+  })
+
+  it('does not PASS when exit is not 0', async () => {
+    const command = `pnpm exec vitest run tests/extensions/beads-policy.test.ts ${extraFile} --reporter dot`
+    const matrix = await matrixForVitest(narrow, command, 1)
+    const row = vitestRow(matrix)
+    expect(row?.result).not.toBe('PASS')
+    expect(matrix.blockingRows.length).toBeGreaterThan(0)
+  })
+
+  it.each([
+    '-t foo',
+    '--testNamePattern foo',
+    '--testPathPattern beads-policy',
+    '--exclude other.test.ts',
+    '--changed',
+    '--related',
+    '--shard 1/2',
+    '--config vitest.other.config.ts',
+    '--project unit',
+  ])('does not PASS with narrowing flag %s even when path and exit 0 match', async (flag) => {
+    const command = `pnpm exec vitest run tests/extensions/beads-policy.test.ts --reporter dot ${flag}`
+    const matrix = await matrixForVitest(narrow, command, 0)
+    const row = vitestRow(matrix)
+    expect(row?.result).not.toBe('PASS')
+    expect(matrix.blockingRows.length).toBeGreaterThan(0)
+  })
+
+  it('FAIL matching command stays blocking', async () => {
+    const matrix = await matrixForVitest(narrow, narrow, 1)
+    const row = vitestRow(matrix)
+    expect(row?.result).toBe('FAIL')
+    expect(matrix.blockingRows.some((entry) => entry.result === 'FAIL')).toBe(true)
+  })
+
+  it('missing verification stays blocking NOT RUN', async () => {
+    const matrix = await buildAcceptanceMatrix({
+      bead: {
+        description: [
+          '### Verification / acceptance checks',
+          `- ${narrow}`,
+        ].join('\n'),
+      },
+      automatedChecks: [],
+      frontendChecklist: [],
+      changedFiles: ['.pi/extensions/review-workflow/index.ts'],
+      supervisorArtifact: { status: 'accepted', statusLine: 'ARTIFACT STATUS: accepted', evidence: 'DISPATCH RESULT' },
+      comments: '',
+    })
+    const row = vitestRow(matrix)
+    expect(row?.result).toBe('NOT RUN')
+    expect(matrix.blockingRows.some((entry) => entry.result === 'NOT RUN')).toBe(true)
+  })
+
+  it('keeps STOP CLOSE marker in plan-mode without editing that file', () => {
+    const source = readFileSync(join(process.cwd(), '.pi/extensions/plan-mode/index.ts'), 'utf8')
+    expect(source).toContain('STOP CLOSE')
+  })
+})
