@@ -508,6 +508,18 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return createPlanDocumentComponent(content, getMarkdownTheme());
 	});
 
+	pi.registerEntryRenderer("plan-review-human", (entry) => {
+		const data = entry.data as { content?: unknown } | undefined;
+		const content = typeof data?.content === "string" ? data.content : "";
+		return createPlanDocumentComponent(content, getMarkdownTheme());
+	});
+
+	pi.registerEntryRenderer("plan-review-adjudication", (entry) => {
+		const data = entry.data as { content?: unknown } | undefined;
+		const content = typeof data?.content === "string" ? data.content : "";
+		return createPlanDocumentComponent(content, getMarkdownTheme());
+	});
+
 	pi.registerEntryRenderer(PLAN_REVIEW_WAITING_TRIO_ENTRY, (entry) => {
 		const data = entry.data as { content?: unknown } | undefined;
 		const content = typeof data?.content === "string" ? data.content : PLAN_REVIEW_WAITING_TRIO_NOTICE;
@@ -1522,10 +1534,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	/**
-	 * Put a document in the human transcript.
-	 * Returns false when sendMessage throws. Questionnaire ignores the flag.
-	 * Plan-review must not open ready-UI when this returns false.
-	 * triggerTurn stays false during tool execute (51l5); leftover may wake the model.
+	 * Questionnaire transcript. sendMessage during tool execute is steered until turn_end;
+	 * plan-review human blocks must not use this path.
 	 */
 	function showVisibleTranscript(customType: string, content: string, triggerTurn = false): boolean {
 		try {
@@ -1537,6 +1547,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				},
 				{ triggerTurn },
 			);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
+	/**
+	 * Immediate human block. appendEntry renders before the tool returns;
+	 * sendMessage would stay pending until turn_end and land after the repeat plan.
+	 */
+	function showImmediateReviewBlock(customType: "plan-review-human" | "plan-review-adjudication", content: string): boolean {
+		try {
+			pi.appendEntry(customType, { content });
 			return true;
 		} catch {
 			return false;
@@ -1592,7 +1615,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		ctx: ExtensionContext,
 		planText: string,
 		source: ReadyUiSource,
-		options: { skipReadyChoice?: boolean } = {},
+		options: { skipReadyChoice?: boolean; skipPlanDocument?: boolean } = {},
 	): Promise<ReadyAction | null> {
 		if (!ctx.hasUI) return null;
 
@@ -1606,7 +1629,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		// Full plan goes into the chat immediately via appendEntry + entry renderer.
 		// sendMessage(plan-ready-document) is steered until the blocking widget returns,
 		// so it is not the visibility path. Re-append on clean re-show / leftover.
-		if (planText.trim()) {
+		// A failed plan-review write re-shows buttons without a new plan document.
+		if (planText.trim() && options.skipPlanDocument !== true) {
 			showImmediatePlanDocument(planText);
 		}
 
@@ -1749,11 +1773,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	function failPlanReviewTranscript(ctx: ExtensionContext, message: string): StrictReadyUiOutcome {
-		clearPendingReadyPlan();
+	function notePlanReviewTranscriptFailure(ctx: ExtensionContext, message: string): void {
+		// Keep pending so «Отправить на plan-review» can be pressed again. Do not open the plan.
 		persistState();
 		notifyPlanReview(ctx, message, "error");
-		return { kind: "transcript-failed", message };
 	}
 
 	async function runReadyPlanCritique(
@@ -1814,11 +1837,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 	async function runStrictReadyUiLoop(ctx: ExtensionContext, source: ReadyUiSource): Promise<StrictReadyUiOutcome> {
 		let lastOutcome: StrictReadyUiOutcome = { kind: "cancelled" };
+		let skipPlanDocument = false;
 		while (planModeEnabled && !autoExecuteEnabled && pendingReadyPlan) {
 			const planText = pendingReadyPlan;
 			const action = await promptReadyAction(ctx, planText, source, {
-				skipReadyChoice: lastOutcome.kind === "clean-reshow",
+				skipReadyChoice: lastOutcome.kind === "clean-reshow" || skipPlanDocument,
+				skipPlanDocument,
 			});
+			skipPlanDocument = false;
 
 			if (action === "execute") {
 				const approval = await approvePlanForExecution(ctx, planText);
@@ -1856,15 +1882,17 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				const { results, gate } = await runReadyPlanCritique(ctx, planText);
 				const emptyClean = isEmptyCleanPlanReview(results, gate);
 				const facts = formatPlanReviewFactsBlock(results, gate, emptyClean);
-				// Leftover has no tool result, so the same block wakes the model. Execute stays triggerTurn false (51l5).
-				const wakeModel = source === "leftover" && !emptyClean;
-				const transcript = wakeModel ? `${facts}\n\n${formatPlanReviewAdjudicationRequest(results)}` : facts;
-				const wroteFacts = showVisibleTranscript("plan-review-human", transcript, wakeModel);
+				const wroteFacts = showImmediateReviewBlock("plan-review-human", facts);
 				if (!wroteFacts) {
-					return failPlanReviewTranscript(
-						ctx,
-						"plan-review: не удалось записать замечания в чат. План не открываю. discussionOpen не включён. Повторите «Отправить на plan-review».",
-					);
+					const message = "plan-review: не удалось записать замечания в чат. План не открываю. discussionOpen не включён. Повторите «Отправить на plan-review».";
+					notePlanReviewTranscriptFailure(ctx, message);
+					skipPlanDocument = true;
+					lastOutcome = { kind: "transcript-failed", message };
+					continue;
+				}
+				// Leftover has no tool result. Wake the model after the immediate entry; do not use sendMessage during tool execute.
+				if (source === "leftover" && !emptyClean) {
+					showVisibleTranscript("plan-review-human", `${facts}\n\n${formatPlanReviewAdjudicationRequest(results)}`, true);
 				}
 
 				if (emptyClean) {
@@ -2097,7 +2125,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					used[index] = true;
 				}
 				const adjudicationText = formatPlanReviewAdjudicationBlock(normalized);
-				const wrote = showVisibleTranscript("plan-review-adjudication", adjudicationText, false);
+				const wrote = showImmediateReviewBlock("plan-review-adjudication", adjudicationText);
 				if (!wrote) {
 					persistState();
 					notifyPlanReview(ctx, "plan-review: не удалось записать разбор в чат. План не открываю.", "error");
