@@ -2754,6 +2754,14 @@ describe('findLiveSupervisorSpawnsForWorktree', () => {
   })
 })
 
+function unquoteChildPrompt(cmd: string): string {
+  const prefix = 'pi --approve -- '
+  if (!cmd.startsWith(prefix)) throw new Error(`unexpected child command: ${cmd}`)
+  const quoted = cmd.slice(prefix.length)
+  if (!quoted.startsWith("'") || !quoted.endsWith("'")) throw new Error(`prompt is not posix-quoted: ${quoted}`)
+  return quoted.slice(1, -1).replace(/'\\''/g, "'")
+}
+
 describe('spawn_task_workspace helpers', () => {
   it('validates title as exactly 2–3 words without · suffix', () => {
     expect(validateTaskWorkspaceTitle('Видимый reviewer')).toBeUndefined()
@@ -2769,6 +2777,55 @@ describe('spawn_task_workspace helpers', () => {
     expect(cmd.startsWith('pi --approve -- ')).toBe(true)
     expect(cmd).not.toMatch(/pi --name/)
     expect(cmd).toContain('0lp7')
+    expect(cmd).toContain('Возьми')
+    expect(cmd).toContain('Работаю автономно')
+    expect(cmd).not.toContain('cmux send')
+  })
+
+  it('inlines a two-step parent ping only when both identify refs are present', () => {
+    const hinted = buildTaskWorkspaceChildCommand('beads-task-issue-tracker-0lp7', undefined, {
+      workspaceRef: 'workspace:34',
+      surface: 'surface:orch',
+    })
+    const prompt = unquoteChildPrompt(hinted)
+    expect(hinted.startsWith('pi --approve -- ')).toBe(true)
+    expect(hinted).not.toMatch(/pi --name/)
+    expect(prompt).toContain('Возьми beads-task-issue-tracker-0lp7')
+    expect(prompt).toContain('Работаю автономно')
+    expect(prompt).toContain('plan-review')
+    expect(prompt).toContain('не жди выбора плана')
+    expect(prompt).toContain('Не проси перезапуск Pi')
+    expect(prompt).toContain('из worktree')
+    expect(prompt).toContain('cmux send --workspace workspace:34 --surface surface:orch --')
+    expect(prompt).toContain('без Enter')
+    expect(prompt).toContain('реальный коммит и номер PR, не шаблон')
+    expect(prompt).toContain('sleep 1')
+    expect(prompt).toContain('cmux send-key --workspace workspace:34 --surface surface:orch enter')
+    expect(prompt.length).toBeLessThan(2000)
+    expect(prompt).not.toContain('workspace:37')
+    expect(prompt).not.toContain('surface:112')
+
+    const workspaceOnly = buildTaskWorkspaceChildCommand('beads-task-issue-tracker-0lp7', '  ', {
+      workspaceRef: 'workspace:34',
+    })
+    expect(unquoteChildPrompt(workspaceOnly)).toContain('Работаю автономно')
+    expect(unquoteChildPrompt(workspaceOnly)).not.toContain('cmux send')
+    expect(unquoteChildPrompt(workspaceOnly)).not.toContain('surface:')
+
+    const surfaceOnly = buildTaskWorkspaceChildCommand('beads-task-issue-tracker-0lp7', undefined, {
+      surface: 'surface:orch',
+    })
+    expect(unquoteChildPrompt(surfaceOnly)).not.toContain('cmux send')
+    expect(unquoteChildPrompt(surfaceOnly)).not.toContain('surface:orch')
+
+    const replaced = buildTaskWorkspaceChildCommand(
+      'beads-task-issue-tracker-0lp7',
+      '  только явный текст  ',
+      { workspaceRef: 'workspace:34', surface: 'surface:orch' },
+    )
+    expect(unquoteChildPrompt(replaced)).toBe('только явный текст')
+    expect(replaced).not.toContain('Работаю автономно')
+    expect(replaced).not.toContain('cmux send')
   })
 
   it('builds new-workspace argv with focus false and optional group', () => {
@@ -2828,6 +2885,7 @@ describe('spawn_task_workspace tool', () => {
     parentColor?: string | null
     cmuxFail?: string
     createStdout?: string
+    surfaceRef?: string | null
   } = {}) {
     const cmuxCalls: string[][] = []
     const bdCalls: string[][] = []
@@ -2858,9 +2916,11 @@ describe('spawn_task_workspace tool', () => {
             return { code: 1, stdout: '', stderr: 'cmux down' }
           }
           if (args[0] === 'identify') {
+            const caller: Record<string, string> = { workspace_ref: 'workspace:34' }
+            if (opts.surfaceRef !== null) caller.surface_ref = opts.surfaceRef ?? 'surface:orch'
             return {
               code: 0,
-              stdout: JSON.stringify({ caller: { workspace_ref: 'workspace:34', surface_ref: 'surface:orch' } }),
+              stdout: JSON.stringify({ caller }),
               stderr: '',
             }
           }
@@ -2942,8 +3002,48 @@ describe('spawn_task_workspace tool', () => {
     expect(dryRename).toContain('--workspace')
     expect(dryRename).toContain('workspace:NEW')
     expect(result.text).toMatch(/set-color|argv/)
+    const child = (result.argvPlan ?? []).find((row) => row[0] === 'new-workspace')?.find((part) => part.startsWith('pi --approve --')) ?? ''
+    const prompt = unquoteChildPrompt(child)
+    expect(prompt).toContain('Работаю автономно')
+    expect(prompt).toContain('workspace:34')
+    expect(prompt).toContain('surface:orch')
+    expect(prompt).toContain('cmux send --workspace workspace:34 --surface surface:orch')
+    expect(prompt).toContain('sleep 1')
+    expect(prompt).toContain('cmux send-key')
     // dryRun may identify for group/color context but must not create
     expect(cmuxCalls.some((c) => c[0] === 'new-workspace')).toBe(false)
+  })
+
+  it('dryRun without identify does not invent a parent surface or cmux send', async () => {
+    const offline = makeSpawnPi({ cmuxFail: 'identify' })
+    const failedIdentify = await spawnTaskWorkspace(
+      offline.pi as any,
+      { beadId, title: 'Два слова', dryRun: true },
+      ctx(),
+    )
+    const failedChild = (failedIdentify.argvPlan ?? []).find((row) => row[0] === 'new-workspace')?.find((part) => part.startsWith('pi --approve --')) ?? ''
+    expect(unquoteChildPrompt(failedChild)).toContain('Работаю автономно')
+    expect(unquoteChildPrompt(failedChild)).not.toContain('cmux send')
+    expect(unquoteChildPrompt(failedChild)).not.toContain('surface:')
+
+    const headless = makeSpawnPi()
+    const noUi = await spawnTaskWorkspace(
+      headless.pi as any,
+      { beadId, title: 'Два слова', dryRun: true },
+      ctx(parentBead, false),
+    )
+    const noUiChild = (noUi.argvPlan ?? []).find((row) => row[0] === 'new-workspace')?.find((part) => part.startsWith('pi --approve --')) ?? ''
+    expect(unquoteChildPrompt(noUiChild)).not.toContain('cmux send')
+    expect(headless.cmuxCalls.some((c) => c[0] === 'identify')).toBe(false)
+    expect(headless.cmuxCalls.some((c) => c[0] === 'new-workspace')).toBe(false)
+  })
+
+  it('live spawn without parent surface does not create a workspace', async () => {
+    const { pi, cmuxCalls, bdCalls } = makeSpawnPi({ surfaceRef: null })
+    await expect(spawnTaskWorkspace(pi as any, { beadId, title: 'Два слова' }, ctx())).rejects.toThrow(/surface|BLOCKED/)
+    expect(cmuxCalls.some((c) => c[0] === 'identify')).toBe(true)
+    expect(cmuxCalls.some((c) => c[0] === 'new-workspace')).toBe(false)
+    expect(bdCalls.some((c) => c.includes('add'))).toBe(false)
   })
 
   it('mock group id uses --group afterCurrent; without group uses reorder --after', async () => {

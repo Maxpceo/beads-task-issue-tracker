@@ -644,12 +644,38 @@ export function buildTaskWorkspaceName(title: string, beadId: string): string {
 	return `${base} · ${suffix}`;
 }
 
-/** Child Pi start command: ASCII flags only; Russian text only as the message argument. Never `pi --name`. */
-export function buildTaskWorkspaceChildCommand(beadId: string, message?: string): string {
+/** Parent workspace/surface from `cmux identify`. Both refs required before a concrete ping is inlined. */
+export interface TaskWorkspaceParentHint {
+	workspaceRef?: string;
+	surface?: string;
+}
+
+/**
+ * Default first-command prompt for a parallel Pi. One line.
+ * A non-empty `message` replaces this entirely (no autonomous tail).
+ * Ping argv is inlined only when both hint refs are non-empty; flags match `cmux send --help` / `cmux send-key --help`.
+ */
+function buildDefaultTaskWorkspacePrompt(beadId: string, hint?: TaskWorkspaceParentHint): string {
 	const id = (beadId ?? "").trim();
-	const prompt =
-		(message ?? "").trim() ||
-		`Возьми ${id}. Это параллельная Pi-сессия в отдельном cmux workspace: сделай claim-bead сам, создай канонический worktree, не трогай bead родителя.`;
+	const base =
+		`Возьми ${id}. Работаю автономно. Это параллельная Pi-сессия в отдельном cmux workspace: сделай claim-bead сам, создай канонический worktree, не трогай bead родителя. План отправь на plan-review сам, доведи до закрытия и merge в main, не жди выбора плана. Не проси перезапуск Pi. Команды выполняй из worktree.`;
+	const workspaceRef = (hint?.workspaceRef ?? "").trim();
+	const surface = (hint?.surface ?? "").trim();
+	if (!workspaceRef || !surface) return base;
+	const send =
+		`cmux send --workspace ${workspaceRef} --surface ${surface} -- 'merge готов, реальный коммит и номер PR, не шаблон'`;
+	const sendKey = `cmux send-key --workspace ${workspaceRef} --surface ${surface} enter`;
+	return `${base} После merge в main пингани главного оркестратора из worktree, surface не ищи: 1) ${send} без Enter; 2) sleep 1; 3) ${sendKey}.`;
+}
+
+/** Child Pi start command: ASCII flags only; Russian text only as the message argument. Never `pi --name`. */
+export function buildTaskWorkspaceChildCommand(
+	beadId: string,
+	message?: string,
+	hint?: TaskWorkspaceParentHint,
+): string {
+	const explicit = (message ?? "").trim();
+	const prompt = explicit || buildDefaultTaskWorkspacePrompt(beadId, hint);
 	return `pi --approve -- ${posixQuote(prompt)}`;
 }
 
