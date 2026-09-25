@@ -603,6 +603,26 @@ function extractRecordedStartCommit(comments: BeadComment[]): string | undefined
 	return undefined;
 }
 
+function gitCommitsEqual(left: string, right: string): boolean {
+	const a = left.trim().toLowerCase();
+	const b = right.trim().toLowerCase();
+	if (!a || !b) return false;
+	if (a === b) return true;
+	const shorter = a.length <= b.length ? a : b;
+	const longer = a.length <= b.length ? b : a;
+	return shorter.length >= 7 && /^[0-9a-f]+$/.test(shorter) && /^[0-9a-f]+$/.test(longer) && longer.startsWith(shorter);
+}
+
+/** Latest reviewer-source START_COMMIT/Start-commit that is not HEAD. Skips a bad docs DISPATCH that recorded HEAD. */
+function extractRecordedStartCommitNotHead(comments: BeadComment[], head: string): string | undefined {
+	for (const text of comments.map((comment) => comment.text ?? "").reverse()) {
+		if (!/DISPATCH(?: RESULT)?|WORKFLOW SUBMIT FOR REVIEW|PI WORKFLOW UPDATE|PLAN APPROVED/.test(text)) continue;
+		const match = text.match(/(?:^|\n)\s*(?:START_COMMIT|Start-commit):\s*([0-9a-f]{7,40})\b/i);
+		if (match?.[1] && !gitCommitsEqual(match[1], head)) return match[1];
+	}
+	return undefined;
+}
+
 function visibleDispatchTaskId(beadId: string, role: string): string {
 	const beadSlug = beadId.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-24);
 	const roleSlug = role.replace(/[^a-zA-Z0-9._-]+/g, "-");
@@ -1914,6 +1934,20 @@ async function dispatch(
 		const hasWorkflowStart = reviewerScope.ok && reviewerScope.scope.activeBead === params.beadId && Boolean(reviewerScope.scope.startCommit);
 		if (!hasWorkflowStart && !extractRecordedStartCommit(comments)) {
 			throw new Error(`dispatch_reviewer preflight заблокирован: recorded START_COMMIT отсутствует для ${params.beadId}`);
+		}
+	}
+	if (mode === "docs") {
+		const head = startCommit;
+		const rawScope = taskScopeFromContext(ctx);
+		const stateStart = rawScope?.activeBead === params.beadId ? rawScope.startCommit?.trim() : undefined;
+		if (stateStart && !gitCommitsEqual(stateStart, head)) {
+			startCommit = stateStart;
+		} else {
+			const recorded = extractRecordedStartCommitNotHead(comments, head);
+			if (!recorded) {
+				throw new Error(`dispatch_docs_agent preflight заблокирован: пустой diff, beadId=${params.beadId}, recorded START_COMMIT отсутствует или равен HEAD`);
+			}
+			startCommit = recorded;
 		}
 	}
 	let routingWarning: string | undefined;

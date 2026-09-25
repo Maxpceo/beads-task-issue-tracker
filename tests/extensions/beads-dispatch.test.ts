@@ -1330,3 +1330,141 @@ describe('parseVisiblePing', () => {
     expect(parseVisiblePing('ordinary chat about ping protocol')).toBeUndefined()
   })
 })
+
+describe('dispatch_docs_agent START_COMMIT recovery', () => {
+  const oldStart = 'f6e264537896b0b4ebf489435cbc0fedbee918d7'
+  const head = 'e7ac3cec46957181bc06fa75b8af0148663bff4f'
+  const beadId = 'beads-task-issue-tracker-docs-start'
+
+  function commentsWith(starts: string[]) {
+    return starts.map((start, index) => ({
+      text: index === 0
+        ? `PLAN APPROVED\nSTART_COMMIT: ${start}\n`
+        : `DISPATCH (documentation-expert)\nSTART_COMMIT: ${start}\n`,
+    }))
+  }
+
+  async function runDocs(opts: {
+    comments: Array<{ text: string }>
+    ctx: unknown
+    dryRun?: boolean
+    transport?: 'headless' | 'cmux'
+    status?: string
+  }) {
+    let registeredTool: any
+    let spawnCalls = 0
+    const branch = currentBranch()
+    setSpawnForDispatchTestOverride((() => {
+      spawnCalls += 1
+      throw new Error('spawn must not run')
+    }) as any)
+    const pi = {
+      events: { emit() {} },
+      registerTool(tool: any) {
+        if (tool.name === 'dispatch_docs_agent') registeredTool = tool
+      },
+      exec: async (command: string, args: string[]) => {
+        if (command === 'bd' && args[0] === 'show') {
+          return {
+            stdout: JSON.stringify({
+              id: beadId,
+              title: 'docs start recovery',
+              status: opts.status ?? 'closed',
+              labels: ['pi', 'workflow'],
+              description: description(['.pi/extensions/beads-dispatch/index.ts']),
+            }),
+            stderr: '',
+            code: 0,
+          }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] !== 'add') {
+          return { stdout: JSON.stringify(opts.comments), stderr: '', code: 0 }
+        }
+        if (command === 'bd' && args[0] === 'comments' && args[1] === 'add') return { stdout: '', stderr: '', code: 0 }
+        if (command === 'git' && args.includes('branch')) return { stdout: `${branch}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('--show-toplevel')) return { stdout: `${process.cwd()}\n`, stderr: '', code: 0 }
+        if (command === 'git' && args.includes('rev-parse')) return { stdout: `${head}\n`, stderr: '', code: 0 }
+        return { stdout: '', stderr: '', code: 0 }
+      },
+    }
+    beadsDispatchExtension(pi as any)
+    const result = await registeredTool.execute('call-docs', {
+      beadId,
+      dryRun: opts.dryRun ?? true,
+      transport: opts.transport ?? 'headless',
+    }, undefined, undefined, opts.ctx)
+    return { result, spawnCalls }
+  }
+
+  it('dry-run closed bead recovers older comment START_COMMIT when workflow-state has no start', async () => {
+    const { result, spawnCalls } = await runDocs({
+      comments: commentsWith([oldStart, head]),
+      ctx: { cwd: process.cwd(), sessionManager: { getEntries: () => [] } },
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.startCommit).toBe(oldStart)
+    expect(result.details.output).toContain(`START_COMMIT: ${oldStart}`)
+    expect(result.details.output).toContain(`Review git diff ${oldStart}..HEAD`)
+    expect(result.details.output).not.toContain(`START_COMMIT: ${head}`)
+    expect(result.details.output).not.toContain(`Review git diff ${head}..HEAD`)
+    expect(result.details.output).not.toContain('ping.sh')
+    expect(spawnCalls).toBe(0)
+  })
+
+  it('keeps workflow-state start when it is not HEAD even if the latest comment equals HEAD', async () => {
+    const branch = currentBranch()
+    const { result } = await runDocs({
+      comments: commentsWith([oldStart, head]),
+      ctx: workflowCtx(process.cwd(), beadId, branch, oldStart),
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.startCommit).toBe(oldStart)
+    expect(result.details.output).toContain(`Review git diff ${oldStart}..HEAD`)
+  })
+
+  it('skips a workflow-state start equal to HEAD and uses the earlier non-HEAD comment', async () => {
+    const branch = currentBranch()
+    const { result } = await runDocs({
+      comments: commentsWith([oldStart, head.slice(0, 7)]),
+      ctx: workflowCtx(process.cwd(), beadId, branch, head),
+    })
+    expect(result.details.error).toBeUndefined()
+    expect(result.details.startCommit).toBe(oldStart)
+    expect(result.details.output).toContain(`Review git diff ${oldStart}..HEAD`)
+  })
+
+  it('blocks empty diff before spawn when the only recorded start equals HEAD', async () => {
+    const { result, spawnCalls } = await runDocs({
+      comments: commentsWith([head]),
+      ctx: { cwd: process.cwd(), sessionManager: { getEntries: () => [] } },
+      dryRun: false,
+    })
+    expect(result.details.error).toContain('пустой diff')
+    expect(result.details.error).toContain(`beadId=${beadId}`)
+    expect(result.details.error).toContain('recorded START_COMMIT отсутствует или равен HEAD')
+    expect(result.details.error).not.toContain('taskId')
+    expect(spawnCalls).toBe(0)
+  })
+
+  it('blocks empty diff before spawn when no recorded start exists', async () => {
+    const { result, spawnCalls } = await runDocs({
+      comments: [{ text: 'note without a start' }],
+      ctx: { cwd: process.cwd() },
+      dryRun: false,
+    })
+    expect(result.details.error).toContain('пустой diff')
+    expect(result.details.error).toContain(`beadId=${beadId}`)
+    expect(spawnCalls).toBe(0)
+  })
+
+  it('does not send a successful ping before digest exists', async () => {
+    const source = await fs.readFile(path.join(process.cwd(), '.pi/extensions/beads-dispatch/index.ts'), 'utf8')
+    expect(source).toContain('extractRecordedStartCommit')
+    expect(source).toContain('buildDocsPrompt')
+    expect(source).toContain('Do not ping before digest/result exist.')
+    const docsTask = source.slice(source.indexOf(': mode === "docs"'), source.indexOf('const files = persistIsolationFiles'))
+    expect(docsTask).toContain('nonempty digest ≤10 lines → exact ping command above')
+    expect(docsTask).toContain('${pingContract}')
+    expect(docsTask).not.toContain('ping.sh before digest')
+  })
+})
