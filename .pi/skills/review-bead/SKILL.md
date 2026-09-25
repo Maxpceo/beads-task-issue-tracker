@@ -7,6 +7,8 @@ description: Pi-native review chain for beads in inreview. Use when supervisor f
 
 Run this when a supervisor returns or a bead is already `inreview`. Do not skip spec compliance. Evidence before claims is mandatory.
 
+Do not launch `dispatch_reviewer` or `review_bead` when `.pi/config/workflow-chains.json` `reviewRequired` is the exact boolean `false`. Missing file, missing field, non-boolean, or broken JSON keep review required. Exact `false` does not skip ACCEPTANCE MATRIX when the bead has acceptance/verification bullets.
+
 ## Workflow
 
 1. Guard:
@@ -20,7 +22,7 @@ Run this when a supervisor returns or a bead is already `inreview`. Do not skip 
    ```text
    workflow_update(bead=<ID>, state=reviewing, session=reviewing)
    ```
-   If `workflow_status` shows `bdStatus=inreview`, do not stop with a normal final report before this review workflow completes. If you are not in plan mode and ownership is not stale/foreign, the interactive next action is `dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)`. Do not report `review_bead`/`dispatch_reviewer` as unavailable based on memory, compacted context, or lack of a previous tool call: an unavailable-tool blocker requires evidence that the tool is absent from the current tool surface or that a typed call failed before review started. If review truly cannot run because tooling is unavailable or ownership is ambiguous, return an explicit Russian `BLOCKED` report with the exact evidence, blocker, and next action; `workflow_complete(state=blocked|deferred, reason=<...>)` is the only terminal local state allowed before review in that case. While a live code-reviewer pane exists, do not call `review_bead`; reuse with `followup_visible_dispatch({ beadId, role: "code-reviewer", task })`.
+   If `workflow_status` shows `bdStatus=inreview` and `reviewRequired` is not the exact boolean `false`, do not stop with a normal final report before this review workflow completes. If you are not in plan mode and ownership is not stale/foreign, the interactive next action is `dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)`. Exact `false` skips the reviewer hop only. Do not report `review_bead`/`dispatch_reviewer` as unavailable based on memory, compacted context, or lack of a previous tool call: an unavailable-tool blocker requires evidence that the tool is absent from the current tool surface or that a typed call failed before review started. If review truly cannot run because tooling is unavailable or ownership is ambiguous, return an explicit Russian `BLOCKED` report with the exact evidence, blocker, and next action; `workflow_complete(state=blocked|deferred, reason=<...>)` is the only terminal local state allowed before review in that case. While a live code-reviewer pane exists, do not call `review_bead`; reuse with `followup_visible_dispatch({ beadId, role: "code-reviewer", task })`.
 3. Interactive hop after supervisor complete / `inreview`: one visible code-reviewer pane, not three, not headless `review_bead`:
    ```text
    dispatch_reviewer(beadId=<ID>, transport=cmux, cwd=<workflowState.worktreePath>)

@@ -2,6 +2,7 @@
   "copyRequired": true,
   "copyRoot": "~/Projects/worktrees/beads-task-issue-tracker",
   "handoffFromCopy": true,
+  "reviewRequired": true,
   "naming": {
     "types": ["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"],
     "basenameEqualsBranchSuffix": true,
