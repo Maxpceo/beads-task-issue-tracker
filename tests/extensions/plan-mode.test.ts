@@ -600,6 +600,10 @@ async function markPlanReady(toolHandlers: Map<string, any>, ctx: any, plan = SA
   return tool.execute('tc-complete', { plan }, undefined, undefined, ctx)
 }
 
+function reviewBlockEntries(harness: { sessionEntries: Array<{ customType?: string; data?: unknown }> }, customType: string) {
+  return harness.sessionEntries.filter((entry) => entry.customType === customType) as Array<{ data?: { content?: string } }>
+}
+
 function planReadyDocuments(harness: { sessionEntries: Array<{ customType?: string; data?: unknown }> }) {
   return harness.sessionEntries.filter((entry) => entry.customType === 'plan-ready-document') as Array<{ data?: { content?: string } }>
 }
@@ -3786,11 +3790,17 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(complete.details.pending).toBe(false)
     expect(complete.details.ok).toBe(true)
 
-    const human = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-human')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const human = reviewBlockEntries(harness, 'plan-review-human')
     expect(human).toHaveLength(1)
-    expect(human[0]?.message.display).toBe(true)
-    expect(human[0]?.options).toMatchObject({ triggerTurn: false })
-    const humanText = String(human[0]?.message.content)
+    const humanText = String(human[0]?.data?.content)
+    const entryTypes = harness.sessionEntries.map((entry) => entry.customType)
+    const humanIndex = entryTypes.indexOf('plan-review-human')
+    const planIndexes = entryTypes.flatMap((customType, index) => customType === 'plan-ready-document' ? [index] : [])
+    expect(planIndexes.length).toBeGreaterThanOrEqual(2)
+    expect(humanIndex).toBeGreaterThan(planIndexes[0] ?? -1)
+    expect(humanIndex).toBeLessThan(planIndexes[1] ?? -1)
     expect(humanText).toContain('не code-reviewer')
     expect(humanText).toContain('План сами не правят')
     for (const reviewer of ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer']) {
@@ -3862,16 +3872,16 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(complete.details.findings).toBe(true)
     expect(complete.details.discussionOpen).toBe(false)
 
-    const human = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-human')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    const human = reviewBlockEntries(harness, 'plan-review-human')
     expect(human).toHaveLength(1)
-    expect(human[0]?.message.display).toBe(true)
-    expect(human[0]?.options).toMatchObject({ triggerTurn: false })
-    const humanText = String(human[0]?.message.content)
+    const humanText = String(human[0]?.data?.content)
     expect(humanText).toContain('missing delivery path for findings')
     expect(humanText).toContain('severity: important')
     expect(humanText).toContain('ready-ui loop re-showed select')
     expect(humanText).toContain('return findings in plan_mode_complete tool result')
     expect(humanText).toContain('Вердикт: NEEDS_CHANGES')
+    expect(reviewBlockEntries(harness, 'plan-review-adjudication')).toHaveLength(0)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
     expect(planReadyDocuments(harness)).toHaveLength(docsAfterFacts)
     expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).not.toContain(PLAN_REVIEW_CHANGED_BANNER)
@@ -3897,12 +3907,16 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(recorded.details.recorded).toBe(true)
     expect(recorded.details.overlay).toBe(true)
     expect(String(recorded.content[0].text)).not.toContain('покажи план')
-    const adjudication = harness.sendMessages.find((message) => message.message.customType === 'plan-review-adjudication')
-    expect(adjudication?.message.display).toBe(true)
-    expect(adjudication?.options).toMatchObject({ triggerTurn: false })
-    expect(String(adjudication?.message.content)).toContain('принято')
-    expect(String(adjudication?.message.content)).toContain('нужен видимый разбор до плана')
-    expect(String(adjudication?.message.content)).toContain('missing delivery path for findings')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const adjudication = reviewBlockEntries(harness, 'plan-review-adjudication')
+    expect(adjudication).toHaveLength(1)
+    expect(String(adjudication[0]?.data?.content)).toContain('принято')
+    expect(String(adjudication[0]?.data?.content)).toContain('нужен видимый разбор до плана')
+    expect(String(adjudication[0]?.data?.content)).toContain('missing delivery path for findings')
+    const typesAfterTool = harness.sessionEntries.map((entry) => entry.customType)
+    const adjudicationIndex = typesAfterTool.lastIndexOf('plan-review-adjudication')
+    const planAfterAdjudication = typesAfterTool.findIndex((customType, index) => index > adjudicationIndex && customType === 'plan-ready-document')
+    expect(planAfterAdjudication).toBeGreaterThan(adjudicationIndex)
     const stamped = planReadyDocuments(harness).at(-1)
     expect(String(stamped?.data?.content)).toContain(PLAN_REVIEW_CHANGED_BANNER)
     expect(String(stamped?.data?.content)).not.toContain(PLAN_REVIEW_UNCHANGED_BANNER)
@@ -3984,6 +3998,9 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
 
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
+    const humanEntry = reviewBlockEntries(harness, 'plan-review-human')
+    expect(humanEntry).toHaveLength(1)
+    expect(String(humanEntry[0]?.data?.content)).toContain('leftover must wake model')
     const human = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-human')
     expect(human).toHaveLength(1)
     expect(human[0]?.options?.triggerTurn).toBe(true)
@@ -4007,23 +4024,26 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(persisted?.data?.enabled).toBe(true)
   })
 
-  it('plan-review sendMessage failure does not open the plan or set discussionOpen', async () => {
+  it('plan-review-human appendEntry failure re-shows buttons without a new plan or discussionOpen', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
-      readyActionQueue: ['plan-review', 'execute'],
-      failSendMessageCustomTypes: ['plan-review-human'],
+      readyActionQueue: ['plan-review', 'stay'],
+      failAppendEntryCustomTypes: ['plan-review-human'],
     })
     await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
     const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
-    expect(complete.details.ok).toBe(false)
-    expect(complete.details.transcriptFailed).toBe(true)
-    expect(complete.details.discussionOpen).toBe(false)
-    expect(harness.customCalls.length).toBe(1)
+    expect(complete.details.outcome).toBe('stay')
+    expect(complete.details.discussionOpen).not.toBe(true)
+    expect(harness.customCalls.length).toBe(2)
     expect(planReadyDocuments(harness)).toHaveLength(1)
+    expect(reviewBlockEntries(harness, 'plan-review-human')).toHaveLength(0)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     expect(harness.trace.some((entry) => entry.includes('не удалось записать замечания в чат'))).toBe(true)
-    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(harness.trace.some((entry) => entry.includes('Повторите «Отправить на plan-review»'))).toBe(true)
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean; pendingReadyPlan?: string } } | undefined
     expect(persisted?.data?.discussionOpen).not.toBe(true)
+    expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
   })
 
   it('minor: none is the empty path and returns the unchanged plan itself', async () => {
@@ -4039,7 +4059,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
     expect(complete.details.ok).toBe(true)
     expect(complete.details.outcome).toBe('stay')
-    const humanText = String(harness.sendMessages.find((message) => message.message.customType === 'plan-review-human')?.message.content)
+    const humanText = String(reviewBlockEntries(harness, 'plan-review-human')[0]?.data?.content)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
     expect(humanText).toContain('Замечаний нет.')
     expect(humanText).toContain('Применять нечего, план не менялся.')
     expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).toContain(PLAN_REVIEW_UNCHANGED_BANNER)
@@ -4076,7 +4097,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       revisedPlan: SAMPLE_READY_PLAN,
     }, undefined, undefined, harness.ctx)
     expect(recorded.details.recorded).toBe(true)
-    expect(String(harness.sendMessages.find((message) => message.message.customType === 'plan-review-adjudication')?.message.content)).toContain('отклонено')
+    expect(String(reviewBlockEntries(harness, 'plan-review-adjudication')[0]?.data?.content)).toContain('отклонено')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
     expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).toContain(PLAN_REVIEW_UNCHANGED_BANNER)
     expect(harness.sendUserMessages).not.toContain('покажи план')
   })
@@ -4094,7 +4116,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(complete.details.findings).toBe(true)
     expect(complete.details.discussionOpen).toBe(false)
     expect(harness.customCalls.length).toBe(1)
-    const humanText = String(harness.sendMessages.find((message) => message.message.customType === 'plan-review-human')?.message.content)
+    const humanText = String(reviewBlockEntries(harness, 'plan-review-human')[0]?.data?.content)
     expect(humanText).not.toContain('Замечаний нет')
     expect(humanText).not.toContain('Применять нечего')
     expect(humanText).toContain('plan-dead-zone-reviewer')
@@ -4107,7 +4129,7 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['plan-review', 'execute'],
-      failSendMessageCustomTypes: ['plan-review-adjudication'],
+      failAppendEntryCustomTypes: ['plan-review-adjudication'],
     })
     const finding = {
       severity: 'important' as const,
@@ -4202,9 +4224,10 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(recorded.details.pending).toBe(true)
     expect(String(recorded.content[0].text)).toContain('Overlay не открыт')
     expect(String(recorded.content[0].text)).not.toContain('ready-UI clean-reshow')
-    const adjudication = harness.sendMessages.find((message) => message.message.customType === 'plan-review-adjudication')
-    expect(adjudication?.message.display).toBe(true)
-    expect(String(adjudication?.message.content)).toContain('принято')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const adjudication = reviewBlockEntries(harness, 'plan-review-adjudication')
+    expect(adjudication).toHaveLength(1)
+    expect(String(adjudication[0]?.data?.content)).toContain('принято')
     expect(harness.customCalls).toHaveLength(0)
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов'))).toHaveLength(0)
   })
