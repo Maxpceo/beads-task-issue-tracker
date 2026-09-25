@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   LEGACY_WORKFLOW_CHAINS_RELATIVE,
+  TRACKER_DEFAULT_CHECKS,
   TRACKER_DEFAULTS,
   WORKFLOW_CHAINS_CONFIG_RELATIVE,
   expandHomePath,
@@ -349,6 +350,122 @@ describe('workflow-chains-config', () => {
       } finally {
         rmSync(repo, { recursive: true, force: true })
       }
+    }
+  })
+
+  it('committed tracker file keeps ritual flags and the three checks', () => {
+    const chains = loadWorkflowChains(process.cwd())
+    expect(chains.readError).toBe('')
+    expect(chains.copyRequired).toBe(true)
+    expect(chains.handoffFromCopy).toBe(true)
+    expect(chains.reviewRequired).toBe(true)
+    expect(chains.matrixRequired).toBe(true)
+    expect(chains.mainWriteAllowed).toBe(false)
+    expect(isMainWriteAllowed(chains)).toBe(false)
+    expect(chains.checksExplicit).toBe(true)
+    expect(chains.checks).toEqual([...TRACKER_DEFAULT_CHECKS])
+    expect(chains.naming).toEqual(NAMING)
+    expect(chains.copyRootRaw).toBe(TRACKER_DEFAULTS.copyRootRaw)
+  })
+
+  it('uses tracker checks and checksExplicit false when the file is missing', () => {
+    const repo = initRepo()
+    try {
+      const chains = loadWorkflowChains(repo)
+      expect(chains.checks).toEqual([...TRACKER_DEFAULT_CHECKS])
+      expect(chains.checksExplicit).toBe(false)
+      expect(chains.copyRequired).toBe(true)
+      expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(false)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps tracker checks, not an empty list, for broken JSON and an empty file', () => {
+    for (const body of ['{ not json', '   \n']) {
+      const repo = initRepo()
+      try {
+        writeConfig(repo, body)
+        const chains = loadWorkflowChains(repo)
+        expect(chains.checks).toEqual([...TRACKER_DEFAULT_CHECKS])
+        expect(chains.checksExplicit).toBe(false)
+        expect(chains.copyRequired).toBe(true)
+        expect(chains.reviewRequired).toBe(true)
+        expect(chains.matrixRequired).toBe(true)
+        expect(chains.mainWriteAllowed).toBe(false)
+        expect(chains.readError).not.toBe('')
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('does not reset other flags when checks is missing or the wrong type', () => {
+    const cases: Array<{ label: string; checks?: unknown }> = [
+      { label: 'missing' },
+      { label: 'null', checks: null },
+      { label: 'string', checks: 'pnpm test' },
+      { label: 'empty-string', checks: '' },
+      { label: 'object', checks: { command: 'pnpm test' } },
+      { label: 'number', checks: 0 },
+      { label: 'blank-item', checks: ['pnpm test', ' '] },
+      { label: 'non-string-item', checks: ['pnpm test', 1] },
+    ]
+    for (const item of cases) {
+      const repo = initRepo()
+      try {
+        const body: Record<string, unknown> = {
+          copyRequired: false,
+          handoffFromCopy: false,
+          reviewRequired: false,
+          matrixRequired: false,
+          mainWriteAllowed: true,
+          naming: NAMING,
+        }
+        if (item.label !== 'missing') body.checks = item.checks
+        writeConfig(repo, body)
+        const chains = loadWorkflowChains(repo)
+        expect(chains.checks, item.label).toEqual([...TRACKER_DEFAULT_CHECKS])
+        expect(chains.checksExplicit, item.label).toBe(false)
+        expect(chains.copyRequired, item.label).toBe(false)
+        expect(chains.handoffFromCopy, item.label).toBe(false)
+        expect(chains.reviewRequired, item.label).toBe(false)
+        expect(chains.matrixRequired, item.label).toBe(false)
+        expect(chains.mainWriteAllowed, item.label).toBe(true)
+        expect(chains.naming, item.label).toEqual(NAMING)
+        expect(chains.readError, item.label).toBe('')
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('treats an explicit empty checks array as no commands without resetting flags', () => {
+    const repo = initRepo()
+    try {
+      writeConfig(repo, {
+        copyRequired: true,
+        copyRoot: '~/Projects/worktrees/beads-task-issue-tracker',
+        handoffFromCopy: true,
+        reviewRequired: true,
+        matrixRequired: true,
+        mainWriteAllowed: false,
+        checks: [],
+        naming: NAMING,
+      })
+      const chains = loadWorkflowChains(repo)
+      expect(chains.checks).toEqual([])
+      expect(chains.checksExplicit).toBe(true)
+      expect(chains.copyRequired).toBe(true)
+      expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(false)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 })
