@@ -105,8 +105,6 @@ export function defaultAgentModelsConfig(): AgentModelsConfig {
 		agentClasses: {
 			"code-reviewer": "strong",
 			architect: "strong",
-			"vue-supervisor": "standard",
-			"tauri-supervisor": "standard",
 			"test-supervisor": "standard",
 			detective: "standard",
 			"documentation-expert": "cheap",

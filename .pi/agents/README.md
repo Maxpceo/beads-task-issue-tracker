@@ -82,7 +82,7 @@ Default power classes (all start as `xai/grok-4.5`; change via menu/CLI, not by 
 | Class | Label | Default model | Default agents |
 |---|---|---|---|
 | `strong` | Сильная | `xai/grok-4.5` | `code-reviewer`, `architect` |
-| `standard` | Обычная | `xai/grok-4.5` | `vue-supervisor`, `tauri-supervisor`, `test-supervisor`, `detective` |
+| `standard` | Обычная | `xai/grok-4.5` | `test-supervisor`, `detective` |
 | `cheap` | Дешёвая | `xai/grok-4.5` | `documentation-expert`, `plan-edge-reviewer`, `plan-consistency-reviewer`, `plan-dead-zone-reviewer` |
 
 CLI is **secondary** (project cwd/worktree only; writes only `проект/.pi/agent-models.json`). Primary forms only:
