@@ -289,6 +289,8 @@ function makeHarness(options: {
   noCustom?: boolean
   hasUI?: boolean
   readyActionQueue?: Array<'execute' | 'stay' | 'refine' | 'plan-review' | 'ask' | null>
+  /** Call the ready-UI factory and resolve only when it calls done (question dismiss). */
+  deferReadyUi?: boolean
 } = {}) {
   const taskScopeGit = options.taskScopeGit ?? true
   mockPlanReviewGateOk = true
@@ -514,6 +516,11 @@ function makeHarness(options: {
         : {
             custom: async (factory: (tui: any, theme: any, kb: any, done: (value: any) => void) => any, customOptions?: unknown) => {
               customCalls.push({ options: customOptions, ranFactory: true, factory })
+              if (options.deferReadyUi) {
+                return new Promise((resolve) => {
+                  factory({ requestRender() {} }, ctx.ui.theme, {}, (value: unknown) => resolve(value))
+                })
+              }
               if (options.customResult !== undefined) return options.customResult
               if (readyActionQueue.length > 0) {
                 const next = readyActionQueue.shift()
@@ -4927,5 +4934,71 @@ describe('plan-review widget contract docs (1jbs)', () => {
     expect(prompt).not.toContain('until Maxim confirms discussion is closed')
     expect(source).toContain('"plan_mode_complete", "record_plan_review_adjudication"')
     expect(source).not.toContain('until Maxim confirms discussion is closed')
+    expect(agents).toContain('Вопрос в чат при открытом ready-UI закрывает виджет до ответа')
+    expect(agents).toContain('Ход с ответом не вызывает `plan_mode_complete` и не ждёт кнопку')
+    expect(agents).toContain('«Исполнить» до видимого ответа не пишет PLAN APPROVED')
+    expect(skill).toContain('The answer turn must not call `plan_mode_complete` and must not wait for a button')
+    expect(skill).toContain('does not write `PLAN APPROVED` and does not dispatch')
+    expect(prompt).toContain('The answer turn must not call plan_mode_complete and must not wait for a button')
+    expect(prompt).toContain('Execute before the answer is visible does not write PLAN APPROVED')
+  })
+})
+
+describe('plan-review question closes widget before the answer (1jbs)', () => {
+  async function enterStrict(harness: ReturnType<typeof makeHarness>) {
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+  }
+
+  it('a non-confirm chat question closes an open ready-UI instead of leaving it blocking', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true, readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.customCalls.length === 0; i++) {
+      await Promise.resolve()
+    }
+    expect(harness.customCalls.length).toBeGreaterThan(0)
+
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло' }, harness.ctx)
+    const complete = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: Array<{ text?: string }>; details: { outcome?: string; discussionOpen?: boolean; ok?: boolean } }
+
+    expect(complete.details.outcome).toBe('question')
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.discussionOpen).toBe(true)
+    expect(String(complete.content[0].text)).toContain('не Исполнить, не Остаться и не plan-review')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(persisted?.data?.discussionOpen).toBe(true)
+  })
+
+  it('does not open ready-UI on the answer turn after a chat question', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.discussionOpen).toBe(true)
+    expect(complete.details.error).toBe('discussion is open')
+    expect(harness.customCalls).toHaveLength(0)
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+  })
+
+  it('does not treat Execute before the visible answer as approval', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', readyActionQueue: ['execute'] })
+    await enterStrict(harness)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, harness.ctx)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.outcome).toBe('pre-answer-execute')
+    expect(complete.details.ok).toBe(false)
+    expect(complete.details.preAnswerExecute).toBe(true)
+    expect(String(complete.content[0].text)).toContain('не считается согласием')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
   })
 })
