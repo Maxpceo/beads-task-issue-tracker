@@ -33,7 +33,7 @@ Completion reports и status claims должны подкрепляться fres
 
 - Claims о том, что tests/builds/checks проходят, требуют command, exit code и relevant output excerpt.
 - Claims о том, что bug исправлен или acceptance выполнен, требуют exact command/manual check и observed result.
-- Перед закрытием non-trivial bead/epic с acceptance criteria запиши bd comment `ACCEPTANCE MATRIX:`, который сопоставляет каждый acceptance/verification bullet с evidence, exit code или observed result и `PASS|FAIL|NOT RUN|N/A`.
+- Перед закрытием non-trivial bead/epic с acceptance criteria запиши bd comment `ACCEPTANCE MATRIX:`, который сопоставляет каждый acceptance/verification bullet с evidence, exit code или observed result и `PASS|FAIL|NOT RUN|N/A`. Комментарий не требуется только если `matrixRequired` в `.pi/config/workflow-chains.json` — точный boolean `false`; иначе ритуал трекера.
 - Не закрывай, если matrix содержит `FAIL`, `NOT RUN`, `BLOCKED` или `SCOPE GAP`, если только Максим не предоставил `HUMAN ACCEPTANCE OVERRIDE` с `approver:` и `reason:`.
 - Предотвращай retry loops: после двух падений одного и того же acceptance criterion, после двух acceptance-fix cycles total или когда acceptance blocked/not runnable без понятного local fix, остановись с кратким delta report и попроси Максима принять решение вместо silent redispatch.
 - Если command не запускалась, скажи это явно; не подразумевай, что она прошла.

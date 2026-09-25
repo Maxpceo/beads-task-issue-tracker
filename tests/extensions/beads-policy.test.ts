@@ -2016,6 +2016,104 @@ reason: runtime smoke accepted manually outside this agent session
     })
   })
 
+  it('blocks accepted close without a green matrix when matrixRequired is true', () => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: true,
+        matrixRequired: true,
+        naming: workflowChainsNaming,
+      })
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('требует ACCEPTANCE MATRIX')
+    })
+  })
+
+  it.each([
+    { label: 'missing-field', matrixRequired: undefined },
+    { label: 'non-boolean', matrixRequired: 'false' },
+    { label: 'broken-json', body: '{ not json' },
+  ])('does not skip ACCEPTANCE MATRIX when config is $label', ({ matrixRequired, body }) => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, body ?? {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: false,
+        ...(matrixRequired === undefined ? {} : { matrixRequired }),
+        naming: workflowChainsNaming,
+      })
+      const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('требует ACCEPTANCE MATRIX')
+      expect(decision?.reason).not.toContain('accepted, либо')
+    })
+  })
+
+  it('does not skip ACCEPTANCE MATRIX when the git root has no workflow-chains file', () => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      const decision = evaluateBashPolicy('bd close bead-a --reason accepted', {
+        activeBead: 'bead-a',
+        bdStatus: 'accepted',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('требует ACCEPTANCE MATRIX')
+    })
+  })
+
+  it('does not require ACCEPTANCE MATRIX when matrixRequired is exact false', () => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: false,
+        matrixRequired: false,
+        naming: workflowChainsNaming,
+      })
+      const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).not.toBe('blockBdCloseWithoutReview')
+    })
+  })
+
+  it('does not allow close without accepted/reviewed when matrixRequired is false and reviewRequired is true', () => {
+    withFakeBd(issueWithAcceptance, 'ACCEPTANCE: tests passed', (cwd) => {
+      execFileSync('git', ['init', '-b', 'main'], { cwd, stdio: 'ignore' })
+      writeWorkflowChains(cwd, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: true,
+        matrixRequired: false,
+        naming: workflowChainsNaming,
+      })
+      const decision = evaluateBashPolicy('bd close bead-a --reason done', {
+        activeBead: 'bead-a',
+        bdStatus: 'in_progress',
+        worktreePath: cwd,
+      }, { cwd })
+      expect(decision?.policy).toBe('blockBdCloseWithoutReview')
+      expect(decision?.reason).toContain('accepted')
+      expect(decision?.reason).not.toContain('требует ACCEPTANCE MATRIX')
+    })
+  })
+
   it('blocks gdgf-style epic close when children are closed but runtime smoke criterion is not covered by matrix', () => {
     const epic = {
       id: 'epic-a',
