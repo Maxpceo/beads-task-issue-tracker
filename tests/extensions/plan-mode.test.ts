@@ -473,6 +473,7 @@ function makeHarness(options: {
     },
   }
   const customCalls: Array<{ options?: unknown; ranFactory: boolean; factory?: unknown }> = []
+  const readyUiComponents: Array<{ handleInput?: (data: string) => void }> = []
   const selectCalls: Array<{ title: string; options: string[] }> = []
   const readyActionQueue = [...(options.readyActionQueue ?? [])]
   const ctx: any = {
@@ -518,7 +519,8 @@ function makeHarness(options: {
               customCalls.push({ options: customOptions, ranFactory: true, factory })
               if (options.deferReadyUi) {
                 return new Promise((resolve) => {
-                  factory({ requestRender() {} }, ctx.ui.theme, {}, (value: unknown) => resolve(value))
+                  const component = factory({ requestRender() {} }, ctx.ui.theme, {}, (value: unknown) => resolve(value))
+                  readyUiComponents.push(component)
                 })
               }
               if (options.customResult !== undefined) return options.customResult
@@ -569,6 +571,7 @@ function makeHarness(options: {
     sessionEntries,
     entryRenderers,
     customCalls,
+    readyUiComponents,
     selectCalls,
     ctx,
   }
@@ -4996,6 +4999,7 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     expect(complete.details.discussionOpen).toBe(true)
     expect(complete.details.error).toBe('discussion is open')
     expect(harness.customCalls).toHaveLength(0)
+    expect(String(complete.content[0].text)).toContain('Не жди кнопку')
     expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
     expect(harness.trace).not.toContain('workflow-plan-approved')
   })
@@ -5012,6 +5016,28 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     expect(String(complete.content[0].text)).toContain('не считается согласием')
     expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
     expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(mockSupervisorDispatchCalls).toEqual([])
+  })
+
+  it('Execute returned from the blocking overlay before the answer does not approve or dispatch', async () => {
+    const harness = makeHarness({ activeBead: 'bead-ui', deferReadyUi: true })
+    await enterStrict(harness)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'что произошло?' }, harness.ctx)
+    await harness.inputHandlers[0]?.({ source: 'user', text: 'покажи план' }, harness.ctx)
+    const pending = markPlanReady(harness.toolHandlers, harness.ctx)
+    for (let i = 0; i < 12 && harness.readyUiComponents.length === 0; i++) await Promise.resolve()
+    expect(harness.readyUiComponents.length).toBeGreaterThan(0)
+    harness.readyUiComponents[0]?.handleInput?.('1')
+    const complete = await Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
+    ]) as { content: Array<{ text?: string }>; details: { outcome?: string } }
+    expect(complete.details.outcome).toBe('pre-answer-execute')
+    expect(String(complete.content[0].text)).toContain('Супервизор не запущен')
+    expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
+    expect(harness.trace).not.toContain('workflow-plan-approved')
+    expect(mockSupervisorDispatchCalls).toEqual([])
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
   })
 })

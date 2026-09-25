@@ -2251,7 +2251,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (discussionOpen) {
 					persistState();
 					return toolText(
-						"plan_mode_complete blocked: discussion is open. Answer in chat. Call complete only after Maxim confirms questions are closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
+						"plan_mode_complete blocked: discussion is open. Answer in chat. Не жди кнопку. Call complete only after Maxim confirms questions are closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
 						{ ok: false, error: "discussion is open", pending: false, discussionOpen: true },
 					);
 				}
