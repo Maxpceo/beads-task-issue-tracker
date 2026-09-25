@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Key, SelectList } from '@earendil-works/pi-tui'
 
@@ -55,7 +56,33 @@ function writeAgentMd(root: string, name: string): void {
   fs.writeFileSync(path.join(root, '.pi', 'agents', `${name}.md`), `---\nname: ${name}\n---\nBody\n`)
 }
 
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+
 const temps: string[] = []
+
+describe('defaultAgentModelsConfig tracker split', () => {
+  it('does not hardcode vue-supervisor or tauri-supervisor', () => {
+    const classes = defaultAgentModelsConfig().agentClasses
+    expect(classes['vue-supervisor']).toBeUndefined()
+    expect(classes['tauri-supervisor']).toBeUndefined()
+    expect(classes['code-reviewer']).toBe('strong')
+    expect(classes.architect).toBe('strong')
+    expect(classes['test-supervisor']).toBe('standard')
+    expect(classes.detective).toBe('standard')
+    expect(classes['documentation-expert']).toBe('cheap')
+    expect(classes['plan-edge-reviewer']).toBe('cheap')
+    expect(classes['plan-consistency-reviewer']).toBe('cheap')
+    expect(classes['plan-dead-zone-reviewer']).toBe('cheap')
+  })
+
+  it('keeps tracker agent-models.json standard assignments', () => {
+    const raw = JSON.parse(fs.readFileSync(path.join(repoRoot, '.pi', 'agent-models.json'), 'utf8')) as {
+      agentClasses: Record<string, string>
+    }
+    expect(raw.agentClasses['vue-supervisor']).toBe('standard')
+    expect(raw.agentClasses['tauri-supervisor']).toBe('standard')
+  })
+})
 
 afterEach(() => {
   while (temps.length) {
