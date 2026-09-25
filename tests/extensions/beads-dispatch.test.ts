@@ -930,8 +930,8 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
     }
     beadsDispatchExtension(pi as any)
     const result = await registeredTool.execute('call-1', { beadId: 'bead-model', dryRun: true, agent: 'test-supervisor' }, undefined, undefined, workflowCtx(process.cwd(), 'bead-model', branch, 'abc1234'))
-    expect(result.details.model).toBe('xai/grok-4.6')
-    expect(result.content[0].text).toContain('model=xai/grok-4.6')
+    expect(result.details.model).toBe('xai/grok-4.7')
+    expect(result.content[0].text).toContain('model=xai/grok-4.7')
     expect(result.content[0].text).toContain('thinking=medium')
   })
 
@@ -1020,7 +1020,7 @@ describe('beads-dispatch PLAN APPROVED readiness contract', () => {
       const spawnArgs = captured[0]
       expect(spawnArgs).toBeDefined()
       expect(spawnArgs!).toContain('--model')
-      expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.6')
+      expect(spawnArgs![spawnArgs!.indexOf('--model') + 1]).toBe('xai/grok-4.7')
       expect(spawnArgs!).toContain('--thinking')
       expect(spawnArgs![spawnArgs!.indexOf('--thinking') + 1]).toBe('medium')
 

@@ -323,9 +323,9 @@ describe('dispatch_supervisor transport=cmux', () => {
     expect(result.details.transport).toBe('cmux')
     expect(result.details.pane).toBe('')
     expect(result.details.endCommit).toBeUndefined()
-    // Project agent-models.json maps test-supervisor → standard → xai/grok-4.6
-    expect(result.details.model).toBe('xai/grok-4.6')
-    expect(result.content[0].text).toContain('model=xai/grok-4.6')
+    // Project agent-models.json maps test-supervisor → standard → xai/grok-4.7
+    expect(result.details.model).toBe('xai/grok-4.7')
+    expect(result.content[0].text).toContain('model=xai/grok-4.7')
     const comments = execCalls.filter((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')
     expect(comments).toEqual([])
     expect(fs.existsSync(path.join(tmp, 'ns'))).toBe(false)
