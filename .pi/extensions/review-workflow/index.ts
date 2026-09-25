@@ -747,11 +747,12 @@ function matchingVerificationCheck(item: string, checkResults: Array<ReturnType<
 		if (failed) return failed;
 		const uncovered = focused[0];
 		if (uncovered) {
+			const result: AcceptanceMatrixResult = "NOT RUN";
 			return {
 				command: uncovered.command,
 				exitCode: uncovered.exitCode,
 				output: uncovered.output,
-				result: "NOT RUN",
+				result,
 			};
 		}
 	}
