@@ -4001,12 +4001,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     const humanEntry = reviewBlockEntries(harness, 'plan-review-human')
     expect(humanEntry).toHaveLength(1)
     expect(String(humanEntry[0]?.data?.content)).toContain('leftover must wake model')
-    const human = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-human')
-    expect(human).toHaveLength(1)
-    expect(human[0]?.options?.triggerTurn).toBe(true)
-    expect(String(human[0]?.message.content)).toContain('leftover must wake model')
-    expect(String(human[0]?.message.content)).toContain('record_plan_review_adjudication')
-    expect(String(human[0]?.message.content)).not.toContain('call plan_mode_complete until Maxim confirms')
+    expect(String(humanEntry[0]?.data?.content)).toContain('record_plan_review_adjudication')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(false)
     const leftoverPersisted = harness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
@@ -4024,23 +4020,22 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(persisted?.data?.enabled).toBe(true)
   })
 
-  it('plan-review-human appendEntry failure re-shows buttons without a new plan or discussionOpen', async () => {
+  it('plan-review-human appendEntry failure does not open ready-UI or set discussionOpen', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
-      readyActionQueue: ['plan-review', 'stay'],
+      readyActionQueue: ['plan-review', 'execute'],
       failAppendEntryCustomTypes: ['plan-review-human'],
     })
     await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
     const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
-    expect(complete.details.outcome).toBe('stay')
+    expect(complete.details.transcriptFailed).toBe(true)
     expect(complete.details.discussionOpen).not.toBe(true)
-    expect(harness.customCalls.length).toBe(2)
+    expect(harness.customCalls.length).toBe(1)
     expect(planReadyDocuments(harness)).toHaveLength(1)
     expect(reviewBlockEntries(harness, 'plan-review-human')).toHaveLength(0)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
-    expect(harness.trace.some((entry) => entry.includes('не удалось записать замечания в чат'))).toBe(true)
-    expect(harness.trace.some((entry) => entry.includes('Повторите «Отправить на plan-review»'))).toBe(true)
+    expect(harness.trace.some((entry) => entry.includes('appendEntry не удался'))).toBe(true)
     const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean; pendingReadyPlan?: string } } | undefined
     expect(persisted?.data?.discussionOpen).not.toBe(true)
     expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
