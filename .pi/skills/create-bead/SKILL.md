@@ -26,13 +26,25 @@ Do **not** use for tiny local reminders under ~5 lines/one file where `bd todo a
 
 Do not run `bd create` until every item is true:
 
-- Title is Russian for Maxim; keep only technical identifiers (`bd-api`, file names, commands, labels) in English.
+- Bead title/description language follows `.pi/config/workflow-chains.json` `requireRussian` (see Language below). This skill does not require Russian for every project.
 - Duplicate search is done or intentionally skipped because the title/domain is obviously unique.
 - Description is visible to guards via Preferred: file-based transport (`write` description to `/tmp/...md`, then `--description "$(cat /absolute/path)"`) or legacy inline heredoc; do not use `$VAR`, unsafe/multi-command `$(cat ...)`, repo-path files, or Python/Node/Ruby wrappers.
-- All required `### ...` sections are present with concrete Russian content.
+- All required `### ...` sections are present with concrete content in the language `requireRussian` requires.
 - `-t` / `--type`, `-p` / `--priority`, and at least one `--label` / `--labels` / `-l` are set.
 - `--deps discovered-from:<id>` is set for follow-ups or discovered work when a source bead exists.
 - First-write / cold-session rule из секции ниже выполнен: все факты, уже известные в этой сессии и нужные имплементеру (anchors, SHA, lineage, naming, recipe), вписаны в description.
+
+## Language
+
+Read `.pi/config/workflow-chains.json` from the project (walk from cwd up to the git root; do not read `.pi/workflow-chains.json`). `requireRussian` controls user-facing title and description prose. It does not change `checks`, `copyRequired`, `reviewRequired`, `matrixRequired`, or `mainWriteAllowed`, and exact `false` does not turn off enrichment.
+
+- Exact boolean `false`: English title and description are allowed. Do not rewrite them into Russian to satisfy `enforceBeadRussianLocale`.
+- Missing file, missing field, non-boolean (`"false"`, `0`, `null`), or broken JSON: Russian stays required. Write title and description prose in Russian for Maxim; keep technical identifiers (`bd-api`, file names, commands, labels, API names) unchanged.
+- Do not treat a missing file as permission to write English beads.
+- Required `###` headings stay English either way. English identifiers inside Russian prose stay allowed when Russian is required.
+- `bd comments` that quote an English `bd create` example are not a create. Do not treat them as a locale violation.
+
+This tracker commits `"requireRussian": true`. Another project may set exact `false`.
 
 ## First write = cold-session handoff
 
@@ -70,7 +82,7 @@ Do not run `bd create` until every item is true:
 
 ## Required content
 
-Non-epic agent-created beads must include all sections below. Keep headings exactly in English; write content in Russian, preserving technical identifiers.
+Non-epic agent-created beads must include all sections below. Keep headings exactly in English. Write section content in the language required by `requireRussian` (Russian unless that field is the exact boolean `false`), preserving technical identifiers.
 
 ```markdown
 ### Origin
@@ -126,7 +138,7 @@ Required flags:
 Write the full description with the write tool to an absolute path outside the git worktree (обычно `/tmp/...md`), then pass a tight cat form. Guard reads the file bytes and validates sections/locale; `#` and backticks inside the file are safe because shell does not parse the body.
 
 ```bash
-# 1) write tool → /tmp/bead-desc-<slug>.md  (full ### template, Russian prose)
+# 1) write tool → /tmp/bead-desc-<slug>.md  (full ### template; prose language follows requireRussian)
 # 2) short bd create:
 bd create "Русский title с technical identifiers" \
   -t task \
@@ -213,7 +225,7 @@ bd todo add "Короткое локальное напоминание"
 ## Guard troubleshooting
 
 - `enforceBeadEnrichment`: missing required sections, labels, or concrete acceptance/verification bullets. Add the full template; do not create stub tasks.
-- `enforceBeadRussianLocale`: title/description prose is English. Rewrite user-facing bead text in Russian; keep technical identifiers unchanged.
+- `enforceBeadRussianLocale`: title/description prose is English while `requireRussian` is not the exact boolean `false`. Rewrite user-facing bead text in Russian; keep technical identifiers unchanged. Exact `false` does not trigger this guard and does not turn off enrichment.
 - `blockMainMutation`: command writes repo files or stages/commits from `main`. Skip only when `.pi/config/workflow-chains.json` has exact `copyRequired === false` and `mainWriteAllowed === true`. Otherwise move temp files to `/tmp`, or use a task worktree for code changes.
 - `blockMutationsInPlanning`: planning mode is read-only. Finish/approve the plan before creating beads, unless the active plan explicitly allows related follow-up creation.
 - `blockRawBdClaim`: use `workflow_claim(beadId=...)` instead of `bd update --claim`.

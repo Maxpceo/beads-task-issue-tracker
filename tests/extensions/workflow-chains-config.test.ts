@@ -43,6 +43,7 @@ describe('workflow-chains-config', () => {
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
       expect(chains.mainWriteAllowed).toBe(false)
+      expect(chains.requireRussian).toBe(true)
       expect(isMainWriteAllowed(chains)).toBe(false)
       expect(chains.readError).toBe('')
       expect(chains.copyRootRaw).toBe(TRACKER_DEFAULTS.copyRootRaw)
@@ -62,6 +63,7 @@ describe('workflow-chains-config', () => {
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
       expect(chains.mainWriteAllowed).toBe(false)
+      expect(chains.requireRussian).toBe(true)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -145,6 +147,8 @@ describe('workflow-chains-config', () => {
         expect(chains.reviewRequired, item.label).toBe(true)
         expect(chains.matrixRequired, item.label).toBe(true)
         expect(chains.mainWriteAllowed, item.label).toBe(false)
+        expect(chains.requireRussian, item.label).toBe(true)
+        expect(chains.checks, item.label).toEqual([...TRACKER_DEFAULT_CHECKS])
         expect(isMainWriteAllowed(chains), item.label).toBe(false)
         expect(chains.readError, item.label).toContain(join(repo, WORKFLOW_CHAINS_CONFIG_RELATIVE))
         expect(chains.readError, item.label).not.toBe('')
@@ -361,6 +365,7 @@ describe('workflow-chains-config', () => {
     expect(chains.reviewRequired).toBe(true)
     expect(chains.matrixRequired).toBe(true)
     expect(chains.mainWriteAllowed).toBe(false)
+    expect(chains.requireRussian).toBe(true)
     expect(isMainWriteAllowed(chains)).toBe(false)
     expect(chains.checksExplicit).toBe(true)
     expect(chains.checks).toEqual([...TRACKER_DEFAULT_CHECKS])
@@ -396,6 +401,8 @@ describe('workflow-chains-config', () => {
         expect(chains.reviewRequired).toBe(true)
         expect(chains.matrixRequired).toBe(true)
         expect(chains.mainWriteAllowed).toBe(false)
+        expect(chains.requireRussian).toBe(true)
+        expect(chains.checks).toEqual([...TRACKER_DEFAULT_CHECKS])
         expect(chains.readError).not.toBe('')
       } finally {
         rmSync(repo, { recursive: true, force: true })
@@ -463,9 +470,62 @@ describe('workflow-chains-config', () => {
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
       expect(chains.mainWriteAllowed).toBe(false)
+      expect(chains.requireRussian).toBe(true)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('reads exact requireRussian false without resetting other flags or checks', () => {
+    const repo = initRepo()
+    try {
+      writeConfig(repo, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: false,
+        matrixRequired: false,
+        mainWriteAllowed: true,
+        requireRussian: false,
+        checks: ['echo hi'],
+        naming: NAMING,
+      })
+      const chains = loadWorkflowChains(repo)
+      expect(chains.requireRussian).toBe(false)
+      expect(chains.copyRequired).toBe(false)
+      expect(chains.reviewRequired).toBe(false)
+      expect(chains.matrixRequired).toBe(false)
+      expect(chains.mainWriteAllowed).toBe(true)
+      expect(chains.checks).toEqual(['echo hi'])
+      expect(chains.checksExplicit).toBe(true)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('fail-closes requireRussian without resetting other fields when missing or not boolean', () => {
+    const cases: Array<{ label: string; body: Record<string, unknown> }> = [
+      { label: 'missing', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, mainWriteAllowed: true, checks: ['echo hi'], naming: NAMING } },
+      { label: 'string-false', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, mainWriteAllowed: true, requireRussian: 'false', checks: ['echo hi'], naming: NAMING } },
+      { label: 'zero', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, mainWriteAllowed: true, requireRussian: 0, checks: ['echo hi'], naming: NAMING } },
+      { label: 'null', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, mainWriteAllowed: true, requireRussian: null, checks: ['echo hi'], naming: NAMING } },
+    ]
+    for (const item of cases) {
+      const repo = initRepo()
+      try {
+        writeConfig(repo, item.body)
+        const chains = loadWorkflowChains(repo)
+        expect(chains.requireRussian, item.label).toBe(true)
+        expect(chains.copyRequired, item.label).toBe(false)
+        expect(chains.reviewRequired, item.label).toBe(false)
+        expect(chains.matrixRequired, item.label).toBe(false)
+        expect(chains.mainWriteAllowed, item.label).toBe(true)
+        expect(chains.checks, item.label).toEqual(['echo hi'])
+        expect(chains.readError, item.label).toBe('')
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
     }
   })
 })

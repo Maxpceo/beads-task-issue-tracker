@@ -4857,6 +4857,86 @@ function writeWorkflowChains(repo: string, data: unknown) {
   writeFileSync(join(repo, '.pi', 'config', 'workflow-chains.json'), typeof data === 'string' ? data : `${JSON.stringify(data, null, 2)}\n`)
 }
 
+describe('requireRussian locale switch', () => {
+  const englishTitle = 'bd create "Fix Dolt badge" -t task -p 2 --label dx --description "Short English description is not the locale switch under test" --json'
+  const preservedFlags = {
+    copyRequired: false,
+    handoffFromCopy: false,
+    reviewRequired: false,
+    matrixRequired: false,
+    mainWriteAllowed: true,
+    checks: ['echo hi'],
+    naming: workflowChainsNaming,
+  }
+
+  function repoWithChains(data: unknown): string {
+    const repo = createMainRepo()
+    writeWorkflowChains(repo, data)
+    return repo
+  }
+
+  it('blocks an English title when requireRussian is true', () => {
+    const repo = repoWithChains({ ...preservedFlags, requireRussian: true })
+    try {
+      const decision = evaluateBashPolicy(englishTitle, {}, { cwd: repo })
+      expect(decision?.policy).toBe('enforceBeadRussianLocale')
+      expect(decision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    { label: 'missing-field', body: preservedFlags },
+    { label: 'string-false', body: { ...preservedFlags, requireRussian: 'false' } },
+    { label: 'zero', body: { ...preservedFlags, requireRussian: 0 } },
+    { label: 'broken-json', body: '{ not json' },
+  ])('does not allow an English title when config is $label', ({ body }) => {
+    const repo = repoWithChains(body)
+    try {
+      const decision = evaluateBashPolicy(englishTitle, {}, { cwd: repo })
+      expect(decision?.policy).toBe('enforceBeadRussianLocale')
+      expect(decision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not block an English title with enforceBeadRussianLocale when requireRussian is false', () => {
+    const repo = repoWithChains({ ...preservedFlags, requireRussian: false })
+    try {
+      const command = `bd create "Fix Dolt badge" -t task -p 2 --label dx --description "${russianHandoffDescription}" --json`
+      const decision = evaluateBashPolicy(command, { state: 'idle' }, { cwd: repo })
+      expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
+      expect(decision?.block).not.toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('still enforces enrichment when requireRussian is false', () => {
+    const repo = repoWithChains({ ...preservedFlags, requireRussian: false })
+    try {
+      const decision = evaluateBashPolicy('bd create "Fix Dolt badge" -t task --label dx --description "Short English description without sections" --json', { state: 'idle' }, { cwd: repo })
+      expect(decision?.policy).toBe('enforceBeadEnrichment')
+      expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
+      expect(decision?.block).toBe(true)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not treat an English create example inside bd comments as a locale violation when requireRussian is true', () => {
+    const repo = repoWithChains({ ...preservedFlags, requireRussian: true })
+    try {
+      const decision = evaluateBashPolicy(`bd comments add bead-a 'example bd create "Fix bug" --description "short English"'`, { state: 'idle' }, { cwd: repo })
+      expect(decision?.policy).not.toBe('enforceBeadRussianLocale')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('workflow-chains copy policy', () => {
   const trackerRoot = join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker')
 

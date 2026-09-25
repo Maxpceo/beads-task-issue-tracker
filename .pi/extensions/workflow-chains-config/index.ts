@@ -22,6 +22,8 @@ export interface WorkflowChains {
 	matrixRequired: boolean;
 	/** Exact true plus copyRequired false is required before writing on main/master. Missing/non-boolean fail closed to false. */
 	mainWriteAllowed: boolean;
+	/** Exact false turns off the Russian bead locale guard. Missing, non-boolean, and broken JSON stay true and do not reset other fields. */
+	requireRussian: boolean;
 	/** Command strings. Tracker defaults when checks is absent or not an array of non-empty strings. */
 	checks: string[];
 	/** True only when checks is an explicit array of non-empty strings, including []. */
@@ -52,6 +54,7 @@ export const TRACKER_DEFAULTS = {
 	reviewRequired: true as const,
 	matrixRequired: true as const,
 	mainWriteAllowed: false as const,
+	requireRussian: true as const,
 	checks: TRACKER_DEFAULT_CHECKS,
 	naming: TRACKER_DEFAULT_NAMING,
 };
@@ -78,6 +81,7 @@ export function trackerDefaultChains(readError = "", configPath?: string): Workf
 		reviewRequired: true,
 		matrixRequired: true,
 		mainWriteAllowed: false,
+		requireRussian: true,
 		checks: [...TRACKER_DEFAULT_CHECKS],
 		checksExplicit: false,
 		naming: { ...TRACKER_DEFAULT_NAMING, types: [...TRACKER_DEFAULT_NAMING.types] },
@@ -215,6 +219,7 @@ function parseWorkflowChainsFile(configPath: string, rawText: string): WorkflowC
 		reviewRequired: record.reviewRequired === false ? false : true,
 		matrixRequired: record.matrixRequired === false ? false : true,
 		mainWriteAllowed: record.mainWriteAllowed === true,
+		requireRussian: record.requireRussian === false ? false : true,
 		...parseChecks(record.checks),
 		naming: namingResult.naming,
 		configPath,
