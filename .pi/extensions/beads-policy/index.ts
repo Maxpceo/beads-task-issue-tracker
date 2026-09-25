@@ -1557,6 +1557,8 @@ const HIDDEN_BEAD_DESCRIPTION_REASON =
 	"Заблокировано: `bd create` description скрыт от guard (например `$BUG_DESC`, небезопасный `$(cat /tmp/...)`, backticks или wrapper). Preferred: file-based — write description в `/tmp/...md`, затем `--description \"$(cat /absolute/path)\"` (guard читает файл). Legacy: inline heredoc `--description \"$(cat <<'EOF' ... EOF)\"` (хрупко с `#` и backticks). См. `.pi/skills/create-bead/SKILL.md`.";
 
 function getBeadLocaleError(command: string, cwd?: string): string | undefined {
+	// Exact false only. Missing file, missing field, non-boolean, and broken JSON keep Russian required.
+	if (loadWorkflowChains(cwd ?? process.cwd()).requireRussian === false) return undefined;
 	for (const segment of splitShellSegments(command)) {
 		const isCreate = segmentHasBdCommand(segment, new Set(["create", "new"]));
 		const isUpdate = segmentHasBdCommand(segment, new Set(["update"]));
@@ -1593,7 +1595,7 @@ function getBeadEnrichmentError(command: string, cwd?: string): string | undefin
 		const contentForSections = resolved.kind === "file" ? resolved.text : segment;
 		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !contentForSections.includes(section));
 		if (missing.length > 0) {
-			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через Preferred: file-based (write /tmp + --description "$(cat /absolute/path)") или legacy inline heredoc внутри --description со всеми required ### sections, русским content, type/priority/label/deps и concrete acceptance/verification bullets. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
+			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через Preferred: file-based (write /tmp + --description "$(cat /absolute/path)") или legacy inline heredoc внутри --description со всеми required ### sections, type/priority/label/deps и concrete acceptance/verification bullets. Язык prose задаёт requireRussian, не этот guard. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
 		}
 
 		if (!hasLabel(segment)) {
