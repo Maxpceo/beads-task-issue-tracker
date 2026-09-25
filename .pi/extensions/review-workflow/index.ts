@@ -8,6 +8,7 @@ import { renderPathRulesLoaded } from "../path-rules/index";
 import { AgentDashboardComponent, getSharedDashboardState, publishDashboardCard, registerDashboardRenderer } from "../subagent/dashboard";
 import { resolveActiveTaskScope, taskScopeFromContext } from "../worktree-scope/index";
 import { resolveAgentModelFromCwd } from "../agent-models/index";
+import { loadWorkflowChains } from "../workflow-chains-config/index";
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
 	registerTool(tool: any): void;
@@ -269,7 +270,7 @@ function needsAppFrontendSuite(files: string[]): boolean {
 	});
 }
 
-export function checksForFiles(files: string[], cwd: string): string[][] {
+function trackerChecksForFiles(files: string[], cwd: string): string[][] {
 	const checks: string[][] = [];
 	if (needsAppFrontendSuite(files)) {
 		checks.push(["pnpm", "--dir", cwd, "test"]);
@@ -277,6 +278,59 @@ export function checksForFiles(files: string[], cwd: string): string[][] {
 	}
 	if (files.some((file) => file.startsWith("src-tauri/") || file.endsWith(".rs"))) {
 		checks.push(["cargo", "check", "--manifest-path", path.join(cwd, "src-tauri", "Cargo.toml")]);
+	}
+	return checks;
+}
+
+function isCargoCheckCommand(command: string): boolean {
+	return command === "cargo check" || command.startsWith("cargo check ") || command.startsWith("cargo check\t");
+}
+
+function resolveManifestPath(manifest: string, cwd: string): string {
+	return path.isAbsolute(manifest) ? manifest : path.join(cwd, manifest);
+}
+
+function cargoCheckArgv(command: string, cwd: string): string[] {
+	const parts = command.trim().split(/\s+/);
+	const argv: string[] = [];
+	for (let index = 0; index < parts.length; index += 1) {
+		const token = parts[index] ?? "";
+		if (token === "--manifest-path" && parts[index + 1]) {
+			argv.push(token, resolveManifestPath(parts[index + 1] ?? "", cwd));
+			index += 1;
+			continue;
+		}
+		if (token.startsWith("--manifest-path=")) {
+			const manifest = token.slice("--manifest-path=".length);
+			argv.push(`--manifest-path=${resolveManifestPath(manifest, cwd)}`);
+			continue;
+		}
+		argv.push(token);
+	}
+	return argv;
+}
+
+export function checksForFiles(files: string[], cwd: string): string[][] {
+	const chains = loadWorkflowChains(cwd);
+	if (!chains.checksExplicit) return trackerChecksForFiles(files, cwd);
+	if (chains.checks.length === 0) return [];
+	const checks: string[][] = [];
+	const frontend = needsAppFrontendSuite(files);
+	const rust = files.some((file) => file.startsWith("src-tauri/") || file.endsWith(".rs"));
+	for (const command of chains.checks) {
+		if (command === "pnpm test") {
+			if (frontend) checks.push(["pnpm", "--dir", cwd, "test"]);
+			continue;
+		}
+		if (command === "npx vue-tsc --noEmit") {
+			if (frontend) checks.push(["npx", "--prefix", cwd, "vue-tsc", "--noEmit"]);
+			continue;
+		}
+		if (isCargoCheckCommand(command)) {
+			if (rust) checks.push(cargoCheckArgv(command, cwd));
+			continue;
+		}
+		if (files.length > 0) checks.push(command.trim().split(/\s+/));
 	}
 	return checks;
 }

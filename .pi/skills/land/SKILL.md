@@ -24,10 +24,14 @@ description: Pi-native landing workflow. Use when user says “пора зака
    - `inreview` without approval or human acceptance remains open and must be listed;
    - `in_progress` remains open unless the work is explicitly accepted/closed by an allowed fast-path route.
    - Do not use `land` to skip bd lifecycle authority: current-session active beads with bd status `inreview` still need `review-bead` or explicit human acceptance, and active non-terminal bd statuses block unrelated next work unless explicitly handed off/deferred with reason.
-4. Run quality gates if code changed:
-   ```bash
-   pnpm test && npx vue-tsc --noEmit
-   ```
+4. Run quality gates if code changed. Read `checks` from `.pi/config/workflow-chains.json`. Reading `checks` does not change `copyRequired`, `reviewRequired`, `matrixRequired`, or `mainWriteAllowed`.
+   - No file, unreadable file, broken JSON, missing `checks`, or a `checks` value that is not an array of non-empty strings:
+     ```bash
+     pnpm test && npx vue-tsc --noEmit
+     ```
+     Do not add `cargo check` in this fallback.
+   - Exact `checks: []`: do not invent `pnpm test`, `vue-tsc`, or `cargo check`.
+   - Non-empty array of non-empty strings: run those command strings in order, joined with `&&`. The committed tracker list includes `cargo check --manifest-path src-tauri/Cargo.toml`, so code changes run that check too.
    For docs/beads-only changes, record `not run: docs/beads only` rather than implying tests passed.
 5. Commit code with explicit paths only:
    ```bash

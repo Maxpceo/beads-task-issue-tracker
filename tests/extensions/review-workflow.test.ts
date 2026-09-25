@@ -3550,3 +3550,127 @@ describe('e4vt focused vitest superset matching', () => {
     expect(source).toContain('STOP CLOSE')
   })
 })
+
+describe('yt6p checksForFiles reads workflow-chains checks', () => {
+  const naming = {
+    types: ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'ci', 'task'],
+    basenameEqualsBranchSuffix: true,
+    suffixMustNotStartWith: 'beads-task-issue-tracker-',
+    suffixPattern: '^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$',
+    requireActiveBeadSuffixPrefix: true,
+  }
+  const trackerChecks = [
+    'pnpm test',
+    'npx vue-tsc --noEmit',
+    'cargo check --manifest-path src-tauri/Cargo.toml',
+  ]
+
+  function initRepo(): string {
+    const repo = mkdtempSync(join(tmpdir(), 'yt6p-checks-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' })
+    return repo
+  }
+
+  function writeChains(repo: string, data: unknown) {
+    mkdirSync(join(repo, '.pi', 'config'), { recursive: true })
+    writeFileSync(join(repo, '.pi', 'config', 'workflow-chains.json'), typeof data === 'string' ? data : `${JSON.stringify(data)}\n`)
+  }
+
+  function ritual(checks?: unknown) {
+    return {
+      copyRequired: true,
+      copyRoot: '~/Projects/worktrees/beads-task-issue-tracker',
+      handoffFromCopy: true,
+      reviewRequired: true,
+      matrixRequired: true,
+      mainWriteAllowed: false,
+      ...(checks === undefined ? {} : { checks }),
+      naming,
+    }
+  }
+
+  function expectTrackerArgv(cwd: string) {
+    expect(checksForFiles(['app/pages/foo.vue'], cwd)).toEqual([
+      ['pnpm', '--dir', cwd, 'test'],
+      ['npx', '--prefix', cwd, 'vue-tsc', '--noEmit'],
+    ])
+    expect(checksForFiles(['src-tauri/src/lib.rs'], cwd)).toEqual([
+      ['cargo', 'check', '--manifest-path', join(cwd, 'src-tauri', 'Cargo.toml')],
+    ])
+    const piOnly = checksForFiles(['.pi/extensions/review-workflow/index.ts', 'tests/extensions/review-workflow.test.ts'], cwd)
+    expect(piOnly.some((argv) => argv.includes('vue-tsc') || (argv[0] === 'pnpm' && argv.at(-1) === 'test'))).toBe(false)
+    expect(piOnly.some((argv) => argv[0] === 'cargo')).toBe(false)
+  }
+
+  it('keeps current argv when the file is missing, broken, or checks has the wrong type', () => {
+    const repo = initRepo()
+    try {
+      expectTrackerArgv(repo)
+      writeChains(repo, '{ not json')
+      expectTrackerArgv(repo)
+      writeChains(repo, ritual('pnpm test'))
+      expectTrackerArgv(repo)
+      writeChains(repo, ritual(null))
+      expectTrackerArgv(repo)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not add pnpm, vue-tsc, or cargo for an explicit empty checks list', () => {
+    const repo = initRepo()
+    try {
+      writeChains(repo, ritual([]))
+      expect(checksForFiles(['app/pages/foo.vue', 'src-tauri/src/lib.rs'], repo)).toEqual([])
+      expect(checksForFiles(['.pi/extensions/review-workflow/index.ts'], repo)).toEqual([])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('gates the committed tracker list and does not append it to a foreign command', () => {
+    const repo = initRepo()
+    try {
+      writeChains(repo, ritual(trackerChecks))
+      expect(checksForFiles(['app/pages/foo.vue'], repo)).toEqual([
+        ['pnpm', '--dir', repo, 'test'],
+        ['npx', '--prefix', repo, 'vue-tsc', '--noEmit'],
+      ])
+      expect(checksForFiles(['src-tauri/src/lib.rs'], repo)).toEqual([
+        ['cargo', 'check', '--manifest-path', join(repo, 'src-tauri', 'Cargo.toml')],
+      ])
+      expect(checksForFiles(['app/foo.ts', 'src-tauri/src/lib.rs'], repo)).toEqual([
+        ['pnpm', '--dir', repo, 'test'],
+        ['npx', '--prefix', repo, 'vue-tsc', '--noEmit'],
+        ['cargo', 'check', '--manifest-path', join(repo, 'src-tauri', 'Cargo.toml')],
+      ])
+      const piOnly = checksForFiles(['.pi/extensions/review-workflow/index.ts', 'tests/extensions/review-workflow.test.ts'], repo)
+      expect(piOnly).toEqual([])
+
+      writeChains(repo, ritual(['echo hi']))
+      expect(checksForFiles(['app/pages/foo.vue'], repo)).toEqual([['echo', 'hi']])
+      expect(checksForFiles(['.pi/extensions/review-workflow/index.ts'], repo)).toEqual([['echo', 'hi']])
+      expect(checksForFiles([], repo)).toEqual([])
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('skills read checks, skip cargo on the missing-file fallback, and do not invent commands for []', () => {
+    for (const relative of [
+      '.pi/skills/land/SKILL.md',
+      '.pi/skills/merge-to-main/SKILL.md',
+      '.pi/skills/release/SKILL.md',
+    ]) {
+      const text = readFileSync(join(process.cwd(), relative), 'utf8')
+      expect(text, relative).toContain('checks')
+      expect(text, relative).toContain('pnpm test && npx vue-tsc --noEmit')
+      expect(text, relative).toContain('Do not add `cargo check` in this fallback.')
+      expect(text, relative).toContain('Exact `checks: []`: do not invent `pnpm test`, `vue-tsc`, or `cargo check`.')
+      expect(text, relative).toContain('not run: docs/beads only')
+      expect(text, relative).toContain('cargo check --manifest-path src-tauri/Cargo.toml')
+      expect(text, relative).not.toMatch(/"copyRequired":\s*false/)
+      expect(text, relative).not.toMatch(/"mainWriteAllowed":\s*true/)
+    }
+  })
+})

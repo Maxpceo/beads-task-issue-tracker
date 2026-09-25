@@ -18,10 +18,15 @@ Prepare the project for `./release.sh`. The script is interactive and performs i
    bd list --status=inreview
    ```
 2. Require clean working tree and `main` branch unless user explicitly requests otherwise. If not on `main`, run `merge-to-main` first.
-3. Run quality gates:
-   ```bash
-   pnpm test && npx vue-tsc --noEmit
-   ```
+3. Run quality gates if code changed. Read `checks` from `.pi/config/workflow-chains.json`. Reading `checks` does not change `copyRequired`, `reviewRequired`, `matrixRequired`, or `mainWriteAllowed`.
+   - No file, unreadable file, broken JSON, missing `checks`, or a `checks` value that is not an array of non-empty strings:
+     ```bash
+     pnpm test && npx vue-tsc --noEmit
+     ```
+     Do not add `cargo check` in this fallback.
+   - Exact `checks: []`: do not invent `pnpm test`, `vue-tsc`, or `cargo check`.
+   - Non-empty array of non-empty strings: run those command strings in order, joined with `&&`. The committed tracker list includes `cargo check --manifest-path src-tauri/Cargo.toml`, so code changes run that check too.
+   For docs/beads-only changes, record `not run: docs/beads only` rather than implying tests passed.
 4. Review `CHANGELOG.md` `[Unreleased]`. If empty, stop: nothing to release.
 5. Curate `### Highlights` under `[Unreleased]` using this ranking:
    1. critical compatibility or upstream adaptation;

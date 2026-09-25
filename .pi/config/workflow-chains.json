@@ -5,6 +5,11 @@
   "reviewRequired": true,
   "matrixRequired": true,
   "mainWriteAllowed": false,
+  "checks": [
+    "pnpm test",
+    "npx vue-tsc --noEmit",
+    "cargo check --manifest-path src-tauri/Cargo.toml"
+  ],
   "naming": {
     "types": ["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"],
     "basenameEqualsBranchSuffix": true,

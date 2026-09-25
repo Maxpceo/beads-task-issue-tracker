@@ -22,6 +22,10 @@ export interface WorkflowChains {
 	matrixRequired: boolean;
 	/** Exact true plus copyRequired false is required before writing on main/master. Missing/non-boolean fail closed to false. */
 	mainWriteAllowed: boolean;
+	/** Command strings. Tracker defaults when checks is absent or not an array of non-empty strings. */
+	checks: string[];
+	/** True only when checks is an explicit array of non-empty strings, including []. */
+	checksExplicit: boolean;
 	naming: WorkflowChainsNaming;
 	configPath?: string;
 	readError: string;
@@ -35,6 +39,12 @@ export const TRACKER_DEFAULT_NAMING: WorkflowChainsNaming = {
 	requireActiveBeadSuffixPrefix: true,
 };
 
+export const TRACKER_DEFAULT_CHECKS = [
+	"pnpm test",
+	"npx vue-tsc --noEmit",
+	"cargo check --manifest-path src-tauri/Cargo.toml",
+];
+
 export const TRACKER_DEFAULTS = {
 	copyRequired: true as const,
 	copyRootRaw: "~/Projects/worktrees/beads-task-issue-tracker",
@@ -42,6 +52,7 @@ export const TRACKER_DEFAULTS = {
 	reviewRequired: true as const,
 	matrixRequired: true as const,
 	mainWriteAllowed: false as const,
+	checks: TRACKER_DEFAULT_CHECKS,
 	naming: TRACKER_DEFAULT_NAMING,
 };
 
@@ -67,6 +78,8 @@ export function trackerDefaultChains(readError = "", configPath?: string): Workf
 		reviewRequired: true,
 		matrixRequired: true,
 		mainWriteAllowed: false,
+		checks: [...TRACKER_DEFAULT_CHECKS],
+		checksExplicit: false,
 		naming: { ...TRACKER_DEFAULT_NAMING, types: [...TRACKER_DEFAULT_NAMING.types] },
 		configPath,
 		readError,
@@ -151,6 +164,19 @@ function parseNaming(raw: unknown, configPath: string): { naming?: WorkflowChain
 	};
 }
 
+function parseChecks(raw: unknown): { checks: string[]; checksExplicit: boolean } {
+	if (!Array.isArray(raw)) return { checks: [...TRACKER_DEFAULT_CHECKS], checksExplicit: false };
+	if (raw.length === 0) return { checks: [], checksExplicit: true };
+	const checks: string[] = [];
+	for (const item of raw) {
+		if (typeof item !== "string" || item.trim() === "") {
+			return { checks: [...TRACKER_DEFAULT_CHECKS], checksExplicit: false };
+		}
+		checks.push(item);
+	}
+	return { checks, checksExplicit: true };
+}
+
 function parseWorkflowChainsFile(configPath: string, rawText: string): WorkflowChains {
 	let parsed: unknown;
 	try {
@@ -189,6 +215,7 @@ function parseWorkflowChainsFile(configPath: string, rawText: string): WorkflowC
 		reviewRequired: record.reviewRequired === false ? false : true,
 		matrixRequired: record.matrixRequired === false ? false : true,
 		mainWriteAllowed: record.mainWriteAllowed === true,
+		...parseChecks(record.checks),
 		naming: namingResult.naming,
 		configPath,
 		readError: "",

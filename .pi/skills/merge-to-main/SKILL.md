@@ -46,7 +46,7 @@ EOF
   FILES: <comma-separated repo-relative files allowed for this fix>
   REASON: <кратко зачем правка нужна для merge quality gate>
   ```
-- Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом запуска `pnpm test && npx vue-tsc --noEmit` после правки.
+- Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом quality gates из `checks` (шаг 6) после правки. Не подставляйте `pnpm test`, `vue-tsc` или `cargo check`, если `checks` — точный `[]`.
 - Без такого marker, без `FILES:`, или при изменении файлов вне `FILES:` новые risky-изменения в `.pi/extensions` / `workflow` на уже закрытом bead блокируются.
 - Не запускайте `git merge origin/main` в грязное post-close дерево: `changedCodeFiles` раздувается диффом main и выходит за `FILES:` (`every()` покрытия нет). Abort merge и остановитесь; merge-unscale маркера нет.
 - Конфликтный `git rebase origin/main` после ownership-fix, если конфликты только в `FILES:` POST-CLOSE MERGE FIX, — ожидаемый allow (rebase-fallback читает branch из `--git-path` rebase dir + `head-name` и `START_COMMIT` из `ORIG_HEAD`, в том числе в linked worktree). Не путать с `git merge origin/main`.
@@ -57,10 +57,15 @@ EOF
 - This is a documented workflow checkpoint; typed router/tool enforcement is out of scope for this skill.
 
 5. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
-6. Run quality gates:
-   ```bash
-   pnpm test && npx vue-tsc --noEmit
-   ```
+6. Run quality gates if code changed. Read `checks` from `.pi/config/workflow-chains.json`. Reading `checks` does not change `copyRequired`, `reviewRequired`, `matrixRequired`, or `mainWriteAllowed`.
+   - No file, unreadable file, broken JSON, missing `checks`, or a `checks` value that is not an array of non-empty strings:
+     ```bash
+     pnpm test && npx vue-tsc --noEmit
+     ```
+     Do not add `cargo check` in this fallback.
+   - Exact `checks: []`: do not invent `pnpm test`, `vue-tsc`, or `cargo check`.
+   - Non-empty array of non-empty strings: run those command strings in order, joined with `&&`. The committed tracker list includes `cargo check --manifest-path src-tauri/Cargo.toml`, so code changes run that check too.
+   For docs/beads-only changes, record `not run: docs/beads only` rather than implying tests passed.
 7. Push branch via merge-slot. Сначала один раз сохраните имя ветки, затем синхронизируйтесь с `origin/main` явно; не используйте неявный pull+rebase, потому что у новой ветки может не быть upstream.
 
    **Holder recipe (identical to `land`; compute once immediately before acquire):**
