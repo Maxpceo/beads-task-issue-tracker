@@ -662,10 +662,9 @@ function buildDefaultTaskWorkspacePrompt(beadId: string, hint?: TaskWorkspacePar
 	const workspaceRef = (hint?.workspaceRef ?? "").trim();
 	const surface = (hint?.surface ?? "").trim();
 	if (!workspaceRef || !surface) return base;
-	const send =
-		`cmux send --workspace ${workspaceRef} --surface ${surface} -- 'merge готов, <SHA>, PR #<номер>'`;
+	const send = `cmux send --workspace ${workspaceRef} --surface ${surface} --`;
 	const sendKey = `cmux send-key --workspace ${workspaceRef} --surface ${surface} enter`;
-	return `${base} После merge в main пингани главного оркестратора из worktree, surface не ищи. В текст send подставь фактический SHA коммита и номер PR; пример формы ниже, значения <SHA> и <номер> замени до отправки. Текст send не должен содержать \\n или \\r. Enter только шаг 3 через cmux send-key. 1) ${send}; 2) sleep 1; 3) ${sendKey}.`;
+	return `${base} После merge в main пингани главного оркестратора из worktree, surface не ищи. В шаг 1 допиши текст из слов merge готов, фактического SHA коммита и номера PR; в argv этот текст не вшит. Текст send не должен содержать \\n или \\r. Enter только шаг 3 через cmux send-key. 1) ${send}; 2) sleep 1; 3) ${sendKey}.`;
 }
 
 /** Child Pi start command: ASCII flags only; Russian text only as the message argument. Never `pi --name`. */
