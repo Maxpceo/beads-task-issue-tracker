@@ -28,14 +28,20 @@ import {
   announceVisiblePlanReviewWait,
   classifyPlanReviewRisk,
   evaluatePlanReviewGate as realEvaluatePlanReviewGate,
+  formatPlanReviewHumanBlock,
   hasImportantOrCriticalFindings,
+  isEmptyCleanPlanReview,
   planReviewStopAdvice,
+  stampPlanReviewBanner,
+  substantivePlanReviewFindings,
+  PLAN_REVIEW_CHANGED_BANNER,
+  PLAN_REVIEW_UNCHANGED_BANNER,
   type PlanReviewFinding,
   type PlanReviewResult,
 } from '../../.pi/extensions/plan-review/index'
 
 const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
-const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'plan_mode_complete', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
+const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'plan_mode_complete', 'record_plan_review_adjudication', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
 const hopWorkflowTools = [
   'complete_visible_dispatch',
   'followup_visible_dispatch',
@@ -150,6 +156,12 @@ function loadPlanModeExtension(): (pi: unknown) => void {
         classifyPlanReviewRisk,
         planReviewStopAdvice,
         hasImportantOrCriticalFindings,
+        formatPlanReviewHumanBlock,
+        isEmptyCleanPlanReview,
+        stampPlanReviewBanner,
+        substantivePlanReviewFindings,
+        PLAN_REVIEW_CHANGED_BANNER,
+        PLAN_REVIEW_UNCHANGED_BANNER,
         evaluatePlanReviewGate: (results: PlanReviewResult[]) => {
           if (!mockPlanReviewGateOk || mockPlanReviewReasons.length > 0) {
             const importantFindings = mockPlanReviewImportantFindings.length > 0
@@ -586,6 +598,10 @@ async function markPlanReady(toolHandlers: Map<string, any>, ctx: any, plan = SA
   const tool = toolHandlers.get('plan_mode_complete')
   if (!tool) throw new Error('plan_mode_complete tool not registered')
   return tool.execute('tc-complete', { plan }, undefined, undefined, ctx)
+}
+
+function reviewBlockEntries(harness: { sessionEntries: Array<{ customType?: string; data?: unknown }> }, customType: string) {
+  return harness.sessionEntries.filter((entry) => entry.customType === customType) as Array<{ data?: { content?: string } }>
 }
 
 function planReadyDocuments(harness: { sessionEntries: Array<{ customType?: string; data?: unknown }> }) {
@@ -3754,7 +3770,30 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(comment).toContain('PLAN APPROVED')
   })
 
-  it('plan-review clean: toast without transcript dump + plan document + re-show select + execute; cycle unchanged', async () => {
+  it('plan-review human block is appendEntry before plan-ready-document, not sendMessage', async () => {
+    expect(source).toContain('function showImmediateReviewBlock')
+    expect(source).toContain('pi.appendEntry(customType, { content })')
+    expect(source).not.toMatch(/showVisibleTranscript\(\s*["']plan-review-human/)
+    expect(source).not.toMatch(/showVisibleTranscript\(\s*["']plan-review-adjudication/)
+
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'stay'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const types = harness.sessionEntries.map((entry) => entry.customType)
+    const humanIndex = types.indexOf('plan-review-human')
+    const planIndexes = types.flatMap((customType, index) => customType === 'plan-ready-document' ? [index] : [])
+    expect(humanIndex).toBeGreaterThanOrEqual(0)
+    expect(planIndexes[1]).toBeGreaterThan(humanIndex)
+    expect(harness.sessionEntries[humanIndex]?.type).toBe('custom')
+  })
+
+  it('plan-review clean: three verdicts and unchanged banner in transcript, toast is not the only proof', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
       readyActionQueue: ['plan-review', 'execute'],
@@ -3770,8 +3809,29 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(false)
     expect(String(complete.content[0].text)).not.toContain('Strict plan critique complete')
+    expect(String(complete.content[0].text)).not.toContain('покажи план')
     expect(complete.details.pending).toBe(false)
     expect(complete.details.ok).toBe(true)
+
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const human = reviewBlockEntries(harness, 'plan-review-human')
+    expect(human).toHaveLength(1)
+    const humanText = String(human[0]?.data?.content)
+    const entryTypes = harness.sessionEntries.map((entry) => entry.customType)
+    const humanIndex = entryTypes.indexOf('plan-review-human')
+    const planIndexes = entryTypes.flatMap((customType, index) => customType === 'plan-ready-document' ? [index] : [])
+    expect(planIndexes.length).toBeGreaterThanOrEqual(2)
+    expect(humanIndex).toBeGreaterThan(planIndexes[0] ?? -1)
+    expect(humanIndex).toBeLessThan(planIndexes[1] ?? -1)
+    expect(humanText).toContain('не code-reviewer')
+    expect(humanText).toContain('План сами не правят')
+    for (const reviewer of ['plan-edge-reviewer', 'plan-consistency-reviewer', 'plan-dead-zone-reviewer']) {
+      expect(humanText).toContain(reviewer)
+      expect(humanText).toContain('Вердикт: APPROVED')
+    }
+    expect(humanText).toContain('Замечаний нет.')
+    expect(humanText).toContain('Применять нечего, план не менялся.')
 
     expect(waitingTrioNotices(harness).notifies.length).toBeGreaterThanOrEqual(1)
     expect(waitingTrioNotices(harness).entries.length).toBeGreaterThanOrEqual(1)
@@ -3780,14 +3840,17 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-clean')).toBe(false)
 
     const planDocs = planReadyDocuments(harness)
-    expect(planDocs.length).toBeGreaterThanOrEqual(2) // initial overlay + clean re-show
+    expect(planDocs.length).toBeGreaterThanOrEqual(2)
     expect(String(planDocs[0]?.data?.content)).toContain('Plan:')
+    expect(String(planDocs.at(-1)?.data?.content)).toContain(PLAN_REVIEW_UNCHANGED_BANNER)
+    expect(String(planDocs.at(-1)?.data?.content)).not.toContain(PLAN_REVIEW_CHANGED_BANNER)
     expect(planReadyChoices(harness)).toHaveLength(1)
 
-    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
+    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean; discussionOpen?: boolean } }>
     const cycleAfter = afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0
     expect(cycleAfter).toBe(cycleBefore)
     expect(afterEntries.at(-1)?.data?.enabled).toBe(false)
+    expect(afterEntries.some((entry) => entry.data?.discussionOpen === true)).toBe(false)
 
     const comment = harness.execCalls.find((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')?.args[3] ?? ''
     expect(comment).toContain('PLAN APPROVED')
@@ -3797,19 +3860,20 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(0)
   })
 
-  it('plan-review dirty: transcript findings triggerTurn false + tool result; pending cleared; one select; cycle unchanged', async () => {
+  it('plan-review dirty: plan stays closed until adjudication is recorded, then opens without a confirm phrase', async () => {
     const harness = makeHarness({
       activeBead: 'bead-ui',
-      readyActionQueue: ['plan-review', 'execute'],
+      readyActionQueue: ['plan-review', 'stay'],
     })
-    mockPlanReviewImportantFindings = [{
-      severity: 'important',
+    const finding = {
+      severity: 'important' as const,
       issue: 'missing delivery path for findings',
       evidence: 'ready-ui loop re-showed select',
       suggestedFix: 'return findings in plan_mode_complete tool result',
-    }]
+    }
+    mockPlanReviewImportantFindings = [finding]
     mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
-      ? { ...result, verdict: 'NEEDS_CHANGES' as const, findings: mockPlanReviewImportantFindings }
+      ? { ...result, verdict: 'NEEDS_CHANGES' as const, findings: [finding] }
       : result)
     mockRenderedPlanReviewResults = 'PLAN REVIEW: NEEDS_CHANGES\n- important: missing delivery path'
 
@@ -3818,43 +3882,77 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       .filter((entry) => entry.customType === 'plan-mode')
       .at(-1) as { data?: { planReviewCycleCount?: number } } | undefined
     const cycleBefore = beforeCycleEntry?.data?.planReviewCycleCount ?? 0
+    const docsBeforeReview = () => planReadyDocuments(harness).length
 
     const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    const docsAfterFacts = docsBeforeReview()
 
     expect(mockPlanReviewSpawnCount).toBe(1)
-    expect(String(complete.content[0].text)).toContain('Strict plan critique complete')
-    expect(String(complete.content[0].text)).toContain('call plan_mode_complete')
-    expect(String(complete.content[0].text)).toMatch(/NEEDS_CHANGES|missing delivery path/)
+    expect(String(complete.content[0].text)).toContain('record_plan_review_adjudication')
+    expect(String(complete.content[0].text)).not.toContain('call plan_mode_complete until Maxim confirms')
     expect(complete.details.ok).toBe(false)
     expect(complete.details.pending).toBe(false)
     expect(complete.details.findings).toBe(true)
+    expect(complete.details.discussionOpen).toBe(false)
 
-    const findingsMsgs = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-findings')
-    expect(findingsMsgs).toHaveLength(1)
-    expect(findingsMsgs[0]?.message.display).toBe(true)
-    expect(findingsMsgs[0]?.options).toMatchObject({ triggerTurn: false })
-    expect(String(findingsMsgs[0]?.message.content)).toContain('Strict plan critique complete')
-    expect(String(findingsMsgs[0]?.message.content)).toMatch(/NEEDS_CHANGES|missing delivery path/)
-
-    const planDoc = planReadyDocuments(harness).at(-1)
-    expect(planDoc).toBeTruthy()
-    expect(String(planDoc?.data?.content)).toContain('Plan:')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    const human = reviewBlockEntries(harness, 'plan-review-human')
+    expect(human).toHaveLength(1)
+    const humanText = String(human[0]?.data?.content)
+    expect(humanText).toContain('missing delivery path for findings')
+    expect(humanText).toContain('severity: important')
+    expect(humanText).toContain('ready-ui loop re-showed select')
+    expect(humanText).toContain('return findings in plan_mode_complete tool result')
+    expect(humanText).toContain('Вердикт: NEEDS_CHANGES')
+    expect(reviewBlockEntries(harness, 'plan-review-adjudication')).toHaveLength(0)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    expect(planReadyDocuments(harness)).toHaveLength(docsAfterFacts)
+    expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).not.toContain(PLAN_REVIEW_CHANGED_BANNER)
 
     expect(harness.customCalls.length).toBe(1)
-    expectExecuteReadyOverlay(harness.customCalls)
-    expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(0)
+    const blockedComplete = await markPlanReady(harness.toolHandlers, harness.ctx, 'Plan:\n1. Revised without adjudication')
+    expect(blockedComplete.details.ok).toBe(false)
+    expect(blockedComplete.details.error).toBe('adjudication required')
+    expect(blockedComplete.details.discussionOpen).toBe(false)
+    expect(harness.customCalls.length).toBe(1)
+
+    const recorded = await harness.toolHandlers.get('record_plan_review_adjudication')?.execute('adj', {
+      adjudications: [{
+        reviewer: 'plan-edge-reviewer',
+        issue: finding.issue,
+        decision: 'accepted',
+        reason: 'нужен видимый разбор до плана',
+        whatChanged: 'не менял',
+      }],
+      revisedPlan: 'Plan:\n1. Draft with a real text change',
+    }, undefined, undefined, harness.ctx)
+
+    expect(recorded.details.recorded).toBe(true)
+    expect(recorded.details.overlay).toBe(true)
+    expect(String(recorded.content[0].text)).not.toContain('покажи план')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const adjudication = reviewBlockEntries(harness, 'plan-review-adjudication')
+    expect(adjudication).toHaveLength(1)
+    expect(String(adjudication[0]?.data?.content)).toContain('принято')
+    expect(String(adjudication[0]?.data?.content)).toContain('нужен видимый разбор до плана')
+    expect(String(adjudication[0]?.data?.content)).toContain('missing delivery path for findings')
+    const typesAfterTool = harness.sessionEntries.map((entry) => entry.customType)
+    const adjudicationIndex = typesAfterTool.lastIndexOf('plan-review-adjudication')
+    const planAfterAdjudication = typesAfterTool.findIndex((customType, index) => index > adjudicationIndex && customType === 'plan-ready-document')
+    expect(planAfterAdjudication).toBeGreaterThan(adjudicationIndex)
+    const stamped = planReadyDocuments(harness).at(-1)
+    expect(String(stamped?.data?.content)).toContain(PLAN_REVIEW_CHANGED_BANNER)
+    expect(String(stamped?.data?.content)).not.toContain(PLAN_REVIEW_UNCHANGED_BANNER)
+    expect(harness.sendUserMessages.some((message) => message.includes('покажи план'))).toBe(false)
+    expect(harness.customCalls.length).toBe(2)
+
+    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean; discussionOpen?: boolean } }>
+    expect(afterEntries.at(-1)?.data?.enabled).toBe(true)
+    expect(afterEntries.at(-1)?.data?.discussionOpen).toBe(false)
+    expect(afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0).toBe(cycleBefore)
     expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
     expect(mockSupervisorDispatchCalls).toHaveLength(0)
-
-    const afterEntries = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode') as Array<{ data?: { planReviewCycleCount?: number; pendingReadyPlan?: string; enabled?: boolean } }>
-    expect(afterEntries.at(-1)?.data?.pendingReadyPlan).toBeUndefined()
-    expect(afterEntries.at(-1)?.data?.enabled).toBe(true)
-    expect((afterEntries.at(-1)?.data as { discussionOpen?: boolean } | undefined)?.discussionOpen).toBe(true)
-    expect(afterEntries.at(-1)?.data?.planReviewCycleCount ?? 0).toBe(cycleBefore)
-
-    expect(waitingTrioNotices(harness).notifies.length).toBeGreaterThanOrEqual(1)
-    expect(waitingTrioNotices(harness).entries.length).toBeGreaterThanOrEqual(1)
-    expect(harness.trace.some((entry) => entry.startsWith('notify:') && entry.includes('plan-review: findings'))).toBe(true)
+    expect(humanText).toContain('plan-edge-reviewer')
   })
 
   it('plan-review notifies start before spawn; notify failure does not cancel spawn', async () => {
@@ -3923,16 +4021,16 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
 
     expect(mockPlanReviewSpawnCount).toBe(1)
     expect(harness.selectCalls.filter((call) => call.title.includes('План готов')).length).toBe(1)
-    // Leftover has no tool-result channel: exactly one findings message wakes the model.
-    const findingsMsgs = harness.sendMessages.filter((message) => message.message.customType === 'plan-review-findings')
-    expect(findingsMsgs).toHaveLength(1)
-    expect(findingsMsgs[0]?.options?.triggerTurn).toBe(true)
-    expect(String(findingsMsgs[0]?.message.content)).toContain('Strict plan critique complete')
-    expect(String(findingsMsgs[0]?.message.content)).toContain('call plan_mode_complete')
+    const humanEntry = reviewBlockEntries(harness, 'plan-review-human')
+    expect(humanEntry).toHaveLength(1)
+    expect(String(humanEntry[0]?.data?.content)).toContain('leftover must wake model')
+    expect(String(humanEntry[0]?.data?.content)).toContain('record_plan_review_adjudication')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-findings')).toBe(false)
     const leftoverPersisted = harness.sessionEntries
       .filter((entry) => entry.customType === 'plan-mode')
       .at(-1) as { data?: { discussionOpen?: boolean } } | undefined
-    expect(leftoverPersisted?.data?.discussionOpen).toBe(true)
+    expect(leftoverPersisted?.data?.discussionOpen).not.toBe(true)
 
     const leftoverPlan = planReadyDocuments(harness).at(-1)
     expect(leftoverPlan).toBeTruthy()
@@ -3943,6 +4041,213 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
       .at(-1) as { data?: { pendingReadyPlan?: string; enabled?: boolean } } | undefined
     expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
     expect(persisted?.data?.enabled).toBe(true)
+  })
+
+  it('plan-review-human appendEntry failure does not open ready-UI or set discussionOpen', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'execute'],
+      failAppendEntryCustomTypes: ['plan-review-human'],
+    })
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.transcriptFailed).toBe(true)
+    expect(complete.details.discussionOpen).not.toBe(true)
+    expect(harness.customCalls.length).toBe(1)
+    expect(planReadyDocuments(harness)).toHaveLength(1)
+    expect(reviewBlockEntries(harness, 'plan-review-human')).toHaveLength(0)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(harness.execCalls.some((call) => call.command === 'bd' && call.args[0] === 'comments' && call.args[1] === 'add')).toBe(false)
+    expect(harness.trace.some((entry) => entry.includes('appendEntry не удался'))).toBe(true)
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean; pendingReadyPlan?: string } } | undefined
+    expect(persisted?.data?.discussionOpen).not.toBe(true)
+    expect(persisted?.data?.pendingReadyPlan).toBeUndefined()
+  })
+
+  it('minor: none is the empty path and returns the unchanged plan itself', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'stay'],
+    })
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result) => ({
+      ...result,
+      findings: [{ severity: 'minor' as const, issue: 'none', evidence: 'none', suggestedFix: 'none' }],
+    }))
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.ok).toBe(true)
+    expect(complete.details.outcome).toBe('stay')
+    const humanText = String(reviewBlockEntries(harness, 'plan-review-human')[0]?.data?.content)
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-human')).toBe(false)
+    expect(humanText).toContain('Замечаний нет.')
+    expect(humanText).toContain('Применять нечего, план не менялся.')
+    expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).toContain(PLAN_REVIEW_UNCHANGED_BANNER)
+    expect(harness.customCalls.length).toBe(2)
+  })
+
+  it('one minor finding does not re-show the plan until adjudication is recorded', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'stay'],
+    })
+    const finding = {
+      severity: 'minor' as const,
+      issue: 'wording is vague',
+      evidence: 'README still says toast-only',
+      suggestedFix: 'name the transcript block',
+    }
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? { ...result, verdict: 'APPROVED' as const, findings: [finding] }
+      : result)
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.findings).toBe(true)
+    expect(harness.customCalls.length).toBe(1)
+    expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).not.toContain(PLAN_REVIEW_CHANGED_BANNER)
+    const recorded = await harness.toolHandlers.get('record_plan_review_adjudication')?.execute('adj-minor', {
+      adjudications: [{
+        reviewer: 'plan-edge-reviewer',
+        issue: finding.issue,
+        decision: 'rejected',
+        reason: 'toast не заменяет блок, но правка плана не нужна',
+        whatChanged: 'текст не менял',
+      }],
+      revisedPlan: SAMPLE_READY_PLAN,
+    }, undefined, undefined, harness.ctx)
+    expect(recorded.details.recorded).toBe(true)
+    expect(String(reviewBlockEntries(harness, 'plan-review-adjudication')[0]?.data?.content)).toContain('отклонено')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    expect(String(planReadyDocuments(harness).at(-1)?.data?.content)).toContain(PLAN_REVIEW_UNCHANGED_BANNER)
+    expect(harness.sendUserMessages).not.toContain('покажи план')
+  })
+
+  it('missing reviewer does not claim no findings and does not clean-reshow', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'execute'],
+    })
+    mockPlanReviewGateOk = false
+    mockPlanReviewReasons = ['missing reviewer: plan-dead-zone-reviewer']
+    mockPlanReviewResults = defaultMockPlanReviewResults().filter((result) => result.reviewer !== 'plan-dead-zone-reviewer')
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    const complete = await markPlanReady(harness.toolHandlers, harness.ctx)
+    expect(complete.details.findings).toBe(true)
+    expect(complete.details.discussionOpen).toBe(false)
+    expect(harness.customCalls.length).toBe(1)
+    const humanText = String(reviewBlockEntries(harness, 'plan-review-human')[0]?.data?.content)
+    expect(humanText).not.toContain('Замечаний нет')
+    expect(humanText).not.toContain('Применять нечего')
+    expect(humanText).toContain('plan-dead-zone-reviewer')
+    expect(humanText).toContain('Ревьюер не ответил')
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean } } | undefined
+    expect(persisted?.data?.discussionOpen).not.toBe(true)
+  })
+
+  it('adjudication write failure and incomplete adjudications do not open ready-UI', async () => {
+    const harness = makeHarness({
+      activeBead: 'bead-ui',
+      readyActionQueue: ['plan-review', 'execute'],
+      failAppendEntryCustomTypes: ['plan-review-adjudication'],
+    })
+    const finding = {
+      severity: 'important' as const,
+      issue: 'chat write can fail',
+      evidence: 'sendMessage throws',
+      suggestedFix: 'keep the plan closed',
+    }
+    mockPlanReviewImportantFindings = [finding]
+    mockPlanReviewResults = defaultMockPlanReviewResults().map((result, index) => index === 0
+      ? { ...result, verdict: 'NEEDS_CHANGES' as const, findings: [finding] }
+      : result)
+    await harness.commandHandlers.get('plan')?.handler('', harness.ctx)
+    await markPlanReady(harness.toolHandlers, harness.ctx)
+    const docsAfterFacts = planReadyDocuments(harness).length
+    const incomplete = await harness.toolHandlers.get('record_plan_review_adjudication')?.execute('adj-incomplete', {
+      adjudications: [],
+      revisedPlan: 'Plan:\n1. Changed',
+    }, undefined, undefined, harness.ctx)
+    expect(incomplete.details.ok).toBe(false)
+    expect(incomplete.details.recorded).toBe(false)
+    expect(incomplete.details.overlay).toBe(false)
+    expect(harness.customCalls.length).toBe(1)
+
+    const failedWrite = await harness.toolHandlers.get('record_plan_review_adjudication')?.execute('adj-fail', {
+      adjudications: [{
+        reviewer: 'plan-edge-reviewer',
+        issue: finding.issue,
+        decision: 'accepted',
+        reason: 'запись обязательна',
+        whatChanged: 'добавил восстановление',
+      }],
+      revisedPlan: 'Plan:\n1. Changed after review',
+    }, undefined, undefined, harness.ctx)
+    expect(failedWrite.details.ok).toBe(false)
+    expect(failedWrite.details.recorded).toBe(false)
+    expect(failedWrite.details.overlay).toBe(false)
+    expect(failedWrite.details.discussionOpen).toBe(false)
+    expect(String(failedWrite.content[0].text)).toContain('запись разбора в чат не удалась')
+    expect(harness.customCalls.length).toBe(1)
+    expect(planReadyDocuments(harness)).toHaveLength(docsAfterFacts)
+    expect(harness.trace.some((entry) => entry.includes('не удалось записать разбор в чат'))).toBe(true)
+    const persisted = harness.sessionEntries.filter((entry) => entry.customType === 'plan-mode').at(-1) as { data?: { discussionOpen?: boolean; planReviewAdjudicationRecorded?: boolean } } | undefined
+    expect(persisted?.data?.discussionOpen).not.toBe(true)
+    expect(persisted?.data?.planReviewAdjudicationRecorded).not.toBe(true)
+  })
+
+  it('RPC adjudication writes the block and does not claim the overlay is open', async () => {
+    const harness = makeHarness({
+      hasUI: false,
+      activeBead: 'bead-ui',
+      entries: [
+        {
+          type: 'custom',
+          customType: 'workflow-state',
+          data: { activeBead: 'bead-ui', branch: 'task/plan-approved', worktreePath: '/tmp/task', startCommit: 'task123' },
+        },
+        {
+          type: 'custom',
+          customType: 'plan-mode',
+          data: {
+            enabled: true,
+            autoExecute: false,
+            discussionOpen: false,
+            planReviewAdjudicationRequired: true,
+            planReviewAdjudicationRecorded: false,
+            planReviewSnapshot: SAMPLE_READY_PLAN,
+            planReviewPendingFindings: [{
+              reviewer: 'plan-edge-reviewer',
+              issue: 'rpc must not fake overlay',
+              severity: 'minor',
+              evidence: 'no UI',
+              suggestedFix: 'say overlay is closed',
+            }],
+          },
+        },
+      ],
+    })
+    await harness.sessionStartHandlers[0]?.({}, harness.ctx)
+    const recorded = await harness.toolHandlers.get('record_plan_review_adjudication')?.execute('adj-rpc', {
+      adjudications: [{
+        reviewer: 'plan-edge-reviewer',
+        issue: 'rpc must not fake overlay',
+        decision: 'accepted',
+        reason: 'канал sendMessage есть, overlay нет',
+        whatChanged: 'добавил честный pending',
+      }],
+      revisedPlan: `${SAMPLE_READY_PLAN}\n2. Honest RPC.`,
+    }, undefined, undefined, harness.ctx)
+    expect(recorded.details.ok).toBe(true)
+    expect(recorded.details.recorded).toBe(true)
+    expect(recorded.details.overlay).toBe(false)
+    expect(recorded.details.pending).toBe(true)
+    expect(String(recorded.content[0].text)).toContain('Overlay не открыт')
+    expect(String(recorded.content[0].text)).not.toContain('ready-UI clean-reshow')
+    expect(harness.sendMessages.some((message) => message.message.customType === 'plan-review-adjudication')).toBe(false)
+    const adjudication = reviewBlockEntries(harness, 'plan-review-adjudication')
+    expect(adjudication).toHaveLength(1)
+    expect(String(adjudication[0]?.data?.content)).toContain('принято')
+    expect(harness.customCalls).toHaveLength(0)
+    expect(harness.selectCalls.filter((call) => call.title.includes('План готов'))).toHaveLength(0)
   })
 
   it('execute-path live factory is overlay buttons only; full plan is the transcript entry', async () => {
@@ -4502,5 +4807,55 @@ describe('Pi plan-mode display markdown helpers (yxn0)', () => {
     const createPlanSite = readyUiSource.slice(readyUiSource.indexOf('export function createPlanDocumentComponent'))
     expect(createPlanSite).toContain('new ClampedMarkdown(text, 0, 0, theme)')
     expect(createPlanSite).not.toContain('transform: planMarkdownTransform')
+  })
+})
+
+describe('plan-review human block and honest banner', () => {
+  it('stamps unchanged when only the old banner and trailing whitespace differ', () => {
+    const previous = `${PLAN_REVIEW_CHANGED_BANNER}\n\nPlan:\n1. Same   \n`
+    const next = 'Plan:\n1. Same\n'
+    const stamped = stampPlanReviewBanner(previous, next)
+    expect(stamped.startsWith(PLAN_REVIEW_UNCHANGED_BANNER)).toBe(true)
+    expect(stamped.split(PLAN_REVIEW_UNCHANGED_BANNER).length - 1).toBe(1)
+    expect(stamped).not.toContain(PLAN_REVIEW_CHANGED_BANNER)
+    const repeated = stampPlanReviewBanner(stamped, stamped)
+    expect(repeated.split(PLAN_REVIEW_UNCHANGED_BANNER).length - 1).toBe(1)
+  })
+
+  it('stamps changed when the text differs even if a caller would say it did not', () => {
+    const stamped = stampPlanReviewBanner('Plan:\n1. Old', 'Plan:\n1. New')
+    expect(stamped.startsWith(PLAN_REVIEW_CHANGED_BANNER)).toBe(true)
+    expect(stamped).toContain('Plan:\n1. New')
+    expect(stamped).not.toContain(PLAN_REVIEW_UNCHANGED_BANNER)
+  })
+
+  it('treats none as no finding and does not claim that for BLOCKED', () => {
+    const noneResult = {
+      reviewer: 'plan-edge-reviewer',
+      verdict: 'APPROVED' as const,
+      findings: [{ severity: 'minor' as const, issue: 'none', evidence: 'none', suggestedFix: 'none' }],
+      unresolvedBlockers: [],
+      raw: '',
+    }
+    expect(substantivePlanReviewFindings(noneResult)).toHaveLength(0)
+    expect(formatPlanReviewHumanBlock([noneResult], { emptyClean: true })).toContain('Замечаний нет.')
+    const blocked = formatPlanReviewHumanBlock([{
+      reviewer: 'plan-consistency-reviewer',
+      verdict: 'BLOCKED',
+      findings: [],
+      unresolvedBlockers: ['empty report'],
+      raw: '',
+    }], { suppressNoFindingsClaim: true })
+    expect(blocked).not.toContain('Замечаний нет')
+    expect(blocked).toContain('Отчёта с замечаниями нет')
+    expect(isEmptyCleanPlanReview([noneResult], {
+      ok: true,
+      results: [noneResult],
+      missingReviewers: [],
+      blockedReviewers: [],
+      unresolvedBlockers: [],
+      importantFindings: [],
+      reasons: [],
+    })).toBe(true)
   })
 })
