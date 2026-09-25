@@ -53,11 +53,15 @@ import {
 	announceVisiblePlanReviewWait,
 	classifyPlanReviewRisk,
 	evaluatePlanReviewGate,
+	formatPlanReviewHumanBlock,
 	hasImportantOrCriticalFindings,
+	isEmptyCleanPlanReview,
 	missingRevisedPlanSections,
 	planReviewStopAdvice,
 	renderPlanReviewResults,
 	runPlanReviewers,
+	stampPlanReviewBanner,
+	substantivePlanReviewFindings,
 	type PlanReviewGateResult,
 	type PlanReviewResult,
 	type PlanReviewStopAdvice,
@@ -77,7 +81,7 @@ import { PROTECTED_BRANCHES, validateTaskScopePath } from "../worktree-scope/ind
 import { loadWorkflowChains } from "../workflow-chains-config/index";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "plan_mode_complete", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "plan_mode_complete", "record_plan_review_adjudication", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
 const PLAN_MODE_TOOL_SET = new Set(PLAN_MODE_TOOLS);
 const NORMAL_MODE_FALLBACK_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "plan_subagent"];
 const MANDATORY_WORKFLOW_TOOLS = [
@@ -219,11 +223,52 @@ const WorkflowPlanApprovedParams = {
 const PlanModeCompleteParams = {
 	type: "object",
 	properties: {
-		plan: { type: "string", description: "Final plan text ready for human ready-UI (execute/stay/refine/plan-review/ask). First complete after entering plan mode opens the widget. Do not call after a clarifying question or while discussionOpen until Maxim confirms." },
+		plan: { type: "string", description: "Final plan text ready for human ready-UI (execute/stay/refine/plan-review/ask). First complete after entering plan mode opens the widget. Do not call after a clarifying question or while discussionOpen until Maxim confirms. Do not call while plan-review findings are waiting for record_plan_review_adjudication." },
 	},
 	required: ["plan"],
 	additionalProperties: false,
 } as const;
+
+const RecordPlanReviewAdjudicationParams = {
+	type: "object",
+	properties: {
+		adjudications: {
+			type: "array",
+			description: "One item per live plan-review finding, keyed by reviewer + issue. Empty only when that review had no live findings.",
+			items: {
+				type: "object",
+				properties: {
+					reviewer: { type: "string" },
+					issue: { type: "string" },
+					decision: { type: "string", enum: ["accepted", "rejected"] },
+					reason: { type: "string", description: "Why the finding was accepted or rejected" },
+					whatChanged: { type: "string", description: "What changed in the plan, or that it did not change. The visible banner still follows the real text diff." },
+				},
+				required: ["reviewer", "issue", "decision", "reason", "whatChanged"],
+				additionalProperties: false,
+			},
+		},
+		revisedPlan: { type: "string", description: "Plan text after adjudication. The extension stamps the honest banner; do not rely on whatChanged for that mark." },
+	},
+	required: ["adjudications", "revisedPlan"],
+	additionalProperties: false,
+} as const;
+
+type PlanReviewAdjudicationInput = {
+	reviewer?: string;
+	issue?: string;
+	decision?: string;
+	reason?: string;
+	whatChanged?: string;
+};
+
+type PendingPlanReviewFinding = {
+	reviewer: string;
+	issue: string;
+	severity: string;
+	evidence: string;
+	suggestedFix: string;
+};
 
 const QuestionnaireParams = {
 	type: "object",
@@ -441,8 +486,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let prePlanActiveToolNames: string[] | undefined;
 	/** Set only by plan_mode_complete; gates ready-UI in strict agent_end. */
 	let pendingReadyPlan: string | undefined;
-	/** True after ask/refine/dirty plan-review until a whole-message confirm. */
+	/** True after ask/refine until a whole-message confirm. Dirty plan-review does not set this. */
 	let discussionOpen = false;
+	/** Plan text that was reviewed; banner diff uses this, not adjudication prose. */
+	let planReviewSnapshot: string | undefined;
+	let planReviewPendingFindings: PendingPlanReviewFinding[] = [];
+	/** Live findings or a failed gate are waiting for record_plan_review_adjudication. */
+	let planReviewAdjudicationRequired = false;
+	/** Set only after the adjudication block is written to the transcript. */
+	let planReviewAdjudicationRecorded = false;
 
 	pi.registerEntryRenderer("plan-ready-document", (entry) => {
 		const data = entry.data as { content?: unknown } | undefined;
@@ -1390,12 +1442,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		if (autoExecute || autopilot) {
 			clearPendingReadyPlan();
 			discussionOpen = false;
+			clearPlanReviewAdjudication();
 		}
 		// Reset cycle and discussionOpen only on plan-mode off→on (new /plan or first enable).
 		// Repeated workflow_plan_mode while already on does not reset.
 		if (!wasEnabled) {
 			resetPlanReviewCycleState();
 			discussionOpen = false;
+			clearPlanReviewAdjudication();
 		}
 		pi.setActiveTools(PLAN_MODE_TOOLS);
 		const modeLabel = autopilot ? "Autopilot " : autoExecute ? "Auto " : "";
@@ -1417,6 +1471,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		todoItems = [];
 		clearPendingReadyPlan();
 		discussionOpen = false;
+		clearPlanReviewAdjudication();
 		resetPlanReviewCycleState();
 		const restoredTools = restoreNormalToolSurface();
 		if (ctx.hasUI) ctx.ui.notify(`Plan mode disabled. Full access restored: ${restoredTools.join(", ")}`);
@@ -1448,15 +1503,31 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			lastPlanReviewDraftPlan,
 			pendingReadyPlan,
 			discussionOpen,
+			planReviewSnapshot,
+			planReviewPendingFindings,
+			planReviewAdjudicationRequired,
+			planReviewAdjudicationRecorded,
 		});
+	}
+
+	function clearPlanReviewAdjudication(): void {
+		planReviewSnapshot = undefined;
+		planReviewPendingFindings = [];
+		planReviewAdjudicationRequired = false;
+		planReviewAdjudicationRecorded = false;
 	}
 
 	function canUseCustomUi(ctx: ExtensionContext): boolean {
 		return ctx.mode === "tui" && typeof ctx.ui?.custom === "function";
 	}
 
-	/** Put a document in the human transcript without waking a model turn (51l5). */
-	function showVisibleTranscript(customType: string, content: string): void {
+	/**
+	 * Put a document in the human transcript.
+	 * Returns false when sendMessage throws. Questionnaire ignores the flag.
+	 * Plan-review must not open ready-UI when this returns false.
+	 * triggerTurn stays false during tool execute (51l5); leftover may wake the model.
+	 */
+	function showVisibleTranscript(customType: string, content: string, triggerTurn = false): boolean {
 		try {
 			pi.sendMessage(
 				{
@@ -1464,10 +1535,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					content,
 					display: true,
 				},
-				{ triggerTurn: false },
+				{ triggerTurn },
 			);
+			return true;
 		} catch {
-			// sendMessage failure must not block select / questionnaire
+			return false;
 		}
 	}
 
@@ -1571,6 +1643,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		| { kind: "cancelled" }
 		| { kind: "findings"; results: PlanReviewResult[]; gate: PlanReviewGateResult }
 		| { kind: "clean-reshow" }
+		| { kind: "transcript-failed"; message: string }
 		| { kind: "error"; message: string };
 
 	function formatPlanModeCompleteToolText(outcome: StrictReadyUiOutcome): string {
@@ -1599,8 +1672,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				return `Ready-UI упал: ${outcome.message}. Pending cleared. Plan mode ON. Не утверждать что overlay ждёт. Снова plan_mode_complete или продолжить план.`;
 			case "clean-reshow":
 				return "plan_mode_complete: ready-UI clean-reshow; pending kept";
+			case "transcript-failed":
+				return outcome.message;
 			case "findings":
-				return formatReadyCritiqueFindingsText(outcome.results);
+				return formatPlanReviewAdjudicationRequest(outcome.results);
 		}
 	}
 
@@ -1613,21 +1688,72 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		);
 	}
 
-	function formatReadyCritiqueFindingsText(results: PlanReviewResult[]): string {
-		if (isDeadPaneHardBlock(results)) {
-			return [
-				formatDeadPaneHardBlockCopy(results),
-				"",
-				renderPlanReviewResults(results),
-			].join("\n");
+	function collectLivePlanReviewFindings(results: PlanReviewResult[]): PendingPlanReviewFinding[] {
+		const items: PendingPlanReviewFinding[] = [];
+		for (const result of results) {
+			for (const finding of substantivePlanReviewFindings(result)) {
+				items.push({
+					reviewer: result.reviewer,
+					issue: finding.issue,
+					severity: finding.severity,
+					evidence: finding.evidence,
+					suggestedFix: finding.suggestedFix,
+				});
+			}
 		}
+		return items;
+	}
+
+	function formatPlanReviewFactsBlock(results: PlanReviewResult[], gate: PlanReviewGateResult, emptyClean: boolean): string {
+		const parts = [
+			formatPlanReviewHumanBlock(results, {
+				emptyClean,
+				suppressNoFindingsClaim: !emptyClean && !gate.ok,
+			}),
+		];
+		if (!emptyClean && gate.missingReviewers.length > 0) {
+			parts.push(gate.missingReviewers.map((name) => `## ${name}\nВердикт: нет отчёта\nРевьюер не ответил.`).join("\n\n"));
+		}
+		return parts.filter(Boolean).join("\n\n");
+	}
+
+	function formatPlanReviewAdjudicationRequest(results: PlanReviewResult[]): string {
+		const deadPane = isDeadPaneHardBlock(results) ? `${formatDeadPaneHardBlockCopy(results)}\n\n` : "";
 		return [
-			"**Strict plan critique complete.** Implementation remains blocked until explicit approval.",
+			`${deadPane}Факты plan-review уже в чате (plan-review-human). Повторный план не открыт.`,
+			"Сразу вызови record_plan_review_adjudication: adjudications[] по каждому живому finding (reviewer, issue, decision accepted|rejected, reason, whatChanged) и revisedPlan.",
+			"Не проси человека писать «покажи план». Не вызывай plan_mode_complete, пока разбор не записан в чат.",
 			"",
 			renderPlanReviewResults(results),
-			"",
-			"Revise the plan. Adjudicate each finding (Accepted findings / Rejected findings), keep Unresolved blockers: none when clear. Do not call plan_mode_complete until Maxim confirms discussion is closed (да / ок / ok / покажи план / вопросы закрыты / можно показывать план).",
 		].join("\n");
+	}
+
+	function formatPlanReviewAdjudicationBlock(items: Array<{ reviewer: string; issue: string; decision: "accepted" | "rejected"; reason: string; whatChanged: string }>): string {
+		const lines = ["Разбор оркестратора:"];
+		if (items.length === 0) {
+			lines.push("Живых замечаний для разбора нет.");
+			return lines.join("\n");
+		}
+		for (const item of items) {
+			const decision = item.decision === "accepted" ? "принято" : "отклонено";
+			lines.push(`- ${item.reviewer} / ${item.issue}: ${decision}. Почему: ${item.reason}. Что изменено: ${item.whatChanged}`);
+		}
+		return lines.join("\n");
+	}
+
+	function notifyPlanReview(ctx: ExtensionContext, text: string, level: "info" | "warning" | "error"): void {
+		try {
+			if (ctx.hasUI) ctx.ui.notify(text, level);
+		} catch {
+			// notify failure must not open or hide the plan
+		}
+	}
+
+	function failPlanReviewTranscript(ctx: ExtensionContext, message: string): StrictReadyUiOutcome {
+		clearPendingReadyPlan();
+		persistState();
+		notifyPlanReview(ctx, message, "error");
+		return { kind: "transcript-failed", message };
 	}
 
 	async function runReadyPlanCritique(
@@ -1728,34 +1854,40 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
 			if (action === "plan-review") {
 				const { results, gate } = await runReadyPlanCritique(ctx, planText);
-				const clean = gate.ok && !hasImportantOrCriticalFindings(results, gate.importantFindings);
+				const emptyClean = isEmptyCleanPlanReview(results, gate);
+				const facts = formatPlanReviewFactsBlock(results, gate, emptyClean);
+				// Leftover has no tool result, so the same block wakes the model. Execute stays triggerTurn false (51l5).
+				const wakeModel = source === "leftover" && !emptyClean;
+				const transcript = wakeModel ? `${facts}\n\n${formatPlanReviewAdjudicationRequest(results)}` : facts;
+				const wroteFacts = showVisibleTranscript("plan-review-human", transcript, wakeModel);
+				if (!wroteFacts) {
+					return failPlanReviewTranscript(
+						ctx,
+						"plan-review: не удалось записать замечания в чат. План не открываю. discussionOpen не включён. Повторите «Отправить на plan-review».",
+					);
+				}
 
-				if (clean) {
-					const cleanText = "plan-review: чисто (нет important/critical) — можно исполнять";
-					try {
-						if (ctx.hasUI) ctx.ui.notify(cleanText, "info");
-					} catch {
-						// swallow
-					}
+				if (emptyClean) {
+					pendingReadyPlan = stampPlanReviewBanner(planText, planText);
+					clearPlanReviewAdjudication();
 					persistState();
+					notifyPlanReview(ctx, "plan-review: чисто (нет important/critical) — можно исполнять", "info");
 					lastOutcome = { kind: "clean-reshow" };
-					// pending kept; re-show ready buttons so Maxim can execute immediately
 					continue;
 				}
 
-				// Dirty: deliver findings to the agent turn; no second select (prevents double run).
+				// Live finding or gate not ok: facts only. Plan returns from record_plan_review_adjudication.
+				planReviewSnapshot = planText;
+				planReviewPendingFindings = collectLivePlanReviewFindings(results);
+				planReviewAdjudicationRequired = true;
+				planReviewAdjudicationRecorded = false;
 				clearPendingReadyPlan();
-				discussionOpen = true;
 				persistState();
 				const importantCount = countImportantOrCritical(results, gate);
 				const dirtyText = gate.ok
 					? `plan-review: findings — important/critical: ${importantCount}; plan mode ON, pending cleared`
 					: `plan-review: gate blocked (${gate.reasons[0] ?? "see findings"}); important/critical: ${importantCount}; pending cleared`;
-				try {
-					if (ctx.hasUI) ctx.ui.notify(dirtyText, gate.ok ? "warning" : "error");
-				} catch {
-					// swallow
-				}
+				notifyPlanReview(ctx, dirtyText, gate.ok ? "warning" : "error");
 				return { kind: "findings", results, gate };
 			}
 
@@ -1896,9 +2028,119 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		});
 
 		workflowPi.registerTool({
+			name: "record_plan_review_adjudication",
+			label: "Record Plan Review Adjudication",
+			description: "Write the orchestrator adjudication of plan-review findings into the human transcript, stamp an honest plan banner, and open ready-UI. Call immediately after a non-empty plan-review. Do not ask Maxim to write «покажи план». Does not approve the plan or start a supervisor.",
+			parameters: RecordPlanReviewAdjudicationParams,
+			async execute(_id: string, params: { adjudications?: PlanReviewAdjudicationInput[]; revisedPlan?: string }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext) {
+				if (!planModeEnabled) {
+					return toolText("record_plan_review_adjudication blocked: plan mode is off", { ok: false, recorded: false, overlay: false });
+				}
+				if (!planReviewAdjudicationRequired || planReviewAdjudicationRecorded) {
+					return toolText("record_plan_review_adjudication blocked: no pending plan-review findings", {
+						ok: false,
+						recorded: false,
+						overlay: false,
+						discussionOpen: false,
+					});
+				}
+				const revisedPlan = typeof params.revisedPlan === "string" ? params.revisedPlan.trim() : "";
+				if (!revisedPlan) {
+					return toolText("record_plan_review_adjudication blocked: revisedPlan must be non-empty", {
+						ok: false,
+						recorded: false,
+						overlay: false,
+						discussionOpen: false,
+					});
+				}
+				const rawItems = Array.isArray(params.adjudications) ? params.adjudications : [];
+				const normalized: Array<{ reviewer: string; issue: string; decision: "accepted" | "rejected"; reason: string; whatChanged: string }> = [];
+				for (const item of rawItems) {
+					const decision = item?.decision === "accepted" || item?.decision === "rejected" ? item.decision : undefined;
+					if (!decision || !item.reviewer?.trim() || !item.issue?.trim() || !item.reason?.trim() || !item.whatChanged?.trim()) {
+						return toolText("record_plan_review_adjudication blocked: each adjudication needs reviewer, issue, decision accepted|rejected, reason, and whatChanged", {
+							ok: false,
+							recorded: false,
+							overlay: false,
+							discussionOpen: false,
+						});
+					}
+					normalized.push({
+						reviewer: item.reviewer.trim(),
+						issue: item.issue.trim(),
+						decision,
+						reason: item.reason.trim(),
+						whatChanged: item.whatChanged.trim(),
+					});
+				}
+				const liveFindings = planReviewPendingFindings;
+				if (normalized.length !== liveFindings.length) {
+					return toolText("record_plan_review_adjudication blocked: adjudications must cover every live finding", {
+						ok: false,
+						recorded: false,
+						overlay: false,
+						discussionOpen: false,
+						expected: liveFindings.length,
+					});
+				}
+				const used = new Array(normalized.length).fill(false);
+				for (const finding of liveFindings) {
+					const index = normalized.findIndex((item, itemIndex) => !used[itemIndex] && item.reviewer === finding.reviewer && item.issue === finding.issue);
+					if (index < 0) {
+						return toolText(`record_plan_review_adjudication blocked: missing adjudication for ${finding.reviewer}: ${finding.issue}`, {
+							ok: false,
+							recorded: false,
+							overlay: false,
+							discussionOpen: false,
+						});
+					}
+					used[index] = true;
+				}
+				const adjudicationText = formatPlanReviewAdjudicationBlock(normalized);
+				const wrote = showVisibleTranscript("plan-review-adjudication", adjudicationText, false);
+				if (!wrote) {
+					persistState();
+					notifyPlanReview(ctx, "plan-review: не удалось записать разбор в чат. План не открываю.", "error");
+					return toolText("record_plan_review_adjudication: запись разбора в чат не удалась. Ready-UI не открыт. Повторите tool. discussionOpen не включён.", {
+						ok: false,
+						recorded: false,
+						overlay: false,
+						discussionOpen: false,
+					});
+				}
+				const stamped = stampPlanReviewBanner(planReviewSnapshot ?? "", revisedPlan);
+				planReviewAdjudicationRecorded = true;
+				planReviewAdjudicationRequired = false;
+				planReviewPendingFindings = [];
+				planReviewSnapshot = undefined;
+				pendingReadyPlan = stamped;
+				persistState();
+				if (!ctx.hasUI) {
+					return toolText("Разбор записан. Overlay не открыт: нет UI. Pending сохранён, select откроется на agent_settled.", {
+						ok: true,
+						recorded: true,
+						overlay: false,
+						pending: true,
+						discussionOpen: false,
+					});
+				}
+				const outcome = await runStrictReadyUiLoopSafe(ctx, "execute");
+				const pending = outcome.kind === "execute-blocked" || outcome.kind === "clean-reshow" || Boolean(pendingReadyPlan);
+				return toolText(formatPlanModeCompleteToolText(outcome), {
+					ok: outcome.kind !== "error" && outcome.kind !== "transcript-failed" && outcome.kind !== "execute-blocked",
+					recorded: true,
+					overlay: outcome.kind !== "error" && outcome.kind !== "transcript-failed",
+					pending,
+					discussionOpen: false,
+					outcome: outcome.kind,
+				});
+			},
+		});
+
+		workflowPi.registerTool({
 			name: "plan_mode_complete",
 			label: "Plan Mode Complete",
-			description: "Mark the draft plan as ready for the human ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос). First complete after entering plan mode opens the widget. Never after a clarifying question or while discussionOpen until Maxim confirms. Empty/whitespace plan is rejected.",
+			description: "Mark the draft plan as ready for the human ready-UI (Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос). First complete after entering plan mode opens the widget. Never after a clarifying question or while discussionOpen until Maxim confirms. Do not call while plan-review findings are waiting for record_plan_review_adjudication. Empty/whitespace plan is rejected.",
 			parameters: PlanModeCompleteParams,
 			renderCall(_args: { plan?: string }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, _context: unknown) {
 				return new Text(
@@ -1938,6 +2180,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					persistState();
 					return toolText("plan_mode_complete noted (auto/autopilot: ready-UI skipped)", { ok: true, pending: false, auto: true });
 				}
+				if (planReviewAdjudicationRequired && !planReviewAdjudicationRecorded) {
+					persistState();
+					return toolText(
+						"plan_mode_complete blocked: plan-review findings are waiting for record_plan_review_adjudication. Не открываю ready-UI. Не проси человека писать «покажи план».",
+						{ ok: false, error: "adjudication required", pending: false, discussionOpen: false, adjudicationRequired: true },
+					);
+				}
 				if (discussionOpen) {
 					persistState();
 					return toolText(
@@ -1950,15 +2199,24 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				if (ctx.hasUI) {
 					const outcome = await runStrictReadyUiLoopSafe(ctx, "execute");
 					if (outcome.kind === "findings") {
-						const findingsText = formatReadyCritiqueFindingsText(outcome.results);
-						// Human transcript + model tool result. triggerTurn false during execute (51l5).
-						showVisibleTranscript("plan-review-findings", findingsText);
+						const findingsText = formatPlanReviewAdjudicationRequest(outcome.results);
 						return toolText(findingsText, {
 							ok: false,
 							pending: false,
 							findings: true,
+							adjudicationRequired: true,
+							discussionOpen: false,
 							gate: outcome.gate,
 							results: outcome.results,
+							outcome: outcome.kind,
+						});
+					}
+					if (outcome.kind === "transcript-failed") {
+						return toolText(outcome.message, {
+							ok: false,
+							pending: false,
+							discussionOpen: false,
+							transcriptFailed: true,
 							outcome: outcome.kind,
 						});
 					}
@@ -2552,7 +2810,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 You are in plan mode - a read-only exploration mode for safe code analysis.
 
 Restrictions:
-- You can only use: read, bash, grep, find, ls, questionnaire, plan_mode_complete, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review, plan_subagent
+- You can only use: read, bash, grep, find, ls, questionnaire, plan_mode_complete, record_plan_review_adjudication, workflow_status, workflow_plan_mode, workflow_plan_approved, workflow_plan_review, plan_subagent
 - You MAY use plan_subagent only for read-only planning agents (detective/architect); generic subagent and implementation supervisors remain unavailable in plan mode.
 - You CANNOT use: edit, write, subagent, dispatch_supervisor, dispatch_reviewer, dispatch_docs_agent, review_bead, workflow_submit_for_review, workflow_complete, spawn_task_workspace (file/workflow mutations are disabled until approval)
 - After approved/cancelled plan mode, Pi restores the pre-plan active tool surface plus registered mandatory workflow tools.
@@ -2562,7 +2820,7 @@ Restrictions:
 - Other bd mutating commands remain blocked: bd create/update/close, bd comments add/delete, bd merge-slot acquire/release, bd dolt commit/push/pull. workflow_update and setup-worktree stay outside PLAN_MODE_TOOLS.
 
 Questions and «объясни» belong in chat. questionnaire is only for a real A/B choice that cannot continue without a pick — never instead of a paragraph.
-The first plan_mode_complete after entering plan mode / «делай план» opens ready-UI immediately. Do not dump the draft plan in chat instead of the widget. Ready-UI: Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос. «Задать вопрос» closes the widget without an editor; wait for the question in normal chat. After ask, refine, or dirty plan-review, discussionOpen is true: do NOT call plan_mode_complete until Maxim confirms with a whole-message allowlist (да / ок / ok / покажи план / вопросы закрыты / можно показывать план). discussionOpen resets when plan mode goes off→on (same moment as the plan-review cycle reset). The plan-review button runs critique without approving or starting a supervisor. If the button returns findings, they arrive in the plan_mode_complete tool result — adjudicate in chat; call plan_mode_complete only after Maxim confirms.
+The first plan_mode_complete after entering plan mode / «делай план» opens ready-UI immediately. Do not dump the draft plan in chat instead of the widget. Ready-UI: Исполнить / Остаться / Уточнить / Отправить на plan-review / Задать вопрос. «Задать вопрос» closes the widget without an editor; wait for the question in normal chat. After ask or refine, discussionOpen is true: do NOT call plan_mode_complete until Maxim confirms with a whole-message allowlist (да / ок / ok / покажи план / вопросы закрыты / можно показывать план). Dirty plan-review does not set discussionOpen and does not wait for that phrase. discussionOpen resets when plan mode goes off→on (same moment as the plan-review cycle reset). The plan-review button runs critique without approving or starting a supervisor. Reviewer facts are written to the chat before any repeat plan. If there is a live finding or the gate is not ok, immediately call record_plan_review_adjudication; that tool writes the adjudication and re-opens the plan. Do not call plan_mode_complete while that adjudication is pending. Do not ask Maxim to write «покажи план».
 Use brave-search skill via bash for web research.
 
 Create a detailed numbered draft plan under a "Plan:" header. Do not write English ## section headings; keep canonical English field-lines (Acceptance:, Files to change:) for gates — ready-UI display rewrites known labels to Russian ##, and dual-write of Russian+English keys is forbidden.
@@ -2720,22 +2978,12 @@ After completing a step, include a [DONE:n] tag in your response.`,
 	});
 
 	// Restore leftover pendingReadyPlan (restart) with select — not custom (gauq/m6ho).
-	// Findings cannot ride a tool result here (no active execute), so wake the model via sendMessage.
+	// Dirty plan-review wakes the model from the loop (plan-review-human, triggerTurn true). Do not send a second findings dump.
 	pi.on("agent_settled", async (_event, ctx) => {
 		if (!planModeEnabled || autoExecuteEnabled || executionMode) return;
 		if (!pendingReadyPlan) return;
 		if (!ctx.hasUI) return;
-		const outcome = await runStrictReadyUiLoopSafe(ctx, "leftover");
-		if (outcome.kind === "findings") {
-			pi.sendMessage(
-				{
-					customType: "plan-review-findings",
-					content: formatReadyCritiqueFindingsText(outcome.results),
-					display: true,
-				},
-				{ triggerTurn: true },
-			);
-		}
+		await runStrictReadyUiLoopSafe(ctx, "leftover");
 	});
 
 	// Restore state on session start/resume
@@ -2764,6 +3012,10 @@ After completing a step, include a [DONE:n] tag in your response.`,
 				lastPlanReviewDraftPlan?: string;
 				pendingReadyPlan?: string;
 				discussionOpen?: boolean;
+				planReviewSnapshot?: string;
+				planReviewPendingFindings?: PendingPlanReviewFinding[];
+				planReviewAdjudicationRequired?: boolean;
+				planReviewAdjudicationRecorded?: boolean;
 			} }
 			| undefined;
 
@@ -2781,10 +3033,15 @@ After completing a step, include a [DONE:n] tag in your response.`,
 			lastPlanReviewDraftPlan = planModeEntry.data.lastPlanReviewDraftPlan ?? lastPlanReviewDraftPlan;
 			pendingReadyPlan = planModeEntry.data.pendingReadyPlan ?? pendingReadyPlan;
 			discussionOpen = planModeEntry.data.discussionOpen ?? discussionOpen;
+			planReviewSnapshot = planModeEntry.data.planReviewSnapshot ?? planReviewSnapshot;
+			planReviewPendingFindings = planModeEntry.data.planReviewPendingFindings ?? planReviewPendingFindings;
+			planReviewAdjudicationRequired = planModeEntry.data.planReviewAdjudicationRequired ?? planReviewAdjudicationRequired;
+			planReviewAdjudicationRecorded = planModeEntry.data.planReviewAdjudicationRecorded ?? planReviewAdjudicationRecorded;
 			// Auto/autopilot never keeps ready pending across restore.
 			if (autoExecuteEnabled) {
 				clearPendingReadyPlan();
 				discussionOpen = false;
+				clearPlanReviewAdjudication();
 			}
 		}
 

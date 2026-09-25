@@ -541,3 +541,88 @@ export function renderPlanReviewResults(results: PlanReviewResult[]): string {
 		return [`## ${result.reviewer}`, `PLAN REVIEW: ${result.verdict}`, "Findings:", findings, `Unresolved blockers: ${blockers}`].join("\n");
 	}).join("\n\n");
 }
+
+/** Visible banner when the plan text did not change after plan-review. */
+export const PLAN_REVIEW_UNCHANGED_BANNER = "Plan-review: замечаний к применению нет, план не менялся";
+
+/** Visible banner when the plan text actually changed. Not inferred from adjudication prose. */
+export const PLAN_REVIEW_CHANGED_BANNER = "План изменён по замечаниям plan-review";
+
+const PLAN_REVIEW_BANNERS = [PLAN_REVIEW_UNCHANGED_BANNER, PLAN_REVIEW_CHANGED_BANNER];
+
+export function isNoneFindingText(value: string | undefined): boolean {
+	return (value ?? "").trim().toLowerCase() === "none";
+}
+
+/** Live findings. Empty list and issue text `none` are not findings. */
+export function substantivePlanReviewFindings(result: PlanReviewResult): PlanReviewFinding[] {
+	return (result.findings ?? []).filter((finding) => !isNoneFindingText(finding.issue));
+}
+
+/**
+ * Empty clean path: gate ok, nobody BLOCKED or missing, no live finding.
+ * `minor: none` and `findings: []` qualify. One real minor finding does not.
+ */
+export function isEmptyCleanPlanReview(results: PlanReviewResult[], gate: PlanReviewGateResult): boolean {
+	if (!gate.ok) return false;
+	if (gate.missingReviewers.length > 0) return false;
+	if (results.some((result) => result.verdict === "BLOCKED" || Boolean(result.error))) return false;
+	return results.every((result) => substantivePlanReviewFindings(result).length === 0);
+}
+
+export function formatPlanReviewHumanBlock(
+	results: PlanReviewResult[],
+	options?: { emptyClean?: boolean; suppressNoFindingsClaim?: boolean },
+): string {
+	const lines = [
+		"plan-review — тройка планировщиков (plan-edge-reviewer, plan-consistency-reviewer, plan-dead-zone-reviewer), не code-reviewer. План сами не правят.",
+		"",
+	];
+	for (const result of results) {
+		lines.push(`## ${result.reviewer}`);
+		lines.push(`Вердикт: ${result.verdict}`);
+		const live = substantivePlanReviewFindings(result);
+		const blocked = result.verdict === "BLOCKED" || Boolean(result.error);
+		if (live.length === 0) {
+			if (blocked || options?.suppressNoFindingsClaim) {
+				const blockers = (result.unresolvedBlockers ?? []).map((item) => item.trim()).filter((item) => item && !isNoneFindingText(item));
+				lines.push(blockers.length > 0 ? `Отчёта с замечаниями нет: ${blockers.join("; ")}` : "Отчёта с замечаниями нет.");
+			} else {
+				lines.push("Замечаний нет.");
+			}
+		} else {
+			for (const finding of live) {
+				lines.push(`- severity: ${finding.severity}`);
+				lines.push(`  issue: ${finding.issue}`);
+				lines.push(`  evidence: ${finding.evidence}`);
+				lines.push(`  suggested fix: ${finding.suggestedFix}`);
+			}
+		}
+		lines.push("");
+	}
+	if (options?.emptyClean) {
+		lines.push("Применять нечего, план не менялся.");
+	}
+	return lines.join("\n").trim();
+}
+
+/** Drop a previous banner and trailing whitespace so a repeat review does not stack marks. */
+export function stripPlanReviewBanner(text: string): string {
+	let out = text ?? "";
+	for (const banner of PLAN_REVIEW_BANNERS) {
+		out = out.split(banner).join("");
+	}
+	return out.replace(/[ \t]+$/gm, "").trim();
+}
+
+/**
+ * Stamp exactly one banner from the real text diff.
+ * Adjudication prose is ignored: if the text changed, the banner is "изменён".
+ */
+export function stampPlanReviewBanner(previousPlan: string, nextPlan: string): string {
+	const previous = stripPlanReviewBanner(previousPlan);
+	const next = stripPlanReviewBanner(nextPlan);
+	const banner = previous === next ? PLAN_REVIEW_UNCHANGED_BANNER : PLAN_REVIEW_CHANGED_BANNER;
+	const body = next;
+	return body ? `${banner}\n\n${body}` : banner;
+}
