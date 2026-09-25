@@ -4965,7 +4965,7 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     const complete = await Promise.race([
       pending,
       new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
-    ]) as { content: Array<{ text?: string }>; details: { outcome?: string; discussionOpen?: boolean; ok?: boolean } }
+    ]) as { content: [{ text?: string }]; details: { outcome?: string; discussionOpen?: boolean; ok?: boolean } }
 
     expect(complete.details.outcome).toBe('question')
     expect(complete.details.ok).toBe(false)
@@ -5032,7 +5032,7 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     const complete = await Promise.race([
       pending,
       new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
-    ]) as { content: Array<{ text?: string }>; details: { outcome?: string } }
+    ]) as { content: [{ text?: string }]; details: { outcome?: string } }
     expect(complete.details.outcome).toBe('pre-answer-execute')
     expect(String(complete.content[0].text)).toContain('Супервизор не запущен')
     expect(String(complete.content[0].text)).not.toContain('PLAN APPROVED записан')
@@ -5051,7 +5051,7 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     const closed = await Promise.race([
       pending,
       new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
-    ]) as { content: Array<{ text?: string }>; details: { outcome?: string } }
+    ]) as { content: [{ text?: string }]; details: { outcome?: string } }
     expect(closed.details.outcome).toBe('question')
     expect(closed.details.outcome).not.toBe('executed')
     expect(String(closed.content[0].text)).not.toContain('PLAN APPROVED записан')
@@ -5077,7 +5077,7 @@ describe('plan-review question closes widget before the answer (1jbs)', () => {
     const complete = await Promise.race([
       pending,
       new Promise((_, reject) => setTimeout(() => reject(new Error('overlay still blocking')), 1000)),
-    ]) as { content: Array<{ text?: string }>; details: { outcome?: string; discussionOpen?: boolean } }
+    ]) as { content: [{ text?: string }]; details: { outcome?: string; discussionOpen?: boolean } }
     expect(complete.details.outcome).toBe('question')
     expect(complete.details.outcome).not.toBe('executed')
     expect(complete.details.discussionOpen).toBe(true)
