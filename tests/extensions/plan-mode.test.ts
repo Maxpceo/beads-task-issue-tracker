@@ -4859,3 +4859,73 @@ describe('plan-review human block and honest banner', () => {
     })).toBe(true)
   })
 })
+
+describe('plan-review widget contract docs (1jbs)', () => {
+  const agents = readFileSync(resolve(__dirname, '../../AGENTS.md'), 'utf8')
+  const skill = readFileSync(resolve(__dirname, '../../.pi/skills/plan-bead/SKILL.md'), 'utf8')
+  const dirtyPlanReview = '(?:грязн[а-яё]*|dirty)\\s+plan-review'
+  const forbiddenDirtyLinkage = [
+    new RegExp(`${dirtyPlanReview}[\\s\\S]{0,160}discussionOpen\\s*=\\s*true`, 'i'),
+    new RegExp(`discussionOpen\\s*=\\s*true[\\s\\S]{0,160}${dirtyPlanReview}`, 'i'),
+    new RegExp(`${dirtyPlanReview}[\\s\\S]{0,120}(?:also sets|sets|ставит)\\s+\\x60?discussionOpen`, 'i'),
+    new RegExp(`${dirtyPlanReview}[\\s\\S]{0,220}(?:only after Maxim confirms|только (?:целой )?фраз|открывается только)`, 'i'),
+    /call `plan_mode_complete` only after Maxim confirms \(dirty plan-review/i,
+  ]
+
+  function dirtyWindows(text: string): string[] {
+    return [...text.matchAll(new RegExp(dirtyPlanReview, 'gi'))].map((match) => {
+      const index = match.index ?? 0
+      return text.slice(Math.max(0, index - 40), Math.min(text.length, index + match[0].length + 180))
+    })
+  }
+
+  it('AGENTS.md and plan-bead do not tie dirty plan-review to discussionOpen or a confirm-only widget', () => {
+    for (const text of [agents, skill]) {
+      for (const pattern of forbiddenDirtyLinkage) {
+        expect(text).not.toMatch(pattern)
+      }
+      const windows = dirtyWindows(text)
+      expect(windows.length).toBeGreaterThan(0)
+      for (const window of windows) {
+        if (/discussionOpen/i.test(window)) {
+          expect(window).toMatch(/не ставит|does not set/i)
+        }
+        if (/покажи план|confirm/i.test(window)) {
+          expect(window).toMatch(/не жд|не прос|does not wait|do not ask/i)
+        }
+      }
+    }
+
+    expect(agents).toContain('после trim/lowercase: «да», «ок», «ok», «покажи план», «вопросы закрыты», «можно показывать план»')
+    expect(agents).toContain('оркестратор сам сразу вызывает `record_plan_review_adjudication`')
+    expect(agents).toContain('человек findings не выбирает')
+    expect(agents).toContain('«покажи план» не просят')
+    expect(agents).toContain('кнопки открывает этот tool, не `plan_mode_complete`, пока разбор не записан')
+
+    expect(skill).toContain('«да», «ок», «ok», «покажи план», «вопросы закрыты», «можно показывать план»')
+    expect(skill).toContain('immediately calls `record_plan_review_adjudication`')
+    expect(skill).toContain('the human does not pick findings')
+    expect(skill).toContain('do not ask for «покажи план»')
+    expect(skill).toContain('ready-UI is opened by that tool, not by `plan_mode_complete`, until the adjudication is recorded')
+    expect(skill).not.toContain('dirty plan-review also sets `discussionOpen`')
+  })
+
+  it('adjudication request and injected plan-mode prompt name the tool and omit the confirm tail', () => {
+    const requestStart = source.indexOf('function formatPlanReviewAdjudicationRequest')
+    const requestEnd = source.indexOf('\n\tfunction ', requestStart + 1)
+    const request = source.slice(requestStart, requestEnd)
+    const promptStart = source.indexOf('pi.on("before_agent_start"')
+    const promptEnd = source.indexOf('pi.on(', promptStart + 10)
+    const prompt = source.slice(promptStart, promptEnd)
+
+    expect(request).toContain('record_plan_review_adjudication')
+    expect(request).toContain('plan_mode_complete')
+    expect(request).not.toContain('until Maxim confirms discussion is closed')
+    expect(prompt).toContain('plan_mode_complete, record_plan_review_adjudication')
+    expect(prompt).toContain('immediately call record_plan_review_adjudication')
+    expect(prompt).toContain('Dirty plan-review does not set discussionOpen')
+    expect(prompt).not.toContain('until Maxim confirms discussion is closed')
+    expect(source).toContain('"plan_mode_complete", "record_plan_review_adjudication"')
+    expect(source).not.toContain('until Maxim confirms discussion is closed')
+  })
+})
