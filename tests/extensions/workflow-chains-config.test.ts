@@ -9,6 +9,7 @@ import {
   TRACKER_DEFAULTS,
   WORKFLOW_CHAINS_CONFIG_RELATIVE,
   expandHomePath,
+  isMainWriteAllowed,
   loadWorkflowChains,
 } from '../../.pi/extensions/workflow-chains-config/index'
 
@@ -40,6 +41,8 @@ describe('workflow-chains-config', () => {
       expect(chains.handoffFromCopy).toBe(true)
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(false)
+      expect(isMainWriteAllowed(chains)).toBe(false)
       expect(chains.readError).toBe('')
       expect(chains.copyRootRaw).toBe(TRACKER_DEFAULTS.copyRootRaw)
       expect(chains.copyRoot).toBe(join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker'))
@@ -57,6 +60,7 @@ describe('workflow-chains-config', () => {
       expect(chains.copyRequired).toBe(true)
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(false)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -139,6 +143,8 @@ describe('workflow-chains-config', () => {
         expect(chains.handoffFromCopy, item.label).toBe(true)
         expect(chains.reviewRequired, item.label).toBe(true)
         expect(chains.matrixRequired, item.label).toBe(true)
+        expect(chains.mainWriteAllowed, item.label).toBe(false)
+        expect(isMainWriteAllowed(chains), item.label).toBe(false)
         expect(chains.readError, item.label).toContain(join(repo, WORKFLOW_CHAINS_CONFIG_RELATIVE))
         expect(chains.readError, item.label).not.toBe('')
         expect(chains.copyRoot, item.label).toBe(join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker'))
@@ -157,6 +163,8 @@ describe('workflow-chains-config', () => {
       expect(chains.handoffFromCopy).toBe(false)
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(false)
+      expect(isMainWriteAllowed(chains)).toBe(false)
       expect(chains.copyRoot).toBe('')
       expect(chains.readError).toBe('')
     } finally {
@@ -268,9 +276,79 @@ describe('workflow-chains-config', () => {
       expect(chains.copyRequired).toBe(true)
       expect(chains.reviewRequired).toBe(true)
       expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(false)
+      expect(isMainWriteAllowed(chains)).toBe(false)
       expect(chains.readError).toBe('')
     } finally {
       rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('reads exact mainWriteAllowed true without resetting copyRequired or reviewRequired', () => {
+    const repo = initRepo()
+    try {
+      writeConfig(repo, {
+        copyRequired: false,
+        handoffFromCopy: false,
+        reviewRequired: true,
+        matrixRequired: true,
+        mainWriteAllowed: true,
+        naming: NAMING,
+      })
+      const chains = loadWorkflowChains(repo)
+      expect(chains.copyRequired).toBe(false)
+      expect(chains.reviewRequired).toBe(true)
+      expect(chains.matrixRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(true)
+      expect(isMainWriteAllowed(chains)).toBe(true)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not treat mainWriteAllowed true as permission when copyRequired is true', () => {
+    const repo = initRepo()
+    try {
+      writeConfig(repo, {
+        copyRequired: true,
+        copyRoot: '~/Projects/worktrees/beads-task-issue-tracker',
+        handoffFromCopy: true,
+        reviewRequired: true,
+        matrixRequired: true,
+        mainWriteAllowed: true,
+        naming: NAMING,
+      })
+      const chains = loadWorkflowChains(repo)
+      expect(chains.copyRequired).toBe(true)
+      expect(chains.mainWriteAllowed).toBe(true)
+      expect(isMainWriteAllowed(chains)).toBe(false)
+      expect(chains.readError).toBe('')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('fail-closes mainWriteAllowed without resetting other fields when missing or not boolean', () => {
+    const cases: Array<{ label: string; body: Record<string, unknown> }> = [
+      { label: 'missing', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, naming: NAMING } },
+      { label: 'string-true', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, mainWriteAllowed: 'true', naming: NAMING } },
+      { label: 'null', body: { copyRequired: false, handoffFromCopy: false, reviewRequired: false, matrixRequired: false, mainWriteAllowed: null, naming: NAMING } },
+    ]
+    for (const item of cases) {
+      const repo = initRepo()
+      try {
+        writeConfig(repo, item.body)
+        const chains = loadWorkflowChains(repo)
+        expect(chains.copyRequired, item.label).toBe(false)
+        expect(chains.reviewRequired, item.label).toBe(false)
+        expect(chains.matrixRequired, item.label).toBe(false)
+        expect(chains.mainWriteAllowed, item.label).toBe(false)
+        expect(isMainWriteAllowed(chains), item.label).toBe(false)
+        expect(chains.readError, item.label).toBe('')
+      } finally {
+        rmSync(repo, { recursive: true, force: true })
+      }
     }
   })
 })

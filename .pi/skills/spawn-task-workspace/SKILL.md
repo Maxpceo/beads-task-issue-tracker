@@ -54,7 +54,7 @@ Keep the invariant **one cmux workspace = one Pi session = one bead**, while let
 6. Child session (automatic via `--command`):
    - Starts on main checkout with `pi --approve`.
    - Follows `claim-bead`: claim, create canonical worktree, plan, implement.
-   - Must leave main before mutating files (already in claim-bead).
+   - Must leave main before mutating files unless `.pi/config/workflow-chains.json` has exact `copyRequired === false` and `mainWriteAllowed === true` (same predicate as claim-bead / `blockMainMutation`).
 
 ## dryRun checks
 
