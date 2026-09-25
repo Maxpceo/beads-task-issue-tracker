@@ -4970,3 +4970,86 @@ describe('workflow-chains copy policy', () => {
     }
   })
 })
+
+describe('mainWriteAllowed blockMainMutation', () => {
+  const noCopy = { copyRequired: false, handoffFromCopy: false, naming: workflowChainsNaming }
+
+  function expectMainMutationBlocked(repo: string) {
+    const commit = evaluateBashPolicy('git commit -m x', {}, { cwd: repo })
+    const edit = evaluatePathPolicy('edit', join(repo, 'tracked.txt'))
+    const write = evaluatePathPolicy('write', join(repo, 'tracked.txt'))
+    expect(commit?.policy).toBe('blockMainMutation')
+    expect(commit?.block).toBe(true)
+    expect(edit?.policy).toBe('blockMainMutation')
+    expect(write?.policy).toBe('blockMainMutation')
+  }
+
+  it.each([
+    { label: 'tracker false', body: { ...noCopy, copyRequired: true, copyRoot: '~/Projects/worktrees/beads-task-issue-tracker', handoffFromCopy: true, mainWriteAllowed: false } },
+    { label: 'explicit false', body: { ...noCopy, mainWriteAllowed: false } },
+    { label: 'missing field', body: { ...noCopy } },
+    { label: 'string true', body: { ...noCopy, mainWriteAllowed: 'true' } },
+    { label: 'broken json', body: '{ not json' },
+  ])('$label still blocks git commit and edit/write on main', ({ body }) => {
+    const repo = createMainRepo()
+    try {
+      writeWorkflowChains(repo, body)
+      writeFileSync(join(repo, 'tracked.txt'), 'ok\n')
+      expectMainMutationBlocked(repo)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not apply blockMainMutation to ordinary commit and edit/write when mainWriteAllowed is true and copyRequired is false', () => {
+    const repo = createMainRepo()
+    try {
+      writeWorkflowChains(repo, { ...noCopy, mainWriteAllowed: true })
+      writeFileSync(join(repo, 'tracked.txt'), 'ok\n')
+      const commit = evaluateBashPolicy('git commit -m x', {}, { cwd: repo })
+      const edit = evaluatePathPolicy('edit', join(repo, 'tracked.txt'))
+      const write = evaluatePathPolicy('write', join(repo, 'tracked.txt'))
+      expect(commit?.policy).not.toBe('blockMainMutation')
+      expect(edit?.policy).not.toBe('blockMainMutation')
+      expect(write?.policy).not.toBe('blockMainMutation')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('still blocks main writes when mainWriteAllowed is true and copyRequired is true', () => {
+    const repo = createMainRepo()
+    try {
+      writeWorkflowChains(repo, {
+        copyRequired: true,
+        copyRoot: '~/Projects/worktrees/beads-task-issue-tracker',
+        handoffFromCopy: true,
+        mainWriteAllowed: true,
+        naming: workflowChainsNaming,
+      })
+      writeFileSync(join(repo, 'tracked.txt'), 'ok\n')
+      expectMainMutationBlocked(repo)
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not skip planning, protectPaths, or destructive when main write is allowed', () => {
+    const repo = createMainRepo()
+    try {
+      writeWorkflowChains(repo, { ...noCopy, mainWriteAllowed: true })
+      writeFileSync(join(repo, 'tracked.txt'), 'ok\n')
+      writeFileSync(join(repo, '.env'), 'SECRET=1\n')
+      const planningBash = evaluateBashPolicy('git commit -m x', { planMode: 'strict' }, { cwd: repo })
+      const planningEdit = evaluatePathPolicy('edit', join(repo, 'tracked.txt'), { planMode: 'strict' })
+      const protectedPath = evaluatePathPolicy('edit', join(repo, '.env'))
+      const destructive = evaluateBashPolicy('git reset --hard', {}, { cwd: repo })
+      expect(planningBash?.policy).toBe('blockMutationsInPlanning')
+      expect(planningEdit?.policy).toBe('blockMutationsInPlanning')
+      expect(protectedPath?.policy).toBe('protectPaths')
+      expect(destructive?.policy).toBe('blockDestructiveCommand')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+})

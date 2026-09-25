@@ -214,7 +214,7 @@ bd todo add "Короткое локальное напоминание"
 
 - `enforceBeadEnrichment`: missing required sections, labels, or concrete acceptance/verification bullets. Add the full template; do not create stub tasks.
 - `enforceBeadRussianLocale`: title/description prose is English. Rewrite user-facing bead text in Russian; keep technical identifiers unchanged.
-- `blockMainMutation`: command writes repo files or stages/commits from `main`. Move temp files to `/tmp`, or use a task worktree for code changes.
+- `blockMainMutation`: command writes repo files or stages/commits from `main`. Skip only when `.pi/config/workflow-chains.json` has exact `copyRequired === false` and `mainWriteAllowed === true`. Otherwise move temp files to `/tmp`, or use a task worktree for code changes.
 - `blockMutationsInPlanning`: planning mode is read-only. Finish/approve the plan before creating beads, unless the active plan explicitly allows related follow-up creation.
 - `blockRawBdClaim`: use `workflow_claim(beadId=...)` instead of `bd update --claim`.
 - `fastPathDiscipline`: current checkout has risky code changes. For tracker-only `bd create`, use a clean checkout or the safe direct pattern; for code changes, claim/plan the relevant bead first.

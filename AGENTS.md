@@ -27,6 +27,8 @@ Pi-планы и design notes хранятся в `.pi/plans/` или bd.
 
 Это enforced через targeted validation `.pi/extensions/beads-policy` при создании новых task-like worktrees под корнем project worktree: ветки `feat|fix|docs|refactor|test|chore|ci|task` должны использовать canonical branch suffix и matching worktree basename. List/remove/prune/info и non-task smoke/orphan worktrees без task-like branch prefix не подпадают под это naming enforcement.
 
+Правка взятой задачи в checkout на `main`/`master` разрешена только если в `.pi/config/workflow-chains.json` точные `copyRequired === false` и `mainWriteAllowed === true`. Нет поля, не-boolean, битый JSON или `copyRequired: true` — не писать задачу в `main`; используй feature branch или копию. `merge-to-main` и `release` этот флаг не ослабляет: ad-hoc правки на `main` в этих workflow остаются запрещены.
+
 ## Evidence Before Claims (железное правило)
 
 Completion reports и status claims должны подкрепляться fresh evidence в том же сообщении. Не пиши hedging claims вроде “should work”, “probably”, “seems”, “looks correct”, “выглядит корректно”, “должно работать”, “наверное” или “вроде проходит”.

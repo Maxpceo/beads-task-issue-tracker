@@ -4,6 +4,7 @@
   "handoffFromCopy": true,
   "reviewRequired": true,
   "matrixRequired": true,
+  "mainWriteAllowed": false,
   "naming": {
     "types": ["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"],
     "basenameEqualsBranchSuffix": true,

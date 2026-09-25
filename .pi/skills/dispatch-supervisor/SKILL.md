@@ -49,7 +49,7 @@ Approve-path fork — when a manual `dispatch_supervisor` is the right step:
    ```text
    dispatch_supervisor(beadId=<ID>, transport="cmux", cwd=<workflowState.worktreePath>)
    ```
-   - `cwd` must be the task worktree, never protected `main`.
+   - `cwd` may be the project checkout on `main` only when `.pi/config/workflow-chains.json` has exact `copyRequired === false` and `mainWriteAllowed === true`; otherwise never protected `main`.
    - Return `status=spawned` is **not** DONE and not `continuation completed`.
    - Live `new-split` uses explicit `--focus false` (no focus-pane workaround); spawn must not steal Maxim focus.
    - Layout (`resolveVisibleSplitPlacement`): first agent splits right of orch (column 0); second splits right of the oldest live agent (**side-by-side** column 1); third and later `new-split down` on the shortest column. Never re-split orch when another live agent exists. See AGENTS.md «Layout geometry».

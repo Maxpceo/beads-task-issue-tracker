@@ -20,6 +20,8 @@ export interface WorkflowChains {
 	handoffFromCopy: boolean;
 	reviewRequired: boolean;
 	matrixRequired: boolean;
+	/** Exact true plus copyRequired false is required before writing on main/master. Missing/non-boolean fail closed to false. */
+	mainWriteAllowed: boolean;
 	naming: WorkflowChainsNaming;
 	configPath?: string;
 	readError: string;
@@ -39,8 +41,14 @@ export const TRACKER_DEFAULTS = {
 	handoffFromCopy: true as const,
 	reviewRequired: true as const,
 	matrixRequired: true as const,
+	mainWriteAllowed: false as const,
 	naming: TRACKER_DEFAULT_NAMING,
 };
+
+/** Main/master writes are allowed only when both flags are exact booleans: mainWriteAllowed true and copyRequired false. */
+export function isMainWriteAllowed(chains: WorkflowChains): boolean {
+	return chains.mainWriteAllowed === true && chains.copyRequired === false;
+}
 
 export function expandHomePath(value: string): string {
 	if (value === "~") return os.homedir();
@@ -58,6 +66,7 @@ export function trackerDefaultChains(readError = "", configPath?: string): Workf
 		handoffFromCopy: true,
 		reviewRequired: true,
 		matrixRequired: true,
+		mainWriteAllowed: false,
 		naming: { ...TRACKER_DEFAULT_NAMING, types: [...TRACKER_DEFAULT_NAMING.types] },
 		configPath,
 		readError,
@@ -179,6 +188,7 @@ function parseWorkflowChainsFile(configPath: string, rawText: string): WorkflowC
 		handoffFromCopy: record.handoffFromCopy,
 		reviewRequired: record.reviewRequired === false ? false : true,
 		matrixRequired: record.matrixRequired === false ? false : true,
+		mainWriteAllowed: record.mainWriteAllowed === true,
 		naming: namingResult.naming,
 		configPath,
 		readError: "",
