@@ -74,6 +74,7 @@ import {
 } from "../beads-dispatch/index";
 import { finalizeVisibleReviewClose } from "../review-workflow/index";
 import { PROTECTED_BRANCHES, validateTaskScopePath } from "../worktree-scope/index";
+import { loadWorkflowChains } from "../workflow-chains-config/index";
 
 // Tools
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire", "plan_mode_complete", "workflow_status", "workflow_plan_mode", "workflow_plan_approved", "workflow_plan_review", "plan_subagent"];
@@ -643,7 +644,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		branch?: string,
 		phase: "approval" | "continuation" = "approval",
 		evidence?: { worktreePath?: string; branch?: string },
+		cwd?: string,
 	): string {
+		const chains = loadWorkflowChains(cwd ?? process.cwd());
+		if (!chains.copyRequired) {
+			const nextStep = phase === "continuation"
+				? "then retry `dispatch_supervisor` from the project checkout"
+				: "then retry `workflow_plan_approved` (no `bd worktree create`)";
+			return `Recovery: copy is not required for this project (copyRequired=false); do not run \`bd worktree create\`. ${nextStep}.`;
+		}
 		const protectedBranch = Boolean(branch && PROTECTED_BRANCHES.has(branch));
 		const recoveryBranch =
 			(!protectedBranch && isCanonicalTaskBranch(branch) ? branch : undefined)
@@ -691,6 +700,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		startCommit?: string,
 		phase: "approval" | "continuation" = "approval",
 		evidence?: { worktreePath?: string; branch?: string },
+		cwd?: string,
 	): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string; code?: string }> {
 		const detectedWorktreePath = await detectGitValueAt(worktreePath, ["rev-parse", "--show-toplevel"]);
 		const detectedBranch = detectedWorktreePath ? await detectGitValueAt(detectedWorktreePath, ["branch", "--show-current"]) : undefined;
@@ -701,7 +711,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			getBranch: () => detectedBranch,
 		});
 		if (!validated.ok) {
-			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase, evidence);
+			const recovery = worktreeRecovery(worktreePath, expectedBranch ?? detectedBranch, phase, evidence, cwd);
 			if (validated.error.code === "BRANCH_MISMATCH") {
 				return { error: `${source} branch ${expectedBranch} does not match worktree branch ${detectedBranch ?? "<unknown>"}. ${recovery}`, code: validated.error.code };
 			}
@@ -719,6 +729,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function approvalScope(ctx: ExtensionContext, beadId: string, planEvidence: string): Promise<{ branch?: string; worktreePath?: string; startCommit?: string; error?: string }> {
+		const searchCwd = ctx.cwd ?? process.cwd();
+		const chains = loadWorkflowChains(searchCwd);
 		const evidenceWorktreePathRaw = latestPlanField(planEvidence, ["WORKTREE", "Worktree", "worktree", "worktreePath", "Worktree / cwd"]);
 		const evidenceWorktreePath = evidenceWorktreePathRaw ? normalizeWorktreePathEvidence(evidenceWorktreePathRaw) : undefined;
 		const evidenceBranch = latestPlanField(planEvidence, ["BRANCH", "Branch", "branch"]);
@@ -729,12 +741,16 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		};
 
 		if (evidenceWorktreePath) {
-			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit, "approval", evidenceCanon);
+			const scoped = await validatedWorktreeScope("approved plan evidence", evidenceWorktreePath, evidenceBranch, evidenceStartCommit, "approval", evidenceCanon, searchCwd);
 			if (!scoped.error) return scoped;
 			const evidenceProtected = scoped.code === "PROTECTED_BRANCH" || Boolean(evidenceBranch && PROTECTED_BRANCHES.has(evidenceBranch));
-			if (!evidenceProtected) return scoped;
-		} else if (evidenceBranch && !PROTECTED_BRANCHES.has(evidenceBranch)) {
-			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found. ${worktreeRecovery(undefined, evidenceBranch, "approval", evidenceCanon)}` };
+			if (!chains.copyRequired && (scoped.code === "WORKTREE_NOT_FOUND" || scoped.code === "INVALID_WORKTREE" || scoped.code === "MISSING_WORKTREE" || evidenceProtected)) {
+				// copy optional: ignore missing/protected evidence path
+			} else if (!evidenceProtected) {
+				return scoped;
+			}
+		} else if (evidenceBranch && !PROTECTED_BRANCHES.has(evidenceBranch) && chains.copyRequired) {
+			return { error: `approved plan evidence names branch ${evidenceBranch}, but no worktree path was found. ${worktreeRecovery(undefined, evidenceBranch, "approval", evidenceCanon, searchCwd)}` };
 		}
 
 		const recordedScope = latestRecordedWorkflowScope(ctx, beadId);
@@ -744,14 +760,21 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			branch: evidenceCanon.branch ?? (isCanonicalTaskBranch(recordedScope?.branch) ? recordedScope?.branch : undefined),
 		};
 		const noReadableWithCanon = () =>
-			`no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined, "approval", recoveryCanon)}`;
+			`no readable task worktree is recorded or named in approved plan evidence. ${worktreeRecovery(undefined, undefined, "approval", recoveryCanon, searchCwd)}`;
 		if (recordedScope?.worktreePath && !recordedProtected) {
-			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit, "approval", recoveryCanon);
-			if (scoped.error) {
+			const scoped = await validatedWorktreeScope("recorded workflow-state", recordedScope.worktreePath, recordedScope.branch, recordedScope.startCommit, "approval", recoveryCanon, searchCwd);
+			if (!scoped.error) return scoped;
+			if (chains.copyRequired) {
 				if (scoped.code === "PROTECTED_BRANCH") return { error: noReadableWithCanon() };
 				return scoped;
 			}
-			return scoped;
+		}
+		if (!chains.copyRequired) {
+			return {
+				branch: evidenceCanon.branch ?? (isCanonicalTaskBranch(recordedScope?.branch) ? recordedScope?.branch : undefined),
+				worktreePath: undefined,
+				startCommit: evidenceStartCommit ?? recordedScope?.startCommit,
+			};
 		}
 		if (recordedProtected) {
 			return { error: noReadableWithCanon() };
@@ -958,6 +981,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	}
 
 	async function resolveContinuationCwd(ctx: ExtensionContext, beadId: string, approvedWorktreePath?: string): Promise<{ cwd?: string; error?: string }> {
+		const searchCwd = ctx.cwd ?? process.cwd();
+		const chains = loadWorkflowChains(searchCwd);
 		const recorded = latestRecordedWorkflowScope(ctx, beadId);
 		const attempts: Array<{ path?: string; expectedBranch?: string; source: "recorded workflow-state" | "approved plan evidence" }> = [
 			{ path: recorded?.worktreePath, expectedBranch: recorded?.branch, source: "recorded workflow-state" },
@@ -965,12 +990,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		];
 		for (const attempt of attempts) {
 			if (!attempt.path) continue;
-			const scoped = await validatedWorktreeScope(attempt.source, attempt.path, attempt.expectedBranch, undefined, "continuation");
+			const scoped = await validatedWorktreeScope(attempt.source, attempt.path, attempt.expectedBranch, undefined, "continuation", undefined, searchCwd);
 			if (!scoped.error && scoped.worktreePath) return { cwd: scoped.worktreePath };
 		}
+		if (!chains.copyRequired) return { cwd: searchCwd };
 		const recoveryPath = recorded?.worktreePath && !PROTECTED_BRANCHES.has(recorded.branch ?? "") ? recorded.worktreePath : approvedWorktreePath;
 		const recoveryBranch = recorded?.branch && !PROTECTED_BRANCHES.has(recorded.branch) ? recorded.branch : undefined;
-		return { error: `no readable task worktree for continuation. ${worktreeRecovery(recoveryPath, recoveryBranch, "continuation")}` };
+		return { error: `no readable task worktree for continuation. ${worktreeRecovery(recoveryPath, recoveryBranch, "continuation", undefined, searchCwd)}` };
 	}
 
 	function hasNonemptyFastPathRationale(planEvidence: string): boolean {

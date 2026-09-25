@@ -1,0 +1,12 @@
+{
+  "copyRequired": true,
+  "copyRoot": "~/Projects/worktrees/beads-task-issue-tracker",
+  "handoffFromCopy": true,
+  "naming": {
+    "types": ["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"],
+    "basenameEqualsBranchSuffix": true,
+    "suffixMustNotStartWith": "beads-task-issue-tracker-",
+    "suffixPattern": "^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$",
+    "requireActiveBeadSuffixPrefix": true
+  }
+}

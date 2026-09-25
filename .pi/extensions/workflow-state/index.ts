@@ -1,8 +1,8 @@
-import * as os from "node:os";
 import * as path from "node:path";
 
 import { parseWorkflowIntent, shouldAutoClaim } from "../workflow-intent/index";
 import { isPathInsideOrEqual, validateTaskScopePath } from "../worktree-scope/index";
+import { loadWorkflowChains } from "../workflow-chains-config/index"; // `.pi/config/workflow-chains.json`
 
 interface ExtensionAPI {
 	exec(command: string, args: string[]): Promise<{ stdout: string; stderr: string; code: number }>;
@@ -72,8 +72,6 @@ type WorkflowStateName = (typeof WORKFLOW_STATES)[number];
 type PlanMode = "off" | "strict" | "auto";
 
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
-const CANONICAL_PI_BRANCH_PREFIXES = new Set(["feat", "fix", "docs", "refactor", "test", "chore", "ci", "task"]);
-const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 
 interface WorkflowState {
 	activeBead?: string;
@@ -281,17 +279,26 @@ function parseWorktreePorcelain(stdout: string): PorcelainWorktreeEntry[] {
 	return entries;
 }
 
-function isCanonicalExistingTaskWorktree(entry: PorcelainWorktreeEntry, beadId: string): boolean {
+function isCanonicalExistingTaskWorktree(entry: PorcelainWorktreeEntry, beadId: string, searchCwd?: string): boolean {
 	if (!entry.path || entry.bare || entry.detached || !entry.branch) return false;
 	const slash = entry.branch.indexOf("/");
 	if (slash <= 0) return false;
 	const prefix = entry.branch.slice(0, slash);
 	const suffix = entry.branch.slice(slash + 1);
-	if (!CANONICAL_PI_BRANCH_PREFIXES.has(prefix) || !suffix) return false;
+	const chains = loadWorkflowChains(searchCwd ?? entry.path);
+	const typeSet = new Set(chains.naming.types);
+	if (!typeSet.has(prefix) || !suffix) return false;
 	const suffixKey = beadIdSuffix(beadId);
-	if (!suffixKey || !suffix.startsWith(`${suffixKey}-`)) return false;
-	if (path.basename(entry.path) !== suffix) return false;
-	return isPathInsideOrEqual(entry.path, WORKTREE_ROOT);
+	if (chains.naming.requireActiveBeadSuffixPrefix && (!suffixKey || !suffix.startsWith(`${suffixKey}-`))) return false;
+	if (chains.naming.basenameEqualsBranchSuffix && path.basename(entry.path) !== suffix) return false;
+	if (chains.naming.suffixMustNotStartWith && suffix.startsWith(chains.naming.suffixMustNotStartWith)) return false;
+	try {
+		if (!new RegExp(chains.naming.suffixPattern).test(suffix)) return false;
+	} catch {
+		return false;
+	}
+	if (!chains.copyRoot) return false;
+	return isPathInsideOrEqual(entry.path, chains.copyRoot);
 }
 
 async function discoverExistingTaskWorktrees(
@@ -303,7 +310,7 @@ async function discoverExistingTaskWorktrees(
 	if (list.code !== 0) return { candidates: [], listFailed: true };
 	const candidates: ExistingTaskWorktreeCandidate[] = [];
 	for (const entry of parseWorktreePorcelain(list.stdout)) {
-		if (!isCanonicalExistingTaskWorktree(entry, beadId) || !entry.branch) continue;
+		if (!isCanonicalExistingTaskWorktree(entry, beadId, repoRoot) || !entry.branch) continue;
 		const [toplevel, liveBranch] = await Promise.all([
 			detectWorktreePath(pi, entry.path),
 			detectBranch(pi, entry.path),

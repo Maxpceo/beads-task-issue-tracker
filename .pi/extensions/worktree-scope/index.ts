@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { loadWorkflowChains } from "../workflow-chains-config/index";
+
 export const PROTECTED_BRANCHES = new Set(["main", "master"]);
 const TERMINAL_BD_STATUSES = new Set(["closed", "blocked", "deferred"]);
 const NON_TERMINAL_WORKFLOW_STATES = new Set(["claimed", "planning", "plan_approved", "implementing", "inreview", "reviewing", "accepted", "landing"]);
@@ -54,6 +56,7 @@ export interface TaskScopePathValidationOptions {
 	getRepoRoot?: (cwd: string) => string | undefined;
 	getBranch?: (cwd: string) => string | undefined;
 	exists?: (cwd: string) => boolean;
+	searchCwd?: string;
 }
 
 function runGit(cwd: string, args: string[]): string | undefined {
@@ -143,6 +146,28 @@ function taskScopeOwnership(workflowState: TaskScopeWorkflowState, currentRuntim
 	return undefined;
 }
 
+function copyOptionalSearchCwd(workflowState: TaskScopeWorkflowState | undefined, fallback?: string): string {
+	if (workflowState?.worktreePath && fs.existsSync(workflowState.worktreePath)) return workflowState.worktreePath;
+	return fallback || process.cwd();
+}
+
+function optionalCopyWithoutRecordedWorktree(workflowState: TaskScopeWorkflowState, ownership: TaskScopeOwnership, searchCwd: string): TaskScopeResult | undefined {
+	if (workflowState.worktreePath && fs.existsSync(workflowState.worktreePath)) return undefined;
+	const chains = loadWorkflowChains(searchCwd);
+	if (chains.copyRequired) return undefined;
+	return {
+		ok: true,
+		scope: {
+			activeBead: workflowState.activeBead,
+			branch: workflowState.branch ?? "",
+			worktreePath: searchCwd,
+			startCommit: workflowState.startCommit,
+			endCommit: workflowState.endCommit,
+			ownership,
+		},
+	};
+}
+
 export function resolveActiveTaskScope(workflowState: TaskScopeWorkflowState | undefined, options: TaskScopePathValidationOptions = {}): TaskScopeResult {
 	if (!workflowState?.activeBead) {
 		return { ok: false, error: { code: "NO_ACTIVE_SCOPE", message: "active task bead отсутствует" } };
@@ -154,6 +179,8 @@ export function resolveActiveTaskScope(workflowState: TaskScopeWorkflowState | u
 	if (!ownership) {
 		return { ok: false, error: { code: "MISSING_OWNERSHIP", message: `active task bead ${workflowState.activeBead} не имеет session/runtime/approved-plan ownership evidence` } };
 	}
+	const optional = optionalCopyWithoutRecordedWorktree(workflowState, ownership, copyOptionalSearchCwd(workflowState, options.searchCwd));
+	if (optional) return optional;
 	const validated = validateTaskScopePath(workflowState.worktreePath, { ...options, expectedBranch: workflowState.branch });
 	if (!validated.ok) return validated;
 	return {
@@ -192,6 +219,12 @@ export function taskScopeErrorToPolicyReason(error: TaskScopeError, beadId?: str
 }
 
 export function requireTaskToolTarget(toolName: string, input: Record<string, unknown>, workflowState: TaskScopeWorkflowState | undefined): TaskScopeResult {
+	const searchCwd = typeof input.cwd === "string" && input.cwd.trim() !== "" ? input.cwd : copyOptionalSearchCwd(workflowState);
+	const ownership = workflowState ? taskScopeOwnership(workflowState) : undefined;
+	if (workflowState && ownership) {
+		const optional = optionalCopyWithoutRecordedWorktree(workflowState, ownership, searchCwd);
+		if (optional) return optional;
+	}
 	const resolved = resolveActiveTaskScope(workflowState);
 	if (!resolved.ok) return resolved;
 	const provided = input.cwd ?? input.worktreePath;

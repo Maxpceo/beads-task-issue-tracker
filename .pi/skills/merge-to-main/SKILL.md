@@ -9,7 +9,7 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
 
 ## Workflow
 
-1. Start in the feature/task worktree when `workflowState.worktreePath` is present. The approved main checkout/pull phase begins only after PR merge; before that, mutating commands, docs dispatch, tests, commit, and branch push run from the feature worktree.
+1. Read `.pi/config/workflow-chains.json`. When `handoffFromCopy` is true (tracker default, also when the file is missing/unreadable), start in the feature/task worktree when `workflowState.worktreePath` is present. The approved main checkout/pull phase begins only after PR merge; before that, mutating commands, docs dispatch, tests, commit, and branch push run from the feature worktree. When `handoffFromCopy` is false, merge is not a copy ritual: do not require a separate task copy, and skip worktree-remove cleanup that assumes one.
 2. Pre-flight:
    ```bash
    git status --short
@@ -149,7 +149,7 @@ EOF
     ```
     Local pull / worktree remove / `branch -d` failure must **not** keep the slot held — release first, then report any local cleanup blocker.
 
-12. Local cleanup from the primary `main` worktree (no chdir-style git flags, no feature-worktree checkout of main):
+12. Local cleanup from the primary `main` worktree (no chdir-style git flags, no feature-worktree checkout of main). Skip this copy-remove ritual when `handoffFromCopy` is false in `.pi/config/workflow-chains.json` (no separate task copy was required):
     - Resolve primary via `git worktree list`: path that has branch `main` checked out and is **not** locked.
     - Primary cwd cleanup only when the session bead is terminal (`closed` / `blocked` / explicit `deferred`) **and** lock is off. Otherwise STOP before primary pull/remove.
     - Change agent cwd to the primary path (plain shell `cd` / session cwd), then:

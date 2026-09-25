@@ -4638,3 +4638,130 @@ exit 1
     }
   })
 })
+
+const workflowChainsNaming = {
+  types: ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'ci', 'task'],
+  basenameEqualsBranchSuffix: true,
+  suffixMustNotStartWith: 'beads-task-issue-tracker-',
+  suffixPattern: '^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$',
+  requireActiveBeadSuffixPrefix: true,
+}
+
+function writeWorkflowChains(repo: string, data: unknown) {
+  mkdirSync(join(repo, '.pi', 'config'), { recursive: true })
+  writeFileSync(join(repo, '.pi', 'config', 'workflow-chains.json'), typeof data === 'string' ? data : `${JSON.stringify(data, null, 2)}\n`)
+}
+
+describe('workflow-chains copy policy', () => {
+  const trackerRoot = join(homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker')
+
+  it('still requires tracker copyRoot when tmpdir has no config file', () => {
+    const outside = join(tmpdir(), 'wf-chains-outside', 'lgok-branch-worktree-naming')
+    const decision = evaluateBashPolicy(`bd worktree create ${outside} --branch task/lgok-branch-worktree-naming`, {
+      activeBead: 'beads-task-issue-tracker-lgok',
+    }, { cwd: tmpdir() })
+
+    expect(decision?.policy).toBe('blockWorktreeInsideRepo')
+    expect(decision?.reason).toContain(trackerRoot)
+  })
+
+  it('does not turn copy off for broken JSON and notifies readError once', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-chains-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' })
+    writeWorkflowChains(repo, '{ not json')
+    const notifications: Array<{ message: string; level: string }> = []
+    let toolCallHandler: any
+    try {
+      beadsPolicyExtension({
+        on(event: string, handler: any) {
+          if (event === 'tool_call') toolCallHandler = handler
+        },
+        registerCommand() {},
+      } as any)
+      const ctx = {
+        cwd: repo,
+        sessionManager: { getEntries: () => [] },
+        ui: {
+          notify(message: string, level: string) { notifications.push({ message, level }) },
+          setStatus() {},
+          theme: { fg: (_style: string, value: string) => value },
+        },
+      }
+      await toolCallHandler({ toolName: 'bash', input: { command: 'echo ok' } }, ctx)
+      await toolCallHandler({ toolName: 'bash', input: { command: 'echo ok' } }, ctx)
+      const outside = join(tmpdir(), 'wf-chains-broken', 'lgok-branch-worktree-naming')
+      const decision = evaluateBashPolicy(`bd worktree create ${outside} --branch task/lgok-branch-worktree-naming`, {
+        activeBead: 'beads-task-issue-tracker-lgok',
+      }, { cwd: repo })
+
+      expect(decision?.policy).toBe('blockWorktreeInsideRepo')
+      expect(decision?.reason).toContain(trackerRoot)
+      expect(notifications.filter(item => item.level === 'error')).toHaveLength(1)
+      expect(notifications[0]?.message).toContain(join(repo, '.pi', 'config', 'workflow-chains.json'))
+      expect(notifications[0]?.message).toContain('Оставляю ритуал трекера')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('does not treat missing copy as lock violation when copyRequired is false', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-nocopy-'))
+    execFileSync('git', ['init', '-b', 'task/current'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    writeFileSync(join(repo, 'tracked.txt'), 'ok\n')
+    execFileSync('git', ['add', 'tracked.txt'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+    writeWorkflowChains(repo, { copyRequired: false, handoffFromCopy: false, naming: workflowChainsNaming })
+    try {
+      const state = {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        branch: 'task/current',
+        runtimeOwnerKey,
+        planApproved: true,
+      }
+      const bashDecision = evaluateBashPolicy('git add tracked.txt', state, { cwd: repo })
+      const toolDecision = evaluateToolPolicy('dispatch_supervisor', { beadId: 'bead-a', cwd: repo }, state)
+      const outside = join(tmpdir(), 'wf-chains-optional', 'lgok-branch-worktree-naming')
+      const createDecision = evaluateBashPolicy(`bd worktree create ${outside} --branch task/lgok-branch-worktree-naming`, state, { cwd: repo })
+
+      expect(bashDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(toolDecision?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(createDecision?.policy).not.toBe('blockWorktreeInsideRepo')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps lock on an existing recorded worktree when copyRequired is false', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'beads-policy-keep-copy-'))
+    execFileSync('git', ['init', '-b', 'task/current'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: repo, stdio: 'ignore' })
+    writeFileSync(join(repo, 'tracked.txt'), 'ok\n')
+    execFileSync('git', ['add', 'tracked.txt'], { cwd: repo, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-m', 'init'], { cwd: repo, stdio: 'ignore' })
+    writeWorkflowChains(repo, { copyRequired: false, handoffFromCopy: false, naming: workflowChainsNaming })
+    const other = mkdtempSync(join(tmpdir(), 'beads-policy-other-'))
+    try {
+      const state = {
+        activeBead: 'bead-a',
+        state: 'implementing',
+        bdStatus: 'in_progress',
+        branch: 'task/current',
+        worktreePath: repo,
+        runtimeOwnerKey,
+        planApproved: true,
+      }
+      const inside = evaluateBashPolicy('git add tracked.txt', state, { cwd: repo })
+      const outside = evaluateBashPolicy('git add tracked.txt', state, { cwd: other })
+      expect(inside?.policy).not.toBe('enforceActiveWorktreeCwd')
+      expect(outside?.policy).toBe('enforceActiveWorktreeCwd')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(other, { recursive: true, force: true })
+    }
+  })
+})

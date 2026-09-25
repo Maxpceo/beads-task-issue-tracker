@@ -9,7 +9,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 
 ## Workflow
 
-1. Ensure the current tool cwd is the active feature/task worktree when `workflowState.worktreePath` is present. `land` must not save/push from `main` under an active worktree lock; use `main` only for read-only inspection until explicit `merge-to-main` completes PR merge and transitions to `main`.
+1. Read `.pi/config/workflow-chains.json`. When `handoffFromCopy` is true (tracker default, also when the file is missing/unreadable), ensure the current tool cwd is the active feature/task worktree when `workflowState.worktreePath` is present. `land` must not save/push from `main` under an active worktree lock; use `main` only for read-only inspection until explicit `merge-to-main` completes PR merge and transitions to `main`. When `handoffFromCopy` is false, landing is not a copy ritual: save/push from the recorded checkout even if it is the project tree without a separate task copy.
 2. Inspect state, preferably in one compact command:
    ```bash
    git status --short
