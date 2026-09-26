@@ -26,6 +26,8 @@
 
 ### Changed
 
+- **Tracker Pi workflow loads from the pinned pi-workflow package** (`beads-task-issue-tracker-v1dt`): project settings pin `git:github.com/Maxpceo/pi-workflow@v0.1.0`. Local `.pi/extensions` moved to `.pi/extensions-aside-v1dt` so Pi does not autoload a second copy. `workflow-chains.json` is unchanged. Extension tests import the aside path. The `.pi/git/` install cache is not committed.
+
 - **Pi parallel workspace start command includes autonomous mode** (`beads-task-issue-tracker-5k4n`): the default first command from `buildTaskWorkspaceChildCommand` now includes both claim and autonomous-mode instructions. When `cmux identify` returns the parent workspace and surface, the prompt inlines a two-step ping (`cmux send` without a placeholder payload, pause, then `cmux send-key enter`). The child must append the real commit SHA and PR number. An explicit message still replaces the default. Live spawn is blocked when the parent surface is missing. Focused vitest under `tests/extensions/beads-dispatch-cmux.test.ts`.
 
 - **Pi agent model defaults no longer hardcode vue and tauri supervisors** (`beads-task-issue-tracker-rrjc`): `defaultAgentModelsConfig` drops `vue-supervisor` and `tauri-supervisor`. Projects without those agents no longer inherit the names from code. This tracker's `.pi/agent-models.json` still assigns both `standard`, and `.pi/supervisor-routing.json` is unchanged. Focused vitest under `tests/extensions/agent-models.test.ts`.
