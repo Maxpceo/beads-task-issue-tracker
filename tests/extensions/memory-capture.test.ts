@@ -4,7 +4,7 @@ import * as path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import memoryCaptureExtension, { parseMemoryCapture } from '../../.pi/extensions/memory-capture/index'
+import memoryCaptureExtension, { parseMemoryCapture } from '../../.pi/extensions-aside-v1dt/memory-capture/index'
 
 const tempDirs: string[] = []
 

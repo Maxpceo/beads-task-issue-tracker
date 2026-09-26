@@ -38,13 +38,13 @@ import {
   runAgentModelsMenu,
   saveAgentModels,
   supportedThinkingLevels,
-} from '../../.pi/extensions/agent-models/index'
+} from '../../.pi/extensions-aside-v1dt/agent-models/index'
 import {
   FILTER_HINT,
   MODEL_PICKER_MIN_RENDER_LINES,
   modelLabelOptions,
   runSearchableModelPicker,
-} from '../../.pi/extensions/agent-models/searchable-picker'
+} from '../../.pi/extensions-aside-v1dt/agent-models/searchable-picker'
 
 function tempProject(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-models-'))

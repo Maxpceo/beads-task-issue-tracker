@@ -46,7 +46,7 @@ import beadsDispatchExtension, {
   setCmuxAdapterForTests,
   setStickyTabTitleDelayForTests,
   validateVisibleChildArgv,
-} from '../../.pi/extensions/beads-dispatch/index'
+} from '../../.pi/extensions-aside-v1dt/beads-dispatch/index'
 
 const currentPlan = `PLAN APPROVED
 Approved-by: Test
@@ -464,7 +464,7 @@ describe('dispatch_supervisor transport=cmux', () => {
   })
 
   it('pins WRAPPER BOUNDARY does not cancel visible ping.sh', () => {
-    const src = fs.readFileSync(path.join(process.cwd(), '.pi/extensions/beads-dispatch/index.ts'), 'utf8')
+    const src = fs.readFileSync(path.join(process.cwd(), '.pi/extensions-aside-v1dt/beads-dispatch/index.ts'), 'utf8')
     const start = src.indexOf('WRAPPER WORKFLOW BOUNDARY:')
     const boundary = src.slice(start, src.indexOf('`;', start))
     expect(boundary).toContain('ping.sh')
@@ -2387,7 +2387,7 @@ describe('kgvd dual-agent layout wiring', () => {
     const agents = fs.readFileSync(path.join(process.cwd(), 'AGENTS.md'), 'utf8')
     const skill = fs.readFileSync(path.join(process.cwd(), '.pi/skills/dispatch-supervisor/SKILL.md'), 'utf8')
     const review = fs.readFileSync(path.join(process.cwd(), '.pi/skills/review-bead/SKILL.md'), 'utf8')
-    const transport = fs.readFileSync(path.join(process.cwd(), '.pi/extensions/beads-dispatch/cmux-transport.ts'), 'utf8')
+    const transport = fs.readFileSync(path.join(process.cwd(), '.pi/extensions-aside-v1dt/beads-dispatch/cmux-transport.ts'), 'utf8')
     expect(transport).toContain('resolveVisibleSplitPlacement')
     expect(agents).toContain('resolveVisibleSplitPlacement')
     expect(agents).toContain('side-by-side')

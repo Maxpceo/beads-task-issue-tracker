@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isAllowedBdWorktreeCreateCommand, isSafeCommand } from '../../.pi/extensions/plan-mode/utils'
+import { isAllowedBdWorktreeCreateCommand, isSafeCommand } from '../../.pi/extensions-aside-v1dt/plan-mode/utils'
 
 describe('plan-mode isSafeCommand bd worktree create recovery exception', () => {
   it('allows a single canonical bd worktree create with absolute path and task branch', () => {

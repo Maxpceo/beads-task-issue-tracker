@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-const source = readFileSync(resolve(__dirname, '../../.pi/extensions/bead-purpose/index.ts'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/bead-purpose/index.ts'), 'utf8')
 const runtimeOwnerKey = 'runtime:test-bead-purpose'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
 

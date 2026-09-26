@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import beadPurposeExtension from '../../.pi/extensions/bead-purpose/index'
-import { evaluateBashPolicy, evaluatePathPolicy } from '../../.pi/extensions/beads-policy/index'
-import sessionReplayExtension from '../../.pi/extensions/session-replay/index'
-import subagentExtension from '../../.pi/extensions/subagent/index'
-import { createDashboardState, renderDashboardLines, selectDashboardAgents, upsertDashboardCard } from '../../.pi/extensions/subagent/dashboard'
-import workflowChainExtension from '../../.pi/extensions/workflow-chain/index'
+import beadPurposeExtension from '../../.pi/extensions-aside-v1dt/bead-purpose/index'
+import { evaluateBashPolicy, evaluatePathPolicy } from '../../.pi/extensions-aside-v1dt/beads-policy/index'
+import sessionReplayExtension from '../../.pi/extensions-aside-v1dt/session-replay/index'
+import subagentExtension from '../../.pi/extensions-aside-v1dt/subagent/index'
+import { createDashboardState, renderDashboardLines, selectDashboardAgents, upsertDashboardCard } from '../../.pi/extensions-aside-v1dt/subagent/dashboard'
+import workflowChainExtension from '../../.pi/extensions-aside-v1dt/workflow-chain/index'
 
 const projectRoot = process.cwd()
 const runtimeOwnerKey = 'runtime:e2e-pi-runtime-harness'

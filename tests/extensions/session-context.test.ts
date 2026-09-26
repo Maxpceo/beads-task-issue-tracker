@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import sessionContextExtension from '../../.pi/extensions/session-context/index'
+import sessionContextExtension from '../../.pi/extensions-aside-v1dt/session-context/index'
 
 const runtimeOwnerKey = 'runtime:test-session-context'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey

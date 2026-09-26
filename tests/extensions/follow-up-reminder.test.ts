@@ -5,7 +5,7 @@ import followUpReminderExtension, {
   formatFollowUps,
   reduceFollowUpState,
   type FollowUpCandidate,
-} from '../../.pi/extensions/follow-up-reminder/index'
+} from '../../.pi/extensions-aside-v1dt/follow-up-reminder/index'
 
 function candidate(overrides: Partial<FollowUpCandidate> = {}): FollowUpCandidate {
   return {

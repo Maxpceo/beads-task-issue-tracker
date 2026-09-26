@@ -17,8 +17,8 @@ import beadsPolicyExtension, {
   resolveBdReadCwd,
   resolveMergeSlotHolder,
   sessionUniqFromSessionKey,
-} from '../../.pi/extensions/beads-policy/index'
-import { saveRegistry } from '../../.pi/extensions/beads-dispatch/cmux-transport'
+} from '../../.pi/extensions-aside-v1dt/beads-policy/index'
+import { saveRegistry } from '../../.pi/extensions-aside-v1dt/beads-dispatch/cmux-transport'
 
 const runtimeOwnerKey = 'runtime:test-beads-policy'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey

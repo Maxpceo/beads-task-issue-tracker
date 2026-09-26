@@ -16,7 +16,7 @@ import reviewWorkflowExtension, {
   isReviewApproved,
   setReviewRuntimeDelegateForTestOverride,
   setSpawnForReviewTestOverride,
-} from '../../.pi/extensions/review-workflow/index'
+} from '../../.pi/extensions-aside-v1dt/review-workflow/index'
 
 afterEach(() => {
   setSpawnForReviewTestOverride(null)
@@ -2351,7 +2351,7 @@ describe('review_workflow reviewer verdict handling', () => {
     const previous = process.env.PI_REVIEW_RUNTIME_DELEGATED
     process.env.PI_REVIEW_RUNTIME_DELEGATED = '1'
     try {
-      const loadedRuntimeSource = readFileSync(join(process.cwd(), '.pi', 'extensions', 'review-workflow', 'index.ts'), 'utf8')
+      const loadedRuntimeSource = readFileSync(join(process.cwd(), '.pi', 'extensions-aside-v1dt', 'review-workflow', 'index.ts'), 'utf8')
       const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
         changedFiles: '.pi/extensions/review-workflow/index.ts',
         reviewWorkflowRuntimeSource: loadedRuntimeSource,
@@ -2381,7 +2381,7 @@ describe('review_workflow reviewer verdict handling', () => {
   })
 
   it('allows approved review-workflow runtime change when load-time hash matches and records evidence before close', async () => {
-    const loadedRuntimeSource = readFileSync(join(process.cwd(), '.pi', 'extensions', 'review-workflow', 'index.ts'), 'utf8')
+    const loadedRuntimeSource = readFileSync(join(process.cwd(), '.pi', 'extensions-aside-v1dt', 'review-workflow', 'index.ts'), 'utf8')
     const { result, execCalls } = await runNonDryReview('VERDICT: APPROVED\nReady', {
       changedFiles: '.pi/extensions/review-workflow/index.ts',
       reviewWorkflowRuntimeSource: loadedRuntimeSource,
@@ -2682,7 +2682,7 @@ describe('32an hop stale runtime close', () => {
     mkdirSync(join(cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
     writeFileSync(join(cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'), 'stale worktree runtime for 32an hop')
     const worktreeSha = createHash('sha256').update(readFileSync(join(cwd, '.pi/extensions/review-workflow/index.ts'))).digest('hex')
-    const loadedSha = createHash('sha256').update(readFileSync(join(process.cwd(), '.pi/extensions/review-workflow/index.ts'))).digest('hex')
+    const loadedSha = createHash('sha256').update(readFileSync(join(process.cwd(), '.pi/extensions-aside-v1dt/review-workflow/index.ts'))).digest('hex')
     return {
       cwd,
       worktreeSha,
@@ -2875,7 +2875,7 @@ describe('32an hop stale runtime close', () => {
     mkdirSync(join(cwd, '.pi', 'extensions', 'review-workflow'), { recursive: true })
     writeFileSync(
       join(cwd, '.pi', 'extensions', 'review-workflow', 'index.ts'),
-      readFileSync(join(process.cwd(), '.pi/extensions/review-workflow/index.ts')),
+      readFileSync(join(process.cwd(), '.pi/extensions-aside-v1dt/review-workflow/index.ts')),
     )
     try {
       const { pi, execCalls, getStatus } = makeHopPi({
@@ -3546,7 +3546,7 @@ describe('e4vt focused vitest superset matching', () => {
   })
 
   it('keeps STOP CLOSE marker in plan-mode without editing that file', () => {
-    const source = readFileSync(join(process.cwd(), '.pi/extensions/plan-mode/index.ts'), 'utf8')
+    const source = readFileSync(join(process.cwd(), '.pi/extensions-aside-v1dt/plan-mode/index.ts'), 'utf8')
     expect(source).toContain('STOP CLOSE')
   })
 })

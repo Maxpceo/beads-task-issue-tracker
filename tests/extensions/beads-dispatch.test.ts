@@ -5,8 +5,8 @@ import * as path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, extractPlanSupervisorAgent, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, supervisorArtifactReadyForReview, validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
-import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
+import beadsDispatchExtension, { PLAN_APPROVED_READINESS_MATRIX, chooseSupervisor, extractPlanSupervisorAgent, nsDir, parseVisiblePing, setCmuxAdapterForTests, setSpawnForDispatchTestOverride, supervisorArtifactReadyForReview, validateSupervisorReadiness } from '../../.pi/extensions-aside-v1dt/beads-dispatch/index'
+import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, resetDashboardWidgetHost, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions-aside-v1dt/subagent/dashboard'
 
 const plan = `PLAN APPROVED
 Approved-by: Test
@@ -1458,7 +1458,7 @@ describe('dispatch_docs_agent START_COMMIT recovery', () => {
   })
 
   it('does not send a successful ping before digest exists', async () => {
-    const source = await fs.readFile(path.join(process.cwd(), '.pi/extensions/beads-dispatch/index.ts'), 'utf8')
+    const source = await fs.readFile(path.join(process.cwd(), '.pi/extensions-aside-v1dt/beads-dispatch/index.ts'), 'utf8')
     expect(source).toContain('extractRecordedStartCommit')
     expect(source).toContain('buildDocsPrompt')
     expect(source).toContain('Do not ping before digest/result exist.')
