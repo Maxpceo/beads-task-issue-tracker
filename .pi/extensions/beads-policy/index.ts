@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { requireTaskToolTarget, taskScopeErrorToPolicyReason } from "../worktree-scope/index";
 import { findLiveSupervisorSpawnsForWorktree } from "../beads-dispatch/cmux-transport";
-import { isMainWriteAllowed, loadWorkflowChains, type WorkflowChains } from "../workflow-chains-config/index"; // `.pi/config/workflow-chains.json`
+import { loadWorkflowChains, type WorkflowChains } from "../workflow-chains-config/index"; // `.pi/config/workflow-chains.json`
 interface ExtensionAPI {
 	on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: any): void;
@@ -3321,18 +3321,15 @@ export function evaluateBashPolicy(
 	const worktreeCwdDecision = activeWorktreeCwdDecision(command, options.cwd ?? process.cwd(), workflowState);
 	if (worktreeCwdDecision) return worktreeCwdDecision;
 
-	const chains = chainsForPolicy(commandCwd ?? options.cwd, workflowState.worktreePath);
-	if (
-		(commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command, commandCwd)) &&
-		isProtectedBranch(commandCwd) &&
-		!isMainWriteAllowed(chains)
-	) {
+	if ((commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command, commandCwd)) && isProtectedBranch(commandCwd)) {
 		return {
 			policy: "blockMainMutation",
 			block: true,
 			reason: "Заблокировано: file mutations и git add/stage/commit на main/master запрещены. Используй feature branch или approved merge/release workflow.",
 		};
 	}
+
+	const chains = chainsForPolicy(commandCwd ?? options.cwd, workflowState.worktreePath);
 	const invalidWorktree = invalidWorktreePath(command, commandCwd, chains);
 	if (invalidWorktree) {
 		return {
@@ -3529,14 +3526,11 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 	}
 
 	if ((toolName === "edit" || toolName === "write") && PROTECTED_BRANCHES.has(getBranchForPath(targetPath) ?? "")) {
-		const chains = chainsForPolicy(nearestExistingDirectory(targetPath), workflowState.worktreePath);
-		if (!isMainWriteAllowed(chains)) {
-			return {
-				policy: "blockMainMutation",
-				block: true,
-				reason: `Заблокировано: edit/write на main/master запрещён для ${targetPath}. Используй feature branch или external worktree.`,
-			};
-		}
+		return {
+			policy: "blockMainMutation",
+			block: true,
+			reason: `Заблокировано: edit/write на main/master запрещён для ${targetPath}. Используй feature branch или external worktree.`,
+		};
 	}
 
 	return undefined;
