@@ -2275,8 +2275,7 @@ function canCloseByReviewState(command: string, cwd: string, workflowState: Work
 	return status === "accepted" || (status === "reviewed" && /NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments));
 }
 
-function descriptionAcceptanceChecks(description?: string, chains?: WorkflowChains): string[] {
-	if (chains?.matrixRequired === false) return [];
+function descriptionAcceptanceChecks(description?: string): string[] {
 	if (!description) return [];
 	const sections = [extractSection(description, "### Acceptance criteria"), extractSection(description, "### Verification / acceptance checks")];
 	return sections
@@ -2388,10 +2387,9 @@ function acceptanceMatrixHasBlockingResult(matrixText: string): boolean {
 	return acceptanceMatrixStructuredResults(matrixText).some((result) => ACCEPTANCE_BLOCKING_RESULTS.test(result));
 }
 
-function validateAcceptanceMatrixForClose(cwd: string, id: string, chains: WorkflowChains): string | undefined {
-	if (chains.matrixRequired === false) return undefined;
+function validateAcceptanceMatrixForClose(cwd: string, id: string): string | undefined {
 	const issue = getBdIssue(cwd, id);
-	const checks = descriptionAcceptanceChecks(issue?.description, chains);
+	const checks = descriptionAcceptanceChecks(issue?.description);
 	if (checks.length === 0) return undefined;
 	const comments = getBdCommentsText(cwd, id);
 	if (hasValidHumanAcceptanceOverride(comments)) return undefined;
@@ -3422,7 +3420,7 @@ export function evaluateBashPolicy(
 		if (earlyEpicMatrixError && (!latestMatrix || latestMatrix.toUpperCase().startsWith("EPIC ACCEPTANCE MATRIX"))) {
 			return { policy: "requireEpicFinalizationSweep", block: true, reason: earlyEpicMatrixError };
 		}
-		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId, chains) : undefined;
+		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId) : undefined;
 		if (matrixError) {
 			return {
 				policy: "blockBdCloseWithoutReview",
