@@ -2266,8 +2266,7 @@ function validateEpicCloseMatrix(cwd: string, id: string): string | undefined {
 	return undefined;
 }
 
-function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot, chains: WorkflowChains): boolean {
-	if (chains.reviewRequired === false) return true;
+function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
 	const id = terminalCloseId(command);
 	if (!id) return false;
 	const status = workflowState.activeBead === id && workflowState.bdStatus ? workflowState.bdStatus : getBdIssue(cwd, id)?.status;
@@ -3428,7 +3427,7 @@ export function evaluateBashPolicy(
 				reason: matrixError,
 			};
 		}
-		if (!canCloseByReviewState(command, commandCwd, workflowState, chains)) {
+		if (!canCloseByReviewState(command, commandCwd, workflowState)) {
 			return {
 				policy: "blockBdCloseWithoutReview",
 				block: true,
