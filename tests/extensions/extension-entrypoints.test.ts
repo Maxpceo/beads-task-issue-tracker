@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-const extensionsDir = resolve(__dirname, '../../.pi/extensions-aside-v1dt')
+const extensionsDir = resolve(__dirname, '../../.pi/extensions')
 
 export function extensionEntrypointPaths(): string[] {
   return readdirSync(extensionsDir)
