@@ -5,7 +5,6 @@
   "reviewRequired": true,
   "matrixRequired": true,
   "mainWriteAllowed": false,
-  "requireRussian": true,
   "checks": [
     "pnpm test",
     "npx vue-tsc --noEmit",
