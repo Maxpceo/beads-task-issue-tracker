@@ -1,9 +1,9 @@
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 
-import { evaluateBashPolicy } from '../../.pi/extensions/beads-policy/index'
-import { validateSupervisorReadiness } from '../../.pi/extensions/beads-dispatch/index'
-import reviewWorkflowExtension from '../../.pi/extensions/review-workflow/index'
+import { evaluateBashPolicy } from '../../.pi/extensions-aside-v1dt/beads-policy/index'
+import { validateSupervisorReadiness } from '../../.pi/extensions-aside-v1dt/beads-dispatch/index'
+import reviewWorkflowExtension from '../../.pi/extensions-aside-v1dt/review-workflow/index'
 
 const handoffDescription = `### Origin
 - Pressure-test fixture.

@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { inferTargetFilesFromText, loadPathRules, renderPathRulesLoaded } from '../../.pi/extensions/path-rules/index'
+import { inferTargetFilesFromText, loadPathRules, renderPathRulesLoaded } from '../../.pi/extensions-aside-v1dt/path-rules/index'
 
 describe('path-rules loader', () => {
   it('loads global rules and src-tauri/PI_RULES.md for src-tauri targets', async () => {

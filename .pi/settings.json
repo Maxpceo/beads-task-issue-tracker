@@ -1,22 +1,13 @@
 {
-  "skills": ["skills"],
-  "prompts": ["prompts"],
-  "extensions": [
-    "extensions/plan-mode/index.ts",
-    "extensions/workflow-state/index.ts",
-    "extensions/bead-purpose/index.ts",
-    "extensions/cmux-sidebar/index.ts",
-    "extensions/beads-policy/index.ts",
-    "extensions/agent-models/index.ts",
-    "extensions/beads-dispatch/index.ts",
-    "extensions/review-workflow/index.ts",
-    "extensions/workflow-chain/index.ts",
-    "extensions/subagent/index.ts",
-    "extensions/status-dashboard.ts",
-    "extensions/session-context/index.ts",
-    "extensions/session-replay/index.ts",
-    "extensions/memory-capture/index.ts",
-    "extensions/follow-up-reminder/index.ts"
+  "skills": [
+    "skills"
   ],
-  "enableSkillCommands": true
+  "prompts": [
+    "prompts"
+  ],
+  "extensions": [],
+  "enableSkillCommands": true,
+  "packages": [
+    "git:github.com/Maxpceo/pi-workflow@v0.1.0"
+  ]
 }

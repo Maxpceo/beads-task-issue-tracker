@@ -12,7 +12,7 @@ import {
   expandHomePath,
   isMainWriteAllowed,
   loadWorkflowChains,
-} from '../../.pi/extensions/workflow-chains-config/index'
+} from '../../.pi/extensions-aside-v1dt/workflow-chains-config/index'
 
 const NAMING = {
   types: ['feat', 'fix', 'docs', 'refactor', 'test', 'chore', 'ci', 'task'],

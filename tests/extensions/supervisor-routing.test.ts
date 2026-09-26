@@ -9,7 +9,7 @@ import {
   resolveSupervisorFromRouting,
   textForSupervisorRouting,
   type SupervisorRoutingLoadResult,
-} from '../../.pi/extensions/beads-dispatch/supervisor-routing'
+} from '../../.pi/extensions-aside-v1dt/beads-dispatch/supervisor-routing'
 
 const temps: string[] = []
 

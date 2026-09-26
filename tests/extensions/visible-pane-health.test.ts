@@ -12,7 +12,7 @@ import {
   loadRegistry,
   saveRegistry,
   type DispatchRegistryEntry,
-} from '../../.pi/extensions/beads-dispatch/cmux-transport'
+} from '../../.pi/extensions-aside-v1dt/beads-dispatch/cmux-transport'
 
 const idleFooter = `Fix the filter
 $

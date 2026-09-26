@@ -5,9 +5,9 @@ import { join, resolve } from 'node:path'
 import ts from 'typescript'
 import * as piTuiMock from '../mocks/pi-tui'
 
-import { findLiveRegistryEntriesForBead } from '../../.pi/extensions/beads-dispatch/index'
-import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions/workflow-state/index'
-import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions/workflow-intent/index'
+import { findLiveRegistryEntriesForBead } from '../../.pi/extensions-aside-v1dt/beads-dispatch/index'
+import { currentRuntimeOwnerKey, registerWorkflowClaimApi, requestWorkflowClaim } from '../../.pi/extensions-aside-v1dt/workflow-state/index'
+import { parseWorkflowIntent, shouldAutoClaimAndPlan } from '../../.pi/extensions-aside-v1dt/workflow-intent/index'
 import {
   AUTOPILOT_CLOSE_HOP_SUMMARY,
   describeAutopilotGitState,
@@ -18,9 +18,9 @@ import {
   isPlanWidgetConfirmMessage,
   isSafeCommand,
   PLAN_WIDGET_CONFIRM_MESSAGES,
-} from '../../.pi/extensions/plan-mode/utils'
-import * as worktreeScope from '../../.pi/extensions/worktree-scope/index'
-import * as workflowChainsConfig from '../../.pi/extensions/workflow-chains-config/index'
+} from '../../.pi/extensions-aside-v1dt/plan-mode/utils'
+import * as worktreeScope from '../../.pi/extensions-aside-v1dt/worktree-scope/index'
+import * as workflowChainsConfig from '../../.pi/extensions-aside-v1dt/workflow-chains-config/index'
 import {
   PLAN_REVIEW_WAITING_TRIO_ENTRY,
   PLAN_REVIEW_WAITING_TRIO_NOTICE,
@@ -38,9 +38,9 @@ import {
   PLAN_REVIEW_UNCHANGED_BANNER,
   type PlanReviewFinding,
   type PlanReviewResult,
-} from '../../.pi/extensions/plan-review/index'
+} from '../../.pi/extensions-aside-v1dt/plan-review/index'
 
-const source = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/index.ts'), 'utf8')
 const expectedPlanTools = ['read', 'bash', 'grep', 'find', 'ls', 'questionnaire', 'plan_mode_complete', 'record_plan_review_adjudication', 'workflow_status', 'workflow_plan_mode', 'workflow_plan_approved', 'workflow_plan_review', 'plan_subagent']
 const hopWorkflowTools = [
   'complete_visible_dispatch',
@@ -110,7 +110,7 @@ function defaultMockPlanReviewResults(): PlanReviewResult[] {
 }
 
 function transpileSibling(relativePath: string): Record<string, unknown> {
-  const filePath = resolve(__dirname, '../../.pi/extensions/plan-mode', relativePath.replace(/\.js$/, '.ts'))
+  const filePath = resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode', relativePath.replace(/\.js$/, '.ts'))
   const siblingSource = readFileSync(filePath, 'utf8')
   const { outputText } = ts.transpileModule(siblingSource, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
@@ -2522,7 +2522,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('documents autopilot stop contract separately from /plan-auto in README', () => {
-    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/README.md'), 'utf8')
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/README.md'), 'utf8')
     expect(readme).toContain('/plan-autopilot')
     expect(readme).toContain('Approved-by: оркестратор')
     expect(readme).toContain('работаю автономно')
@@ -2949,7 +2949,7 @@ describe('Pi plan-mode typed workflow tools', () => {
   })
 
   it('README documents hop UX human message contract', () => {
-    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/README.md'), 'utf8')
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/README.md'), 'utf8')
     expect(readme).toContain('Hop UX')
     expect(readme).toContain('exactly one')
     expect(readme).toContain('result-only')
@@ -3459,7 +3459,7 @@ describe('Pi plan-mode plan-review recorded worktree gate (ifqu)', () => {
   })
 
   it('README documents trio cwd as recorded task worktree for /plan, /plan-auto, and /plan-autopilot', () => {
-    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/README.md'), 'utf8')
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/README.md'), 'utf8')
     expect(readme).toContain('recorded task worktree')
     expect(readme).toMatch(/\/plan[\s\S]*\/plan-auto[\s\S]*\/plan-autopilot/)
     expect(readme).toContain('ctx.cwd')
@@ -4722,8 +4722,8 @@ describe('Pi plan-mode complete-when-ready overlay', () => {
   })
 
   it('source no longer contains Plan mode - what next select copy', () => {
-    const indexSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/index.ts'), 'utf8')
-    const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/ready-ui.ts'), 'utf8')
+    const indexSource = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/index.ts'), 'utf8')
+    const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/ready-ui.ts'), 'utf8')
     expect(indexSource).not.toContain('Plan mode - what next')
     expect(indexSource).toContain('plan_mode_complete')
     expect(indexSource).toMatch(/overlay:\s*true/)
@@ -4754,7 +4754,7 @@ describe('Pi plan-mode display markdown helpers (yxn0)', () => {
     createPlanDocumentComponent: (content: string, mdTheme: unknown) => unknown
     ClampedMarkdown: new (...args: unknown[]) => { render: (width: number) => string[] }
   }
-  const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions/plan-mode/ready-ui.ts'), 'utf8')
+  const readyUiSource = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/plan-mode/ready-ui.ts'), 'utf8')
 
   it('planMarkdownTransform rewrites column-0 H3+ to ## and leaves H1/H2', () => {
     expect(readyUi.planMarkdownTransform('### A\ntext\n### B')).toBe('## A\ntext\n## B')

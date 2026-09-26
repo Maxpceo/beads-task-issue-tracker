@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { isPathInsideOrEqual, PROTECTED_BRANCHES, requireTaskToolTarget, resolveActiveTaskScope, taskScopeErrorToPolicyReason, validateTaskScopePath } from '../../.pi/extensions/worktree-scope/index'
+import { isPathInsideOrEqual, PROTECTED_BRANCHES, requireTaskToolTarget, resolveActiveTaskScope, taskScopeErrorToPolicyReason, validateTaskScopePath } from '../../.pi/extensions-aside-v1dt/worktree-scope/index'
 
 function createRepo(branch = 'task/scope') {
   const repo = mkdtempSync(join(tmpdir(), 'worktree-scope-'))

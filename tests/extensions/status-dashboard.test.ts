@@ -5,7 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import ts from 'typescript'
 
-const source = readFileSync(resolve(__dirname, '../../.pi/extensions/status-dashboard.ts'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/status-dashboard.ts'), 'utf8')
 
 function loadStatusDashboardExtension(): (pi: unknown) => void {
   const { outputText } = ts.transpileModule(source, {

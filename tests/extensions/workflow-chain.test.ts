@@ -12,8 +12,8 @@ import workflowChainExtension, {
   typedWorkflowBlockReason,
   type WorkflowChain,
   type WorkflowSnapshot,
-} from '../../.pi/extensions/workflow-chain/index'
-import { renderWorkflowDashboard, truncateWorkflowPreview } from '../../.pi/extensions/workflow-chain/dashboard'
+} from '../../.pi/extensions-aside-v1dt/workflow-chain/index'
+import { renderWorkflowDashboard, truncateWorkflowPreview } from '../../.pi/extensions-aside-v1dt/workflow-chain/dashboard'
 
 function tempProject(): string {
   return mkdtempSync(join(tmpdir(), 'workflow-chain-'))

@@ -19,14 +19,14 @@ import planReviewExtension, {
   renderPlanReviewResults,
   runPlanReviewers,
   type PlanReviewResult,
-} from '../../.pi/extensions/plan-review/index'
+} from '../../.pi/extensions-aside-v1dt/plan-review/index'
 import {
   clearObservedDashboardCards,
   getSharedDashboardState,
   resetDashboardWidgetHost,
   setSharedDashboardState,
-} from '../../.pi/extensions/subagent/dashboard'
-import type { SpawnSyncVisibleAgentsInput } from '../../.pi/extensions/beads-dispatch/visible-agents'
+} from '../../.pi/extensions-aside-v1dt/subagent/dashboard'
+import type { SpawnSyncVisibleAgentsInput } from '../../.pi/extensions-aside-v1dt/beads-dispatch/visible-agents'
 
 const tmpDirs: string[] = []
 

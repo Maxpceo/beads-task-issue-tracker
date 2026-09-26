@@ -5,7 +5,7 @@ import { resolve } from 'node:path'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-const source = readFileSync(resolve(__dirname, '../../.pi/extensions/subagent/index.ts'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/subagent/index.ts'), 'utf8')
 
 type Resolved = {
   model?: string

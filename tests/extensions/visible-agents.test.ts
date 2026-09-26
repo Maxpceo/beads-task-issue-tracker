@@ -8,13 +8,13 @@ import {
   findRegistryByTaskId,
   loadRegistry,
   setCmuxAdapterForTests,
-} from '../../.pi/extensions/beads-dispatch/cmux-transport'
+} from '../../.pi/extensions-aside-v1dt/beads-dispatch/cmux-transport'
 import {
   BPAZ_WATCHDOG_TRACE_RELATIVE_PATH,
   extractPlanReviewFromJournal,
   extractSyncJournalOutput,
   spawnSyncVisibleAgents,
-} from '../../.pi/extensions/beads-dispatch/visible-agents'
+} from '../../.pi/extensions-aside-v1dt/beads-dispatch/visible-agents'
 
 const approvedReport = `PLAN REVIEW: APPROVED
 Findings:

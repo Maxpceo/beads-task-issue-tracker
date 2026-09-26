@@ -16,7 +16,7 @@ import {
   setSharedDashboardState,
   getSharedDashboardState,
   upsertDashboardCard,
-} from '../../.pi/extensions/subagent/dashboard'
+} from '../../.pi/extensions-aside-v1dt/subagent/dashboard'
 interface TestAgentConfig {
   name: string
   description: string
@@ -390,7 +390,7 @@ describe('subagent dashboard helpers', () => {
   })
 
   it('README keeps dashboard as CI/headless fallback and visible panes panel-only', () => {
-    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions/subagent/README.md'), 'utf8')
+    const readme = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/subagent/README.md'), 'utf8')
     expect(readme).toContain('Visible cmux spawn stays panel-only')
     expect(readme).toContain('dashboard cards stay CI/headless-only')
     expect(readme).toContain('resolveVisibleSplitPlacement')

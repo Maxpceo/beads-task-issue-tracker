@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import ts from 'typescript'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-const source = readFileSync(resolve(__dirname, '../../.pi/extensions/cmux-sidebar/index.ts'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/cmux-sidebar/index.ts'), 'utf8')
 const settingsSource = readFileSync(resolve(__dirname, '../../.pi/settings.json'), 'utf8')
 const runtimeOwnerKey = 'runtime:test-cmux-sidebar'
 ;(globalThis as typeof globalThis & { __piWorkflowRuntimeOwnerKey?: string }).__piWorkflowRuntimeOwnerKey = runtimeOwnerKey
@@ -748,13 +748,13 @@ describe('cmux-sidebar extension', () => {
     }
   })
 
-  it('l) settings.json entry after bead-purpose and extension file exists', () => {
-    const settings = JSON.parse(settingsSource) as { extensions: string[] }
-    const purposeIdx = settings.extensions.indexOf('extensions/bead-purpose/index.ts')
-    const sidebarIdx = settings.extensions.indexOf('extensions/cmux-sidebar/index.ts')
-    expect(purposeIdx).toBeGreaterThanOrEqual(0)
-    expect(sidebarIdx).toBe(purposeIdx + 1)
-    expect(existsSync(resolve(__dirname, '../../.pi/extensions/cmux-sidebar/index.ts'))).toBe(true)
+  it('l) settings.json does not autoload local extensions and aside file exists', () => {
+    const settings = JSON.parse(settingsSource) as { extensions?: string[]; packages?: string[] }
+    expect(settings.extensions ?? []).not.toContain('extensions/bead-purpose/index.ts')
+    expect(settings.extensions ?? []).not.toContain('extensions/cmux-sidebar/index.ts')
+    expect(settings.packages).toContain('git:github.com/Maxpceo/pi-workflow@v0.1.0')
+    expect(existsSync(resolve(__dirname, '../../.pi/extensions-aside-v1dt/cmux-sidebar/index.ts'))).toBe(true)
+    expect(existsSync(resolve(__dirname, '../../.pi/extensions/cmux-sidebar/index.ts'))).toBe(false)
   })
 
   it('m) blocked fixtures → xmark + clear-progress, no set-progress, no clear-description; implementing→blocked clean', async () => {

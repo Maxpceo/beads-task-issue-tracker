@@ -2,8 +2,8 @@ import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import reviewWorkflowExtension, { setSpawnForReviewTestOverride } from '../../.pi/extensions/review-workflow/index'
-import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions/subagent/dashboard'
+import reviewWorkflowExtension, { setSpawnForReviewTestOverride } from '../../.pi/extensions-aside-v1dt/review-workflow/index'
+import { clearObservedDashboardCards, createDashboardState, getSharedDashboardState, registerDashboardRenderer, selectDashboardAgents, setSharedDashboardState } from '../../.pi/extensions-aside-v1dt/subagent/dashboard'
 
 function createApprovedReviewerSpawn() {
   return (() => {

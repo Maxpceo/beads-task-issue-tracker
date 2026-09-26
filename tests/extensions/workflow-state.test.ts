@@ -5,7 +5,7 @@ import * as path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import workflowStateExtension, { currentRuntimeOwnerKey, hasSessionOwnershipEvidence } from '../../.pi/extensions/workflow-state/index'
+import workflowStateExtension, { currentRuntimeOwnerKey, hasSessionOwnershipEvidence } from '../../.pi/extensions-aside-v1dt/workflow-state/index'
 
 const WORKTREE_ROOT = path.join(os.homedir(), 'Projects', 'worktrees', 'beads-task-issue-tracker')
 
