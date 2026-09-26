@@ -324,15 +324,9 @@ bd todo list
 bd todo done <id>
 ```
 
-### Quick Start
+### Примеры bd create
 
-**Проверить ready work:**
-
-```bash
-bd ready --json
-```
-
-**Создать новые issues:**
+`bd ready`, `bd show`, `bd update --claim`, `bd close` и `bd dolt` уже в `## Quick Reference` выше. Здесь только создание задачи. Claim новой задачи — `workflow_claim`, не `bd update --claim`. Close — только после review и evidence.
 
 ```bash
 # Preferred: file-based (write tool → /tmp, then tight cat)
@@ -348,19 +342,6 @@ bd create "Уточнить обработку найденной проблем
 # - ...
 # EOF
 # )" --json
-```
-
-**Claim and update:**
-
-```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
-```
-
-**Complete work:**
-
-```bash
-bd close bd-42 --reason "Выполнено" --json
 ```
 
 ### Issue Types
@@ -388,22 +369,8 @@ Legacy bd type references могут упоминать `spike`, `story` и `mil
 - `3` - Low (polish, optimization)
 - `4` - Backlog (future ideas)
 
-### Workflow for AI Agents
-
-1. **Check ready work**: `bd ready` показывает unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
-3. **Work on it**: implement, test, document
-4. **Discover new work?** Создай linked issue:
-   - `bd create "Описать найденную проблему" --description="Кратко: что обнаружено, где воспроизводится, какой ожидаемый результат" -p 1 --label dx --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Выполнено"`
-
 ### bd 0.57+ Dolt sync
 
-bd 0.57+ использует self-managing Dolt server с auto-flush/auto-import. Старой команды `bd sync` больше нет.
-
-- Каждая write operation auto-commits to Dolt history.
-- Используй `bd dolt pull` / `bd dolt push` для remote Dolt sync when needed.
-- Для legacy JSONL projects явно commit named `.beads/` paths вместо reliance on Dolt commands.
-- Manual `bd sync` step не требуется и недоступен.
+bd 0.57+ использует self-managing Dolt server с auto-flush/auto-import. Старой команды `bd sync` больше нет. Remote sync — `bd dolt pull` / `bd dolt push` из `## Quick Reference`, не отдельный цикл.
 
 <!-- END BEADS INTEGRATION -->
