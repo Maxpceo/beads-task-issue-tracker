@@ -2160,9 +2160,9 @@ export async function spawnTaskWorkspace(
 	const mainCwd = await resolveMainCheckout(pi, cwd);
 	const workspaceName = buildTaskWorkspaceName(title, beadId);
 	const description = (params.description ?? bead.title ?? workspaceName).trim();
+	const childCommand = buildTaskWorkspaceChildCommand(beadId);
 
 	let callerWorkspaceRef = "workspace:caller";
-	let callerSurface: string | undefined;
 	let parentColor: string | null = null;
 	let groupId: string | undefined;
 	let siblingColors: string[] = [];
@@ -2171,7 +2171,6 @@ export async function spawnTaskWorkspace(
 		try {
 			const identified = await identifyCallerWorkspace(pi);
 			callerWorkspaceRef = identified.workspaceRef;
-			callerSurface = identified.surface;
 			const listResult = await pi.exec("cmux", buildListWorkspacesArgv());
 			if (listResult.code === 0) {
 				const row = findWorkspaceRow(listResult.stdout || "", callerWorkspaceRef);
@@ -2195,16 +2194,6 @@ export async function spawnTaskWorkspace(
 			// dryRun without live cmux still returns argv plan with placeholders
 		}
 	}
-
-	if (!params.dryRun && !callerSurface) {
-		throw new Error("нет surface родителя после identify: BLOCKED");
-	}
-
-	const childCommand = buildTaskWorkspaceChildCommand(
-		beadId,
-		undefined,
-		callerSurface ? { workspaceRef: callerWorkspaceRef, surface: callerSurface } : undefined,
-	);
 
 	const color = pickTaskWorkspaceColor({
 		explicit: params.color,
@@ -2259,7 +2248,7 @@ export async function spawnTaskWorkspace(
 		};
 	}
 
-	// Repeat identify for the lock comment. Surface in the child command stays from the first success.
+	// Live path requires cmux identify (already done above or throws).
 	await identifyCallerWorkspace(pi).then((id) => {
 		callerWorkspaceRef = id.workspaceRef;
 	});

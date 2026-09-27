@@ -9,7 +9,7 @@ description: Pi-native landing workflow. Use when user says “пора зака
 
 ## Workflow
 
-1. Read `.pi/config/workflow-chains.json`. When `handoffFromCopy` is true (tracker default, also when the file is missing/unreadable), ensure the current tool cwd is the active feature/task worktree when `workflowState.worktreePath` is present. `land` must not save/push from `main` under an active worktree lock; use `main` only for read-only inspection until explicit `merge-to-main` completes PR merge and transitions to `main`. When `handoffFromCopy` is false, landing is not a copy ritual: save/push from the recorded checkout even if it is the project tree without a separate task copy.
+1. Ensure the current tool cwd is the active feature/task worktree when `workflowState.worktreePath` is present. `land` must not save/push from `main` under an active worktree lock; use `main` only for read-only inspection until explicit `merge-to-main` completes PR merge and transitions to `main`.
 2. Inspect state, preferably in one compact command:
    ```bash
    git status --short
@@ -24,14 +24,10 @@ description: Pi-native landing workflow. Use when user says “пора зака
    - `inreview` without approval or human acceptance remains open and must be listed;
    - `in_progress` remains open unless the work is explicitly accepted/closed by an allowed fast-path route.
    - Do not use `land` to skip bd lifecycle authority: current-session active beads with bd status `inreview` still need `review-bead` or explicit human acceptance, and active non-terminal bd statuses block unrelated next work unless explicitly handed off/deferred with reason.
-4. Run quality gates if code changed. Read `checks` from `.pi/config/workflow-chains.json`. Reading `checks` does not change `copyRequired`, `reviewRequired`, `matrixRequired`, or `mainWriteAllowed`.
-   - No file, unreadable file, broken JSON, missing `checks`, or a `checks` value that is not an array of non-empty strings:
-     ```bash
-     pnpm test && npx vue-tsc --noEmit
-     ```
-     Do not add `cargo check` in this fallback.
-   - Exact `checks: []`: do not invent `pnpm test`, `vue-tsc`, or `cargo check`.
-   - Non-empty array of non-empty strings: run those command strings in order, joined with `&&`. The committed tracker list includes `cargo check --manifest-path src-tauri/Cargo.toml`, so code changes run that check too.
+4. Run quality gates if code changed:
+   ```bash
+   pnpm test && npx vue-tsc --noEmit
+   ```
    For docs/beads-only changes, record `not run: docs/beads only` rather than implying tests passed.
 5. Commit code with explicit paths only:
    ```bash

@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { requireTaskToolTarget, taskScopeErrorToPolicyReason } from "../worktree-scope/index";
 import { findLiveSupervisorSpawnsForWorktree } from "../beads-dispatch/cmux-transport";
-import { isMainWriteAllowed, loadWorkflowChains, type WorkflowChains } from "../workflow-chains-config/index"; // `.pi/config/workflow-chains.json`
 interface ExtensionAPI {
 	on(event: string, handler: (event: any, ctx: ExtensionContext) => unknown): void;
 	registerCommand(name: string, config: any): void;
@@ -90,21 +89,8 @@ const SENSITIVE_PATH_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
 	{ pattern: PRIVATE_KEY_OR_CERT_PATTERN, reason: "private key/cert файлы защищены" },
 ];
 const PROTECTED_BRANCHES = new Set(["main", "master"]);
+const WORKTREE_ROOT = path.join(os.homedir(), "Projects", "worktrees", "beads-task-issue-tracker");
 const META_ONLY_PATTERN = /^(\.beads\/|\.pi\/plans\/|.*\.(md|json|jsonl)$)/;
-const notifiedWorkflowChainsErrors = new Set<string>();
-
-function chainsForPolicy(cwd?: string, worktreePath?: string): WorkflowChains {
-	const existingWorktree = worktreePath && fs.existsSync(worktreePath) ? worktreePath : undefined;
-	return loadWorkflowChains(existingWorktree ?? cwd ?? process.cwd());
-}
-
-function notifyWorkflowChainsReadError(ctx: ExtensionContext, chains: WorkflowChains): void {
-	if (!chains.readError) return;
-	const key = chains.configPath ?? chains.readError;
-	if (notifiedWorkflowChainsErrors.has(key)) return;
-	notifiedWorkflowChainsErrors.add(key);
-	ctx.ui.notify(chains.readError, "error");
-}
 const CODE_FILE_PATTERN = /^(app|src-tauri|tests|i18n|\.pi\/extensions|\.pi\/agents|\.pi\/skills|scripts)\/|\.(ts|tsx|vue|rs|js|mjs|cjs|css|scss|sh)$/;
 const FAST_PATH_FILE_THRESHOLD = 3;
 const FAST_PATH_ADDED_LINE_THRESHOLD = 80;
@@ -779,19 +765,17 @@ function hasWorktreeLockOwnershipEvidence(workflowState: WorkflowStateSnapshot):
 	return false;
 }
 
-function hasActiveWorktreeLockRequirement(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
-	if (!(workflowState.activeBead && isWorkflowStateNonTerminal(workflowState) && hasWorktreeLockOwnershipEvidence(workflowState))) {
-		return false;
-	}
-	const recorded = workflowState.worktreePath;
-	if (recorded && fs.existsSync(recorded)) return true;
-	const chains = chainsForPolicy(cwd, recorded);
-	if (!chains.copyRequired) return false;
-	return Boolean(recorded || workflowState.branch);
+function hasActiveWorktreeLockRequirement(workflowState: WorkflowStateSnapshot): boolean {
+	return Boolean(
+		workflowState.activeBead &&
+		isWorkflowStateNonTerminal(workflowState) &&
+		hasWorktreeLockOwnershipEvidence(workflowState) &&
+		(workflowState.worktreePath || workflowState.branch),
+	);
 }
 
-function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot, cwd?: string): boolean {
-	return Boolean(workflowState.worktreePath && hasActiveWorktreeLockRequirement(workflowState, cwd));
+function hasActiveWorktreeLock(workflowState: WorkflowStateSnapshot): boolean {
+	return Boolean(workflowState.worktreePath && hasActiveWorktreeLockRequirement(workflowState));
 }
 
 function commandHasTestOrGateOperation(command: string): boolean {
@@ -817,7 +801,7 @@ function commandRequiresActiveWorktreeCwd(command: string, processCwd: string): 
 }
 
 function activeWorktreeCwdDecision(command: string, processCwd: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if (!hasActiveWorktreeLockRequirement(workflowState, processCwd)) return undefined;
+	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	if (!commandRequiresActiveWorktreeCwd(command, processCwd)) return undefined;
 	const required = workflowState.worktreePath;
 	if (!required) {
@@ -880,7 +864,7 @@ function activeWorktreeCwdDecision(command: string, processCwd: string, workflow
 }
 
 function activeWorktreePathDecision(toolName: string, targetPath: string, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLockRequirement(workflowState, workflowState.worktreePath)) return undefined;
+	if ((toolName !== "edit" && toolName !== "write") || !hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	const required = workflowState.worktreePath;
 	if (!required) {
 		return {
@@ -917,7 +901,7 @@ function activeWorktreePathDecision(toolName: string, targetPath: string, workfl
 }
 
 function requiredToolCwdDecision(toolName: string, input: Record<string, unknown>, workflowState: WorkflowStateSnapshot): PolicyDecision | undefined {
-	if (!hasActiveWorktreeLockRequirement(workflowState, typeof input.cwd === "string" ? input.cwd : workflowState.worktreePath)) return undefined;
+	if (!hasActiveWorktreeLockRequirement(workflowState)) return undefined;
 	const canonicalToolName = ["dispatch_supervisor", "dispatch_reviewer", "dispatch_docs_agent", "review_bead"].find((name) => matchesToolName(toolName, name));
 	if (!canonicalToolName) return undefined;
 	const target = requireTaskToolTarget(canonicalToolName, input, workflowState);
@@ -1557,8 +1541,6 @@ const HIDDEN_BEAD_DESCRIPTION_REASON =
 	"Заблокировано: `bd create` description скрыт от guard (например `$BUG_DESC`, небезопасный `$(cat /tmp/...)`, backticks или wrapper). Preferred: file-based — write description в `/tmp/...md`, затем `--description \"$(cat /absolute/path)\"` (guard читает файл). Legacy: inline heredoc `--description \"$(cat <<'EOF' ... EOF)\"` (хрупко с `#` и backticks). См. `.pi/skills/create-bead/SKILL.md`.";
 
 function getBeadLocaleError(command: string, cwd?: string): string | undefined {
-	// Exact false only. Missing file, missing field, non-boolean, and broken JSON keep Russian required.
-	if (loadWorkflowChains(cwd ?? process.cwd()).requireRussian === false) return undefined;
 	for (const segment of splitShellSegments(command)) {
 		const isCreate = segmentHasBdCommand(segment, new Set(["create", "new"]));
 		const isUpdate = segmentHasBdCommand(segment, new Set(["update"]));
@@ -1595,7 +1577,7 @@ function getBeadEnrichmentError(command: string, cwd?: string): string | undefin
 		const contentForSections = resolved.kind === "file" ? resolved.text : segment;
 		const missing = REQUIRED_HANDOFF_SECTIONS.filter((section) => !contentForSections.includes(section));
 		if (missing.length > 0) {
-			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через Preferred: file-based (write /tmp + --description "$(cat /absolute/path)") или legacy inline heredoc внутри --description со всеми required ### sections, type/priority/label/deps и concrete acceptance/verification bullets. Язык prose задаёт requireRussian, не этот guard. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
+			return `Заблокировано: agent-created beads требуют self-contained handoff template. Отсутствует: ${missing.join(", ")}. Минимальное исправление: открой \`.pi/skills/create-bead/SKILL.md\`, повтори mandatory checklist и создай bead через Preferred: file-based (write /tmp + --description "$(cat /absolute/path)") или legacy inline heredoc внутри --description со всеми required ### sections, русским content, type/priority/label/deps и concrete acceptance/verification bullets. Если context или acceptance неясны, задай пользователю один вопрос с 2-4 вариантами перед созданием bead.`;
 		}
 
 		if (!hasLabel(segment)) {
@@ -2268,8 +2250,7 @@ function validateEpicCloseMatrix(cwd: string, id: string): string | undefined {
 	return undefined;
 }
 
-function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot, chains: WorkflowChains): boolean {
-	if (chains.reviewRequired === false) return true;
+function canCloseByReviewState(command: string, cwd: string, workflowState: WorkflowStateSnapshot): boolean {
 	const id = terminalCloseId(command);
 	if (!id) return false;
 	const status = workflowState.activeBead === id && workflowState.bdStatus ? workflowState.bdStatus : getBdIssue(cwd, id)?.status;
@@ -2277,8 +2258,7 @@ function canCloseByReviewState(command: string, cwd: string, workflowState: Work
 	return status === "accepted" || (status === "reviewed" && /NO_ACCEPTANCE_REQUIRED|no acceptance criteria/i.test(comments));
 }
 
-function descriptionAcceptanceChecks(description?: string, chains?: WorkflowChains): string[] {
-	if (chains?.matrixRequired === false) return [];
+function descriptionAcceptanceChecks(description?: string): string[] {
 	if (!description) return [];
 	const sections = [extractSection(description, "### Acceptance criteria"), extractSection(description, "### Verification / acceptance checks")];
 	return sections
@@ -2390,10 +2370,9 @@ function acceptanceMatrixHasBlockingResult(matrixText: string): boolean {
 	return acceptanceMatrixStructuredResults(matrixText).some((result) => ACCEPTANCE_BLOCKING_RESULTS.test(result));
 }
 
-function validateAcceptanceMatrixForClose(cwd: string, id: string, chains: WorkflowChains): string | undefined {
-	if (chains.matrixRequired === false) return undefined;
+function validateAcceptanceMatrixForClose(cwd: string, id: string): string | undefined {
 	const issue = getBdIssue(cwd, id);
-	const checks = descriptionAcceptanceChecks(issue?.description, chains);
+	const checks = descriptionAcceptanceChecks(issue?.description);
 	if (checks.length === 0) return undefined;
 	const comments = getBdCommentsText(cwd, id);
 	if (hasValidHumanAcceptanceOverride(comments)) return undefined;
@@ -2561,10 +2540,7 @@ function extractWorktreePathFromSegment(segment: string): string | undefined {
 	return parseWorktreeCreateSegment(segment)?.path;
 }
 
-function invalidWorktreePath(command: string, cwd?: string, chains: WorkflowChains = chainsForPolicy(cwd)): string | undefined {
-	if (!chains.copyRequired) return undefined;
-	const copyRoot = chains.copyRoot;
-	if (!copyRoot) return undefined;
+function invalidWorktreePath(command: string, cwd?: string): string | undefined {
 	for (const segment of splitShellSegments(command)) {
 		if (!/\b(?:bd\s+worktree\s+create|git\s+worktree\s+add)\b/.test(segment)) continue;
 		const rawPath = extractWorktreePathFromSegment(segment);
@@ -2573,36 +2549,29 @@ function invalidWorktreePath(command: string, cwd?: string, chains: WorkflowChai
 		if (!unquoted.startsWith("/") && !unquoted.startsWith("~/") && !unquoted.startsWith("$HOME/")) return unquoted;
 		if (unquoted.includes("..")) return unquoted;
 		const resolved = realpathExistingOrParent(normalizeFsPath(unquoted, cwd));
-		const allowedRoot = realpathExistingOrParent(copyRoot);
+		const allowedRoot = realpathExistingOrParent(WORKTREE_ROOT);
 		if (resolved !== allowedRoot && !resolved.startsWith(`${allowedRoot}${path.sep}`)) return unquoted;
 	}
 	return undefined;
 }
 
 
-function worktreeNamingBlockReason(command: string, cwd?: string, workflowState: WorkflowStateSnapshot = {}, chains: WorkflowChains = chainsForPolicy(cwd)): string | undefined {
-	const typeSet = new Set(chains.naming.types);
-	const copyRoot = chains.copyRoot;
+function worktreeNamingBlockReason(command: string, cwd?: string, workflowState: WorkflowStateSnapshot = {}): string | undefined {
 	for (const segment of splitShellSegments(command)) {
 		const parsed = parseWorktreeCreateSegment(segment);
 		if (!parsed?.path || !parsed.branch) continue;
 		const [rawPrefix, ...suffixParts] = parsed.branch.split("/");
 		const prefix = rawPrefix ?? "";
 		const suffix = suffixParts.join("/");
-		if (!typeSet.has(prefix) || !suffix) continue;
+		if (!TASK_WORKTREE_BRANCH_PREFIXES.has(prefix) || !suffix) continue;
 		const resolvedPath = realpathExistingOrParent(normalizeFsPath(parsed.path, cwd));
-		if (copyRoot && !isPathInsideOrEqual(resolvedPath, copyRoot)) continue;
-		if (!copyRoot) continue;
+		if (!isPathInsideOrEqual(resolvedPath, WORKTREE_ROOT)) continue;
 		const basename = path.basename(resolvedPath);
 		const expectedFormat = "<type>/<bead-suffix>-<domain-or-component>-<purpose> with worktree basename equal to branch suffix";
-		if (chains.naming.basenameEqualsBranchSuffix && basename !== suffix) return `Заблокировано: canonical worktree naming требует, чтобы worktree basename (${basename}) точно совпадал с branch suffix (${suffix}) для ${parsed.branch}. Формат: ${expectedFormat}.`;
-		if (chains.naming.suffixMustNotStartWith && suffix.startsWith(chains.naming.suffixMustNotStartWith)) return `Заблокировано: branch/worktree suffix не должен использовать полный project bead id (${suffix}); используй короткий bead suffix, например lgok-branch-worktree-naming.`;
-		try {
-			if (!new RegExp(chains.naming.suffixPattern).test(suffix)) return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
-		} catch {
-			return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
-		}
-		if (chains.naming.requireActiveBeadSuffixPrefix && workflowState.activeBead) {
+		if (basename !== suffix) return `Заблокировано: canonical worktree naming требует, чтобы worktree basename (${basename}) точно совпадал с branch suffix (${suffix}) для ${parsed.branch}. Формат: ${expectedFormat}.`;
+		if (/^beads-task-issue-tracker-[a-z0-9]+(?:-|$)/i.test(suffix)) return `Заблокировано: branch/worktree suffix не должен использовать полный project bead id (${suffix}); используй короткий bead suffix, например lgok-branch-worktree-naming.`;
+		if (!/^[a-z0-9]+-[a-z0-9][a-z0-9-]*-[a-z0-9][a-z0-9-]*$/.test(suffix)) return `Заблокировано: canonical branch naming требует suffix вида <bead-suffix>-<domain-or-component>-<purpose>; получен ${suffix}.`;
+		if (workflowState.activeBead) {
 			const activeSuffix = workflowState.activeBead.split("-").pop() ?? "";
 			if (activeSuffix && !suffix.startsWith(`${activeSuffix}-`)) return `Заблокировано: active bead ${workflowState.activeBead} требует branch/worktree suffix с префиксом ${activeSuffix}-; получен ${suffix}.`;
 		}
@@ -3228,9 +3197,8 @@ function latestWorkflowState(ctx: ExtensionContext): WorkflowStateSnapshot {
 		const currentSessionState = hasCurrentSessionOwnership(state, ctx);
 		const currentScopeState = workflowStateHasCurrentScopeEvidence(state, scope);
 		const recordedTaskScopeState = workflowStateHasValidRecordedTaskScope(state);
-		const missingWorktreeLock = currentSessionState && hasActiveWorktreeLockRequirement(state, ctx.cwd) && !state.worktreePath;
-		const copyOptionalWithoutWorktree = currentSessionState && !chainsForPolicy(ctx.cwd, state.worktreePath).copyRequired && !state.worktreePath;
-		const isCurrentSessionState = currentSessionState && (currentScopeState || recordedTaskScopeState || missingWorktreeLock || copyOptionalWithoutWorktree);
+		const missingWorktreeLock = currentSessionState && hasActiveWorktreeLockRequirement(state) && !state.worktreePath;
+		const isCurrentSessionState = currentSessionState && (currentScopeState || recordedTaskScopeState || missingWorktreeLock);
 		if (!isCurrentSessionState) {
 			return withRuntimeMergeSlotSessionKey(
 				{ ...state, activeBead: undefined, state: "idle", branch: scope.branch, worktreePath: scope.worktreePath, startCommit: scope.startCommit },
@@ -3323,28 +3291,24 @@ export function evaluateBashPolicy(
 	const worktreeCwdDecision = activeWorktreeCwdDecision(command, options.cwd ?? process.cwd(), workflowState);
 	if (worktreeCwdDecision) return worktreeCwdDecision;
 
-	const chains = chainsForPolicy(commandCwd ?? options.cwd, workflowState.worktreePath);
-	if (
-		(commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command, commandCwd)) &&
-		isProtectedBranch(commandCwd) &&
-		!isMainWriteAllowed(chains)
-	) {
+	if ((commandHasMainLocalMutation(command) || commandHasProtectedBranchFsMutation(command, commandCwd)) && isProtectedBranch(commandCwd)) {
 		return {
 			policy: "blockMainMutation",
 			block: true,
 			reason: "Заблокировано: file mutations и git add/stage/commit на main/master запрещены. Используй feature branch или approved merge/release workflow.",
 		};
 	}
-	const invalidWorktree = invalidWorktreePath(command, commandCwd, chains);
+
+	const invalidWorktree = invalidWorktreePath(command, commandCwd);
 	if (invalidWorktree) {
 		return {
 			policy: "blockWorktreeInsideRepo",
 			block: true,
-			reason: `Заблокировано: worktree path должен находиться внутри ${chains.copyRoot}; получен ${invalidWorktree}.`,
+			reason: `Заблокировано: worktree path должен находиться внутри ${WORKTREE_ROOT}; получен ${invalidWorktree}.`,
 		};
 	}
 
-	const worktreeNamingReason = worktreeNamingBlockReason(command, commandCwd, workflowState, chains);
+	const worktreeNamingReason = worktreeNamingBlockReason(command, commandCwd, workflowState);
 	if (worktreeNamingReason) {
 		return {
 			policy: "blockWorktreeInsideRepo",
@@ -3427,7 +3391,7 @@ export function evaluateBashPolicy(
 		if (earlyEpicMatrixError && (!latestMatrix || latestMatrix.toUpperCase().startsWith("EPIC ACCEPTANCE MATRIX"))) {
 			return { policy: "requireEpicFinalizationSweep", block: true, reason: earlyEpicMatrixError };
 		}
-		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId, chains) : undefined;
+		const matrixError = closeId ? validateAcceptanceMatrixForClose(commandCwd, closeId) : undefined;
 		if (matrixError) {
 			return {
 				policy: "blockBdCloseWithoutReview",
@@ -3435,7 +3399,7 @@ export function evaluateBashPolicy(
 				reason: matrixError,
 			};
 		}
-		if (!canCloseByReviewState(command, commandCwd, workflowState, chains)) {
+		if (!canCloseByReviewState(command, commandCwd, workflowState)) {
 			return {
 				policy: "blockBdCloseWithoutReview",
 				block: true,
@@ -3531,14 +3495,11 @@ export function evaluatePathPolicy(toolName: string, targetPath: string, workflo
 	}
 
 	if ((toolName === "edit" || toolName === "write") && PROTECTED_BRANCHES.has(getBranchForPath(targetPath) ?? "")) {
-		const chains = chainsForPolicy(nearestExistingDirectory(targetPath), workflowState.worktreePath);
-		if (!isMainWriteAllowed(chains)) {
-			return {
-				policy: "blockMainMutation",
-				block: true,
-				reason: `Заблокировано: edit/write на main/master запрещён для ${targetPath}. Используй feature branch или external worktree.`,
-			};
-		}
+		return {
+			policy: "blockMainMutation",
+			block: true,
+			reason: `Заблокировано: edit/write на main/master запрещён для ${targetPath}. Используй feature branch или external worktree.`,
+		};
 	}
 
 	return undefined;
@@ -3552,7 +3513,6 @@ export default function beadsPolicyExtension(pi: ExtensionAPI): void {
 	pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
 		const runtimeSessionKey = currentSessionKey(ctx);
 		const workflowState = latestWorkflowState(ctx);
-		notifyWorkflowChainsReadError(ctx, chainsForPolicy(ctx.cwd, workflowState.worktreePath));
 
 		if (matchesToolName(event.toolName, "bash")) {
 			const command = String(event.input.command ?? "");

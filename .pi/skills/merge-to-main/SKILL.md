@@ -9,7 +9,7 @@ Full explicit PR + docs + merge cycle for a feature branch. Do not run `land` be
 
 ## Workflow
 
-1. Read `.pi/config/workflow-chains.json`. When `handoffFromCopy` is true (tracker default, also when the file is missing/unreadable), start in the feature/task worktree when `workflowState.worktreePath` is present. The approved main checkout/pull phase begins only after PR merge; before that, mutating commands, docs dispatch, tests, commit, and branch push run from the feature worktree. When `handoffFromCopy` is false, merge is not a copy ritual: do not require a separate task copy, and skip worktree-remove cleanup that assumes one.
+1. Start in the feature/task worktree when `workflowState.worktreePath` is present. The approved main checkout/pull phase begins only after PR merge; before that, mutating commands, docs dispatch, tests, commit, and branch push run from the feature worktree.
 2. Pre-flight:
    ```bash
    git status --short
@@ -46,7 +46,7 @@ EOF
   FILES: <comma-separated repo-relative files allowed for this fix>
   REASON: <кратко зачем правка нужна для merge quality gate>
   ```
-- Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом quality gates из `checks` (шаг 6) после правки. Не подставляйте `pnpm test`, `vue-tsc` или `cargo check`, если `checks` — точный `[]`.
+- Сделайте только строго scoped фиксы на той же `BRANCH/WORKTREE` в этом `START_COMMIT` контексте и только в файлах, перечисленных в `FILES:`. Запишите отдельный `MERGE FIX`/`ACCEPTANCE` комментарий с результатом запуска `pnpm test && npx vue-tsc --noEmit` после правки.
 - Без такого marker, без `FILES:`, или при изменении файлов вне `FILES:` новые risky-изменения в `.pi/extensions` / `workflow` на уже закрытом bead блокируются.
 - Не запускайте `git merge origin/main` в грязное post-close дерево: `changedCodeFiles` раздувается диффом main и выходит за `FILES:` (`every()` покрытия нет). Abort merge и остановитесь; merge-unscale маркера нет.
 - Конфликтный `git rebase origin/main` после ownership-fix, если конфликты только в `FILES:` POST-CLOSE MERGE FIX, — ожидаемый allow (rebase-fallback читает branch из `--git-path` rebase dir + `head-name` и `START_COMMIT` из `ORIG_HEAD`, в том числе в linked worktree). Не путать с `git merge origin/main`.
@@ -57,15 +57,10 @@ EOF
 - This is a documented workflow checkpoint; typed router/tool enforcement is out of scope for this skill.
 
 5. Commit dirty feature-branch files with explicit paths. Commit bead metadata separately if needed.
-6. Run quality gates if code changed. Read `checks` from `.pi/config/workflow-chains.json`. Reading `checks` does not change `copyRequired`, `reviewRequired`, `matrixRequired`, or `mainWriteAllowed`.
-   - No file, unreadable file, broken JSON, missing `checks`, or a `checks` value that is not an array of non-empty strings:
-     ```bash
-     pnpm test && npx vue-tsc --noEmit
-     ```
-     Do not add `cargo check` in this fallback.
-   - Exact `checks: []`: do not invent `pnpm test`, `vue-tsc`, or `cargo check`.
-   - Non-empty array of non-empty strings: run those command strings in order, joined with `&&`. The committed tracker list includes `cargo check --manifest-path src-tauri/Cargo.toml`, so code changes run that check too.
-   For docs/beads-only changes, record `not run: docs/beads only` rather than implying tests passed.
+6. Run quality gates:
+   ```bash
+   pnpm test && npx vue-tsc --noEmit
+   ```
 7. Push branch via merge-slot. Сначала один раз сохраните имя ветки, затем синхронизируйтесь с `origin/main` явно; не используйте неявный pull+rebase, потому что у новой ветки может не быть upstream.
 
    **Holder recipe (identical to `land`; compute once immediately before acquire):**
@@ -162,7 +157,7 @@ EOF
     ```
     Local pull / worktree remove / `branch -d` failure must **not** keep the slot held — release first, then report any local cleanup blocker.
 
-12. Local cleanup from the primary `main` worktree (no chdir-style git flags, no feature-worktree checkout of main). Skip this copy-remove ritual when `handoffFromCopy` is false in `.pi/config/workflow-chains.json` (no separate task copy was required):
+12. Local cleanup from the primary `main` worktree (no chdir-style git flags, no feature-worktree checkout of main):
     - Resolve primary via `git worktree list`: path that has branch `main` checked out and is **not** locked.
     - Primary cwd cleanup only when the session bead is terminal (`closed` / `blocked` / explicit `deferred`) **and** lock is off. Otherwise STOP before primary pull/remove.
     - Change agent cwd to the primary path (plain shell `cd` / session cwd), then:
